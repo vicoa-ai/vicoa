@@ -368,7 +368,7 @@ class _HelpFeedbackWidgetState extends State<HelpFeedbackWidget>
                         onTap: () async {
                           logFirebaseEvent('help_feedback_github_tap');
                           HapticFeedback.lightImpact();
-                          await launchURL('https://github.com/vicoa-ai/vicoa-open');
+                          await launchURL('https://github.com/vicoa-ai/vicoa');
                         },
                         child: Container(
                           width: double.infinity,
