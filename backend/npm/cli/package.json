@@ -24,7 +24,7 @@
     "mobile",
     "cross-device"
   ],
-  "license": "AGPL-3.0",
+  "license": "AGPL-3.0-or-later",
   "engines": {
     "node": ">=16"
   }

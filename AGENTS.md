@@ -151,9 +151,8 @@ local-first with background sync.
 
 ## Extension points (why some code looks indirect)
 
-Vicoa's hosted service adds closed features — billing, its marketing site, and
-growth campaigns — as a **separate overlay package that is not part of this
-repository**. The open code must never depend on it, so a few seams exist:
+Vicoa's hosted service adds closed features — billing and payment processing — as a separate overlay package that is not part of this
+repository. The open code must never depend on it, so a few seams exist:
 
 - `backend/src/shared/hooks.py` — additive hook registry (user-created,
   user-delete, app setup, lifespan). The core declares hooks; something else may

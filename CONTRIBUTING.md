@@ -340,5 +340,5 @@ keep your copyright, and you agree that:
   codebase
 - to the extent your Contribution is covered by patents you can license, you
   grant everyone the patent license the AGPLv3 requires to use it.
-- your contributed code may be used for commercial purposes, including the producer's cloud business operations;
-- the producer can adjust the Vicoa License to be more strict or relaxed as deemed necessary.
+- your contributed code may be used for any purpose permitted by the AGPLv3,
+  including commercial use as part of the maintainers' hosted service.
