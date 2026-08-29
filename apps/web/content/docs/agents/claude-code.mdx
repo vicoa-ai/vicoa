@@ -1,0 +1,160 @@
+---
+title: Claude Code
+description: Learn how to use Claude Code with Vicoa for vibe coding anywhere from desktop, mobile, and web
+---
+
+# Claude Code
+
+Claude Code is Anthropic's AI coding agent, and it's the **default agent** in Vicoa.
+
+## Getting Started
+
+### Installation
+
+Claude Code is the default agent, so it works immediately after installing Vicoa:
+
+```bash
+# Install Vicoa CLI
+npm i -g @vicoa/cli
+
+# Start Claude Code (default behavior)
+vicoa
+```
+
+No additional configuration needed.
+
+### Basic Usage
+
+Simply run `vicoa` to start a Claude Code session:
+
+```bash
+vicoa
+```
+
+Claude Code will start in your terminal, and the session will be accessible from the Vicoa mobile app and web dashboard.
+
+## Configuration Options
+
+### Resume Previous Session
+
+Continue from where you left off:
+
+```bash
+vicoa --resume SESSION_ID
+```
+
+Find session IDs in the Vicoa web app.
+
+
+### Custom Session Name
+
+Give your session a descriptive name:
+
+```bash
+vicoa --name "Refactor Landing Page"
+```
+
+This makes it easier to identify sessions in the Vicoa web and mobile.
+
+
+## Making Claude Code Your Default
+
+Claude Code is already the default agent, but if you've changed it and want to restore:
+
+```bash
+vicoa --set-default claude
+```
+
+After this command, `vicoa` will always launch Claude Code unless you override with `--agent`.
+
+## Using Claude Code Temporarily
+
+If you have a different default agent but want to use Claude Code for one session:
+
+```bash
+vicoa --agent claude
+```
+
+Your default agent remains unchanged for future sessions.
+
+
+## Mobile and Web Workflow
+
+### Typical Development Flow
+
+1. **Start Claude Code on your terminal**
+   ```bash
+   vicoa
+   ```
+
+2. **Monitor progress on your phone**
+   - Open the Vicoa mobile app
+   - View real-time output
+   - Receive push notifications
+
+3. **Respond from anywhere**
+   - Approve permissions on the go
+   - Send follow-up instructions
+   - Review completed work
+
+
+## Slash Commands
+
+Claude Code supports custom slash commands from your `~/.claude/commands` directory. These commands automatically sync to Vicoa, making them available in the mobile and web UI.
+
+Create custom commands by adding `.md` files to `~/.claude/commands/`:
+
+```bash
+# Create a custom command
+echo "# Review Command\nReview code for security issues" > ~/.claude/commands/review.md
+```
+
+The command becomes available as `/review` in Claude Code and in the Vicoa mobile UI.
+
+## Frequently Asked Questions
+
+### Is Claude Code free to use?
+
+Claude Code requires an Anthropic API key. Vicoa comes with free usage for pairing with Claude Code.
+
+### How is this different from using Claude Code directly?
+
+When you use `vicoa` to launch Claude Code, you get:
+- Mobile app access
+- Web dashboard
+- Push notifications
+- Remote permission approval
+- Session persistence and resumption
+- Multi-device access
+
+Using Claude Code directly (`claude` command) provides only the terminal interface.
+
+### Can I switch between Claude Code and other agents?
+
+Yes! Vicoa supports multiple agents:
+
+```bash
+# Use Claude Code
+vicoa --agent claude
+
+# Use Codex
+vicoa --agent codex
+
+# Use OpenCode
+vicoa --agent opencode
+```
+
+See the [Agent Guide](/docs/agents) for details on each agent.
+
+
+## Advanced Usage
+
+### Pre-existing Agent Instance
+
+Use a specific agent instance ID:
+
+```bash
+vicoa --agent-instance-id abc123
+```
+
+Useful for integrating with external tools or automation scripts.

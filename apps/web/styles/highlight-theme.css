@@ -1,0 +1,117 @@
+/* Highlight.js custom theme with light/dark support */
+
+/* Light theme colors */
+:root .hljs {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+:root .hljs-keyword,
+:root .hljs-selector-tag,
+:root .hljs-literal,
+:root .hljs-section,
+:root .hljs-link {
+  color: #a626a4;
+}
+
+:root .hljs-function .hljs-keyword {
+  color: #a626a4;
+}
+
+:root .hljs-subst {
+  color: #383a42;
+}
+
+:root .hljs-string,
+:root .hljs-title,
+:root .hljs-name,
+:root .hljs-type,
+:root .hljs-attribute,
+:root .hljs-symbol,
+:root .hljs-bullet,
+:root .hljs-addition,
+:root .hljs-variable,
+:root .hljs-template-tag,
+:root .hljs-template-variable {
+  color: #50a14f;
+}
+
+:root .hljs-comment,
+:root .hljs-quote,
+:root .hljs-deletion,
+:root .hljs-meta {
+  color: #a0a1a7;
+}
+
+:root .hljs-doctag,
+:root .hljs-strong {
+  font-weight: bold;
+}
+
+:root .hljs-emphasis {
+  font-style: italic;
+}
+
+:root .hljs-number,
+:root .hljs-built_in,
+:root .hljs-class .hljs-title {
+  color: #c18401;
+}
+
+/* Dark theme colors */
+.dark .hljs {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+.dark .hljs-keyword,
+.dark .hljs-selector-tag,
+.dark .hljs-literal,
+.dark .hljs-section,
+.dark .hljs-link {
+  color: #c678dd;
+}
+
+.dark .hljs-function .hljs-keyword {
+  color: #c678dd;
+}
+
+.dark .hljs-subst {
+  color: #abb2bf;
+}
+
+.dark .hljs-string,
+.dark .hljs-title,
+.dark .hljs-name,
+.dark .hljs-type,
+.dark .hljs-attribute,
+.dark .hljs-symbol,
+.dark .hljs-bullet,
+.dark .hljs-addition,
+.dark .hljs-variable,
+.dark .hljs-template-tag,
+.dark .hljs-template-variable {
+  color: #98c379;
+}
+
+.dark .hljs-comment,
+.dark .hljs-quote,
+.dark .hljs-deletion,
+.dark .hljs-meta {
+  color: #5c6370;
+}
+
+.dark .hljs-doctag,
+.dark .hljs-strong {
+  font-weight: bold;
+}
+
+.dark .hljs-emphasis {
+  font-style: italic;
+}
+
+.dark .hljs-number,
+.dark .hljs-built_in,
+.dark .hljs-class .hljs-title {
+  color: #e5c07b;
+}

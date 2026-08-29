@@ -1,0 +1,171 @@
+/* Folding cube */
+.sk-folding-cube {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform: rotateZ(45deg);
+}
+.sk-folding-cube .sk-cube {
+  float: left;
+  width: 50%;
+  height: 50%;
+  position: relative;
+  transform: scale(1.1);
+}
+.sk-folding-cube .sk-cube:before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: currentColor;
+  animation: sk-foldCubeAngle 2.4s infinite linear both;
+  transform-origin: 100% 100%;
+}
+.sk-folding-cube .sk-cube2 { transform: scale(1.1) rotateZ(90deg); }
+.sk-folding-cube .sk-cube3 { transform: scale(1.1) rotateZ(180deg); }
+.sk-folding-cube .sk-cube4 { transform: scale(1.1) rotateZ(270deg); }
+.sk-folding-cube .sk-cube2:before { animation-delay: 0.3s; }
+.sk-folding-cube .sk-cube3:before { animation-delay: 0.6s; }
+.sk-folding-cube .sk-cube4:before { animation-delay: 0.9s; }
+@keyframes sk-foldCubeAngle {
+  0%, 10% {
+    transform: perspective(140px) rotateX(-180deg);
+    opacity: 0;
+  }
+  25%, 75% {
+    transform: perspective(140px) rotateX(0deg);
+    opacity: 1;
+  }
+  90%, 100% {
+    transform: perspective(140px) rotateY(180deg);
+    opacity: 0;
+  }
+}
+
+/* Single dot pulse */
+.sk-single-dot {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background-color: currentColor;
+  animation: sk-single-dot-pulse 1.2s infinite ease-in-out;
+}
+@keyframes sk-single-dot-pulse {
+  0%, 100% { opacity: 0; transform: scale(0.4); }
+  50%       { opacity: 1; transform: scale(1); }
+}
+
+/* Rotating plane */
+.sk-rotating-plane {
+  width: 100%;
+  height: 100%;
+  background-color: currentColor;
+  animation: sk-rotateplane 1.2s infinite ease-in-out;
+}
+@keyframes sk-rotateplane {
+  0%   { transform: perspective(120px) rotateX(0deg) rotateY(0deg); }
+  50%  { transform: perspective(120px) rotateX(-180.1deg) rotateY(0deg); }
+  100% { transform: perspective(120px) rotateX(-180deg) rotateY(-179.9deg); }
+}
+
+/* Rect orbital — cubes orbiting a tall rectangle */
+.sk-rect-orbital {
+  width: 10px;
+  height: 16px;
+  position: relative;
+}
+.sk-rect-orbital .sk-ro-cube {
+  width: 2px;
+  height: 2px;
+  background-color: currentColor;
+  border-radius: 0.5px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  animation: sk-rect-orbital-move 3s linear infinite;
+}
+.sk-rect-orbital .sk-ro-cube:nth-child(2) { animation-delay: -0.75s; }
+.sk-rect-orbital .sk-ro-cube:nth-child(3) { animation-delay: -1.5s; }
+.sk-rect-orbital .sk-ro-cube:nth-child(4) { animation-delay: -2.25s; }
+
+/* perimeter = 44px: right 8 (18.18%) → down 14 (50%) → left 8 (68.18%) → up 14 (100%) */
+@keyframes sk-rect-orbital-move {
+  0%      { left: 0px;  top: 0px;  }
+  18.18%  { left: 8px;  top: 0px;  }
+  50%     { left: 8px;  top: 14px; }
+  68.18%  { left: 0px;  top: 14px; }
+  100%    { left: 0px;  top: 0px;  }
+}
+
+/* Double bounce */
+.sk-double-bounce {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+.sk-double-bounce .sk-db-child {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background-color: currentColor;
+  opacity: 0.6;
+  position: absolute;
+  top: 0;
+  left: 0;
+  animation: sk-bounce 2.0s infinite ease-in-out;
+}
+.sk-double-bounce .sk-db-child2 {
+  animation-delay: -1.0s;
+}
+@keyframes sk-bounce {
+  0%, 100% { transform: scale(0.0); }
+  50%       { transform: scale(1.0); }
+}
+
+/* Three dots bounce */
+.sk-three-bounce {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.sk-three-bounce .sk-bounce {
+  width: 4px;
+  height: 4px;
+  background-color: currentColor;
+  border-radius: 100%;
+  animation: sk-bouncedelay 1.4s infinite ease-in-out both;
+}
+.sk-three-bounce .sk-bounce1 { animation-delay: -0.32s; }
+.sk-three-bounce .sk-bounce2 { animation-delay: -0.16s; }
+@keyframes sk-bouncedelay {
+  0%, 80%, 100% { transform: scale(0); }
+  40%           { transform: scale(1.0); }
+}
+
+/* Chasing cubes */
+.sk-chasing-cubes {
+  width: 16px;
+  height: 16px;
+  position: relative;
+}
+.sk-chasing-cubes .sk-cc-cube {
+  background-color: currentColor;
+  width: 6px;
+  height: 6px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  animation: sk-cubemove 1.8s infinite ease-in-out;
+}
+.sk-chasing-cubes .sk-cc-cube2 {
+  animation-delay: -0.9s;
+}
+@keyframes sk-cubemove {
+  25%   { transform: translateX(12px) rotate(-90deg) scale(0.5); }
+  50%   { transform: translateX(12px) translateY(12px) rotate(-179deg); }
+  50.1% { transform: translateX(12px) translateY(12px) rotate(-180deg); }
+  75%   { transform: translateX(0px) translateY(12px) rotate(-270deg) scale(0.5); }
+  100%  { transform: rotate(-360deg); }
+}

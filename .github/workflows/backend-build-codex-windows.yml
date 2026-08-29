@@ -1,0 +1,70 @@
+name: Build Codex Windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  build-codex-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Configure Git for submodules
+        shell: bash
+        run: git config --global url."https://x-access-token:${{ secrets.GH_SUBMODULE_PAT }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Initialize submodules
+        # cwd is backend/, so the pathspec resolves to the codex
+        # submodule only (not the other root submodules).
+        run: git submodule update --init --recursive src/integrations/cli_wrappers/codex
+
+      - name: Get codex submodule SHA
+        id: codex_sha
+        shell: bash
+        # HEAD:<path> is repo-root-relative; the ./ makes it cwd-relative so it
+        # resolves the codex gitlink now that backend is a monorepo subdir.
+        run: echo "sha=$(git rev-parse HEAD:./src/integrations/cli_wrappers/codex)" >> $GITHUB_OUTPUT
+
+      - name: Restore cached Codex binary
+        id: codex_cache
+        uses: actions/cache@v4
+        with:
+          path: backend/src/vicoa/_bin/codex/win-x64
+          key: codex-bin-win-x64-${{ steps.codex_sha.outputs.sha }}
+
+      - name: Cache Cargo registry and build
+        if: steps.codex_cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/src/integrations/cli_wrappers/codex/codex-rs/target
+          key: cargo-win-x64-${{ hashFiles('backend/src/integrations/cli_wrappers/codex/codex-rs/Cargo.lock') }}
+          restore-keys: cargo-win-x64-
+
+      - name: Build Codex binary
+        if: steps.codex_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: bash scripts/cibw_before_build.sh
+
+      - name: Test binary
+        shell: bash
+        run: src/vicoa/_bin/codex/win-x64/codex.exe --version
+
+      - name: Upload codex binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-bin-win-x64
+          path: backend/src/vicoa/_bin/codex/win-x64/codex.exe
+          retention-days: 7

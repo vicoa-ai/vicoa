@@ -1,0 +1,27 @@
+User-agent: *
+Allow: /
+
+User-agent: Googlebot
+Allow: /
+Crawl-delay: 1
+
+User-agent: Bingbot
+Allow: /
+Crawl-delay: 1
+
+# Block access to admin and API routes
+Disallow: /api/
+Disallow: /dashboard/
+Disallow: /admin/
+Disallow: /_next/
+Disallow: /private/
+
+# Allow important pages
+Allow: /
+Allow: /features
+Allow: /pricing
+Allow: /sign-up
+Allow: /sign-in
+
+# Sitemap location
+Sitemap: https://vicoa.ai/sitemap.xml

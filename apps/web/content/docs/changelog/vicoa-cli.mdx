@@ -1,0 +1,375 @@
+---
+title: Vicoa CLI
+description: Release notes for the Vicoa CLI and daemon — new agent support, bug fixes, and stability improvements shipped in every version.
+---
+
+# Vicoa CLI
+
+### v1.7.12
+24 August, 2026
+- Detect and report ACP agent startup failures and silently-empty turns instead of leaving a dead session
+- Fix agent-detection false positives from stale nvm-installed CLIs
+- Add `--role {user,agent}` filter to `vicoa session get`
+- Honor cancel of a queued message for Codex and ACP agents (previously only Claude did)
+- Fix `vicoa` install on Windows (PATH handling + termios crash); document the Linux GLIBC → pip fallback
+- Remove `vicoa serve` / `vicoa terminal` CLI paths and the legacy relay server
+
+### v1.7.11
+20 August, 2026
+- Auto-continue rate-limited sessions once their limit window resets, with new `vicoa session ls --rate-limited`, `session message`, and `session continue` commands
+- Coalesce multiple queued user messages into a single turn for all headless agents (Claude and Codex)
+- Manage per-machine agent skills from the daemon — list, install, and uninstall — powering the new Skills tab
+
+### v1.7.10
+17 August, 2026
+- Rework headless Claude onto a session-lifetime stream reader with event-derived turns, fixing stuck UI and stalled replies
+- Harden the native Codex session: per-call timeouts, fail-fast when the process dies, and a quieter watchdog
+- Fix Codex spawn failures with a registration timeout, stderr capture, and human-readable RPC errors
+- Abort a headless spawn on registration failure instead of leaving a zombie process
+
+### v1.7.9
+13 August, 2026
+- Add daemon RPCs to stage, unstage, and commit individual files for the Changes panel
+- Fetch Claude rate limits on demand from the machine daemon
+- Fix the Claude context-window seed for `[1m]` 1M-context models
+- Reduce the number of rate-limit messages surfaced for Claude
+
+### v1.7.8
+10 August, 2026
+- Add a `vicoa automation` CLI to create, list, and manage scheduled automations
+- Add minutely and daily-window scheduling to automations
+- Add a `--priority` filter to `vicoa task ls`
+- Link a session to a task and set its title from the CLI
+- Silence phone push while you're actively using the desktop app
+- Fix headless Claude stranding `AskUserQuestion` and permission replies, recovering them over REST
+
+### v1.7.7
+9 August, 2026
+- Link tasks to their sessions across Tasks and workspace search
+- Fix headless CLI auth launching a terminal browser during login
+- Publish slim `py3-none-<platform>` wheels to fix the PyPI 10 GB project size cap
+
+### v1.7.6
+6 August, 2026
+- Route headless Codex through `codex_native` on the frozen daemon path
+- Fix workspace search timing out on heavy accounts
+
+### v1.7.5
+5 August, 2026
+- Add a `vicoa session` CLI with agent-facing instance reads
+- Add ⌘K workspace search backed by a `/api/v1/search` endpoint, with a commands tier and a statement-timeout guardrail
+- Fix headless agents swallowing user messages that quote control-command JSON
+
+### v1.7.4
+1 August, 2026
+- Add automations: schedule recurring agent runs via a server-side cron sweep
+- Fix inbound headless Claude messages dropped by the broadcast bridge
+
+### v1.7.3
+31 July, 2026
+- Allow deleting any git worktree, not just Vicoa-managed ones
+- Fix headless Claude stalling on an AskUserQuestion and correct queued-message status; add a web retrieve button
+
+### v1.7.2
+29 July, 2026
+- Add `vicoa task` CLI subcommands and agent-facing task endpoints for creating and updating tasks
+- Add daemon `write-file` and `stat-file` RPCs for in-place file editing, gated on a `content_hash` conflict check
+- Support uploading arbitrary files alongside images
+- Reap orphaned remote ptys via a lease heartbeat so terminals don't leak after a client disconnects
+- Pipeline remote terminal keystrokes over the relay to cut typing lag
+- Fix headless Claude stalling on large outputs by raising the stdout buffer cap and self-healing on JSON overflow
+
+### v1.7.1
+26 July, 2026
+- Serve remote-machine terminals over the relay and enable web terminals
+- Restore terminals and file tabs across a daemon restart; close them when a session is archived or deleted
+- Fix the frozen Windows daemon binary crashing on load by guarding POSIX-only terminal imports (`fcntl`/`pty`/`termios`)
+- Stop attaching git diffs to agent messages
+
+### v1.6.12
+24 July, 2026
+- Add tasks and projects: user-scoped CRUD, labels, sub-tasks, an Inbox default, and instance status that drives linked task status
+- Link projects to a local directory per machine
+- Add a `scan-files` daemon RPC to power the live `@`-mention file index
+- Run daemon RPC handlers off the WebSocket receive loop so a slow handler can't stall the connection
+
+### v1.6.11
+23 July, 2026
+- Including v1.6.9 & v1.6.10
+- Support grouping sidebar sessions by git worktree (persist `worktree_name` on spawn)
+- Fix `auto` permission mode being dropped after a mid-session reconnect
+- Fix `git-status` missing files inside newly created directories
+- Fix inconsistent interrupt behavior across headless agents
+
+### v1.6.8
+21 July, 2026
+- Support resuming headless Claude and ACP sessions
+- Derive session live/dead state from heartbeats 
+- Fix git diff crashing on binary files containing NUL bytes
+- Fix `git-status` to flag submodule entries and stop `hash-object` batch aborts
+
+### v1.6.7
+19 July, 2026
+- Capture context-window and rate-limit usage for Claude sessions, surfaced to the app
+- Add `git-log`, `commit-files`, and `commit-diff` daemon RPCs for browsing commit history
+- Discover Codex's live models via `model/list`; add gpt-5.6 (sol/terra/luna) to the catalog
+- Support sub-agent activities
+- Support cancelling in-flight messages with an atomic consume guard and cross-process broadcast
+
+### v1.6.6
+17 July, 2026
+- Add a daemon local server for the desktop app
+- Add `--takeover` and `/healthz` cloud-auth status for the desktop shell
+- Add `scan-agents` daemon RPCs to detect newly installed CLIs
+- Support image attachments: upload/download endpoints, delivery to headless Claude, Codex, and ACP
+- Harden machine identity
+- Add Claude Fable 5 to the new-session agent catalog
+
+### v1.6.4
+4 July, 2026
+- Detect Windows-installed agent CLIs when resolving global npm installs
+- Match generated session titles to the language of the user's first message
+
+### v1.6.3
+22 June, 2026
+- Support starting sessions in a git worktree (daemon RPCs + spawn param)
+
+### v1.6.2
+18 June, 2026
+- Forward Claude skill / project slash commands and TUI queued prompts as user messages
+- Improve service stability when user deletes account.
+- Improve Stripe checkout page
+
+### v1.6.1
+15 June, 2026
+- Support more coding agents via a generic ACP integration: Gemini, Cursor, Copilot, Kimi, and Hermes
+- Fetch and cache each machine's available models from OpenCode and other ACP agents for the new-session picker
+
+### v1.5.8
+13 June, 2026
+- Run one daemon per `--base-url` instead of one daemon total
+- Show session source (app or terminal) when registering sessions
+- Improve `vicoa ls` to show session title and id, and `vicoa stop <session-id>` to stop a specific session
+- Graceful TUI wrapper shutdown and faster PTY teardown
+- Stop reusing the previous user's machine identity after a user switch
+
+### v1.5.7
+8 June, 2026
+- Support list files and read file RPCs for the vicoa-app Files tab
+- Support git status and git diff RPCs for the vicoa-app Git tab
+- Migrate ACP from SSE to websocket
+- Drop the default "Hi" / "You are starting a coding session" prompts for sessions started from daemon
+- Fix duplicate first message for Claude Code sessions started from daemon
+- Speed up shutting down Claude Code TUI
+- Prevent showing logging warnings in CLI output
+
+### v1.5.6
+6 June, 2026
+- Support changing model, thinking effort, and permission mode during a session
+- Migrate headless Claude from SSE to websocket
+- Upgrade model catalog: Sonnet auto, thinking default high, Codex plan removed
+- Fix codex headless first-prompt drop issue
+- Fix Claude Code headless reconnect issue
+- Fix slash command scanner missing symlinked skill directories
+- Do not sync files in hidden directories and nested `.gitignore` files
+
+### v1.5.5
+4 June, 2026
+- Machine management backend: link sessions to `machine_id` and add rename / remove / get endpoints
+- Update recent directories when spawning a new session
+- Session titles: drop char cap and route TUI command echoes as agent messages
+
+### v1.5.4
+3 June, 2026
+- Support session configuration (agent, model, thinking effort, permission mode) 
+  - Support for all vicoa daemon: Claude Code, Codex, OpenCode
+  - Support for Claude TUI
+- Implement Codex native app-server integration for daemon to replace codex-acp
+- Pin/unpin agent instances
+- Automatically generate session titles
+- Fix `vicoa ls` missing TUI sessions on Windows and Linux
+
+### v1.5.3
+30 May, 2026
+- Upgrade Codex to rust-v0.134.0 with Vicoa integration
+- Support slash command for Codex TUI via vicoa 
+- Fix daemon launch failures when agents are installed via nvm / Volta / snap
+- Fix subscription not up-to-date in the web issue
+
+### v1.5.2
+28 May, 2026
+- Bundle certifi CA in WebSocket clients (fixes TLS failures on frozen binaries)
+
+### v1.5.1
+28 May, 2026
+- Switch to WebSocket for instant message delivery and session events
+- New `/ws` endpoint with RPC routing
+- Migrate daemon and CLI wrapper from REST polling to WebSocket
+- Tag daemon REST requests with `X-CLI-Version` for telemetry
+- Add catch-up handlers for messages, instances, and machines on reconnect
+
+### v1.4.2
+20 May, 2026
+- Add `vicoa ls` and `vicoa stop` commands
+- Start `vicoa daemon` by default on Windows with `vicoa` command
+- Support daemon debug-level logging
+- Improve headless Claude interrupt and permission handling
+- Fix SSE heartbeat starvation on busy channels
+- Resolve users by email when Supabase id drifts
+- Improvements to Claude wrapper: echo-dedup, prompt detection, AUQ race, FIFO injection tracker
+
+### v1.4.1
+13 May, 2026
+- Upgrade Claude Code SDK, fastmcp, and related libraries
+- Support enabling thinking mode
+- Improve permission mode handling based on terminal text (not predefined steps)
+- Fix Ask User Question for Claude CLI
+- Improve realtime status updates
+- Improve machine daemon and headless Claude startup
+
+### v1.3.21
+9 May, 2026
+- Add API for reporting issues
+- Auto-update status to "awaiting input" when terminal is idle
+- Install OpenCode directly in CLI to avoid long black-screen startup
+- Improve ACP implementation for OpenCode and Codex
+- Fix Codex start and permission issues on Linux
+- Show error message if Claude is not installed
+- Fix vicoa auth on headless Linux servers
+
+### v1.3.20
+4 May, 2026
+- Implement DB cursor for the backend to replace SSE queue
+- Improve Codex ACP startup; read `OPENAI_API_KEY` from `auth.json`
+- Bypass node program for `vicoa daemon` CLI
+- Limit machine platform string length
+
+### v1.3.19
+1 May, 2026
+- Reuse Linux build artifacts (repack + rename instead of rebuild)
+
+### v1.3.18
+1 May, 2026
+- Add smoke tests
+- Pin pydantic to prevent binary import breakage
+- Fix release CI
+
+### v1.3.17
+1 May, 2026
+- Fix MCP error in daemon
+- Improve SSE stability and connectivity
+
+### v1.3.16
+30 April, 2026
+- Fix MCP start issue
+- Remove the title of daemon-started Codex and OpenCode
+
+### v1.3.15
+29 April, 2026
+- Implement pg listener for SSE connection stability
+- Improve SSE connection
+- Filter instances with `active_only` parameter
+- Fix vicoa daemon start issue
+- Commit DB before sending push notification
+
+### v1.3.14
+28 April, 2026
+- Migrate remote session spawn requests and messages from polling to SSE
+- Add `--session-id` and `--prompt` arguments
+- Close session now also terminates headless Claude, Codex, and OpenCode sessions
+- Enforce a single running `vicoa daemon`
+- Deduplicate user messages sent from TUI
+- Add `SseWriteTimeoutMiddleware`
+- Fix MCP issue after building as binary
+
+### v1.3.13
+21 April, 2026
+- Update CLI texts to use "connection" instead of "authorization"
+- Fix `vicoa daemon` command for binary packages
+- Update the default installation command
+- Update build binaries to get version tag from context
+
+### v1.3.12
+20 April, 2026
+- Add Codex build GitHub workflow script
+- Update Codex build for binary
+
+### v1.3.11
+20 April, 2026
+- Use Codex binaries from release in build
+- Improve npm package build process
+- Add tag field for release
+
+### v1.3.10
+19 April, 2026
+- Distribute via single `@vicoa/cli` npm package with platform version tags (`npx @vicoa/cli`)
+- Add PyInstaller binary distribution
+- Add GitHub Actions workflow for multi-platform binary builds
+- Switch to onedir mode for faster startup
+
+### v1.3.9
+2 April, 2026
+- Start daemon in background; update recent directories with the normal `vicoa` command
+- Use "claude code" instead of "claudecode" for agent tag
+- Implement pagination for getting agent instances
+- Expose billing endpoint regardless of Stripe configuration
+- Improve and implement Stripe payment
+- Mark session as completed when exited for Codex and ACP
+
+### v1.3.8
+18 March, 2026
+- Integrate Deepgram and add API to generate short-lived token (voice/dictation)
+
+### v1.3.7
+15 March, 2026
+- Fix Codex tool use not shown
+- Improve permission request handling
+
+### v1.3.6
+13 March, 2026
+- Add Ask User Question logging
+
+### v1.3.5
+8 March, 2026
+- Support multi-select in Ask User Question
+- Improve permission detection and parsing (previously missed the first option)
+- Bypass control messages with `persist_only` action
+- Add Mailgun service for sending emails
+- Improve RevenueCat webhook to send email; implement Superwall webhook
+- Update Codex to remove the free tip
+
+### v1.3.4
+6 March, 2026
+- Support Ask User Question
+- Support persisting control-only messages without requiring action
+- Sync Claude skills as slash commands
+
+### v1.3.3
+1 March, 2026
+- Support starting remote Codex sessions via ACP
+- Support starting remote OpenCode sessions via ACP
+- Make project file sync asynchronous when starting the CLI
+- Expand Claude slash commands to include commands in subfolders and the local project `.claude` folder
+
+### v1.3.2
+22 February, 2026
+- Upgrade Codex version
+
+### v1.3.1
+7 February, 2026
+- Support OpenCode
+
+### v1.3.0
+25 January, 2026
+- Support Claude CLI 2.1.x
+
+### v1.2.x
+14 December, 2025 – 6 January, 2026
+- Support Claude CLI 2.0.x and Codex
+
+## Related
+
+- [Mobile app changelog](/docs/changelog/mobile-app) — releases for iOS and Android
+- [Desktop app changelog](/docs/changelog/desktop-app) — releases for the Vicoa desktop app
+- [Updates](/updates) — feature announcements with screenshots
+- [Version Compatibility](/docs/version-compatibility) — which CLI and app versions pair together

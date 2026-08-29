@@ -1,0 +1,83 @@
+---
+title: Claude Code vs. Codex in Vicoa
+description: Learn how Vicoa uses Claude Code by default, how to switch to Codex, and the exact CLI commands to manage both agents
+---
+
+# Claude Code vs. Codex in Vicoa
+Learn how Vicoa uses Claude Code by default, how to switch to Codex, and the exact CLI commands to manage both agents.
+
+Vicoa supports both Claude Code and Codex. **Claude Code** is the default agent so the CLI feels familiar right out of the box. **Codex** is also integrated and can started with a single command.
+
+This guide answers the common questions we hear about swapping between Claude Code and Codex and highlights the commands you’ll use most.
+
+## Default Agent Behaviour
+
+Out of the box, `vicoa` starts **Claude Code** so you can get productive immediately. If you ever changed the default in the past, Vicoa keeps that preference until you update it again.
+
+## Launch Codex for a Single Session
+
+Launch Vicoa with Codex just for the current run by passing the `--agent` flag:
+
+```bash
+vicoa --agent codex
+```
+
+This keeps your default unchanged. The next time you run `vicoa` with no flags, the CLI will return to Claude Code.
+
+## Make Codex the Default Agent
+
+If you want `vicoa` to always start Codex, set the default agent once:
+
+```bash
+vicoa --set-default codex
+```
+
+After running this command, `vicoa` will launch Codex automatically. Override the default for a single run with `vicoa --agent claude` (or any other available agent).
+
+## Restore Claude Code as the Default
+
+To switch back to Claude Code as default, run:
+
+```bash
+vicoa --set-default claude
+```
+
+## Frequently Asked Questions
+
+### Can I keep Claude Code and Codex available at the same time?
+
+Yes. Think of `--agent` as a temporary override. Set your preferred default once, then toggle to the other agent whenever the task demands it. For example:
+
+```bash
+# default is Claude Code
+vicoa
+
+# jump into Codex for a targeted fix
+vicoa --agent codex
+
+# hop back to Claude Code without changing the default
+vicoa
+```
+
+### Do I need to reauthenticate after switching agents?
+
+No. Agent selection happens client-side inside the CLI. As long as your Vicoa session is active, both Claude Code and Codex respect the same authentication state.
+
+### When should I prefer Claude Code vs. Codex?
+
+Both Claude Code and Codex are powerful tools, and they are both improving and evolving. The choice between them depends on your specific projects.  
+
+### Do I need to do anything on mobile app or web to switch between Claude Code and Codex?
+
+No. Vicoa syncs both agents in similar way. We aim to provide the best experience for both agents seamlessly with customized formatting. If there are design or formatting preferences you prefer, please let us know at hi@vicoa.ai.
+
+## Tip: Keep Both Agents Handy
+
+Many developers and teams use both Claude Code and Codex at the same time. Use the `--agent` flag to swap between them on demand while keeping whichever default fits most of your workflow.
+
+## Related
+
+- [Claude Code](/docs/agents/claude-code) — full setup and usage guide
+- [Codex](/docs/agents/codex) — full setup and usage guide
+- [Agents](/docs/agents) — every coding agent Vicoa supports
+- [CLI Commands](/docs/cli-commands) — manage sessions from the terminal

@@ -1,0 +1,12 @@
+pathspec>=0.11.0
+sqlalchemy==2.0.41
+psycopg2-binary==2.9.10
+pydantic==2.13.4
+pydantic-settings==2.9.1
+python-dotenv==1.1.0
+alembic==1.14.0
+sentry-sdk[fastapi]==2.32.0
+fastmcp==3.2.4
+anthropic
+openai
+boto3>=1.34

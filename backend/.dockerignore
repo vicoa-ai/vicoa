@@ -1,0 +1,67 @@
+# Python
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.Python
+**/pip-log.txt
+**/pip-delete-this-directory.txt
+**/.tox/
+**/.coverage
+**/.coverage.*
+**/.cache
+**/nosetests.xml
+**/coverage.xml
+**/*.cover
+**/*.log
+**/.git
+**/.gitignore
+**/.mypy_cache
+**/.pytest_cache
+**/.hypothesis
+**/.ruff_cache
+
+# Virtual environments
+**/venv/
+**/env/
+**/ENV/
+**/.venv/
+
+# Node
+**/node_modules/
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+
+# IDE
+**/.vscode/
+**/.idea/
+**/*.swp
+**/*.swo
+
+# OS
+**/.DS_Store
+**/Thumbs.db
+
+# Environment files
+**/.env
+**/.env.*
+
+# Build artifacts
+**/dist/
+**/build/
+**/*.egg-info/
+**/target/
+
+# Packaged CLI binaries (used by the pip-installed CLI, not the server image)
+src/vicoa/_bin/
+
+# Local Postgres data (dev only)
+postgres-data/
+
+# Test files
+tests/
+backend/tests/
+servers/tests/
+test_*.py
+*_test.py

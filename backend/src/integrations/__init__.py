@@ -1,0 +1,1 @@
+"""Vicoa integrations package."""

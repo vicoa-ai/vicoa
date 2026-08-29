@@ -1,0 +1,43 @@
+{
+  "name": "vicoa-desktop",
+  "version": "0.1.18",
+  "private": true,
+  "description": "Electron shell for the Vicoa desktop app",
+  "main": "dist/main.js",
+  "//vicoaDaemonVersion": "Pinned vicoa-ai/vicoa release whose daemon is bundled (scripts/stage-daemon.mjs). Bump this ONE line to ship a newer daemon. Overridable per build via VICOA_DAEMON_VERSION / VICOA_DAEMON_DIST.",
+  "vicoaDaemonVersion": "v1.7.12",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc && electron .",
+    "start": "electron .",
+    "check": "tsc && node dist/check.js",
+    "build:renderer": "node scripts/build-renderer.mjs",
+    "stage:daemon": "node scripts/stage-daemon.mjs",
+    "build:notification-status": "node scripts/build-notification-status.mjs",
+    "make:icon": "node scripts/make-icons.mjs",
+    "stage:all": "pnpm run build:renderer && pnpm run stage:daemon && pnpm run build:notification-status && pnpm run make:icon && tsc",
+    "//stage:all:win": "Windows staging. Skips make:icon (needs the macOS sips/iconutil/swift toolchain; resources/icon.ico is committed) and build:notification-status (macOS-only helper, self-skips anyway).",
+    "stage:all:win": "pnpm run build:renderer && pnpm run stage:daemon && tsc",
+    "//stage:all:linux": "Linux staging. Like Windows, skips make:icon (macOS-only toolchain; resources/icon-linux.png is committed) and build:notification-status (macOS-only helper).",
+    "stage:all:linux": "pnpm run build:renderer && pnpm run stage:daemon && tsc",
+    "package": "pnpm run stage:all && electron-builder --mac --config electron-builder.config.cjs",
+    "package:release": "pnpm run stage:all && electron-builder --mac --config electron-builder.config.cjs --publish always",
+    "//package:win": "Windows build. UNSIGNED by design — no env gate, so a local build and the CI release differ only in --publish.",
+    "package:win": "pnpm run stage:all:win && electron-builder --win --config electron-builder.config.cjs --publish never",
+    "package:win:release": "pnpm run stage:all:win && electron-builder --win --config electron-builder.config.cjs --publish always",
+    "//package:linux": "Linux build (AppImage, x64). UNSIGNED by design; a local build and the CI release differ only in --publish. Must run ON Linux — the frozen daemon is native and stage-daemon stages for the host platform.",
+    "package:linux": "pnpm run stage:all:linux && electron-builder --linux --config electron-builder.config.cjs --publish never",
+    "package:linux:release": "pnpm run stage:all:linux && electron-builder --linux --config electron-builder.config.cjs --publish always",
+    "//package:release:local": "Fast local pre-flight: real Developer ID signing (cert must be in your keychain) but skips Apple notarization + publish, host arch only — catch signing/packaging bugs in ~2-3 min before pushing a desktop-v* tag.",
+    "package:release:local": "VICOA_MAC_RELEASE=1 VICOA_SKIP_NOTARIZE=1 pnpm run stage:all && VICOA_MAC_RELEASE=1 VICOA_SKIP_NOTARIZE=1 electron-builder --mac --config electron-builder.config.cjs --publish never"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.9.3"
+  }
+}

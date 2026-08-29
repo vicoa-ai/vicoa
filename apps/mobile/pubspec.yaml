@@ -1,0 +1,264 @@
+name: vicoa
+description: A new Flutter project.
+
+# The following line prevents the package from being accidentally published to
+# pub.dev using `pub publish`. This is preferred for private packages.
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+
+# The following defines the version and build number for your application.
+# A version number is three numbers separated by dots, like 1.2.43
+# followed by an optional build number separated by a +.
+# Both the version and the builder number may be overridden in flutter
+# build by specifying --build-name and --build-number, respectively.
+# In Android, build-name is used as versionName while build-number used as versionCode.
+# Read more about Android versioning at https://developer.android.com/studio/publish/versioning
+# In iOS, build-name is used as CFBundleShortVersionString while build-number used as CFBundleVersion.
+# Read more about iOS versioning at
+# https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
+version: 1.7.8+33
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  flutter_web_plugins:
+    sdk: flutter
+  aligned_dialog: 0.0.6
+  aligned_tooltip: ^0.0.1
+  app_links: 6.3.2
+  app_links_platform_interface: 2.0.2
+  app_settings: ^5.1.1
+  appflowy_editor: ^5.1.0
+  auto_size_text: 3.0.0
+  audio_waveforms: ^2.0.2
+  cached_network_image: 3.4.1
+  cached_network_image_platform_interface: 4.1.1
+  cached_network_image_web: 1.3.1
+  chewie: 1.11.3
+  cloud_firestore: ^5.6.9
+  collection: 1.19.1
+  crypto: ^3.0.3
+  csslib: ^1.0.2
+  debug_panel_proto: 
+    git:
+      url: https://github.com/FlutterFlow/debug_panel_proto.git
+      ref: v0.1.4
+  dropdown_button2: 2.3.9
+  easy_debounce: 2.0.1
+  firebase_analytics: 11.5.0
+  firebase_analytics_platform_interface: 4.4.0
+  firebase_analytics_web: 0.5.10+13
+  firebase_auth: 5.6.0
+  firebase_core: 3.14.0
+  firebase_core_platform_interface: 5.4.0
+  firebase_core_web: 2.23.0
+  firebase_crashlytics: 4.3.7
+  firebase_crashlytics_platform_interface: 3.8.7
+  firebase_messaging: 15.2.7
+  firebase_performance: 0.10.1+7
+  firebase_performance_platform_interface: 0.1.5+7
+  firebase_performance_web: 0.1.7+13
+  flutter_animate: 4.5.0
+  flutter_cache_manager: 3.4.1
+  flutter_html: ^3.0.0
+  flutter_keyboard_visibility: 
+    git:
+      url: https://github.com/FlutterFlow/flutter_keyboard_visibility.git
+      path: flutter_keyboard_visibility
+      ref: b39c1d0ca1671458e4daf3eea2ebe11741f9bcf3
+  flutter_keyboard_visibility_linux: 1.0.0
+  flutter_keyboard_visibility_macos: 1.0.0
+  flutter_keyboard_visibility_platform_interface: 2.0.0
+  flutter_keyboard_visibility_web: 
+    git:
+      url: https://github.com/FlutterFlow/flutter_keyboard_visibility.git
+      path: flutter_keyboard_visibility_web
+      ref: b39c1d0ca1671458e4daf3eea2ebe11741f9bcf3
+  flutter_keyboard_visibility_windows: 1.0.0
+  flutter_local_notifications: ^17.2.3
+  timezone: ^0.9.4
+  font_awesome_flutter: 10.7.0
+  from_css_color: 2.0.0
+  functions_client: 2.4.2
+  go_router: 12.1.3
+  google_fonts: ^8.0.2
+  google_sign_in: 7.2.0
+  gotrue: 2.12.0
+  http: ^1.4.0
+  image_picker: ^1.2.1
+  file_picker: ^8.1.4
+  web_socket_channel: ^3.0.1
+  hive: 2.2.3
+  html: ^0.15.5
+  flutter_highlight: ^0.7.0
+  in_app_review: ^2.0.9
+  intl: 0.20.2
+  json_path: 0.7.2
+  lottie: 3.1.2
+  nanoid: ^1.0.0
+  page_transition: 2.1.0
+  path_provider: 2.1.4
+  path_provider_android: 2.2.10
+  path_provider_foundation: 2.4.0
+  path_provider_linux: 2.2.1
+  path_provider_platform_interface: 2.1.2
+  path_provider_windows: 2.3.0
+  percent_indicator: 4.2.2
+  plugin_platform_interface: 2.1.8
+  postgrest: 2.4.2
+  provider: 6.1.5
+  realtime_client: 2.5.0
+  rxdart: 0.27.7
+  share_plus: ^11.0.0
+  share_plus_platform_interface: ^6.0.0
+  shared_preferences: 2.5.3
+  shared_preferences_android: 2.4.10
+  shared_preferences_foundation: 2.5.4
+  shared_preferences_linux: 2.4.1
+  shared_preferences_platform_interface: 2.4.1
+  shared_preferences_web: 2.4.3
+  shared_preferences_windows: 2.4.1
+  sign_in_with_apple: 7.0.1
+  sign_in_with_apple_platform_interface: 2.0.0
+  sign_in_with_apple_web: 3.0.0
+  smooth_page_indicator: 1.1.0
+  permission_handler: ^11.3.0
+  scrollable_positioned_list: ^0.3.8
+  sqflite: 2.3.3+1
+  sqflite_common: 2.5.4+3
+  storage_client: 2.4.0
+  styled_divider: 1.0.4
+  supabase: 2.7.0
+  supabase_flutter: 2.9.0
+  superwallkit_flutter: ^2.4.12
+  syncfusion_flutter_sliders: ^28.2.9
+  purchases_flutter: ^9.3.0
+  purchases_ui_flutter: ^9.3.0
+  timeago: 3.7.1
+  url_launcher: 6.3.1
+  url_launcher_android: 6.3.16
+  url_launcher_ios: 6.3.3
+  url_launcher_linux: 3.2.1
+  url_launcher_macos: 3.2.2
+  url_launcher_platform_interface: 2.3.2
+  url_launcher_web: 2.4.1
+  url_launcher_windows: 3.1.4
+  uuid: ^4.0.0
+  video_player: 2.10.0
+  video_player_android: 2.8.7
+  video_player_avfoundation: 2.7.1
+  video_player_platform_interface: 6.3.0
+  video_player_web: 2.3.5
+  visibility_detector: ^0.4.0+2
+  wakelock_plus: 1.3.2
+  wakelock_plus_platform_interface: 1.2.3
+  webview_flutter: 4.13.0
+  webview_flutter_android: 4.7.0
+  webview_flutter_platform_interface: 2.13.1
+  webview_flutter_wkwebview: 3.22.0
+  flutter_inappwebview: 6.1.5
+  youtube_player_flutter: ^9.1.1
+  flutter_svg: ^2.0.9
+  posthog_flutter: ^5.24.0
+
+  # The following adds the Cupertino Icons font to your application.
+  # Use with the CupertinoIcons class for iOS style icons.
+  cupertino_icons: ^1.0.0
+
+dependency_overrides:
+  http: 1.4.0
+  intl: 0.20.2
+  google_fonts: ^8.0.2
+  pointer_interceptor: 0.10.1+2
+  pointer_interceptor_ios: 0.10.1
+  pointer_interceptor_platform_interface: 0.10.0+1
+  pointer_interceptor_web: 0.10.2+1
+  protobuf: 3.1.0
+  rxdart: 0.27.7
+  uuid: ^4.0.0
+  web: 1.1.0
+
+dev_dependencies:
+  flutter_launcher_icons: 0.13.1
+  flutter_lints: 4.0.0
+  flutterflow_debug_panel: 
+    git:
+      url: https://github.com/FlutterFlow/debug_panel_devtool.git
+      ref: v0.2.5
+  image: 4.2.0
+  lints: 4.0.0
+  flutter_test:
+    sdk: flutter
+
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: 'assets/images/Vicoa_logo_android.png'
+  web:
+    generate: true
+  image_path_android: 'assets/images/Vicoa_logo_android.png'
+  image_path_ios: 'assets/images/vicoa-logo-no-bg.png'
+
+
+# For information on the generic Dart part of this file, see the
+# following page: https://dart.dev/tools/pub/pubspec
+
+# The following section is specific to Flutter.
+flutter:
+  generate: true
+
+  # The following line ensures that the Material Icons font is
+  # included with your application, so that you can use the icons in
+  # the material Icons class.
+  uses-material-design: true
+
+  # To add assets to your application, add an assets section, like this:
+  assets:
+    - assets/fonts/
+    - assets/images/
+    - assets/images/integrations/
+    - assets/videos/
+    - assets/audios/
+    - assets/rive_animations/
+    - assets/pdfs/
+    - assets/jsons/
+    - assets/demo/
+
+  fonts:
+    - family: BootstrapFlutterMartCom
+      fonts:
+        - asset: assets/fonts/Bootstrap_FlutterMart_com.ttf
+
+
+  # An image asset can refer to one or more resolution-specific "variants", see
+  # https://flutter.dev/assets-and-images/#resolution-aware.
+
+  # For details regarding adding assets from package dependencies, see
+  # https://flutter.dev/assets-and-images/#from-packages
+
+  # To add custom fonts to your application, add a fonts section here,
+  # in this "flutter" section. Each entry in this list should have a
+  # "family" key with the font family name, and a "fonts" key with a
+  # list giving the asset and other descriptors for the font. For
+  # example:
+  # fonts:
+  #   - family: Schyler
+  #     fonts:
+  #       - asset: fonts/Schyler-Regular.ttf
+  #       - asset: fonts/Schyler-Italic.ttf
+  #         style: italic
+  #   - family: Trajan Pro
+  #     fonts:
+  #       - asset: fonts/TrajanPro.ttf
+  #       - asset: fonts/TrajanPro_Bold.ttf
+  #         weight: 700
+  #
+  # For details regarding fonts from package dependencies,
+  # see https://flutter.dev/custom-fonts/#from-packages

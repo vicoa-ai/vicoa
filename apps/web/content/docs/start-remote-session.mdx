@@ -1,0 +1,77 @@
+---
+title: Start a Remote Session
+description: Learn how to start a Vicoa coding session remotely from the mobile app or web dashboard after registering your machine.
+---
+
+# Start a Remote Session
+Launch a remote coding session from the Vicoa mobile app or web dashboard after your machine is registered and online. 
+
+Vicoa supports Claude Code for starting sessions directly from the mobile app or web dashboard at the moment. OpenCode and codex support will be added in the future.
+
+## Quick Start
+
+1. Run `npm i -g @vicoa/cli` in a terminal to install Vicoa CLI
+2. Run `vicoa daemon` in the terminal and keep it running (When you run `vicoa`, it will automatically start the daemon if it's not running)
+3. Click "+ New Session" from mobile app or the web dashboard, select your machine, choose an agent, and start vibe coding anywhere
+
+## Prerequisites
+
+- Follow the [Getting Started guide](https://vicoa.ai/docs/getting-started) to install the CLI and authenticate your account.
+- Vicoa CLI version **1.1.0** or higher. Check it with:
+   ```bash
+   vicoa --version
+   ```
+   Upgrade the Vicoa CLI with:
+   ```bash
+   npm i -g @vicoa/cli@latest
+   ```
+- Network connection
+
+## 1. Register your machine
+
+1. Open a terminal on the machine that will run the session.
+2. Register the machine with a simple command:
+
+   ```bash
+   vicoa daemon
+   ```
+
+3. Leave the process running; it keeps your machine available for remote sessions. You can run it in a dedicated tab or background process.
+
+Once the daemon connects, the machine shows up with its hostname in both the mobile app and the web dashboard.
+
+## 2. Start a session from the mobile app
+
+1. Open the Vicoa mobile app and sign in with the same account you authenticated in the CLI.
+2. Click **+ New Session** button.
+3. Pick the registered machine from the list. Machines that are online display a green status indicator.
+4. Select the AI agent you want to pair with (e.g., Claude Code. Codex and OpenCode are coming soon).
+5. Choose the working directory or edit the path
+6. Tap **Start Session**. The mobile app connects to the CLI, and the agent becomes available.
+
+
+## 3. Start a session from the web dashboard
+
+1. Head to the Vicoa dashboard in your browser and sign in.
+2. Click **+ New Session**.
+3. Select the registered machine. Offline machines are greyed out—refresh once the daemon is running.
+4. Pick the agent best suited for the task.
+5. Choose the working directory or edit the path
+6. Confirm with **Start Session**
+
+
+## Troubleshooting
+
+- **Machine not appearing:** Ensure `vicoa daemon` is still running and that the machine is connected to the internet.
+- **Directory list empty:** You can type the path to the directory for the first time, it will remember the path for the next time
+
+You're now ready to jump into Vicoa sessions from anywhere.
+
+Keep the daemon running and start sessions from whichever device is most convenient.
+
+## Related
+
+- [Set up Vicoa](/docs/getting-started) — install the CLI and register your first machine
+- [Agents](/docs/agents) — pick between Claude Code, Codex, and OpenCode
+- [Vicoa Features](/docs/vicoa-features) — slash commands, permission modes, and dictation
+- [Troubleshooting](/docs/troubleshooting) — what to do when a machine won't appear

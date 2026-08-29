@@ -1,0 +1,309 @@
+---
+title: Vicoa Features
+description: Learn how to use Vicoa features including slash commands, permission modes, dictation, and cross-device workflows
+---
+
+# Vicoa Features Guide
+Master Vicoa's powerful features for seamless coding across all your devices
+
+## Updating to the Latest Version
+
+### Update Vicoa CLI
+
+Keep your CLI up to date to access the latest features and improvements:
+
+```bash
+npm i -g @vicoa/cli@latest
+```
+
+To check your current version:
+
+```bash
+vicoa --version
+```
+
+### Download Latest App
+
+Always use the latest version of the Vicoa app for the best experience:
+
+- **iOS App**: [Download from App Store](http://apps.apple.com/sg/app/id6751626168)
+- **Android App**: [Download from Google Play](https://play.google.com/store/apps/details?id=app.vicoa)
+- **Web App**: Visit [https://vicoa.ai](https://vicoa.ai)
+
+## Fuzzy Search for Files
+
+Use the @ key to fuzzy search for files in the project across web, mobile, and CLI.
+
+### How to Use
+
+Type `@` followed by a file path to mention a file in your message, e.g., 
+
+```
+@src/components/Button.tsx help me refactor this component
+```
+
+### Multiple File References
+
+Reference multiple files in a single message, e.g.,
+
+```
+@src/app.ts @src/config.ts these files need to work together
+```
+
+### Benefits
+
+- Give Claude Code immediate context about specific files
+- Faster than asking Claude to search for files
+- No need to remember exact file names
+- Perfect for targeted refactoring, debugging, or code reviews
+
+## Slash Commands
+
+Access powerful commands quickly by typing `/` in the chat interface.
+
+### How to Use
+
+Simply type `/` in your chat to see available slash commands. Slash commands work on web, mobile, and CLI.
+
+### Available Commands
+
+- **Agent-specific commands**: All built-in slash commands from Claude Code, Codex, or OpenCode
+- **Custom commands**: Access your custom commands from `~/.claude/commands` (Claude Code) or `~/.config/opencode/commands` (OpenCode)
+- Works seamlessly across all platforms (desktop, web, mobile)
+
+### Benefits
+
+- Quick access to frequently used workflows
+- Consistent command interface across all devices
+- Support for both built-in and custom commands
+
+## Permission Modes
+
+Switch between different permission modes directly from mobile or web to control how Claude Code operates.
+
+### Available Modes
+
+- **Plan Mode**: Claude will plan changes before executing
+- **Accept Edits**: Review and approve each edit before it's applied
+- **Bypass Permissions**: Let Claude work autonomously with minimal interruptions (coming soon)
+
+### Switch Modes Anywhere
+
+Change permission modes from any device:
+- Toggle settings from mobile app
+- Switch modes from web interface
+- Configure from CLI
+
+### When to Use Each Mode
+
+- **Plan Mode**: When exploring new code or working on complex features
+- **Accept Edits**: For careful review of changes to critical files
+- **Bypass Permissions**: When iterating quickly on familiar code
+
+## Thinking Toggle
+
+Control whether you see Claude's thinking process or just the final output.
+
+### Toggle Thinking
+
+- **Enable**: See Claude's reasoning and thought process
+- **Disable**: View only the final results for a cleaner interface
+- **Change anytime**: Switch on mobile, web, or CLI
+
+### Why Use It
+
+- **Enable for learning**: Understand how Claude approaches problems
+- **Disable for speed**: Focus on results without intermediate steps
+
+## Agent Selection
+
+Vicoa supports Claude Code, Codex, and OpenCode, allowing you to switch between agents with a single command.
+
+### Available Agents
+
+- **Claude Code**: Anthropic's AI coding agent
+- **Codex**: OpenAI's coding agent
+- **OpenCode**: an open source AI coding agent
+- **300+ models**: Use free or alternative models via OpenRouter, Kimi K2, and more
+
+### Switch Agents
+
+```bash
+# Set Claude Code as default
+vicoa --set-default claude
+
+# Set Codex as default
+vicoa --set-default codex
+
+# Set OpenCode as default
+vicoa --set-default opencode
+
+# Start with specific agent
+vicoa codex
+vicoa opencode
+```
+
+### Use Alternative Models
+
+Configure Claude Code to use free models or 300+ models from 60+ providers. Learn more in our [Alternative Models guide](/docs/alternative-models).
+
+**Popular options:**
+- **Free models and pay-per-use models** via OpenRouter
+- **Kimi K2** with 200K+ context window
+
+### Session Filtering
+
+Filter your sessions by:
+- **Agent type**: View only Claude Code, Codex, or OpenCode sessions
+- **Status**: Active, completed, or interrupted sessions
+- **Date**: Find sessions from specific time periods
+
+## Start Agents from Anywhere
+
+Launch Claude Code, Codex, or OpenCode sessions directly from your mobile or web interface—no need to wait until you're back at your desktop.
+
+### How It Works
+
+1. Open Vicoa on mobile or web
+2. Tap to start a new agent session
+3. The session starts on your connected machine
+4. Continue working from any device
+
+
+## Interrupt Agent Execution
+
+Stop agent execution at any time with a single click.
+
+### How to Interrupt
+
+- **Mobile**: Tap the interrupt button during execution
+- **Web**: Click the interrupt button in the interface
+- **Works instantly**: Stops the current operation immediately
+
+### When to Use
+
+- The agent is going in the wrong direction
+- Need to provide additional context
+- Want to change approach during execution
+
+
+## Talk to Code (Dictation)
+
+Convert your voice to text for hands-free coding on mobile.
+
+### How to Use
+
+1. Tap the microphone icon in the chat
+2. Speak your message naturally
+3. Voice converts to text instantly
+4. Send or edit before sending
+
+### Perfect For
+
+- Coding while commuting
+- Quick ideas on the go
+- Hands-free workflow on mobile
+
+## Message Management
+
+### Share Chat Messages
+
+Copy individual or multiple messages to share with your team.
+
+**How to share:**
+1. Long-press a message to select
+2. Select additional messages if needed
+3. Tap copy to share
+
+**Use cases:**
+- Share solutions with teammates
+- Document AI-generated code
+- Save useful responses for reference
+
+### Unseen Messages Navigation
+
+Never lose your place in long conversations.
+
+**Features:**
+- Chat scrolling that doesn't auto-jump to bottom
+- "Jump to unseen messages" button
+- Read older messages without losing context
+
+### Draft Message Retention
+
+Unfinished messages automatically save as drafts.
+
+**Benefits:**
+- Pause and continue conversations later
+- Never lose partially written prompts
+- Think through complex questions at your own pace
+
+## Session Organization
+
+### Session Renaming
+
+Rename sessions for better organization and quick identification.
+
+**How to rename:**
+1. Open session settings
+2. Enter a descriptive name
+3. Find sessions faster in your history
+
+### Session Filters
+
+Find the right session quickly with advanced filtering:
+- Filter by agent (Claude Code, Codex, or OpenCode)
+- Filter by status (active, completed, interrupted)
+- Filter by date range
+
+## View File Changes
+
+See all changed files directly in Vicoa without switching tools.
+
+### How It Works
+
+- All file modifications appear in the interface
+- Review changes on mobile or web
+- No need to switch to your code editor
+- Instant visibility into what Claude changed
+
+### Benefits
+
+- Quick review of modifications
+- Mobile-friendly change viewing
+- Stay in context while reviewing
+
+## Cross-Device Workflow
+
+### Seamless Device Switching
+
+Start coding on your laptop, continue on mobile, finish on the web.
+
+**Features:**
+- Real-time synchronization across all devices
+- Alerts when agent needs input
+- One-tap approval for changes
+- Consistent experience everywhere
+
+
+## Latest Updates
+
+Stay up to date with the latest Vicoa features and improvements:
+
+- [Fuzzy Search for Files with @ in Vicoa](https://updates.vicoa.ai/posts/file-mentions)
+- [View File Changes Directly in Vicoa](https://updates.vicoa.ai/posts/view-file-changes)
+- [Codex Support & Talk to Code (Dictation)](https://updates.vicoa.ai/posts/2-new-updates-to-vibe-code-anywhere)
+- [Share Chat Messages & Improved Layout](https://updates.vicoa.ai/posts/share-chat-messages)
+- [Start Agents from Anywhere & Draft Message Retention](https://updates.vicoa.ai/posts/new-session)
+- [Permission Modes, Thinking Toggle, & Unseen Messages](https://updates.vicoa.ai/posts/new-in-vibe-code-anywhere-permission-modes-thinking-unseen-messages-and-more)
+- [Slash Commands & Interrupt Claude Code](https://updates.vicoa.ai/posts/slash-commands-interrupt)
+
+Subscribe to [Vicoa Updates](https://updates.vicoa.ai/) for the latest feature announcements.
+
+## Need Help?
+
+- Check our [FAQ](/docs/faq) for common questions
+- Review the [troubleshooting guide](/docs/troubleshooting)
+- Join our [Discord community](https://discord.gg/mqz4qRPV4j) for discussions and support
+- Report issues: [GitHub](https://github.com/vicoa-ai/vicoa-open)
+- Contact support: hi@vicoa.ai

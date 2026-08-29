@@ -1,0 +1,29 @@
+{
+  "include": [
+    "src/backend",
+    "src/servers",
+    "src/shared",
+    "src/vicoa",
+    "src/integrations"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/node_modules",
+    "**/.venv",
+    "test-venv/**",
+    "**/dist",
+    "**/build",
+    "**/*.egg-info",
+    "src/integrations/cli_wrappers/codex",
+    "src/integrations/headless/tests"
+  ],
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false,
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Linux",
+  "venvPath": ".",
+  "venv": ".venv",
+  "typeCheckingMode": "basic",
+  "reportPrivateUsage": false,
+  "reportUnnecessaryTypeIgnoreComment": false
+}

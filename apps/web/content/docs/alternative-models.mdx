@@ -1,0 +1,131 @@
+---
+title: Using Free or Alternative Models
+description: Learn how to use Vicoa with free models or alternative AI coding models without a paid Anthropic account
+---
+
+# Using Vicoa with Free or Alternative AI Models
+
+## Can I use Vicoa without a paid Anthropic account?
+
+**Yes!** Vicoa works with whatever AI model you configure Claude Code to use. Since Vicoa is simply a remote access layer for Claude Code, you can configure Claude Code to use:
+
+- **Free AI models** via OpenRouter
+- **300+ models** from 60+ providers through OpenRouter
+- **Kimi K2** via Moonshot AI with 200K+ context window
+
+This means you can use Vicoa completely free or with pay-per-use pricing instead of requiring a Claude Pro or Max subscription.
+
+## How It Works
+
+Vicoa provides remote access to your Claude Code CLI. When you run `vicoa` instead of `claude`, you get the same functionality but accessible from any device (phone, tablet, browser).
+
+The key insight: **Vicoa uses whatever model Claude Code is configured to use**. By configuring Claude Code to point to alternative providers before running `vicoa`, you can access those providers remotely.
+
+## Setup Workflow
+
+1. **Configure Claude Code** to use an alternative models (see options below)
+2. **Run `vicoa`** instead of `claude` to start the remote session
+3. **Access from any device** - your configuration carries over automatically
+
+## Option 1: Free Models via OpenRouter (Recommended)
+
+OpenRouter provides access to 300+ AI models from 60+ providers, including many **free models**.
+
+### Benefits
+- Access to free models (no cost)
+- Pay-per-use pricing for premium models (often cheaper than subscriptions)
+- 300+ models to choose from
+- Easy switching between models
+
+### Quick Setup
+
+Setup connection to OpenRouter, then configure the Claude Code CLI with the following samples:
+
+```bash
+# Configure Claude Code to use OpenRouter with a free model
+export ANTHROPIC_BASE_URL="http://localhost:8787"
+export ANTHROPIC_AUTH_TOKEN="sk-or-<your-openrouter-api-key>"
+export ANTHROPIC_MODEL="z-ai/glm-4.5-air"  # Free model
+
+# Run Vicoa instead of Claude
+vicoa
+```
+
+**📚 Full Guide:** [How to Use Claude Code with OpenRouter - Complete Setup Guide](/blog/use-claude-code-with-openrouter)
+
+This comprehensive guide covers:
+- Three different setup methods (Docker, npm, Direct Proxy)
+- How to choose free vs paid models
+- Cost optimization strategies
+
+## Option 2: Kimi K2 via Moonshot AI
+
+Kimi K2 offers a generous free tier with 200K+ token context window.
+
+### Benefits
+- 200K+ token context window
+- Free tier available (requires $1 minimum credit)
+- Strong multilingual support (Chinese/English)
+- Optimized for coding tasks
+
+### Quick Setup
+
+```bash
+# Configure Claude Code to use Kimi K2
+export ANTHROPIC_BASE_URL="https://api.moonshot.ai/anthropic"
+export ANTHROPIC_AUTH_TOKEN="<your-moonshot-api-key>"
+export ANTHROPIC_MODEL="kimi-k2-turbo-preview"
+
+# Run Vicoa instead of Claude
+vicoa
+```
+
+**📚 Full Guide:** [How to Use Claude Code with Kimi K2 Model](/blog/use-claude-code-with-kimi-k2)
+
+This guide includes:
+- Step-by-step Moonshot AI setup
+- Free tier details and pricing
+- Troubleshooting rate limits
+
+## Comparison Table
+
+| Option | Cost | Setup Complexity | Best For |
+|--------|------|------------------|----------|
+| **OpenRouter (Free Models)** | Free | Easy | Testing, learning, budget projects |
+| **OpenRouter (Paid Models)** | Pay-per-use | Easy | Flexible model selection |
+| **Kimi K2** | Free tier + paid | Easy | Large codebases, multilingual |
+
+## Frequently Asked Questions
+
+**Q: Do I need a Claude Pro subscription to use Vicoa?**
+
+A: No! Vicoa works with any model you configure Claude Code to use, including free models.
+
+**Q: Will all Claude Code features work with alternative models?**
+
+A: Most features work, but some advanced capabilities (like specific tool-calling formats) depend on the model you choose. Claude models typically have the best compatibility.
+
+**Q: Can I switch models after starting a Vicoa session?**
+
+A: You need to restart Vicoa with new environment variables to switch models. It's best to choose your model before starting the session.
+
+**Q: Does using alternative models affect Vicoa's performance?**
+
+A: Vicoa's performance is independent of your model choice. However, different models have different response speeds and capabilities.
+
+## Getting Started
+
+Ready to use Vicoa with free or alternative models?
+
+1. **Choose your provider**: OpenRouter for flexibility, Kimi K2 for long context
+2. **Follow the setup guide**: Complete guides linked above
+3. **Run `vicoa`**: Access your configured setup from any device
+4. **Join our community**: Get help in our [Discord server](https://discord.gg/mqz4qRPV4j)
+
+## Need Help?
+
+- Review [Getting Started](/docs/getting-started) for Vicoa basics
+- Read **[How to Use Claude Code with OpenRouter?](/blog/use-claude-code-with-openrouter)**
+- Read **[How to Use Claude Code with Kimi K2 Model?](/blog/use-claude-code-with-kimi-k2)**
+- Ask questions in our [Discord community](https://discord.gg/mqz4qRPV4j)
+- Email us at [hi@vicoa.ai](mailto:hi@vicoa.ai)

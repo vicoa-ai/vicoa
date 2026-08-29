@@ -1,0 +1,272 @@
+name: Desktop release
+
+# Builds and publishes the desktop app to this repo's GitHub Releases
+# (vicoa-ai/vicoa). electron-updater in the shipped app reads the resulting
+# manifest from that repo to auto-update users — latest-mac.yml on macOS,
+# latest.yml on Windows, latest-linux.yml on Linux. The three manifests are
+# separate files, so all platforms share one release without clobbering each
+# other's update feed.
+#
+#   macOS    Developer ID signed + notarized (required: Squirrel.Mac refuses to
+#            APPLY an update whose code requirement doesn't match).
+#   Windows  UNSIGNED (no cloud-HSM signing subscription set up). NSIS updates
+#            still apply; users just see a SmartScreen prompt on first install.
+#   Linux    UNSIGNED AppImage — the only Linux target electron-updater auto-
+#            updates. No signing/notarize story on Linux at all.
+#
+# The jobs run STRICTLY SERIALLY (macos -> windows -> linux -> publish), never
+# in parallel. Concurrent writers against the same draft release cause a
+# duplicate-release race (two releases end up on the same tag); one two-arch
+# electron-builder invocation is already one such writer, and adding a parallel
+# job would make it worse. The serial chain costs a few extra minutes and buys a
+# release that reconciles cleanly.
+#
+# Trigger: manual (Actions -> "Run workflow"), or push a `desktop-v*` tag.
+# The version that ends up in the release comes from apps/desktop/package.json,
+# so bump that first; the git tag is only a convenience trigger.
+#
+# Monorepo note: the desktop (Electron) project lives at apps/desktop/ and its
+# renderer is the sibling apps/web/ app, so the renderer-install steps run in
+# apps/web/ and the electron steps in apps/desktop/. stage-daemon
+# (apps/desktop/scripts/stage-daemon.mjs) pulls the pinned daemon from this
+# repo's releases (vicoa-ai/vicoa) via the built-in GITHUB_TOKEN.
+#
+# Required repo secrets:
+#   MAC_CERT_P12_BASE64      Developer ID Application cert + key, base64 .p12
+#   MAC_CERT_PASSWORD        password for that .p12
+#   APPLE_API_KEY_P8         App Store Connect API key (.p8 file contents)
+#   APPLE_API_KEY_ID         e.g. ABC123DEF9
+#   APPLE_API_ISSUER         e.g. 00000000-0000-0000-0000-000000000000
+#   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY  (renderer build)
+# Release publishing and the daemon pull both use the built-in GITHUB_TOKEN
+# (no PAT) — the repo must allow Actions read/write for the workflow_run-based
+# backend build to publish, though this push/dispatch workflow self-elevates.
+# See apps/desktop/README.md "Auto-update / release" for setup details. The
+# full release runbook (step-by-step, gotchas, troubleshooting) is an internal
+# ops doc, not part of this repo.
+
+on:
+  workflow_dispatch:
+    inputs:
+      daemon_version:
+        description: 'Override the pinned daemon tag (blank = use the pin)'
+        required: false
+        default: ''
+  push:
+    tags: ['desktop-v*']
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+# The built-in GITHUB_TOKEN both publishes the release to this repo and lets
+# stage-daemon pull the pinned daemon from this repo's releases. contents:write
+# covers creating/uploading the draft release; read is implied for the pull.
+# desktop-release is push/dispatch-triggered, so this block elevates the token
+# even if the repo default is still read-only.
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    # macOS 14 runners are Apple Silicon. electron-builder cross-packages the
+    # x64 app here too (the x64 daemon is downloaded by stage-daemon; the
+    # notification helper is a universal binary), so this ONE job emits both
+    # arm64 + x64 in a single electron-builder invocation — required to keep
+    # both archs listed in one latest-mac.yml (two runs would clobber it).
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install web deps (for the renderer build)
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      - name: Install electron deps
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Write App Store Connect API key
+        run: |
+          mkdir -p "$RUNNER_TEMP/private_keys"
+          printf '%s' "${{ secrets.APPLE_API_KEY_P8 }}" > "$RUNNER_TEMP/private_keys/AuthKey.p8"
+
+      - name: Package, sign, notarize & publish (draft)
+        working-directory: apps/desktop
+        # stage:daemon (inside package:release) downloads + bundles the pinned
+        # daemon (electron/package.json "vicoaDaemonVersion") via gh — the same
+        # mechanism as a local build. No separate download step, one source of
+        # truth. GH_TOKEN below needs contents:read on the monorepo for it.
+        #
+        # De-bundling (ship without the daemon, download it on first run) is
+        # available via VICOA_DEBUNDLE_DAEMON=1 but intentionally NOT enabled —
+        # the app ships bundled for a reliable, offline first run.
+        env:
+          VICOA_MAC_RELEASE: '1'
+          # Override the pinned daemon version for this run (blank = the pin).
+          VICOA_DAEMON_VERSION: ${{ github.event.inputs.daemon_version }}
+          # Developer ID signing — electron-builder imports the .p12 into a
+          # throwaway keychain from these two on its own.
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          # Notarization via App Store Connect API key (reuses the mobile key).
+          APPLE_API_KEY: ${{ runner.temp }}/private_keys/AuthKey.p8
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          # Publish + daemon pull both target this repo via the built-in token.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Renderer build env (build-renderer.mjs bakes NEXT_PUBLIC_* at build
+          # time; next build also needs a POSTGRES_URL to satisfy module init).
+          # Add any other NEXT_PUBLIC_* / server vars your build requires.
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          # PostHog analytics for the desktop app. Optional at build time
+          # (instrumentation-client.ts skips init when absent), so an unset
+          # secret degrades to no-telemetry instead of failing the build.
+          NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
+          NEXT_PUBLIC_POSTHOG_HOST: ${{ secrets.NEXT_PUBLIC_POSTHOG_HOST }}
+          POSTGRES_URL: postgres://127.0.0.1:1/desktop-ci-unused
+          # The Stripe client is built at module scope (lib/payments/stripe.ts),
+          # and `next build` evaluates it while collecting page data for the
+          # /api/stripe/* routes. The desktop app never calls those routes
+          # (checkout opens the web app externally), so placeholders satisfy the
+          # build without a real key — build-renderer's sanitized bundle .env
+          # carries only NEXT_PUBLIC_* + POSTGRES_URL, so STRIPE_* never ships.
+          STRIPE_SECRET_KEY: sk_test_desktop_ci_unused
+          STRIPE_WEBHOOK_SECRET: whsec_desktop_ci_unused
+        run: pnpm run package:release
+
+  windows:
+    # Serial after macOS on purpose (see the header): both jobs upload into the
+    # SAME draft release, and concurrent writers duplicate it.
+    needs: macos
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install web deps (for the renderer build)
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      - name: Install electron deps
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Package & publish (draft)
+        working-directory: apps/desktop
+        # No signing env: the Windows build is deliberately unsigned. Everything
+        # else mirrors the macOS job — stage:daemon pulls the pinned
+        # vicoa-windows-x64.zip via gh (needs contents:read on the monorepo),
+        # and the renderer build needs the same NEXT_PUBLIC_* + build-only
+        # placeholders. See the macOS job above for why each one is here.
+        #
+        # De-bundling is available via VICOA_DEBUNDLE_DAEMON=1 but NOT enabled —
+        # the app ships bundled.
+        env:
+          VICOA_DAEMON_VERSION: ${{ github.event.inputs.daemon_version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
+          NEXT_PUBLIC_POSTHOG_HOST: ${{ secrets.NEXT_PUBLIC_POSTHOG_HOST }}
+          POSTGRES_URL: postgres://127.0.0.1:1/desktop-ci-unused
+          STRIPE_SECRET_KEY: sk_test_desktop_ci_unused
+          STRIPE_WEBHOOK_SECRET: whsec_desktop_ci_unused
+        run: pnpm run package:win:release
+
+  linux:
+    # Serial after Windows on purpose (see the header): every build job uploads
+    # into the SAME draft release, and concurrent writers duplicate it.
+    needs: windows
+    # Pinned to 22.04 (glibc 2.35), NOT ubuntu-latest: electron + the AppImage
+    # link against the builder's glibc, so the runner sets the MINIMUM glibc of
+    # any machine that can launch the app. Keep this in lockstep with the backend
+    # daemon build (.github/workflows/backend-build-binaries.yml `build-linux`) —
+    # the effective floor is the NEWER of the two glibcs, so a mismatch silently
+    # raises it. NB: the shipped floor only actually drops once the pinned
+    # `vicoaDaemonVersion` points at a daemon built on this runner.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install web deps (for the renderer build)
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      - name: Install electron deps
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
+      - name: Package & publish (draft)
+        working-directory: apps/desktop
+        # UNSIGNED AppImage — no signing env (Linux has no signing story). Builds
+        # an AppImage + latest-linux.yml and uploads into the shared draft.
+        # stage:daemon pulls the pinned vicoa-linux-x64.tar.gz via gh (needs
+        # contents:read on the monorepo); the renderer build needs the same
+        # NEXT_PUBLIC_* + build-only placeholders as the other jobs.
+        #
+        # De-bundling is available via VICOA_DEBUNDLE_DAEMON=1 but NOT enabled —
+        # the app ships bundled.
+        env:
+          VICOA_DAEMON_VERSION: ${{ github.event.inputs.daemon_version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
+          NEXT_PUBLIC_POSTHOG_HOST: ${{ secrets.NEXT_PUBLIC_POSTHOG_HOST }}
+          POSTGRES_URL: postgres://127.0.0.1:1/desktop-ci-unused
+          STRIPE_SECRET_KEY: sk_test_desktop_ci_unused
+          STRIPE_WEBHOOK_SECRET: whsec_desktop_ci_unused
+        run: pnpm run package:linux:release
+
+  publish:
+    # Only after ALL platforms have finished uploading.
+    needs: [macos, windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish the release (un-draft)
+        # electron-builder uploaded the assets to a DRAFT release tagged
+        # v<version> in vicoa-ai/vicoa. Flip it live only now that every asset from
+        # every platform finished uploading, so the updater never sees a
+        # half-built release.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./apps/desktop/package.json').version")
+          echo "Publishing v$VERSION to vicoa-ai/vicoa"
+          gh release edit "v$VERSION" \
+            --repo vicoa-ai/vicoa \
+            --draft=false \
+            --latest

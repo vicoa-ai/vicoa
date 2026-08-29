@@ -1,0 +1,345 @@
+---
+title: Mobile App
+description: Release notes for the Vicoa iOS and Android apps — new features, coding agent support, and fixes shipped in each release.
+---
+
+# Mobile App
+
+### v1.7.8
+22 August, 2026
+- Show a blue dot on the session list for sessions awaiting your input
+- Fix empty chat when opening an agent session from a notification
+- Fix links in messages that couldn't be selected or copied
+
+### v1.7.7
+17 August, 2026
+- Add workspace search to quickly find sessions and tasks
+- Add a getting-started checklist to the home screen that hides once you're set up
+- Add minutely and daily-window scheduling to Automations
+- Improve slash commands and file mentions on the Tasks and Automations pages, and reveal a file mention's full path on long-press
+- Show the absolute reset time and on-demand Claude rate limits in the usage indicator
+- Add per-tool icons to the agent chat transcript and tighten spacing between blocks
+- Point new users to the desktop app during onboarding, and add empty-state CTAs and a connect-machine guard to Tasks and Automations
+- Fix the automation editor showing an online machine as offline
+- Fix a muddy light-mode background on the floating tab bar
+
+### v1.7.6
+6 August, 2026
+- Add an Automations page to schedule recurring agent runs
+- Add a navigation bar to switch between sections
+- Improve the Tasks experience
+- Keep your machine, directory, worktree, and task selections when returning to start a new session
+- Polish AskUserQuestion and sub-agent spacing in chat
+- Refresh the Vicoa logo
+- Require iOS 15 or later
+
+### v1.7.5
+23 July, 2026
+- Add Tasks: support view task list and create/edit tasks
+- Start a session directly from a task, seeding your first prompt
+- Support attaching files
+- Support resuming a stopped session from the chat options menu
+- Show context-window and rate-limit usage
+- Stage queued messages in a bar above the chat input, with a cancel action
+- Group sub-agent activity under a collapsible header in chat
+- Show session liveness
+
+### v1.7.4
+18 July, 2026
+- Rename session "Closed" status to "Archived"
+- Compact tool-use display: ellipsize long headers, fix chevron position and expand flicker
+- Add Sonnet 5 and Claude Fable 5 to the agent catalog
+
+### v1.7.3
+11 July, 2026
+- Support sending and viewing image attachments in agent chat
+- Rename add-to-chat image entries to "Photo" and "Camera"
+- Improve the empty-worktree state with a branch icon and clearer copy
+- Re-register push notifications on resume so late-enabled notifications work
+
+### v1.7.2
+4 July, 2026
+- Add Pro benefit messaging and improve Chinese translations
+- Fix missing translations in several screens
+
+### v1.7.1
+25 June, 2026
+- Add a multi-language framework: full English and Simplified Chinese localization
+- Route Simplified-Chinese users to a localized paywall
+- Localize onboarding survey, welcome demo, and app-wide dates and terminology
+
+### v1.6.9
+22 June, 2026
+- Support git worktree sessions in new-session and session management, with a polished worktree picker
+- Add haptic feedback to the machine list
+- Improve sign-out and delete-account data clearing
+
+### v1.6.8
+16 June, 2026
+- Start new sessions with more coding agents: Gemini, Cursor, Copilot, Kimi, and Hermes
+- Add files and slash commands to a new session from a + button bottom sheet
+- New-session picker shows each machine's real available models, including models fetched from OpenCode
+- Supporting changing the model for OpenCode in a new session and mid-session
+- Polish the agent picker: per-agent icons, clearer ordering, and tap-to-explain for agents you haven't installed
+- Animated loading state while your first message loads
+- Improve performance and stability
+
+### v1.6.7
+13 June, 2026
+- Show where a session was started from in the session info sheet
+- New-session agent list reflects the agents available on each machine
+- Polish the Files screen: always-on folder button, haptics, and a git diff refresh fix
+
+### v1.6.6
+8 June, 2026
+- Support browsing files and git status and git diff
+    - Files: browse the project repo, view files with syntax highlighting, and add files to chat context
+    - Git: review uncommitted changes and per-file diffs, with collapsible file bodies and sticky headers
+- Add files or slash commands to chat from a new + button
+- Allow remote sessions to start with a blank prompt
+- Improve performance and stability
+
+### v1.6.5
+6 June, 2026
+- Slash commands available in new-session sheet and insert directly into input
+- Support changing model, thinking effort, and permissions during session for Claude Code and Codex
+- Task notification blocks collapsed in chat view
+- Add Claude Code and Codex slash commands
+- Support cache unsent message in new session
+- Improve user experience in chat pages
+
+### v1.6.4
+4 June, 2026
+- Machine management: view, rename, and remove machines from the app
+- Deep link support for machines
+- Fix directory picker keyboard issue
+
+### v1.6.3
+3 June, 2026
+- Support configuring model, thinking effort, and permission mode in starting new session
+- Show the model, thinking effort, and permission mode in chat
+- Pin and unpin sessions
+- Chat page reacts to instance updates in real time over WebSocket
+- New-session machine list ordered online-first; defaults to the first active machine
+- Improve performance and stability
+
+### v1.6.2
+30 May, 2026
+- Welcome demo session for new users
+- Chat input stays visible (disabled) when a session is closed
+- Fix chat-open freeze and stale @-mention / slash-command caches
+- Fix table rendering: preserve empty cells, stretch narrow tables to full width
+- Android Google sign-in fix
+- Improve onboarding
+
+### v1.6.1
+23 May, 2026
+- Switch to WebSocket for instant message delivery and session events
+- Support "Auto" permission mode for agent chat
+- Improve fuzzy file search with @ experience
+- Inline feedback and lighter push notifications
+- Polish light mode display
+- Fix code blocks with nested markdown rendering
+- Improve chat experience and user interface
+- Stability fixes and visual improvements
+
+### v1.5.11
+20 May, 2026
+- Improve light theme experience
+- Improve experience and reliability
+
+### v1.5.10
+18 May, 2026
+- View session info in detail
+- Long press a session opens a menu with options to delete, rename, or view details
+- Improved Ask User Question for Claude
+- Improve session list design
+- Improve code block formatting
+
+### v1.5.9
+13 May, 2026
+- Make the agent grouping and filter a dropdown list
+- Improve experience of showing profile
+- Add speak to code for new session page
+- Improve chat and Ask User Question user experience
+
+### v1.5.8
+7 May, 2026
+- Support reporting issues in app
+- Customize code block collapse length
+- Improve todo display
+- Improved session renaming
+- Manage subscription in-app
+
+### v1.5.7
+4 May, 2026
+- Improve session filtering and grouping
+- Support fuzzy file search in new session page
+- Improve new session page design
+- Improve the design of tool calls, code blocks, tables, and more in chat page
+
+### v1.5.6
+30 April, 2026
+- Support fuzzy file search in new session
+- Support grouping agent sessions by project and status
+- Improve agent chat page loading experience
+- Fix bugs with deleting sessions
+- Add close session button to agent chat page
+
+### v1.5.5
+28 April, 2026
+- Improve agent lists display and update
+- Improve new session flow and start with a prompt
+- Improve user experience
+
+> Android is supported starting from v1.5.5. Earlier versions are iOS only.
+
+
+### v1.5.4
+24 April, 2026
+- Improve UI and user experience
+- Improve onboarding
+- Provide more instructions
+
+### v1.5.3
+16 April, 2026
+- Improve onboarding
+
+### v1.5.2
+31 March, 2026
+- Implement pagination of sessions
+- Improve filtering
+- Improve onboarding
+
+### v1.4.6
+14 March, 2026
+- Improve markdown formatting
+- Fix formatting issues
+- Improve font style and overall UI
+- Upgrade live preview
+
+### v1.4.5
+12 March, 2026
+- Send push notification before trial ends
+
+### v1.4.3
+9 March, 2026
+- Support Ask User Question
+- Support appearance configuration
+- Support Live Preview
+- Improve network error handling by checking connectivity first
+
+### v1.4.2
+20 February, 2026
+- Improve the feedback and profile pages
+
+### v1.4.1
+20 February, 2026
+- Support Google and Apple login
+
+### v1.3.10
+13 February, 2026
+- Improve onboarding for OpenCode
+
+### v1.3.9
+9 February, 2026
+- Support OpenCode
+
+### v1.3.8
+24 January, 2026
+- Improve code syntax highlighting
+- Improve agent loading experience
+- Improve user feedback experience
+- Format markdown links
+
+### v1.3.7
+14 January, 2026
+- Update support and contact email
+- Improve UI and user experience
+
+### v1.3.6
+6 January, 2026
+- Support bypass permission
+- Improve chat message formatting
+- Highlight code syntax
+
+### v1.3.5
+18 December, 2025
+- Support fussy file search with @
+
+### v1.3.3
+14 December, 2025
+- Support slash commands
+- Support interrupt task
+
+### v1.3.2
+5 December, 2025
+- Improve UI and user experience
+
+### v1.3.1
+25 November, 2025
+- Support switching permission modes (default, plan mode, accept edits)
+- Support turning on/off thinking mode
+
+### v1.2.3
+23 November, 2025
+- Improve the Chat page UI and UX: e.g., scrolling, keyboard, copy, thinking indication
+- Optimize energy impact in chat
+- Support markdown table formatting in chat
+
+### v1.2.2
+2 November, 2025
+- Jump to latest unseen message
+- Improve scrolling behaviour of chats
+- Display project directory
+
+### v1.2.1
+31 October, 2025
+- Start remote session
+- Retain draft message
+
+### v1.1.3
+24 October, 2025
+- Improve performance and UI
+
+### v1.1.2
+8 October, 2025
+- Export and share chat messages
+- Rename sessions
+- Improve session display and UI
+- Session operation options
+- Performance improvements and bug fixes
+
+### v1.1.1
+1 October, 2025
+- Segment sessions by dates
+
+### v1.1.0
+27 September, 2025
+- Support Codex
+- Talk to code (Dictation)
+- Filter agent sessions by agent type, status, and date
+
+### v1.0.3
+23 September, 2025
+- Improve UI and performance
+
+### v1.0.2
+20 September, 2025
+- View git diff code changes in the app
+
+### v1.0.1
+18 September, 2025
+- Support push notification
+- Improve UI and chat experience
+
+### v1.0
+27 August, 2025
+- Initial release
+
+## Related
+
+- [Vicoa CLI changelog](/docs/changelog/vicoa-cli) — releases for the CLI and daemon
+- [Desktop app changelog](/docs/changelog/desktop-app) — releases for the Vicoa desktop app
+- [Updates](/updates) — feature announcements with screenshots
+- [Version Compatibility](/docs/version-compatibility) — which CLI and app versions pair together

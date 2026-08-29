@@ -1,0 +1,101 @@
+---
+title: Gemini, Cursor, Copilot, Kimi, Hermes
+description: Use Gemini, Cursor, Copilot, Kimi, and Hermes in Vicoa by starting a new session directly from the web dashboard or mobile app.
+---
+
+# Gemini, Cursor, Copilot, Kimi, Hermes
+
+Beyond Claude Code, Codex, and OpenCode, Vicoa now supports more coding agents that you launch directly from a **new session** — no extra `vicoa <agent>` command needed:
+
+- **Gemini** — Google's Gemini CLI
+- **Cursor** — Cursor CLI
+- **Copilot** — GitHub Copilot CLI
+- **Kimi** — Kimi CLI
+- **Hermes** — Nous Research's Hermes
+
+These agents are integrated through the Agent Client Protocol (ACP) and run on your own machine using your own credentials. Vicoa never stores your provider keys.
+
+## 1. Update Vicoa to the latest version
+
+Support for these agents requires **Vicoa CLI v1.6.1 or later** and the **mobile app v1.6.8 or later**. Upgrade the CLI with:
+
+```bash
+npm i -g @vicoa/cli@latest
+```
+
+Check your version:
+
+```bash
+vicoa --version
+
+# It should be at least v1.6.1
+```
+
+Update the mobile app from the [App Store (iOS)](https://apps.apple.com/sg/app/vibecode-codex-claude-ai/id6751626168) or [Google Play (Android)](https://play.google.com/store/apps/details?id=app.vicoa). 
+
+See [Version Compatibility](/docs/version-compatibility) for the full matrix.
+
+## 2. Install the agent and start the daemon
+
+Each agent runs from its own CLI on the machine. Install the agent's CLI there and sign in with your own account.
+
+| Agent | CLI to install |
+| --- | --- |
+| Gemini | [Gemini CLI](https://geminicli.com/) |
+| Cursor | [Cursor CLI](https://cursor.com/cli) |
+| Copilot | [GitHub Copilot CLI](https://github.com/features/copilot/cli/) |
+| Kimi | [Kimi CLI](https://github.com/MoonshotAI/kimi-cli) |
+| Hermes | [Hermes Agent](https://hermes-agent.nousresearch.com/) |
+
+Start the Vicoa daemon on the machine:
+
+```bash
+vicoa daemon
+```
+
+## 3. Start a new session
+
+Instead of a dedicated command, start these agents straight from **New Session** in the web dashboard or mobile app: pick the machine, choose the agent, pick a model, and go.
+
+### From the web
+
+<div className="relative w-full aspect-video max-w-4xl mx-auto my-6">
+  <iframe
+    width="100%"
+    height="100%"
+    src="https://www.youtube.com/embed/zHJiJnT6HNk"
+    title="Start a coding agent from a new session on the web"
+    frameBorder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+    allowFullScreen
+    className="absolute inset-0 rounded-lg"
+  />
+</div>
+
+### From your phone
+
+<div className="relative w-full aspect-[9/16] max-w-xs mx-auto my-6">
+  <iframe
+    width="100%"
+    height="100%"
+    src="https://www.youtube.com/embed/PDI_TiePH_s"
+    title="Start a coding agent from a new session on your phone"
+    frameBorder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+    allowFullScreen
+    className="absolute inset-0 rounded-lg"
+  />
+</div>
+
+## Choosing a model
+
+The first time you start a session with an agent on a machine, the new-session picker offers a set of default preset models. 
+
+Once that agent has run on the machine at least once, Vicoa fetches the models actually available for it there, and shows that available models on the machine afterward.
+
+You can also change your model from under the same coding agent during a session.
+
+## Troubleshooting
+
+- **Shows "Not Installed" for an agent you've installed?** Vicoa detects installed agents when the daemon starts. If you installed the agent's CLI after starting Vicoa, run `vicoa daemon` again so it picks up the newly installed agent.
+- **New agents don't appear?** They only show when both the CLI (≥ v1.6.1) and the app (≥ v1.6.8) are up to date. See [Version Compatibility](/docs/version-compatibility).

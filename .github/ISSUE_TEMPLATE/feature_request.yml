@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest an improvement, framed as a workflow.
+title: '[Feature]: '
+type: Feature
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment type
+      description: Are you using the Official app (vicoa.ai) or a self-hosted instance?
+      options:
+        - Official app
+        - Self-hosted
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Desktop
+        - Web
+        - CLI
+        - Backend
+        - Mobile app
+        - Not sure / new
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do and why?
+      description: Describe the problem, what are you trying to do, and what is missing today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the change you want to see
+    validations:
+      required: false

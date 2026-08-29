@@ -1,0 +1,140 @@
+---
+title: FAQ
+description: Answers to common questions about connecting Vicoa with AI coding agents like Claude Code, Codex, and OpenCode
+---
+
+# Frequently Asked Questions
+Answers to common questions about setting up and using Vicoa
+
+## What is Vicoa?
+
+Vicoa (Vibe Code Anywhere) is a platform that lets you run coding agents like Claude Code, Codex, and OpenCode remotely from any device. Start coding on your laptop, continue seamlessly on your phone or tablet, and get instant notifications when your AI agent needs input.
+
+## Do I need coding experience to use Vicoa?
+
+Nope. You don't need traditional coding experience. Vicoa is made for people who uses coding agents. If you can type ideas, tweak prompts, and run simple commands, you're good to go.
+
+## What can I build with Vicoa?
+
+You can build anything that Claude Code, Codex, and OpenCode support: web applications, APIs, automation scripts, mobile apps, data analysis tools, and more. Vicoa doesn't limit what you can create, it just lets you create it from anywhere, whether you're on a laptop, phone, or tablet.
+
+## How does Vicoa work?
+
+Vicoa creates a remote session that connects your local development environment with our server. When you run `vicoa` in your terminal, it establishes a secure connection that lets you interact with Claude Code, Codex, or OpenCode from any device. Your prompts and agents' responses stay synced, and you get push notifications when the AI needs your input.
+
+## What devices and platforms does Vicoa support?
+
+Vicoa works on:
+- **iOS**: Download from the [App Store](http://apps.apple.com/sg/app/id6751626168)
+- **Android**: Download from [Google Play](https://play.google.com/store/apps/details?id=app.vicoa)
+- **Web**: Access at [https://vicoa.ai](https://vicoa.ai) from any browser
+- **CLI**: Works on macOS, Linux, and Windows with Node.js installed
+
+## Is Vicoa free to use?
+
+Vicoa offers a free tier to get started. You'll need your own API keys for Claude or other AI providers. For advanced features and higher usage limits, check our [pricing page](https://vicoa.ai/#pricing) for details.
+
+## How long does it take to set up Vicoa?
+
+You can go from installation to your first remote coding session in minutes. Simply run 'npm i -g @vicoa/cli', launch with 'vicoa', and connect from any device, no complex configuration required.
+
+## Can I use Vicoa with my existing projects?
+
+Absolutely. Vicoa works with any project that Claude Code, Codex, or OpenCode can work with. Just navigate to your project directory and run `vicoa` to start a session. Your existing codebase, git repositories, and development tools all work seamlessly.
+
+## How do I connect Vicoa with Claude Code?
+
+1. Follow the [Getting Started guide](/docs/getting-started) to install Vicoa
+2. Ensure Claude Code is installed
+3. Launch the CLI: `vicoa`
+4. Sign in with your Vicoa account if prompted
+5. Claude Code is the default agent, so you're connected and ready to go
+6. If you previously switched agents, restore Claude Code as default with `vicoa --set-default claude`
+
+## How do I connect Vicoa with Codex?
+
+1. Follow the [Getting Started guide](/docs/getting-started) to install Vicoa
+2. Ensure Codex tools are installed and configured
+3. Run `vicoa --agent codex` or `vicoa codex` to start a session with Codex
+4. To set Codex as default for future sessions: `vicoa --set-default codex`
+5. Switch back to Claude Code anytime with `vicoa --set-default claude`
+
+## How do I connect Vicoa with OpenCode?
+
+1. Follow the [Getting Started guide](/docs/getting-started) to install Vicoa
+2. Ensure OpenCode is installed
+3. Run `vicoa --agent opencode` or `vicoa opencode` to start a session with OpenCode
+4. The OpenCode plugin installs automatically and syncs with Vicoa
+5. To set OpenCode as default: `vicoa --set-default opencode`
+6. Learn more in the [OpenCode documentation](/docs/agents/opencode)
+
+## How do I update to the latest version of Vicoa?
+
+### Update CLI
+
+Keep your CLI up to date with the latest features and bug fixes:
+
+```bash
+npm i -g @vicoa/cli@latest
+```
+
+To check your current version:
+```bash
+vicoa --version
+```
+
+### Update Apps
+
+- **iOS**: Update through the [App Store](http://apps.apple.com/sg/app/id6751626168)
+- **Android**: Update through [Google Play](https://play.google.com/store/apps/details?id=app.vicoa)
+- **Web**: The web app at [https://app.vicoa.ai](https://app.vicoa.ai) is always up to date
+
+## What features does the Vicoa CLI support?
+
+The Vicoa CLI supports many advanced features including:
+
+- **File mentions**: Use `@filename` to reference files directly
+- **Slash commands**: Quick access to common workflows with `/command`
+- **Permission modes**: Switch between plan mode, accept edits, and bypass permissions
+- **Agent switching**: Switch between Claude Code, Codex, and OpenCode
+- **Remote sessions**: Access your session from any device
+
+Learn more in the [Vicoa Features guide](/docs/vicoa-features).
+
+## How do I redeem a promo code?
+
+Visit the [how to redeem a promo code](/redeem-promo) page for instructions.
+
+## Is my code secure with Vicoa?
+
+Yes. Vicoa establishes secure connections between your local environment and our infrastructure. Your code stays in your local development environment.
+
+## How do notifications work?
+
+When your AI agent (Claude Code, Codex, or OpenCode) needs your input, like confirming an action or answering a question, Vicoa sends you an instant push notification on your mobile device. This means you can step away from your computer and still stay responsive.
+
+## When should I use Vicoa?
+
+Vicoa is perfect for developers who:
+- Want to code on the go from mobile or tablet
+- Need to monitor long-running AI coding sessions
+- Work across multiple devices throughout the day
+- Want instant notifications when their AI agent needs input
+- Value the flexibility to code from anywhere, anytime
+
+## What's the difference between the web app and mobile app?
+
+Both the web app and mobile apps provide the same core functionality: access to your remote Claude Code, Codex, and OpenCode sessions, real-time updates, and notifications. The mobile apps offer native push notifications and a mobile-optimized interface, while the web app works on any device with a browser. Choose based on your preference and workflow.
+
+## Can I switch between Claude Code, Codex, and OpenCode?
+
+Yes, Vicoa supports Claude Code, Codex, and OpenCode. You can start a session with any agent and switch between them freely:
+
+- `vicoa` for Claude Code (default)
+- `vicoa codex` for Codex
+- `vicoa opencode` for OpenCode
+
+Set your preferred default with `vicoa --set-default <agent>`. Learn more in the [Agents documentation](/docs/agents).
+
+
+Need more help? Reach out at hi@vicoa.ai or browse the rest of the docs for more information.
