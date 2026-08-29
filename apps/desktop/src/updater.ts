@@ -1,5 +1,5 @@
 /**
- * Auto-update — electron-updater against GitHub Releases at vicoa-ai/vicoa-open.
+ * Auto-update — electron-updater against GitHub Releases at vicoa-ai/vicoa.
  *
  * Manual download, install-on-restart (the renderer drives the flow):
  *   check()          -> 'checking' -> 'available' | 'not-available'

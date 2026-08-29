@@ -9,7 +9,7 @@ import 'server-only';
  * it. Linux isn't published yet.
  */
 
-const RELEASES_API = 'https://api.github.com/repos/vicoa-ai/vicoa-open/releases/latest';
+const RELEASES_API = 'https://api.github.com/repos/vicoa-ai/vicoa/releases/latest';
 
 export type DesktopRelease = {
   version: string;

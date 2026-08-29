@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 # which is outside this project dir, so it cannot be referenced as a file here.
 license = "AGPL-3.0-or-later"
 authors = [
-    {name = "Nick", email = "nicktay.tech@gmail.com"}
+    {name = "Vicoa", email = "hi@vicoa.ai"}
 ]
 keywords = ["vibe-coding", "claude-code", "mobile", "ai", "agents", "codex", "mcp"]
 classifiers = [
@@ -46,8 +46,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://vicoa.ai/"
-Repository = "https://github.com/vicoa-ai/vicoa-open"
-Issues = "https://github.com/vicoa-ai/vicoa-open/issues"
+Repository = "https://github.com/vicoa-ai/vicoa"
+Issues = "https://github.com/vicoa-ai/vicoa/issues"
 
 [project.scripts]
 vicoa = "vicoa.cli:main"

@@ -27,7 +27,7 @@ const contactFaqs: FAQItem[] = [
       <>
         Send your suggestions to{' '}
         <a href="mailto:hi@vicoa.ai" className="text-primary">hi@vicoa.ai</a>, or open a request on our{' '}
-        <a href="https://github.com/vicoa-ai/vicoa-open" className="text-primary" target="_blank" rel="noopener noreferrer">
+        <a href="https://github.com/vicoa-ai/vicoa" className="text-primary" target="_blank" rel="noopener noreferrer">
           GitHub.
         </a>
         .

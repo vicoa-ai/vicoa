@@ -270,7 +270,7 @@ pnpm build && VICOA_BUNDLED=1 pnpm start
 ## Auto-update / release (signed + notarized)
 
 Auto-update is electron-updater against the **public** releases repo
-`vicoa-ai/vicoa-open`. The shipped app carries an `app-update.yml` (written by
+`vicoa-ai/vicoa`. The shipped app carries an `app-update.yml` (written by
 electron-builder from the `publish` block) and reads `latest-mac.yml` from that
 repo — no token needed. Flow (`src/updater.ts` ↔ `lib/desktop-updates.ts`):
 manual download, install-on-restart — `check → available → download →
@@ -289,7 +289,7 @@ pnpm run package           # local dogfood: unsigned/ad-hoc (unchanged)
 VICOA_MAC_RELEASE=1 \
 CSC_LINK=<Developer-ID .p12 path or base64> CSC_KEY_PASSWORD=… \
 APPLE_API_KEY=<AuthKey.p8 path> APPLE_API_KEY_ID=… APPLE_API_ISSUER=… \
-GH_TOKEN=<PAT with contents:write on vicoa-open> \
+GH_TOKEN=<PAT with contents:write on vicoa> \
 pnpm run package:release   # Developer ID sign + hardened runtime + notarize + publish (draft)
 ```
 
@@ -299,7 +299,7 @@ the App Store Connect API key already used for the mobile app (`--apiKey`).
 
 CI does the same via **`.github/workflows/desktop-release.yml`** (macOS-14
 arm64, `workflow_dispatch` or a `desktop-v*` tag): it packages+signs+notarizes,
-uploads to a **draft** release `v<version>` in vicoa-open, then un-drafts it so
+uploads to a **draft** release `v<version>` in vicoa, then un-drafts it so
 the updater never sees a half-uploaded release. Required repo secrets are listed
 at the top of that workflow. To cut a release: bump `version` in
 `apps/desktop/package.json`, then run the workflow.

@@ -87,7 +87,7 @@ export function Footer() {
             <h3 className="text-white mb-4">Support</h3>
             <ul className="space-y-3 text-sm">
               <li><a href="/contact" className="hover:text-blue-400 transition-colors">Contact us</a></li>
-              <li><a href="https://github.com/vicoa-ai/vicoa-open" className="hover:text-blue-400 transition-colors">Feature request</a></li>
+              <li><a href="https://github.com/vicoa-ai/vicoa" className="hover:text-blue-400 transition-colors">Feature request</a></li>
             </ul>
           </div>
 
@@ -128,7 +128,7 @@ export function Footer() {
                 <Mail className="h-5 w-5" />
               </a>
               <a
-                href="https://github.com/vicoa-ai/vicoa-open"
+                href="https://github.com/vicoa-ai/vicoa"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hover:text-blue-400 transition-colors"
