@@ -359,25 +359,6 @@ jobs:
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-      - name: Generate changelog
-        id: changelog
-        run: |
-          echo "# Changelog" > changelog.md
-          echo "" >> changelog.md
-          # --match 'v*' so the diff base is the previous CLI tag, not a desktop-v* tag.
-          if git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null; then
-            LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' HEAD^)
-            echo "## Changes since $LAST_TAG" >> changelog.md
-            # Path-scoped to `.` (cwd is backend/) so the CLI changelog
-            # lists backend commits only. Unscoped, the first post-fold release
-            # would enumerate all ~1500 commits of the folded web + app history,
-            # because those became reachable from HEAD at the subtree merge.
-            git log $LAST_TAG..HEAD --pretty=format:"- %s" -- . >> changelog.md
-          else
-            echo "## Initial Release" >> changelog.md
-            echo "First release of Vicoa!" >> changelog.md
-          fi
-
       - name: Download codex wheel artifacts (if any)
         uses: actions/download-artifact@v4
         with:
@@ -396,14 +377,13 @@ jobs:
         continue-on-error: true
       # Windows wheel disabled for now
 
-      - name: Create GitHub Release (tag builds only)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          body_path: backend/changelog.md
-          files: backend/dist/*
-          draft: false
-          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+      # NOTE: the CLI intentionally does NOT create a GitHub release. The daemon
+      # is distributed via npm (@vicoa/cli) + PyPI (vicoa); the desktop build
+      # pulls the frozen daemon from npm (apps/desktop/scripts/stage-daemon.mjs),
+      # and the runtime download does too (apps/desktop/src/cli-bootstrap.ts). The
+      # only GitHub release page is the desktop one (desktop-release.yml). A `v*`
+      # tag therefore publishes to npm + PyPI only — see also the removed
+      # `create-release` release step in backend-build-binaries.yml.
 
       # PyPI publish is non-blocking: npm is the primary distribution channel
       # (see build-binaries.yml). Codex wheels routinely exceed PyPI's 100 MB

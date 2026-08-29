@@ -534,53 +534,11 @@ jobs:
         with:
           path: backend/artifacts
 
-      - name: Generate changelog
-        run: |
-          echo "# Vicoa ${{ needs.resolve-context.outputs.version }} - Binary Release" > changelog.md
-          echo "" >> changelog.md
-          echo "## Installation" >> changelog.md
-          echo "" >> changelog.md
-          echo "### npx (Recommended)" >> changelog.md
-          echo '```bash' >> changelog.md
-          echo 'npx @vicoa/cli' >> changelog.md
-          echo '```' >> changelog.md
-          echo "" >> changelog.md
-          echo "### Manual Download" >> changelog.md
-          echo "" >> changelog.md
-          echo "- **macOS (Apple Silicon)**: vicoa-macos-arm64.zip" >> changelog.md
-          echo "- **macOS (Intel)**: vicoa-macos-x64.zip" >> changelog.md
-          echo "- **Linux**: vicoa-linux-x64.tar.gz" >> changelog.md
-          echo "- **Windows**: vicoa-windows-x64.zip" >> changelog.md
-          echo "" >> changelog.md
-          echo "## Changes" >> changelog.md
-          # --match 'v*' so the diff base is the previous CLI tag, not a desktop-v* tag.
-          if git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null; then
-            LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' HEAD^)
-            git log $LAST_TAG..HEAD --pretty=format:"- %s" >> changelog.md
-          else
-            echo "- First binary release of Vicoa CLI" >> changelog.md
-          fi
-
-      - name: Create GitHub Release (tag builds only)
-        if: needs.resolve-context.outputs.is_tag == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.resolve-context.outputs.tag }}
-          body_path: backend/changelog.md
-          files: |
-            backend/artifacts/vicoa-macos-arm64/vicoa-macos-arm64.zip
-            backend/artifacts/vicoa-macos-x64/vicoa-macos-x64.zip
-            backend/artifacts/vicoa-linux-x64/vicoa-linux-x64.tar.gz
-            backend/artifacts/vicoa-windows-x64/vicoa-windows-x64.zip
-          draft: false
-          prerelease: false
-        env:
-          # This job is workflow_run-triggered, so the ambient GITHUB_TOKEN only
-          # gains write when the repo's default_workflow_permissions is set to
-          # read/write (Settings -> Actions -> General -> Workflow permissions).
-          # With that set, the top-level `permissions: contents: write` applies
-          # and release creation needs no PAT.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # NOTE: the CLI intentionally does NOT create a GitHub release (see the
+      # matching note in backend-release.yml). The frozen daemon reaches the
+      # desktop build and end users via npm (@vicoa/cli platform packages) — no
+      # GitHub-release zips are needed — so this job now only publishes to npm.
+      # The only GitHub release page is the desktop one (desktop-release.yml).
 
       - name: Setup Node.js for npm publish
         if: needs.resolve-context.outputs.is_tag == 'true'

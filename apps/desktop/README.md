@@ -307,15 +307,17 @@ at the top of that workflow. To cut a release: bump `version` in
 ### Bundled daemon (self-contained)
 
 The release bundles the `vicoa` CLI/daemon so a download needs no npm/python.
-The desktop workflow downloads the matching-arch `vicoa-macos-arm64.zip` that
-`backend`'s `build-binaries.yml` publishes, stages it via
-`VICOA_DAEMON_DIST`, and electron-builder signs + notarizes it inside the app.
-`after-pack.cjs` first canonicalizes the daemon's PyInstaller `*.framework`
-dirs (their top-level binary + `Versions/Current` ship as real copies, which
-makes `codesign` reject them as "ambiguous"). Pick the daemon version with the
-workflow's `daemon_version` input. For a local self-contained build, download a
-daemon zip yourself and pass `VICOA_DAEMON_DIST=<unzipped>/vicoa` to
-`pnpm run package:release`.
+`stage-daemon.mjs` downloads the matching-arch frozen daemon from the **public
+npm registry** (`@vicoa/cli@<vicoaDaemonVersion>-<os>-<arch>`, verifying its
+published sha512) — the same source the app uses at runtime
+(`src/cli-bootstrap.ts`), needing no `gh`/GitHub-release auth — then stages it,
+and electron-builder signs + notarizes it inside the app. `after-pack.cjs` first
+canonicalizes the daemon's PyInstaller `*.framework` dirs (their top-level binary
++ `Versions/Current` ship as real copies, which makes `codesign` reject them as
+"ambiguous"). Pick the daemon version with the workflow's `daemon_version` input,
+else the `vicoaDaemonVersion` pin in `apps/desktop/package.json`. For a local
+self-contained build from a local daemon, pass `VICOA_DAEMON_DIST=<unzipped>/vicoa`
+to `pnpm run package:release`.
 
 Still TODO: Windows/Linux targets (+ their daemons), a branded
 `releases.vicoa.ai` download URL for the marketing site.

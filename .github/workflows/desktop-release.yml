@@ -28,8 +28,9 @@ name: Desktop release
 # Monorepo note: the desktop (Electron) project lives at apps/desktop/ and its
 # renderer is the sibling apps/web/ app, so the renderer-install steps run in
 # apps/web/ and the electron steps in apps/desktop/. stage-daemon
-# (apps/desktop/scripts/stage-daemon.mjs) pulls the pinned daemon from this
-# repo's releases (vicoa-ai/vicoa) via the built-in GITHUB_TOKEN.
+# (apps/desktop/scripts/stage-daemon.mjs) pulls the pinned daemon from the public
+# npm registry (@vicoa/cli platform packages) — no GitHub release / token needed
+# for the pull; it's the same source the app uses at runtime (cli-bootstrap.ts).
 #
 # Required repo secrets:
 #   MAC_CERT_P12_BASE64      Developer ID Application cert + key, base64 .p12
@@ -38,9 +39,10 @@ name: Desktop release
 #   APPLE_API_KEY_ID         e.g. ABC123DEF9
 #   APPLE_API_ISSUER         e.g. 00000000-0000-0000-0000-000000000000
 #   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY  (renderer build)
-# Release publishing and the daemon pull both use the built-in GITHUB_TOKEN
-# (no PAT) — the repo must allow Actions read/write for the workflow_run-based
-# backend build to publish, though this push/dispatch workflow self-elevates.
+# Release publishing uses the built-in GITHUB_TOKEN (no PAT); the daemon pull
+# needs no auth (public npm). The repo must allow Actions read/write for the
+# workflow_run-based backend build to publish, though this push/dispatch
+# workflow self-elevates.
 # See apps/desktop/README.md "Auto-update / release" for setup details. The
 # full release runbook (step-by-step, gotchas, troubleshooting) is an internal
 # ops doc, not part of this repo.
@@ -49,7 +51,7 @@ on:
   workflow_dispatch:
     inputs:
       daemon_version:
-        description: 'Override the pinned daemon tag (blank = use the pin)'
+        description: 'Override the pinned daemon version (blank = use the pin)'
         required: false
         default: ''
   push:
@@ -59,9 +61,9 @@ concurrency:
   group: desktop-release
   cancel-in-progress: false
 
-# The built-in GITHUB_TOKEN both publishes the release to this repo and lets
-# stage-daemon pull the pinned daemon from this repo's releases. contents:write
-# covers creating/uploading the draft release; read is implied for the pull.
+# The built-in GITHUB_TOKEN publishes the release to this repo (electron-builder
+# creates the DRAFT; the publish job un-drafts it). contents:write covers
+# creating/uploading + editing the release. The daemon pull needs no token (npm).
 # desktop-release is push/dispatch-triggered, so this block elevates the token
 # even if the repo default is still read-only.
 permissions:
@@ -108,9 +110,9 @@ jobs:
       - name: Package, sign, notarize & publish (draft)
         working-directory: apps/desktop
         # stage:daemon (inside package:release) downloads + bundles the pinned
-        # daemon (electron/package.json "vicoaDaemonVersion") via gh — the same
-        # mechanism as a local build. No separate download step, one source of
-        # truth. GH_TOKEN below needs contents:read on the monorepo for it.
+        # daemon (apps/desktop/package.json "vicoaDaemonVersion") from the public
+        # npm registry — the same mechanism as a local build, and the same source
+        # the app uses at runtime. No separate download step, one source of truth.
         #
         # De-bundling (ship without the daemon, download it on first run) is
         # available via VICOA_DEBUNDLE_DAEMON=1 but intentionally NOT enabled —
@@ -127,7 +129,8 @@ jobs:
           APPLE_API_KEY: ${{ runner.temp }}/private_keys/AuthKey.p8
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          # Publish + daemon pull both target this repo via the built-in token.
+          # electron-builder publishes the DRAFT release to this repo via this
+          # token; the daemon pull uses public npm (no token).
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Renderer build env (build-renderer.mjs bakes NEXT_PUBLIC_* at build
           # time; next build also needs a POSTGRES_URL to satisfy module init).
@@ -180,10 +183,10 @@ jobs:
       - name: Package & publish (draft)
         working-directory: apps/desktop
         # No signing env: the Windows build is deliberately unsigned. Everything
-        # else mirrors the macOS job — stage:daemon pulls the pinned
-        # vicoa-windows-x64.zip via gh (needs contents:read on the monorepo),
-        # and the renderer build needs the same NEXT_PUBLIC_* + build-only
-        # placeholders. See the macOS job above for why each one is here.
+        # else mirrors the macOS job — stage:daemon pulls the pinned daemon from
+        # npm (@vicoa/cli win32-x64), and the renderer build needs the same
+        # NEXT_PUBLIC_* + build-only placeholders. See the macOS job above for
+        # why each one is here.
         #
         # De-bundling is available via VICOA_DEBUNDLE_DAEMON=1 but NOT enabled —
         # the app ships bundled.
@@ -237,9 +240,9 @@ jobs:
         working-directory: apps/desktop
         # UNSIGNED AppImage — no signing env (Linux has no signing story). Builds
         # an AppImage + latest-linux.yml and uploads into the shared draft.
-        # stage:daemon pulls the pinned vicoa-linux-x64.tar.gz via gh (needs
-        # contents:read on the monorepo); the renderer build needs the same
-        # NEXT_PUBLIC_* + build-only placeholders as the other jobs.
+        # stage:daemon pulls the pinned daemon from npm (@vicoa/cli linux-x64);
+        # the renderer build needs the same NEXT_PUBLIC_* + build-only
+        # placeholders as the other jobs.
         #
         # De-bundling is available via VICOA_DEBUNDLE_DAEMON=1 but NOT enabled —
         # the app ships bundled.
@@ -262,18 +265,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need the tag history to compute the previous desktop release
 
-      - name: Publish the release (un-draft)
+      - name: Publish the release (un-draft) with auto-generated notes
         # electron-builder uploaded the assets to a DRAFT release tagged
         # v<version> in vicoa-ai/vicoa. Flip it live only now that every asset from
         # every platform finished uploading, so the updater never sees a
-        # half-built release.
+        # half-built release. Set the body to GitHub's auto-generated, PR-based
+        # notes (grouped per .github/release.yml). `gh release edit` has no
+        # --generate-notes, so call the REST generate-notes endpoint first, then
+        # set the body. previous_tag_name uses the unambiguous desktop-v* trigger
+        # tag — NOT the shared v* release namespace the daemon tooling historically
+        # tagged into — so the PR range is always the prior DESKTOP release.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+          git fetch --tags --force
           VERSION=$(node -p "require('./apps/desktop/package.json').version")
-          echo "Publishing v$VERSION to vicoa-ai/vicoa"
-          gh release edit "v$VERSION" \
+          TAG="v$VERSION"
+          PREV=$(git tag --list 'desktop-v*' --sort=-version:refname \
+                   | grep -vx "desktop-v$VERSION" | head -n1 || true)
+          echo "Publishing $TAG to vicoa-ai/vicoa (previous desktop tag: ${PREV:-<none>})"
+          if [ -n "$PREV" ]; then
+            BODY=$(gh api -X POST repos/vicoa-ai/vicoa/releases/generate-notes \
+                     -f tag_name="$TAG" -f previous_tag_name="$PREV" --jq .body)
+          else
+            BODY=$(gh api -X POST repos/vicoa-ai/vicoa/releases/generate-notes \
+                     -f tag_name="$TAG" --jq .body)
+          fi
+          printf '%s' "$BODY" | gh release edit "$TAG" \
             --repo vicoa-ai/vicoa \
             --draft=false \
-            --latest
+            --latest \
+            --notes-file -

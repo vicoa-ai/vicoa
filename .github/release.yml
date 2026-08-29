@@ -1,0 +1,35 @@
+# Config for GitHub's auto-generated release notes (the REST
+# `releases/generate-notes` endpoint, called from desktop-release.yml's publish
+# job). Groups merged PRs by label into the release body. Requires a PR-merge
+# workflow: PRs merged since the previous desktop release populate these
+# sections — commits pushed straight to `main` are not listed.
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+      - skip-changelog
+    authors:
+      - dependabot
+      - github-actions
+      - dependabot[bot]
+      - github-actions[bot]
+  categories:
+    - title: 🚀 Features
+      labels:
+        - feature
+        - enhancement
+    - title: 🐛 Fixes
+      labels:
+        - fix
+        - bug
+    - title: 🧹 Maintenance
+      labels:
+        - chore
+        - refactor
+        - ci
+        - build
+        - docs
+        - dependencies
+    - title: Other Changes
+      labels:
+        - "*"

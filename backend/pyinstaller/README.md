@@ -154,8 +154,10 @@ git push origin v1.3.11
 - **Linux x64** - Standard ELF binary
 - **Windows x64** - .exe executable
 
-Binaries are uploaded to GitHub Releases and published to npm as `@vicoa/cli`
-platform packages (see `backend/scripts/build_npm_package.py`). The workflow
-authenticates to GitHub with `secrets.RELEASE_TOKEN`; macOS builds are not
-currently signed/notarized, so macOS users need to run
-`xattr -d com.apple.quarantine vicoa` once (see Troubleshooting above).
+Binaries are published to npm as `@vicoa/cli` platform packages and to PyPI as
+`vicoa` (see `backend/scripts/build_npm_package.py`); the CLI does **not** cut a
+GitHub release (the desktop app is the only GitHub release, and it pulls the
+frozen daemon from these npm platform packages). npm publish uses OIDC Trusted
+Publishing (no token). macOS builds are not currently signed/notarized, so macOS
+users need to run `xattr -d com.apple.quarantine vicoa` once (see Troubleshooting
+above).

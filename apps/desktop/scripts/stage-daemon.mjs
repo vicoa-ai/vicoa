@@ -21,23 +21,33 @@
  *                               dir. HOST arch only (a local build is one arch).
  *   2. VICOA_DAEMON_VERSION=local — the repo's backend/ local PyInstaller
  *                               build (case 4 path). HOST arch only.
- *   3. a pinned RELEASE       — VICOA_DAEMON_VERSION env (a tag), else
+ *   3. a pinned VERSION       — VICOA_DAEMON_VERSION env (a version), else
  *                               package.json "vicoaDaemonVersion". Each arch's
- *                               asset is downloaded (and cached under
- *                               apps/desktop/.daemon-cache/<version>/<arch>/) from
- *                               the vicoa-ai/vicoa GitHub release via
- *                               `gh`. This is the DEFAULT, and the only source
- *                               that can supply a non-host arch.
+ *                               frozen daemon is fetched from the PUBLIC npm
+ *                               registry — `@vicoa/cli` publishes each platform's
+ *                               binary as an aliased version of itself
+ *                               (`@vicoa/cli@<ver>-<os>-<arch>`) whose manifest
+ *                               carries `dist.tarball` + a `dist.integrity`
+ *                               sha512 we verify against. This is the DEFAULT,
+ *                               the only source that can supply a non-host arch,
+ *                               and mirrors the app's own runtime download
+ *                               (src/cli-bootstrap.ts) — a plain HTTPS GET, no
+ *                               npm client and no `gh`/GitHub-release auth (the
+ *                               vicoa-ai/vicoa release is private + zip-only, and
+ *                               the CLI no longer even cuts one). Cached under
+ *                               apps/desktop/.daemon-cache/<version>/<os>-<arch>/.
  *   4. local pyinstaller build — <repo>/backend/pyinstaller/dist/vicoa,
  *                               when no pin is set at all. HOST arch only.
  *
- * A pinned download that fails is a HARD error (loud, not a silent wrong
- * version). An arch with no available source (e.g. requesting x64 while only a
- * host-arch local build exists) succeeds with an EMPTY daemon-dist/<arch> — the
- * app then resolves `vicoa` from PATH (graceful degradation, see
- * apps/desktop/src/config.ts bundledDaemonPath), but WARNS loudly first.
+ * A pinned download that fails (or fails its checksum) is a HARD error (loud,
+ * not a silent wrong version). An arch with no available source (e.g. requesting
+ * x64 while only a host-arch local build exists) succeeds with an EMPTY
+ * daemon-dist/<arch> — the app then resolves `vicoa` from PATH (graceful
+ * degradation, see apps/desktop/src/config.ts bundledDaemonPath), but WARNS
+ * loudly first.
  */
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,12 +56,20 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.dirname(scriptDir);
 const distRoot = path.join(desktopDir, 'daemon-dist');
 
-const RELEASE_REPO = 'vicoa-ai/vicoa';
-const RELEASE_ASSETS = {
-  mac: { arm64: 'vicoa-macos-arm64.zip', x64: 'vicoa-macos-x64.zip' },
-  win: { x64: 'vicoa-windows-x64.zip' },
-  linux: { x64: 'vicoa-linux-x64.tar.gz' },
-};
+const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
+/**
+ * Registry base. `VICOA_NPM_REGISTRY` lets a build behind a slow/blocked public
+ * npm point at a mirror (e.g. https://registry.npmmirror.com); the per-platform
+ * packages + their integrity metadata mirror identically. Mirrors
+ * src/cli-bootstrap.ts's registryBase().
+ */
+function registryBase() {
+  const raw = process.env.VICOA_NPM_REGISTRY?.trim();
+  return (raw && raw.length > 0 ? raw : DEFAULT_REGISTRY).replace(/\/+$/, '');
+}
+
+/** stage-daemon PLATFORM (mac/win/linux) -> npm `os` token (process.platform). */
+const NPM_OS = { mac: 'darwin', win: 'win32', linux: 'linux' };
 
 const PLATFORM =
   process.platform === 'win32' ? 'win' : process.platform === 'linux' ? 'linux' : 'mac';
@@ -72,7 +90,17 @@ const BUILD_ARCHS =
       ? ['arm64', 'x64']
       : [HOST_ARCH];
 
-/** The pinned daemon release tag: env override, else the package.json field. */
+/** `v1.7.6` -> `1.7.6` — npm version tags carry no leading `v`. */
+function bareVersion(version) {
+  return version.replace(/^v/i, '');
+}
+
+/** The npm platform-arch key the CLI publishes each frozen binary under. */
+function npmKey(arch) {
+  return `${NPM_OS[PLATFORM]}-${arch}`;
+}
+
+/** The pinned daemon version: env override, else the package.json field. */
 function pinnedVersion() {
   if (process.env.VICOA_DAEMON_VERSION) return process.env.VICOA_DAEMON_VERSION;
   try {
@@ -119,60 +147,80 @@ function versionString(daemonDir) {
 }
 
 /**
- * Extract a release archive. macOS/Windows daemons ship as `.zip`; the Linux
- * daemon ships as a gzipped tarball (`vicoa-linux-x64.tar.gz`), so it takes the
- * `tar -xzf` path. Windows runners have no `unzip`, but every Windows 10+ ships
- * bsdtar as `tar.exe`, which reads zip archives — and macOS ships bsdtar too, so
- * the mac/win branch could collapse. It doesn't, deliberately: the `unzip` path
- * is what every shipped mac release has been built with, and this is not the
- * change to re-validate it under.
+ * Stream the tarball to `dest`, sha512-hashing as we go. Returns the computed
+ * `sha512-<base64>` digest — the exact shape npm publishes in `dist.integrity`,
+ * so the compare is a plain string equality (mirrors cli-bootstrap.ts).
  */
-function extractArchive(archivePath, destDir) {
-  if (PLATFORM === 'linux') {
-    execFileSync('tar', ['-xzf', archivePath, '-C', destDir], { stdio: 'inherit' });
-    return;
+async function downloadTarball(url, dest) {
+  const res = await fetch(url);
+  if (!res.ok || res.body === null) {
+    throw new Error(`daemon tarball download failed: ${res.status} ${res.statusText}`);
   }
-  const argv =
-    PLATFORM === 'win'
-      ? ['-xf', archivePath, '-C', destDir]
-      : ['-q', '-o', archivePath, '-d', destDir];
-  execFileSync(PLATFORM === 'win' ? 'tar' : 'unzip', argv, { stdio: 'inherit' });
+  const buf = Buffer.from(await res.arrayBuffer());
+  fs.writeFileSync(dest, buf);
+  return `sha512-${createHash('sha512').update(buf).digest('base64')}`;
 }
 
-/** Download + cache the pinned release for one arch; returns the `vicoa/` dir. */
-function downloadRelease(version, arch) {
-  const asset = RELEASE_ASSETS[PLATFORM][arch];
-  // Platform is part of the cache key: `vicoa-macos-x64.zip` and
-  // `vicoa-windows-x64.zip` are both "x64" and would otherwise collide.
+/**
+ * Download + cache the pinned frozen daemon for one arch from the npm registry;
+ * returns the `package/bin/` onedir dir. The tarball unpacks to
+ * `package/bin/{vicoa|vicoa.exe}` + `package/bin/_internal/` (build_npm_package.py
+ * copies the whole onedir into `bin/`), the same layout cli-bootstrap.ts stages
+ * from at runtime.
+ */
+async function downloadFromNpm(version, arch) {
+  const bare = bareVersion(version);
+  const key = npmKey(arch);
+  // Platform is part of the cache key: `1.7.13-win32-x64` and `1.7.13-linux-x64`
+  // are both "x64" and would otherwise collide.
   const cacheDir = path.join(desktopDir, '.daemon-cache', version, `${PLATFORM}-${arch}`);
-  const daemonDir = path.join(cacheDir, 'vicoa');
+  const daemonDir = path.join(cacheDir, 'package', 'bin');
   if (fs.existsSync(path.join(daemonDir, DAEMON_EXE))) {
     console.log(`[stage-daemon] using cached ${version}/${arch} daemon (${versionString(daemonDir)})`);
     return daemonDir;
   }
   fs.mkdirSync(cacheDir, { recursive: true });
-  console.log(`[stage-daemon] downloading ${asset} from ${RELEASE_REPO} ${version} …`);
+
+  const manifestUrl = `${registryBase()}/@vicoa%2Fcli/${bare}-${key}`;
+  console.log(`[stage-daemon] resolving @vicoa/cli@${bare}-${key} from ${registryBase()} …`);
+  let dist;
   try {
-    execFileSync(
-      'gh',
-      ['release', 'download', version, '--repo', RELEASE_REPO, '--pattern', asset, '--dir', cacheDir, '--clobber'],
-      { stdio: 'inherit' },
-    );
+    const res = await fetch(manifestUrl);
+    if (!res.ok) {
+      throw new Error(`registry manifest ${res.status} ${res.statusText}`);
+    }
+    const body = await res.json();
+    const tarball = body?.dist?.tarball;
+    const integrity = body?.dist?.integrity;
+    if (typeof tarball !== 'string' || typeof integrity !== 'string') {
+      throw new Error('manifest is missing dist.tarball / dist.integrity');
+    }
+    dist = { tarball, integrity };
   } catch (err) {
     throw new Error(
-      `gh release download failed for ${version} (${asset}). Is gh installed + authed (with read on ${RELEASE_REPO}), ` +
-        `and does the release ship ${asset}? Underlying: ${err.message}`,
+      `Failed to resolve the frozen daemon @vicoa/cli@${bare}-${key} from the npm ` +
+        `registry (${registryBase()}). Is that version published for this platform? ` +
+        `Underlying: ${err.message}`,
     );
   }
-  extractArchive(path.join(cacheDir, asset), cacheDir);
+
+  const tgz = path.join(cacheDir, 'daemon.tgz');
+  const digest = await downloadTarball(dist.tarball, tgz);
+  if (digest !== dist.integrity) {
+    throw new Error(
+      `Daemon tarball for ${key} failed its checksum — refusing to stage. ` +
+        `Expected ${dist.integrity}, got ${digest}.`,
+    );
+  }
+  // `tar -xf` autodetects gzip on every platform we target: bsdtar ships as
+  // tar.exe on Windows 10+, GNU/bsd tar handle .tgz on macOS/Linux.
+  execFileSync('tar', ['-xf', tgz, '-C', cacheDir], { stdio: 'inherit' });
   if (!fs.existsSync(path.join(daemonDir, DAEMON_EXE))) {
-    throw new Error(`downloaded ${asset} did not contain vicoa/${DAEMON_EXE}`);
+    throw new Error(`daemon tarball for ${key} did not contain package/bin/${DAEMON_EXE}`);
   }
   const got = versionString(daemonDir);
-  const want = version.replace(/^v/, '');
-  if (!got.includes(want)) {
-    // Known hazard: a release asset can be built off the default branch rather
-    // than the tag, so verify loudly rather than trust the tag name.
+  if (!got.includes(bare)) {
+    // Defence in depth: the published binary should report the pinned version.
     console.warn(`[stage-daemon] WARNING: pinned ${version} but the ${arch} binary reports "${got}".`);
   }
   console.log(`[stage-daemon] downloaded ${arch} ${got}`);
@@ -189,7 +237,7 @@ function localBuildPath() {
  * (whatever the host built), so they only apply to HOST_ARCH; a non-host arch
  * returns { source: null } and stages empty (warns).
  */
-function resolveSource(version, arch) {
+async function resolveSource(version, arch) {
   if (process.env.VICOA_DAEMON_DIST) {
     return arch === HOST_ARCH
       ? { source: process.env.VICOA_DAEMON_DIST, kind: `explicit (VICOA_DAEMON_DIST), ${arch}` }
@@ -201,7 +249,10 @@ function resolveSource(version, arch) {
       : { source: null, kind: `${arch}: local build is host-arch (${HOST_ARCH}) only` };
   }
   if (version) {
-    return { source: downloadRelease(version, arch), kind: `pinned release ${version}, ${arch}` };
+    return {
+      source: await downloadFromNpm(version, arch),
+      kind: `pinned npm @vicoa/cli@${bareVersion(version)}, ${arch}`,
+    };
   }
   return arch === HOST_ARCH
     ? { source: localBuildPath(), kind: `local pyinstaller build (no pin), ${arch}` }
@@ -233,7 +284,7 @@ if (process.env.VICOA_DEBUNDLE_DAEMON === '1') {
   syncPackagedDaemonPin(version);
 } else {
   for (const arch of BUILD_ARCHS) {
-    const { source, kind } = resolveSource(version, arch);
+    const { source, kind } = await resolveSource(version, arch);
     const target = path.join(distRoot, arch);
     fs.mkdirSync(target, { recursive: true });
     if (source && fs.existsSync(path.join(source, DAEMON_EXE))) {
