@@ -32,6 +32,18 @@ regexes = [
   '''(goog|appl)_[A-Za-z0-9]{20,}''',  # RevenueCat public SDK keys
 ]
 
+# False positive: a stage-daemon comment documents the release-asset cache key
+# (`...cache key: `vicoa-macos-x64.zip``). The generic-api-key rule reads the
+# `key: <token>` shape as a secret assignment. It is documentation, not a secret.
+# Matched by the exact literal only (NOT path-scoped: a path allowlist would
+# suppress the whole file and could mask a real secret added there later). This
+# match string is a public release-asset filename, so allowlisting it repo-wide
+# cannot hide any real secret.
+[[allowlists]]
+description = "stage-daemon 'cache key: <asset>.zip' comment (docs, not a secret)"
+regexTarget = "match"
+regexes = ['''key: `vicoa-(macos|windows)-x64\.zip`''']
+
 # Dependency lock files hold integrity hashes/versions, not secrets. gitleaks'
 # generic-api-key rule false-positives on them (e.g. Podfile.lock SPEC CHECKSUMS).
 [[allowlists]]
