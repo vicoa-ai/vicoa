@@ -43,6 +43,10 @@ defaults:
 
 jobs:
   codex_wheels:
+    # Fork guard: the release/publish jobs run only in the canonical repo. A
+    # fork that enables Actions and syncs `v*` tags would otherwise fire this
+    # and fail (no secrets, no publish rights). Upstream is always vicoa-ai/vicoa.
+    if: github.repository == 'vicoa-ai/vicoa'
     strategy:
       matrix:
         include:
@@ -327,6 +331,7 @@ jobs:
 
   release:
     needs: [codex_wheels]
+    if: github.repository == 'vicoa-ai/vicoa'  # fork guard (see codex_wheels)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -69,6 +69,10 @@ permissions:
 
 jobs:
   macos:
+    # Fork guard: this whole release pipeline runs only in the canonical repo, so
+    # a fork that enables Actions and pushes a desktop-v* tag never attempts a
+    # signed release with absent secrets. Upstream is always vicoa-ai/vicoa.
+    if: github.repository == 'vicoa-ai/vicoa'
     # macOS 14 runners are Apple Silicon. electron-builder cross-packages the
     # x64 app here too (the x64 daemon is downloaded by stage-daemon; the
     # notification helper is a universal binary), so this ONE job emits both
@@ -150,6 +154,7 @@ jobs:
     # Serial after macOS on purpose (see the header): both jobs upload into the
     # SAME draft release, and concurrent writers duplicate it.
     needs: macos
+    if: github.repository == 'vicoa-ai/vicoa'  # fork guard (see macos)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -198,6 +203,7 @@ jobs:
     # Serial after Windows on purpose (see the header): every build job uploads
     # into the SAME draft release, and concurrent writers duplicate it.
     needs: windows
+    if: github.repository == 'vicoa-ai/vicoa'  # fork guard (see macos)
     # Pinned to 22.04 (glibc 2.35), NOT ubuntu-latest: electron + the AppImage
     # link against the builder's glibc, so the runner sets the MINIMUM glibc of
     # any machine that can launch the app. Keep this in lockstep with the backend
@@ -252,6 +258,7 @@ jobs:
   publish:
     # Only after ALL platforms have finished uploading.
     needs: [macos, windows, linux]
+    if: github.repository == 'vicoa-ai/vicoa'  # fork guard (see macos)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

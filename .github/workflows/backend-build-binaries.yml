@@ -28,7 +28,12 @@ jobs:
   # No checkout here, so this job runs at the workspace root (no
   # working-directory default — that would point at a dir that doesn't exist).
   resolve-context:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # Fork guard: this build+publish pipeline runs only in the canonical repo.
+    # It fires via workflow_run after "Release" completes; a fork that enables
+    # Actions and runs its own Release would otherwise cascade into a publish
+    # attempt with absent secrets. `&&` binds tighter than `||`, so the original
+    # event condition is parenthesized. Repeated on every job below.
+    if: github.repository == 'vicoa-ai/vicoa' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ctx.outputs.version }}
@@ -63,7 +68,7 @@ jobs:
 
   build-macos-arm64:
     needs: [resolve-context]
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.repository == 'vicoa-ai/vicoa' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')  # fork guard (see resolve-context)
     runs-on: macos-14  # M1 runner (arm64)
     defaults:
       run:
@@ -166,7 +171,7 @@ jobs:
 
   build-macos-x64:
     needs: [resolve-context]
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.repository == 'vicoa-ai/vicoa' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')  # fork guard (see resolve-context)
     # GitHub retired the macos-13 Intel runner in late 2025, so we cross-build
     # on macos-15 (Apple Silicon) under Rosetta. PyInstaller doesn't
     # cross-compile — it freezes the running interpreter — so we install an
@@ -322,7 +327,7 @@ jobs:
 
   build-linux:
     needs: [resolve-context]
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.repository == 'vicoa-ai/vicoa' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')  # fork guard (see resolve-context)
     # Pinned to 22.04 (glibc 2.35), NOT ubuntu-latest: PyInstaller links the
     # frozen daemon against the builder's glibc, so the runner sets the MINIMUM
     # glibc of every machine that can run it. 22.04 covers Ubuntu 22.04+/Debian
@@ -445,7 +450,7 @@ jobs:
 
   build-windows:
     needs: [resolve-context]
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.repository == 'vicoa-ai/vicoa' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')  # fork guard (see resolve-context)
     runs-on: windows-latest
     defaults:
       run:
@@ -508,6 +513,7 @@ jobs:
 
   create-release:
     needs: [resolve-context, build-macos-arm64, build-macos-x64, build-linux, build-windows]
+    if: github.repository == 'vicoa-ai/vicoa'  # fork guard (see resolve-context)
     runs-on: ubuntu-latest
     # npm publish uses OIDC Trusted Publishing (no token). npmjs.com's Trusted
     # Publisher for @vicoa/cli is bound to this workflow file + the `release`
