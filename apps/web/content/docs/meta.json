@@ -1,0 +1,18 @@
+{
+  "title": "Documentation",
+  "pages": [
+    "index",
+    "getting-started",
+    "agents",
+    "claude-code-and-codex",
+    "start-remote-session",
+    "cli-commands",
+    "live-preview",
+    "alternative-models",
+    "vicoa-features",
+    "version-compatibility",
+    "changelog",
+    "faq",
+    "troubleshooting"
+  ]
+}

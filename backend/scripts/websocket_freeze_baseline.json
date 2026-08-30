@@ -1,0 +1,21 @@
+{
+  "_comment": "WebSocket migration freeze baseline (websocket-migration plan §2.7). commit_baseline is a per-file CEILING of .commit() calls in production write paths: CI fails if a file exceeds its entry, or if a file with commits has no entry. As each phase migrates write paths onto in_tx, the corresponding entry is decremented or removed; reaching {} by Phase 5 is the 'all write paths on in_tx' signal. grandfathered_trigger_migrations are the only migrations allowed to contain CREATE TRIGGER / pg_notify; any new migration with one fails CI.",
+  "commit_baseline": {
+    "src/backend/api/agents.py": 4,
+    "src/backend/api/attachments.py": 1,
+    "src/backend/api/billing.py": 4,
+    "src/backend/api/machines.py": 3,
+    "src/backend/api/mobile_billing.py": 3,
+    "src/backend/api/push_notifications.py": 3,
+    "src/backend/api/teams.py": 6,
+    "src/backend/api/user_settings.py": 1,
+    "src/servers/api/routers.py": 23
+  },
+  "grandfathered_trigger_migrations": [
+    "40d4252deb5b_add_messages_table.py",
+    "9c1915ca1cd2_add_git_diff_update_trigger_for_agent_.py",
+    "9fe045ea7ad9_fix_large_payload_notifications.py",
+    "b2e3f4a5c6d7_add_smart_payload_to_message_notify.py",
+    "e1a42f472efc_add_user_instance_list_sse_channel.py"
+  ]
+}

@@ -1,0 +1,57 @@
+# Monorepo-root pre-commit config.
+#
+# pre-commit runs from the git root (now the monorepo), so the backend's own
+# backend/.pre-commit-config.yaml no longer fires (its `files:` regexes
+# and the migration script assumed repo-root == backend root). This root config
+# re-scopes those hooks to backend/. It SUPERSEDES the backend's config in
+# the monorepo — run `pre-commit install` from the repo root.
+#
+# ruff/ruff-format auto-discover backend/pyproject.toml per file, so they
+# work unchanged with the re-prefixed paths. pyright is intentionally NOT here:
+# it resolves its config/venv from the cwd and is fragile at the monorepo root.
+# Type-checking is covered by CI (`make lint`) and locally via
+# `cd backend && make typecheck`.
+
+repos:
+  # Secret scanning — blocks new secrets from entering a commit (repo-wide).
+  # Uses .gitleaks.toml at the repo root (publishable client keys allowlisted).
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  # Ruff — fast Python lint + format (config: backend/pyproject.toml)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.13
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^backend/(src/backend|src/servers|src/shared|src/vicoa|src/integrations|tests|scripts)/.*\.py$
+      - id: ruff-format
+        files: ^backend/(src/backend|src/servers|src/shared|src/vicoa|src/integrations|tests|scripts)/.*\.py$
+
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        files: ^backend/(src/backend|src/servers|src/shared|src/vicoa|src/integrations|tests|scripts)/.*\.py$
+      - id: end-of-file-fixer
+        files: ^backend/(src/backend|src/servers|src/shared|src/vicoa|src/integrations|tests|scripts)/.*\.py$
+      # These stay repo-wide (useful across all components):
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+
+  # Backend: schema change ⇒ Alembic migration must be in the same commit.
+  # cd into backend/ so the script + its `git diff --relative` resolve
+  # backend-relative paths; it self-filters to backend files.
+  - repo: local
+    hooks:
+      - id: check-migration-needed
+        name: Check if migration needed for schema changes (backend)
+        entry: bash -c 'cd backend && python scripts/check-migration-needed.py'
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [commit]

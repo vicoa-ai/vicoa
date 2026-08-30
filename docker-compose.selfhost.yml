@@ -1,0 +1,128 @@
+# Vicoa, self-hosted: Postgres + the two backend processes + the web dashboard.
+#
+#   cp .env.example .env      # then fill it in — see SELF_HOSTING.md
+#   ./backend/scripts/generate-jwt-keys.sh selfhost/keys
+#   docker compose -f docker-compose.selfhost.yml up -d
+#
+# Two backend processes share one image, exactly as in Vicoa's own deployment:
+#   backend  :8000  — user-facing REST for the web/mobile clients
+#   server   :8080  — agent-facing REST + MCP + the WebSocket the CLI/daemon uses
+# They are separate services because only `server` may own the WebSocket
+# ConnectionManager (it is process-local); `backend` reaches it over the
+# internal broadcast bridge so writes still fan out to connected clients.
+
+name: vicoa
+
+x-backend-image: &backend-image
+  build:
+    context: ./backend
+  env_file:
+    - .env
+  environment: &backend-env
+    ENVIRONMENT: production
+    # `builtin` (the default) keeps identity in this stack's own Postgres;
+    # set AUTH_PROVIDER=supabase in .env to delegate to a Supabase project.
+    AUTH_PROVIDER: ${AUTH_PROVIDER:-builtin}
+    PRODUCTION_DB_URL: postgresql://${POSTGRES_USER:-vicoa}:${POSTGRES_PASSWORD:-vicoa}@postgres:5432/${POSTGRES_DB:-vicoa}
+    # PEMs are multi-line, so they are mounted as files rather than env values.
+    JWT_PRIVATE_KEY_FILE: /keys/jwt_private.pem
+    JWT_PUBLIC_KEY_FILE: /keys/jwt_public.pem
+  volumes:
+    - ./selfhost/keys:/keys:ro
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vicoa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vicoa}
+      POSTGRES_DB: ${POSTGRES_DB:-vicoa}
+    volumes:
+      - vicoa-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-vicoa} -d ${POSTGRES_DB:-vicoa}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    # Uncomment to reach the database from the host (psql, a GUI client):
+    # ports:
+    #   - '5432:5432'
+
+  # One-shot: `alembic upgrade head`. Everything else waits for it to finish.
+  migrate:
+    <<: *backend-image
+    command: bash scripts/init-db.sh
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  backend:
+    <<: *backend-image
+    command: python -c "from backend.main import main; main()"
+    environment:
+      <<: *backend-env
+      API_PORT: 8000
+      FRONTEND_URLS: '["${PUBLIC_WEB_URL:-http://localhost:3000}"]'
+      # Post-commit realtime fan-out: backend POSTs here so clients on the
+      # `server` process's WebSocket see the change. Both sides must share
+      # INTERNAL_BROADCAST_TOKEN (set it in .env).
+      INTERNAL_BROADCAST_URL: http://server:8080/_internal/broadcast
+    ports:
+      - '${BACKEND_PORT:-8000}:8000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  server:
+    <<: *backend-image
+    command: python -m servers.app
+    environment:
+      <<: *backend-env
+      MCP_SERVER_PORT: 8080
+      FRONTEND_URLS: '["${PUBLIC_WEB_URL:-http://localhost:3000}"]'
+      # This is the only process that mounts /ws and its ConnectionManager.
+      # Keep it to a single replica for the same reason.
+      ENABLE_WEBSOCKET: 'true'
+    ports:
+      - '${SERVER_PORT:-8080}:8080'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./apps/web
+      # NEXT_PUBLIC_* are inlined into the browser bundle at build time — after
+      # changing any of them, rebuild: `docker compose ... build web`.
+      args:
+        NEXT_PUBLIC_BACKEND_API_URL: ${PUBLIC_BACKEND_URL:-http://localhost:8000}
+        NEXT_PUBLIC_VICOA_WS_URL: ${PUBLIC_WS_URL:-ws://localhost:8080/ws}
+        # Must match the backend's AUTH_PROVIDER: it decides which sign-in
+        # screen the browser bundle ships with.
+        NEXT_PUBLIC_AUTH_PROVIDER: ${NEXT_PUBLIC_AUTH_PROVIDER:-builtin}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+        BASE_URL: ${PUBLIC_WEB_URL:-http://localhost:3000}
+    environment:
+      # This container's own server-side code (Next route handlers, e.g. the
+      # CLI-auth key mint) reaches the backend by compose service name — the
+      # browser's published localhost port is not routable from in here.
+      BACKEND_INTERNAL_URL: http://backend:8000
+      # Server-side routes read these at runtime (the browser bundle already
+      # has the build-time copies).
+      NEXT_PUBLIC_BACKEND_API_URL: ${PUBLIC_BACKEND_URL:-http://localhost:8000}
+      NEXT_PUBLIC_VICOA_WS_URL: ${PUBLIC_WS_URL:-ws://localhost:8080/ws}
+      NEXT_PUBLIC_AUTH_PROVIDER: ${NEXT_PUBLIC_AUTH_PROVIDER:-builtin}
+      BASE_URL: ${PUBLIC_WEB_URL:-http://localhost:3000}
+    ports:
+      - '${WEB_PORT:-3000}:3000'
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  vicoa-postgres:

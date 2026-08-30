@@ -1,0 +1,575 @@
+---
+title: Troubleshooting
+description: Fix common Vicoa issues — CLI install errors, connection and login failures, and agent startup problems on macOS, Linux, and Windows.
+---
+
+# Troubleshooting
+
+This page covers common issues you might encounter when installing and using Vicoa, along with their solutions.
+
+We have migrated from python to node.js for CLI installation. You can still use the old python installation method, below are troubleshooting tips.
+
+## Installation Issues
+
+### Command not found: pip
+
+**Problem**: When running `pip install vicoa && vicoa`, you get the error:
+```bash
+zsh: command not found: pip
+```
+
+**Solutions**:
+
+#### Option 1: Use python3 -m pip
+```bash
+python3 -m pip install vicoa && vicoa
+```
+
+#### Option 2: Install Python with pip
+If you don't have pip installed, you need to install Python first:
+
+**On macOS**:
+```bash
+# Using Homebrew
+brew install python
+
+# Using official installer
+# Download from https://www.python.org/downloads/
+```
+
+**On Ubuntu/Debian**:
+```bash
+sudo apt update
+sudo apt install python3 python3-pip
+```
+
+**On Windows**:
+- Download Python from [python.org](https://www.python.org/downloads/)
+- Make sure to check "Add Python to PATH" during installation
+
+#### Option 3: Use pip3 instead
+```bash
+pip3 install vicoa && vicoa
+```
+
+### Python version compatibility error
+
+**Problem**: When running `pip install vicoa`, you get this error:
+```bash
+ERROR: Ignored the following versions that require a different python version: 1.0.1 Requires-Python >=3.10; 1.0.2 Requires-Python >=3.10
+ERROR: Could not find a version that satisfies the requirement vicoa (from versions: none)
+ERROR: No matching distribution found for vicoa
+```
+
+This means your Python version is older than 3.10, which is required for Vicoa.
+
+**Solution**: Check and upgrade your Python version:
+
+#### Step 1: Check your current Python version
+```bash
+python --version
+# or
+python3 --version
+```
+
+#### Step 2: Upgrade Python
+
+**On macOS**:
+```bash
+# Option 1: Using Homebrew (recommended)
+brew install python@3.11
+
+# Option 2: Using pyenv for version management
+brew install pyenv
+pyenv install 3.11.0
+pyenv global 3.11.0
+
+# Option 3: Download from python.org
+# Visit https://www.python.org/downloads/macos/
+```
+
+**On Ubuntu/Debian**:
+```bash
+# Update package list
+sudo apt update
+
+# Install Python 3.11
+sudo apt install python3.11 python3.11-pip
+
+# Set as default (optional)
+sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+```
+
+**On CentOS/RHEL/Fedora**:
+```bash
+# For Fedora
+sudo dnf install python3.11 python3.11-pip
+
+# For CentOS/RHEL (enable EPEL first)
+sudo yum install epel-release
+sudo yum install python311 python311-pip
+```
+
+**On Windows**:
+1. Go to [python.org/downloads](https://www.python.org/downloads/)
+2. Download Python 3.11 or later
+3. Run the installer and check "Add Python to PATH"
+4. Restart your command prompt
+
+#### Step 3: Verify installation and install Vicoa
+```bash
+# Check new Python version
+python3.11 --version
+
+# Install Vicoa with the new Python version
+python3.11 -m pip install vicoa
+
+# Run Vicoa
+python3.11 -m vicoa
+# or just
+vicoa
+```
+
+#### Alternative: Use pyenv (recommended for developers)
+```bash
+# Install pyenv
+curl https://pyenv.run | bash
+
+# Add to your shell profile (~/.bashrc, ~/.zshrc)
+echo 'export PATH="$HOME/.pyenv/bin:$PATH"' >> ~/.bashrc
+echo 'eval "$(pyenv init -)"' >> ~/.bashrc
+source ~/.bashrc
+
+# Install and use Python 3.11
+pyenv install 3.11.0
+pyenv global 3.11.0
+
+# Now install Vicoa
+pip install vicoa
+```
+
+
+### Invalid requirement: '&&'
+
+**Problem**: When running `pip install vicoa && vicoa`, you see:
+```bash
+ERROR: Invalid requirement: '&&'
+Expected package name at the start of dependency specifier
+```
+
+This happens when your shell doesn't interpret `&&` as a command separator and instead passes it to `pip` as part of the package list.
+
+**Solutions**:
+
+#### Option 1: Run the commands separately
+```bash
+pip install vicoa
+vicoa
+```
+
+#### Option 2: Use a shell that supports `&&`
+Run the original command from a POSIX-compatible shell like bash or zsh, or in newer PowerShell versions:
+```bash
+pip install vicoa && vicoa
+```
+
+If you are using the fish shell, use `; and` instead:
+```bash
+pip install vicoa; and vicoa
+```
+
+### ModuleNotFoundError: No module named 'maturin'
+
+**Problem**: While running `pip install vicoa`, you see:
+```bash
+ModuleNotFoundError: No module named 'maturin'
+```
+
+This happens when pip cannot download the pre-built wheel and instead tries to compile Vicoa from source without the Rust build backend `maturin`. This scenario is common on minimal environments (for example A-Shell on iOS) but can occur on any system missing Rust tooling.
+
+**Solutions**:
+
+#### Option 1: Install maturin (works wherever you can install Python packages)
+```bash
+python3 -m pip install --upgrade pip
+python3 -m pip install maturin
+python3 -m pip install vicoa
+```
+
+
+#### Option 2: Ensure a wheel can be downloaded
+- On desktop Linux/macOS/Windows, upgrade packaging tools so pip prefers wheels:
+  ```bash
+  python3 -m pip install --upgrade pip setuptools wheel
+  python3 -m pip install vicoa
+  ```
+- On A-Shell or other lightweight shells, confirm internet access and retry the install after upgrading pip. If wheels are unavailable for your platform, fall back to option 3.
+
+#### Option 3 (not recommended): Compile from source with Rust
+Only try this if you understand the implications—building on constrained shells like A-Shell is slow, fragile, and easy to break. When possible, move to a desktop machine or another Python environment where wheels are available.
+
+If you absolutely must proceed:
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+python3 -m pip install maturin
+python3 -m pip install vicoa
+```
+
+Again, prefer avoiding this route; most users are better off switching environments rather than compiling locally.
+
+If the error persists even after these steps, consider switching to a desktop environment or opening a support ticket—fighting the source build usually costs more time than it saves.
+
+### EACCES: permission denied when installing with npm
+
+**Problem**: When running `npm i -g @vicoa/cli`, you get a permission error:
+```bash
+npm ERR! code EACCES
+npm ERR! syscall mkdir
+npm ERR! path /usr/local/lib/node_modules
+npm ERR! errno -13
+npm ERR! Error: EACCES: permission denied, mkdir '/usr/local/lib/node_modules'
+```
+
+This happens because your user account doesn't have write access to the global `node_modules` directory.
+
+**Solutions**:
+
+#### Option 1: Use sudo (simplest)
+```bash
+sudo npm i -g @vicoa/cli
+```
+
+#### Option 2: Fix npm permissions (recommended for developers)
+Configure npm to use a directory you own, so you don't need `sudo` for global installs:
+
+```bash
+mkdir -p ~/.npm-global
+npm config set prefix '~/.npm-global'
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc  # or ~/.zshrc
+source ~/.bashrc  # or source ~/.zshrc
+npm i -g @vicoa/cli
+```
+
+#### Option 3: Use a Node version manager
+Tools like [nvm](https://github.com/nvm-sh/nvm) or [fnm](https://github.com/Schniz/fnm) install Node into your home directory, so global installs never need `sudo`:
+
+```bash
+# Example with nvm
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source ~/.bashrc
+nvm install --lts
+npm i -g @vicoa/cli
+```
+
+### ENOTEMPTY: directory not empty when upgrading with npm
+
+**Problem**: When running `sudo npm i -g @vicoa/cli@latest`, you get:
+```bash
+npm ERR! code ENOTEMPTY
+npm ERR! syscall rename
+npm ERR! path /usr/local/lib/node_modules/@vicoa/cli
+npm ERR! dest /usr/local/lib/node_modules/@vicoa/.cli-1nAlLTYd
+npm ERR! errno -39
+npm ERR! ENOTEMPTY: directory not empty, rename '/usr/local/lib/node_modules/@vicoa/cli' -> '/usr/local/lib/node_modules/@vicoa/.cli-1nAlLTYd'
+```
+
+npm cannot rename the existing directory during the upgrade because it is not empty.
+
+**Solution**: Remove the existing installation and reinstall:
+
+```bash
+# Uninstall the current version
+sudo npm uninstall -g @vicoa/cli
+
+# Remove the leftover directory if it still exists
+sudo rm -rf /usr/local/lib/node_modules/@vicoa/cli
+
+# Reinstall the latest version
+sudo npm i -g @vicoa/cli@latest
+```
+
+### npm install fails on Mac Intel
+
+**Problem**: After running `npm i -g @vicoa/cli` on an Intel Mac, you see:
+```bash
+Platform package for darwin-x64 is not installed.
+Try reinstalling: npm install -g @vicoa/cli
+```
+
+The npm package does not yet include a pre-built binary for Intel Macs (`darwin-x64`). Use the pip installation method instead.
+
+**Solution**: Install via pip with Python 3.10+.
+
+#### Step 1: Install Python 3.12 (if not already installed)
+```bash
+brew install python@3.12
+```
+
+#### Step 2: Install Vicoa via pip
+```bash
+python3.12 -m pip install vicoa
+```
+
+#### Step 3: Verify the pip version is running
+```bash
+/usr/local/bin/vicoa --version
+```
+You should see output like `vicoa version 1.x.x`.
+
+#### Step 4: Remove the broken npm install (if present)
+If you previously installed via npm, remove it so the shell resolves to the pip version:
+```bash
+npm uninstall -g @vicoa/cli
+hash -r
+which vicoa   # should show /usr/local/bin/vicoa
+```
+
+Then run Vicoa normally:
+```bash
+vicoa
+```
+
+### GLIBC version error on Linux
+
+**Problem**: After installing with `npm i -g @vicoa/cli` or the `install.sh` script, running `vicoa` on an older Linux server fails to start with an error like:
+```bash
+[PYI-...:ERROR] Failed to load Python shared library '.../libpython3.12.so.1.0':
+/lib/x86_64-linux-gnu/libm.so.6: version `GLIBC_2.38' not found (required by .../libpython3.12.so.1.0)
+```
+
+The npm package and the `install.sh` script deliver the same **self-contained pre-built binary**. That binary is built against a recent glibc, so it cannot start on a server whose system glibc is older — for example Ubuntu 22.04 (2.35), Debian 12 (2.36), or RHEL/Rocky 8 (2.28). Check your version with:
+```bash
+ldd --version
+```
+
+**Solution**: Install via **pip** instead. The pip package runs on your own system Python, so it carries no glibc requirement of its own and works on these older servers.
+
+```bash
+pip install vicoa && vicoa
+```
+
+If you previously installed via npm, remove it so your shell resolves to the pip version:
+```bash
+npm uninstall -g @vicoa/cli
+hash -r
+which vicoa   # should now point at the pip-installed vicoa
+```
+
+The pip method needs Python 3.10 or newer. If `pip` isn't found or your Python is too old, see [Command not found: pip](#command-not-found-pip) and [Python version compatibility error](#python-version-compatibility-error) above.
+
+## Connection Issues
+
+
+### Authorization problems
+
+**Problem**: Web authorization fails or doesn't complete.
+
+**Solutions**:
+
+1. **Clear browser cache**: Clear cookies and cache for the Vicoa website
+2. **Try incognito/private mode**: Use a private browser window
+3. **Disable browser extensions**: Temporarily disable ad blockers and other extensions
+4. **Check popup blockers**: Ensure popups are allowed for the Vicoa domain
+
+
+You can also try re-authenticating with Vicoa:
+
+1. Re-authenticate with Vicoa:
+```bash
+vicoa --reauth
+```
+
+2. Verify your API key:
+```bash
+cat ~/.vicoa/credentials.json
+```
+
+### Machine shows offline after signing in to another server
+
+**Problem**: A machine that was working shows up as offline in the dashboard,
+and nothing on that machine reports an error. It usually follows a
+`vicoa --auth` run against a different Vicoa server — a self-hosted stack, a
+staging deployment — on the same machine.
+
+`~/.vicoa/credentials.json` stores **one** API key for all servers, so signing
+in against a second deployment replaces the key the first one was using. The
+first deployment's daemon keeps running and keeps presenting the replaced key,
+gets a 401 back, and exits rather than retrying. The desktop app reads the same
+file, so a CLI sign-in can repoint it too.
+
+**Check it**: `~/.vicoa/daemon_state.json` has one entry per server. The entry
+that stopped working carries an `auth_invalid_at` timestamp, and its
+`api_key_fingerprint` no longer matches the key now stored in
+`credentials.json`.
+
+```bash
+cat ~/.vicoa/daemon_state.json
+```
+
+**Solution**: re-authenticate against the deployment you want this machine
+connected to.
+
+```bash
+vicoa --auth
+```
+
+To use both from one machine, leave the stored credential alone and pass the
+other deployment's key explicitly — this never writes to
+`credentials.json`:
+
+```bash
+vicoa daemon --base-url https://your-server.example.com --api-key <key>
+```
+
+### Failed to connect: backoff_max error
+
+**Problem**: When trying to start a session with `vicoa`, you see:
+```bash
+Error: Failed to connect to Vicoa: Retry.__init__() got an unexpected keyword argument 'backoff_max'
+```
+
+This error occurs due to an incompatible version of the `urllib3` library.
+
+**Solution**: Upgrade urllib3 to version 2.0.0:
+```bash
+pip install urllib3==2.0.0
+```
+
+Then try running Vicoa again:
+```bash
+vicoa
+```
+
+## Runtime Issues
+
+### Vicoa stops responding
+
+**Problem**: The Vicoa CLI becomes unresponsive or freezes.
+
+**Solutions**:
+
+1. **Restart Vicoa**: Press `Ctrl+C` to stop, then run `vicoa` again
+2. **Check system resources**: Ensure you have enough RAM and CPU available
+3. **Update Vicoa**: Run `npm i -g @vicoa/cli@latest`
+
+### Connection lost: Response ended prematurely
+
+**Problem**: When starting the Vicoa daemon, you see:
+```bash
+[WARNING] Connection lost: Response ended prematurely
+```
+
+**Solution**: Stop the process and restart it:
+
+1. Press `Ctrl+C` to stop the daemon
+2. Run the command again
+
+### Vicoa CLI hangs on startup
+
+**Problem**: Running `vicoa` (or `vicoa codex`, `vicoa opencode`, etc.) hangs at launch — the terminal appears to freeze before the agent ever starts. You may have last seen the CLI working on a previous machine or before changing your Vicoa account.
+
+This is usually caused by stale credentials in `~/.vicoa/credentials.json`: the cached CLI key references an account or session that the backend no longer recognizes, so the startup sync calls never complete.
+
+**Solution**: Re-authenticate the CLI to mint a fresh key.
+
+```bash
+vicoa --reauth
+```
+
+This opens your browser, signs you back in via Vicoa, and overwrites `~/.vicoa/credentials.json` with a working key. Then run `vicoa` again as normal.
+
+### Permission request and options are not shown
+
+**Problem**: When using Claude Code, permission requests and options are not displayed in the CLI.
+
+This could be a version compatibility issue between Claude Code and Vicoa.
+
+**Solution**: Check the [version compatibility guide](/docs/version-compatibility) to ensure you're using compatible versions.
+
+If you're using Claude Code 2.1.x, upgrade Vicoa to version 1.3.x or later:
+
+```bash
+npm i -g @vicoa/cli@latest
+```
+
+After upgrading, restart Vicoa:
+```bash
+vicoa
+```
+
+## Mobile App Issues
+
+### Agent Sessions Not Syncing
+
+**Problem**: The app doesn't show your sessions.
+
+**Solutions**:
+
+1. **Force refresh**: Pull down on the sessions list to refresh
+2. **Check account**: Ensure you're logged into the same account
+3. **Restart app**: Close and reopen the Vicoa app
+4. **Check CLI connection**: Verify your CLI is still connected and try sending messages
+
+
+### Messages Not Syncing
+
+If messages aren't appearing in the mobile app:
+
+1. Check your internet connection
+2. Go back to the home page and open the session again
+
+
+## Getting Help
+
+If you're still experiencing issues:
+
+1. Raise issues on GitHub: https://github.com/vicoa-ai/vicoa/issues
+2. Contact support at hi@vicoa.ai
+3. Include details: When reporting issues, include:
+   - Your operating system and version
+   - Python version (`python --version`)
+   - Vicoa version (`vicoa --version`)
+   - Full error messages
+   - Steps to reproduce the issue
+
+## Common Commands Reference
+
+Here are the most commonly used commands for troubleshooting:
+
+```bash
+# Update to latest version
+npm i -g @vicoa/cli@latest
+
+# Check installed version
+vicoa --version
+
+# Uninstall
+npm uninstall -g @vicoa/cli
+```
+
+For the optional pip-based installation path:
+
+```bash
+# Check Python version
+python --version
+python3 --version
+
+# Check pip version
+pip --version
+pip3 --version
+
+# Check Vicoa installation
+pip show vicoa
+
+# Upgrade Vicoa
+pip install --upgrade vicoa
+
+# Install with user permissions
+pip install --user vicoa
+
+# Install in virtual environment
+python3 -m venv vicoa-env
+source vicoa-env/bin/activate
+pip install vicoa
+```

@@ -1,0 +1,6 @@
+# Placeholder so this directory exists in git.
+#
+# The Dockerfile copies `OVERLAY_SRC` (default: this directory) to /app/overlay-src
+# and puts it on PYTHONPATH. In the open/self-host build nothing lands there, so
+# the optional overlay import in backend/main.py (`find_spec("cloud")`) stays None.
+# Vicoa's hosted build overrides OVERLAY_SRC with its closed `cloud` source root.

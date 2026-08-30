@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a reproducible problem in the Vicoa client or daemon.
+title: '[Bug]: '
+type: Bug
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report security vulnerabilities here, see [SECURITY.md](../../SECURITY.md).
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Desktop - macOS
+        - Desktop - Windows
+        - Desktop - Linux
+        - Web
+        - Backend / self-host
+        - CLI
+        - Mobile - iOS
+        - Mobile - Android
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: e.g. v0.14.2
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what happened, and what you expected instead.
+        If an agent helped you investigate, paste the raw evidence, not just its diagnosis.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Relevant log output or screenshots (redact any secrets).
+    validations:
+      required: false

@@ -1,0 +1,23 @@
+Vicoa
+Copyright (C) 2026 Vicoa
+
+This product includes software developed by Vicoa.
+
+Project home: https://github.com/vicoa-ai/vicoa
+
+Vicoa's open-source components are licensed under the GNU Affero General
+Public License, version 3.0 (AGPLv3); see the LICENSE file for the full text.
+
+-----------------------------------------------------------------------
+Third-party components
+
+This product bundles a fork of the OpenAI Codex CLI, located at
+backend/src/integrations/cli_wrappers/codex (a git submodule of
+https://github.com/vicoa-ai/codex) and used only for the backend's
+PyInstaller binary build. It is licensed under the Apache License,
+Version 2.0; see that component's own LICENSE (and NOTICE, if present)
+for the full text.
+-----------------------------------------------------------------------
+
+This NOTICE file is provided for attribution purposes only and does not
+modify the license terms.

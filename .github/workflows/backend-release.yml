@@ -1,0 +1,413 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      publish_testpypi:
+        description: "Publish to Test PyPI (manual run)"
+        type: boolean
+        default: false
+        required: false
+      publish_pypi:
+        description: "Publish to PyPI (manual run)"
+        type: boolean
+        default: false
+        required: false
+      release_run_id:
+        description: |
+          Reuse codex wheels from a previous successful Release run instead
+          of rebuilding from source. Set this to the run id (e.g. 26685252850)
+          when re-publishing a tag whose original Release attempt failed
+          after codex_wheels succeeded. Leave blank for a normal build.
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  # Needed by dawidd6/action-download-artifact when the
+  # `release_run_id` input is used to reuse codex wheels from a
+  # previous Release run (the GitHub REST endpoint for listing /
+  # downloading another run's artifacts requires the `actions: read`
+  # scope). Same reason build-binaries.yml grants it.
+  actions: read
+
+# Monorepo: all run steps execute inside backend/. Note that
+# `uses:` action inputs (cache/artifact `path:`, `hashFiles()`) are
+# ALWAYS workspace-relative and are prefixed with backend/ below.
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  codex_wheels:
+    # Fork guard: the release/publish jobs run only in the canonical repo. A
+    # fork that enables Actions and syncs `v*` tags would otherwise fire this
+    # and fail (no secrets, no publish rights). Upstream is always vicoa-ai/vicoa.
+    if: github.repository == 'vicoa-ai/vicoa'
+    strategy:
+      matrix:
+        include:
+          # macos-15 ships Xcode 16 with a libc++ that handles cxx-generated
+          # `rust::Slice<…>::iterator` correctly. macos-14 (Xcode 15.4, SDK
+          # 14.5) fails the C++20 `contiguous_range` concept check on
+          # webrtc-sys (codex-realtime-webrtc → libwebrtc → webrtc-sys) and
+          # blocks the whole codex wheel build with
+          # `implicit instantiation of undefined template
+          # 'std::__pointer_traits_element_type<rust::Slice<…>::iterator>'`.
+          # The codex bump 0.104.0 → 0.134.0 brought in a webrtc-sys revision
+          # that exercises that path; the previous codex baseline didn't.
+          - os: macos-15
+            arch_tag: darwin-arm64
+            bin_ext: ''
+          # darwin-x64 cross-compiles on the same macos-15 ARM runner:
+          # cibuildwheel handles the Python cross-arch via CIBW_ARCHS_MACOS,
+          # and cargo cross-targets via CARGO_BUILD_TARGET (set in
+          # CIBW_ENVIRONMENT below). GitHub retired the macos-13 Intel runner
+          # so this is the only supported path; the Rosetta runtime check is
+          # the gap a real Intel host would close.
+          - os: macos-15
+            arch_tag: darwin-x64
+            bin_ext: ''
+          - os: ubuntu-latest
+            arch_tag: linux-x64
+            bin_ext: ''
+          # - os: windows-latest
+          #   arch_tag: win-x64
+          #   bin_ext: '.exe'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Configure Git for submodules
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.GH_SUBMODULE_PAT }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Initialize and update submodules
+        # cwd is backend/, so the pathspec resolves to the codex
+        # submodule only — without it, `git submodule update` would init
+        # every root submodule (seomachine, app-business-skills, opencode-vicoa).
+        run: |
+          git submodule update --init --recursive src/integrations/cli_wrappers/codex
+
+      - name: Detect Codex changes
+        id: detect
+        shell: bash
+        run: |
+          set -e
+          # --match 'v*' keeps this off the desktop-v* tags that now share the
+          # monorepo tag namespace.
+          LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || echo "")
+          # Compare the codex SUBMODULE COMMIT, not a path diff. Tags cut before
+          # the 2026-07-23 monorepo fold carry codex at the old repo-root path,
+          # so a path diff across the fold boundary reports "changed" even when
+          # the pinned commit is byte-identical — which would force a needless
+          # full 3-platform Rust rebuild. ls-tree needs --full-tree because cwd
+          # is backend/ and its pathspecs are otherwise cwd-relative.
+          CODEX_NEW=backend/src/integrations/cli_wrappers/codex
+          CODEX_OLD=src/integrations/cli_wrappers/codex
+          if [ -n "$LAST_TAG" ]; then
+            PREV=$(git ls-tree --full-tree "$LAST_TAG" "$CODEX_NEW" | awk '{print $3}')
+            if [ -z "$PREV" ]; then
+              PREV=$(git ls-tree --full-tree "$LAST_TAG" "$CODEX_OLD" | awk '{print $3}')
+            fi
+            CURR=$(git ls-tree --full-tree HEAD "$CODEX_NEW" | awk '{print $3}')
+            echo "codex pin: $LAST_TAG=${PREV:-<none>} HEAD=${CURR:-<none>}"
+            if [ -n "$PREV" ] && [ -n "$CURR" ] && [ "$PREV" = "$CURR" ]; then
+              echo "changed=false" >> $GITHUB_OUTPUT
+            else
+              echo "changed=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            # No previous tag; treat as changed
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+          echo "last_tag=$LAST_TAG" >> $GITHUB_OUTPUT
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache Cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            backend/src/integrations/cli_wrappers/codex/codex-rs/target
+          key: cargo-${{ matrix.arch_tag }}-${{ hashFiles('backend/src/integrations/cli_wrappers/codex/codex-rs/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ matrix.arch_tag }}-
+
+      - name: Install cibuildwheel
+        run: |
+          python -m pip install --upgrade pip
+          pip install cibuildwheel
+
+
+      - name: Set MACOSX_DEPLOYMENT_TARGET for Intel wheels
+        if: matrix.arch_tag == 'darwin-x64'
+        run: echo "MACOSX_DEPLOYMENT_TARGET=10.12" >> $GITHUB_ENV
+
+      - name: Install x86_64-apple-darwin Rust target (darwin-x64 cross-build)
+        if: matrix.arch_tag == 'darwin-x64'
+        run: |
+          # Pin to the channel codex-rs requires; cibw_before_build.sh also
+          # installs it, but adding the cross target is cheap and ensures it's
+          # present before cibuildwheel forks workers.
+          TOOLCHAIN=$(sed -n 's/^channel = "\(.*\)"/\1/p' src/integrations/cli_wrappers/codex/codex-rs/rust-toolchain.toml | head -n1)
+          rustup toolchain install "${TOOLCHAIN}" --profile minimal
+          rustup target add x86_64-apple-darwin --toolchain "${TOOLCHAIN}"
+
+      - name: Determine Codex build version from pyproject.toml
+        id: codex_version
+        run: |
+          VERSION=$(python - <<'PY'
+          import pathlib
+          import tomllib
+
+          data = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          tool = data.get("tool", {})
+          vicoa = tool.get("vicoa", {}) if isinstance(tool, dict) else {}
+          codex_version = vicoa.get("codex_build_version", "") if isinstance(vicoa, dict) else ""
+          if codex_version:
+              print(str(codex_version).strip())
+          else:
+              print(data.get("project", {}).get("version", "").strip())
+          PY
+          )
+          if [ -z "$VERSION" ]; then
+            echo "Failed to read tool.vicoa.codex_build_version or project.version from pyproject.toml" >&2
+            exit 1
+          fi
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Manual-dispatch escape hatch: when `release_run_id` is provided,
+      # reuse the codex wheels produced by that earlier Release run instead
+      # of rebuilding from source. Mirrors build-binaries.yml's
+      # release_run_id input. The downloaded artifact lands in `wheelhouse/`
+      # under the same filename layout cibuildwheel would have produced, so
+      # the upload-artifact step at the end picks it up unchanged. The PyPI
+      # reuse path below (linux-x64 only) targets the previously-published
+      # version on PyPI and is unrelated to this — that one handles the
+      # incremental-release case where codex hasn't changed; this one
+      # handles re-publishing the same release after a partial failure.
+      - name: Reuse wheels from prior Release run
+        id: reuse_release_run
+        if: github.event_name == 'workflow_dispatch' && inputs.release_run_id != ''
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          run_id: ${{ inputs.release_run_id }}
+          name: wheels-${{ matrix.arch_tag }}
+          path: backend/wheelhouse
+
+      - name: Reuse previous Linux wheels from PyPI (codex unchanged, Linux fast path)
+        id: pypi_reuse
+        # Linux-only fast path: download the previous version's manylinux wheel
+        # straight from PyPI, rebrand it with the new version, and drop it into
+        # wheelhouse/ so cibuildwheel is skipped entirely. Only viable on Linux
+        # because PyPI wheels are Python wheels we can repack; the darwin/
+        # codex-only npm path below covers macOS and is also the fallback when
+        # this step fails (e.g. PyPI publish gap).
+        if: matrix.arch_tag == 'linux-x64' && steps.detect.outputs.changed == 'false' && steps.detect.outputs.last_tag != '' && steps.reuse_release_run.outcome != 'success'
+        run: |
+          PREV_VERSION="${{ steps.detect.outputs.last_tag }}"
+          PREV_VERSION="${PREV_VERSION#v}"
+          NEW_VERSION="${{ github.ref_name }}"
+          NEW_VERSION="${NEW_VERSION#v}"
+          mkdir -p wheelhouse
+          PREV_VERSION="$PREV_VERSION" NEW_VERSION="$NEW_VERSION" python scripts/fetch_linux_wheels.py && \
+            echo "reused=true" >> $GITHUB_OUTPUT || \
+            { echo "reused=false" >> $GITHUB_OUTPUT; rm -f wheelhouse/*.whl; }
+
+      - name: Pre-populate Codex binary from previous npm release (codex unchanged)
+        # When codex hasn't changed, pull the codex binary out of the previous
+        # platform npm package instead of rebuilding from Rust source. Runs for
+        # darwin always, and for Linux only when the PyPI fast path above failed
+        # (e.g. PyPI publish gap). cibw_before_build.sh detects the pre-populated
+        # binary and exits early. Falls through silently on any failure so the
+        # Rust build is the backstop.
+        if: steps.detect.outputs.changed == 'false' && steps.detect.outputs.last_tag != '' && steps.reuse_release_run.outcome != 'success' && steps.pypi_reuse.outputs.reused != 'true'
+        run: |
+          python - <<'PY'
+          import os, subprocess, sys, tarfile, pathlib, stat, shutil, tempfile
+
+          prev_version = "${{ steps.detect.outputs.last_tag }}".lstrip("v")
+          arch_tag = "${{ matrix.arch_tag }}"
+          pkg = f"@vicoa/cli@{prev_version}-{arch_tag}"
+
+          tmpdir = tempfile.mkdtemp()
+          try:
+              result = subprocess.run(
+                  ["npm", "pack", pkg, "--pack-destination", tmpdir],
+                  capture_output=True, text=True,
+              )
+              if result.returncode != 0:
+                  print(f"[npm-reuse] {pkg} not available: {result.stderr.strip()}")
+                  print("[npm-reuse] Rust build will run")
+                  sys.exit(0)
+
+              tarballs = list(pathlib.Path(tmpdir).glob("*.tgz"))
+              if not tarballs:
+                  print("[npm-reuse] npm pack succeeded but no tarball found; Rust build will run")
+                  sys.exit(0)
+              tarball = tarballs[0]
+              print(f"[npm-reuse] Downloaded {pkg}")
+
+              codex_prefix = f"package/bin/_internal/vicoa/_bin/codex/{arch_tag}/"
+              dest_dir = pathlib.Path(f"src/vicoa/_bin/codex/{arch_tag}")
+              dest_dir.mkdir(parents=True, exist_ok=True)
+
+              extracted = 0
+              with tarfile.open(tarball) as tf:
+                  for member in tf.getmembers():
+                      if member.name.startswith(codex_prefix) and not member.isdir():
+                          fname = member.name[len(codex_prefix):]
+                          dest = dest_dir / fname
+                          f = tf.extractfile(member)
+                          if f:
+                              dest.write_bytes(f.read())
+                              dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+                              print(f"[npm-reuse] Extracted {dest}")
+                              extracted += 1
+
+              if extracted == 0:
+                  print("[npm-reuse] No codex files found in package; Rust build will run")
+              else:
+                  print(f"[npm-reuse] Pre-populated {extracted} file(s) — Rust build will be skipped")
+          finally:
+              shutil.rmtree(tmpdir, ignore_errors=True)
+          PY
+
+      - name: Build wheels with cibuildwheel (manylinux on Linux)
+        # Skip when wheelhouse/ is already populated:
+        # - reuse_release_run: manual-dispatch escape hatch (prior Release run)
+        # - pypi_reuse: Linux fast path (rebranded PyPI wheel, codex unchanged)
+        # The npm pre-population step above runs inside cibuildwheel via
+        # cibw_before_build.sh's early-exit, so it doesn't skip cibw here.
+        if: steps.reuse_release_run.outcome != 'success' && steps.pypi_reuse.outputs.reused != 'true'
+        env:
+          # Build ONE Python version per arch. The wheel bundles only the
+          # standalone codex binary (no CPython C-extension), and setup.py
+          # retags it py3-none-<platform>, so a single build is valid for all
+          # Python 3.x. Building cp310–cp313 would emit four identically-named
+          # py3-none wheels that overwrite each other — wasted CI, no benefit.
+          CIBW_BUILD: "cp312-*"
+          CIBW_BEFORE_BUILD: "bash scripts/cibw_before_build.sh"
+          CIBW_SKIP: "pp* *-win32 *-manylinux_i686 *-musllinux_*"
+          # darwin-x64 cross-build on the arm64 macos-15 runner:
+          # CIBW_ARCHS_MACOS forces cibuildwheel to produce x86_64 Python
+          # wheels; ARCH overrides uname -m inside cibw_before_build.sh so
+          # ARCH_TAG resolves to darwin-x64 (binary destination); and
+          # CARGO_BUILD_TARGET drives cargo's --target so codex-cli
+          # cross-compiles for Intel.
+          CIBW_ARCHS_MACOS: ${{ matrix.arch_tag == 'darwin-x64' && 'x86_64' || 'auto' }}
+          # LD_LIBRARY_PATH (Linux only): when the npm pre-populate step above
+          # placed the codex binary + its hashed-name libs (libssl-*.so.*,
+          # libcrypto-*.so.*) into src/vicoa/_bin/codex/linux-x64/, auditwheel
+          # runs inside the manylinux container during repair and needs to
+          # resolve codex's DT_NEEDED. The libs aren't on the system, so we
+          # point auditwheel's search path at the pre-populated dir. From
+          # there auditwheel re-bundles them into vicoa.libs/, matching the
+          # binary's existing RPATH ($ORIGIN/../../../../vicoa.libs). cibw
+          # mounts the project at /project inside the container.
+          CIBW_ENVIRONMENT: "CODEX_CHANGED=${{ steps.detect.outputs.changed }} CODEX_PREV_TAG=${{ steps.detect.outputs.last_tag }} CODEX_BUILD_VERSION=${{ steps.codex_version.outputs.value }} ${{ matrix.arch_tag == 'darwin-x64' && 'ARCH=x86_64 CARGO_BUILD_TARGET=x86_64-apple-darwin' || '' }} ${{ matrix.arch_tag == 'linux-x64' && 'LD_LIBRARY_PATH=/project/src/vicoa/_bin/codex/linux-x64' || '' }}"
+        run: |
+          cibuildwheel --output-dir wheelhouse
+
+      - name: Upload codex wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.arch_tag }}
+          path: backend/wheelhouse/*.whl
+          retention-days: 1
+
+  release:
+    needs: [codex_wheels]
+    if: github.repository == 'vicoa-ai/vicoa'  # fork guard (see codex_wheels)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build sdist only
+        run: python -m build --sdist
+
+      - name: Check sdist
+        run: twine check dist/*
+
+      - name: Extract version (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download codex wheel artifacts (if any)
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-darwin-x64
+          path: backend/dist
+        continue-on-error: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-darwin-arm64
+          path: backend/dist
+        continue-on-error: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-linux-x64
+          path: backend/dist
+        continue-on-error: true
+      # Windows wheel disabled for now
+
+      # NOTE: the CLI intentionally does NOT create a GitHub release. The daemon
+      # is distributed via npm (@vicoa/cli) + PyPI (vicoa); the desktop build
+      # pulls the frozen daemon from npm (apps/desktop/scripts/stage-daemon.mjs),
+      # and the runtime download does too (apps/desktop/src/cli-bootstrap.ts). The
+      # only GitHub release page is the desktop one (desktop-release.yml). A `v*`
+      # tag therefore publishes to npm + PyPI only — see also the removed
+      # `create-release` release step in backend-build-binaries.yml.
+
+      # PyPI publish is non-blocking: npm is the primary distribution channel
+      # (see build-binaries.yml). Codex wheels routinely exceed PyPI's 100 MB
+      # per-file project limit, and we don't want a PyPI 400 to cascade into
+      # skipping the Build Binaries workflow (which triggers on this run's
+      # success and ships the npm package).
+      # Test PyPI publish disabled: the test-pypi 'vicoa' project has the same
+      # 10 GB per-project storage cap and is effectively full, so this step just
+      # 400s and adds noise. Re-enable if you need a staging upload; you'll
+      # likely have to prune old test-pypi releases first.
+      # - name: Publish to Test PyPI
+      #   if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_testpypi == 'true')
+      #   continue-on-error: true
+      #   env:
+      #     TWINE_USERNAME: __token__
+      #     TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
+      #   run: |
+      #     twine upload --verbose --repository testpypi dist/*
+
+      - name: Publish to PyPI
+        if: (startsWith(github.ref, 'refs/tags/') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_pypi == 'true')
+        continue-on-error: true
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          twine upload --verbose dist/*

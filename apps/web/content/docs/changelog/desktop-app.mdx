@@ -1,0 +1,191 @@
+---
+title: Desktop App
+description: Release notes for the Vicoa desktop app (macOS, Windows) — new features, agent support, and fixes shipped in each release.
+---
+
+# Desktop App
+
+### v0.1.18
+24 August, 2026
+- Bundle Vicoa CLI daemon [v1.7.12](/docs/changelog/vicoa-cli#v1712)
+- Show why a session failed to start or went silent directly in the composer, instead of a generic "not accepting input"
+- Esc unfocuses the chat composer instead of interrupting a running turn
+- Fix the message bounce when sending a message mid-turn
+- Fix task-list markdown rendering in chat so long items no longer shatter into columns
+- Auto-focus the terminal on open, tab-switch, and cycle
+
+### v0.1.17
+20 August, 2026
+- Bundle Vicoa CLI daemon [v1.7.11](/docs/changelog/vicoa-cli#v1711)
+- Add a Skills tab to view, install (from a git URL), and uninstall per-machine agent skills, with per-agent tabs, search, and a skill detail dialog
+- Auto-continue rate-limited sessions once their limit window resets
+
+### v0.1.16
+18 August, 2026
+- Bundle Vicoa CLI daemon [v1.7.10](/docs/changelog/vicoa-cli#v1710)
+- Add a file finder (⌘P) and more session keyboard shortcuts
+- Add a HEAD-vs-staged baseline toggle to the file diff view
+- Pair changed diff lines and highlight intra-line word changes
+- Move Refresh into the Changes toolbar and collapse extra actions into a ⋯ menu
+- Persist Files/Changes panel view toggles as preferences
+- Show the absolute reset time in the usage indicator
+- Show repo-local skills in new-session and mention menus
+- Kill terminals when a session is closed
+- Fix the side-by-side diff scrollbar reverting to the browser default and match CodeMirror scrollbars to the site style
+- Use ⌥` for the peek-chat toggle
+
+### v0.1.15
+13 August, 2026
+- Bundle Vicoa CLI daemon [v1.7.9](/docs/changelog/vicoa-cli#v179)
+- Add Providers and Machines settings tabs, an onboarding setup checklist, and an "Install Vicoa CLI on launch" step
+- Stage, unstage, and commit individual files in the Changes panel
+- Jump to the first change and step through changes with next/prev buttons in the diff viewer
+- Add a split terminal dock to the Files/Changes panel
+- Add fuzzy file search in the file tree and improve file content search
+- Remember file scroll position per tab in the Files panel
+- Refine slash commands and skills and `@`-file mentions in automations
+- Fix the terminal button being blocked in expanded view
+
+### v0.1.14
+10 August, 2026
+- Bundle Vicoa CLI daemon [v1.7.8](/docs/changelog/vicoa-cli#v178)
+- Add an "Install vicoa command" action to set up the CLI from the desktop app
+- Open a terminal tab with ⌘T even when the panel is closed
+- Add in-file find and fuzzy file search to the Files panel
+- Add minutely and daily-window scheduling to Automations
+- Silence phone push while you're actively using the desktop app
+- Polish the edit-file tool-use display for multi-file edits
+- Fix side-by-side diff scrolling in the Files panel
+
+### v0.1.13
+9 August, 2026
+- Bundle Vicoa CLI daemon [v1.7.7](/docs/changelog/vicoa-cli#v177)
+- Edit git diffs and files in the Files panel, with file tabs
+- Add find-in-conversation search to the agent chat
+- Add a Files-panel focus mode with a chat peek
+- Add on-demand daemon download and terminal installers
+- Link tasks to their sessions in Tasks and search
+- Show Ctrl+Tab panel-tab shortcuts in settings
+- Refresh the Vicoa logo
+
+### v0.1.12
+6 August, 2026
+- Bundle Vicoa CLI daemon [v1.7.6](/docs/changelog/vicoa-cli#v176)
+- Add ⌘K workspace search with a command palette
+- Improve terminals: focus on open and tab click, close the active tab with ⌘W, and stop the lease reaper from killing live remote terminals
+- Add drag-and-drop to the new-session composer and fix a stuck overlay when leaving the file explorer
+- Add skeleton loaders and caching to the Tasks and Automations pages
+- Fix a chat-input submit issue and the session rename dialog
+- Fix Windows desktop panel and terminal issues
+
+### v0.1.11
+2 August, 2026
+- Bundle Vicoa CLI daemon [v1.7.4](/docs/changelog/vicoa-cli#v174)
+- Enable infinite scroll in the sidebar session list
+- Improve Automations: keep Run now on-page and link its run to the spawned session; gate worktrees on git repos and order machines online-first
+- Make page headers draggable across the dashboard and fix window-controls spacing
+
+### v0.1.10
+1 August, 2026
+- Bundle Vicoa CLI daemon [v1.7.4](/docs/changelog/vicoa-cli#v174)
+- Support Automations: schedule recurring agent runs with a two-pane editor, frequency controls, a status toggle, and run history
+- Retain the machine, directory, worktree, and task selections across visits to the new-session page
+- Make keyboard shortcuts OS-aware (⌘ on macOS, Ctrl on Windows) and add ⌘/Ctrl+L to focus the new-session input
+- Improve sidebar session loading
+- Fix the Windows renderer crash, Windows initial version is ready for testing
+
+### v0.1.9
+31 July, 2026
+- Bundle Vicoa CLI daemon [v1.7.3](/docs/changelog/vicoa-cli#v173)
+- Add icons and tighter, dimmed styling to the agent tool-use display
+- Add a retrieve button to re-fetch a stalled reply
+- Allow deleting any git worktree, not just Vicoa-managed ones
+
+### v0.1.8
+29 July, 2026
+
+New Features
+- Bundle Vicoa CLI daemon [v1.7.2](/docs/changelog/vicoa-cli#v172)
+- Edit files in place in the Files panel, not just preview them
+- Support add folder and file drag-and-drop to the chat
+
+Improvement
+- Make Ask User Question text selectable; improve markdown-preview and textarea scrollbars to the sidebar style
+- Cut typing lag in remote terminals and reap orphaned terminals left behind after a disconnect
+
+Bug Fix
+- Fix the Windows blank/white screen and clearer first-launch error reporting
+
+### v0.1.7
+27 July, 2026
+- Bundle Vicoa CLI daemon [v1.7.1](/docs/changelog/vicoa-cli#v171)
+- Add a custom Windows title bar with frameless chrome
+- Fix the Windows blank main page and polish the onboarding and paywall screens
+- Keep intro and welcome content centered at tall window heights
+- Add task ordering to the Display menu
+
+### v0.1.6
+26 July, 2026
+- Bundle Vicoa CLI daemon [v1.7.1](/docs/changelog/vicoa-cli#v171)
+- Open terminals on remote machines over the relay, and enable web terminals
+- Restore open terminals and file tabs after a restart; close them when a session is archived or deleted
+- Enhance Tasks: parent/sub-task linking, a sub-task picker when starting a session, local view tabs, Display options, and drag-and-drop polish
+- Check for updates on focus, resume, and reload instead of only every 6 hours
+
+### v0.1.5
+24 July, 2026
+- Bundle Vicoa CLI daemon [v1.6.12](/docs/changelog/vicoa-cli#v1612)
+- Add a Tasks tab: board and list views, a create/edit dialog, drag-and-drop reordering, labels, sub-tasks, and a settings dialog with date and emoji pickers and folder links
+- Start a session from a task with a new-session Task chip and prompt seeding
+- Read `@`-mentions from the live daemon file index
+
+### v0.1.4
+23 July, 2026
+- Bundle Vicoa CLI daemon [v1.6.11](/docs/changelog/vicoa-cli#v1611)
+- Group sidebar sessions by worktree (selection): git-driven grouping, delete flow, new-session preselect
+- Turn the send button into Stop while a turn runs; show the Stop press immediately in the transcript
+- Clear the stopped dot on resume in both sidebars
+- Hide the worktree chip when the folder isn't a git repo
+- Fix several desktop issues: machine-difference detection, intro image sizing
+
+### v0.1.3
+21 July, 2026
+- Bundle Vicoa CLI daemon [v1.6.8](/docs/changelog/vicoa-cli#v168)
+- Support resuming a stopped session from the actions menu
+- Show when a session's agent is no longer running
+- Support image attachments: attach to the first message, image-only bubbles, upload and render in chat
+- Expand submodules into their working-tree changes in the Changes panel
+- Add an "Unread" action to mark a reviewed session awaiting-input again
+
+### v0.1.2
+19 July, 2026
+- Bundle Vicoa CLI daemon [v1.6.7](/docs/changelog/vicoa-cli#v167)
+- Add commit history to the Changes tab: commit graph, file list, diff view, resizable pane
+- Show context-window and rate-limit usage
+- Stage queued messages in a bar above the chat input, with a cancel action
+- Group sub-agent activity under a collapsible header
+- Force process exit after an update install so the app actually relaunches
+- Move the update notice into a sidebar callout
+
+### v0.1.1
+18 July, 2026
+- Desktop sign-in
+- New-session page with config chips (agent, model, effort, permission mode), project picker, git worktree support, and draft persistence
+- Files/Changes right panel: directory tree drawer, markdown preview, syntax-colored file icons, and a git Changes tab
+- Multi-terminal tabs with keep-alive sessions and global shortcuts (⌘T, ⌘J, ⌘⇧F, ⌘L, ⌘,)
+- Native notifications: session-status banners, dock badge, one-time System Settings enablement nudge
+- Settings shell with rebindable shortcuts and notification mode
+- Sidebar: group-by/filter menus, per-project new session, right-click session actions
+- Collapsible tool-use rendering and a redesigned Ask User Question panel
+
+### v0.1.0
+18 July, 2026
+- Initial release: tray icon, macOS titlebar, and auto-update pipeline (arm64 + Intel x64)
+
+
+## Related
+
+- [Mobile app changelog](/docs/changelog/mobile-app) — releases for iOS and Android
+- [Vicoa CLI changelog](/docs/changelog/vicoa-cli) — releases for the CLI and daemon
+- [Updates](/updates) — feature announcements with screenshots
+- [Version Compatibility](/docs/version-compatibility) — which CLI and app versions pair together

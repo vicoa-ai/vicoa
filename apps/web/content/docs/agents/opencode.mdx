@@ -1,0 +1,98 @@
+---
+title: OpenCode
+description: Learn how to use OpenCode with Vicoa for vibe coding anywhere from desktop, mobile, and web
+---
+
+# OpenCode
+
+OpenCode is an open source AI coding agent that supports multiple AI providers including OpenAI, Anthropic, and Google.
+
+The Vicoa integration with OpenCode is **open source** and available at [github.com/vicoa-ai/opencode-vicoa](https://github.com/vicoa-ai/opencode-vicoa).
+
+## Installation
+
+### Via Vicoa CLI (Recommended)
+
+The easiest way to get started is through the Vicoa CLI, which automatically installs and configures the OpenCode plugin:
+
+```bash
+# Install Vicoa CLI, if you haven't done so
+npm i -g @vicoa/cli
+
+# Launch OpenCode with Vicoa integration
+vicoa opencode
+```
+
+After authentication via the web portal, you're ready to use OpenCode from anywhere.
+
+### Manual Installation
+
+If you prefer manual setup, add the plugin to your OpenCode config (`~/.config/opencode/config.json`):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["opencode-vicoa"]
+}
+```
+
+Then authenticate with Vicoa CLI or set your API key manually:
+
+```bash
+export VICOA_API_KEY="your-vicoa-api-key"
+```
+
+## Usage
+
+### Starting a Session
+
+Once installed, you can launch OpenCode in two ways:
+
+**Option 1: Direct OpenCode command**
+```bash
+opencode
+```
+OpenCode will automatically sync with Vicoa when the plugin is installed.
+
+**Option 2: Via Vicoa CLI**
+```bash
+vicoa opencode
+```
+This additionally prepares project files for fuzzy search on Vicoa mobile and web apps.
+
+### Using OpenCode for a Single Session
+
+If you want to use OpenCode temporarily without changing your default agent:
+
+```bash
+vicoa --agent opencode
+```
+
+This keeps your default agent unchanged for future sessions.
+
+### Making OpenCode Your Default Agent
+
+To make `vicoa` always launch OpenCode by default:
+
+```bash
+vicoa --set-default opencode
+```
+
+After running this command, `vicoa` will automatically launch OpenCode. You can override for a single session with `vicoa --agent claude` or `vicoa --agent codex`.
+
+### Upgrading the Plugin
+
+Keep the OpenCode plugin up to date with:
+
+```bash
+vicoa opencode --upgrade
+```
+
+This clears the cached plugin so OpenCode fetches the latest version on the next run.
+
+## Related
+
+- [Agents](/docs/agents) — compare OpenCode with Claude Code and Codex
+- [Start a Remote Session](/docs/start-remote-session) — run OpenCode from the mobile app or web dashboard
+- [Using Free or Alternative Models](/docs/alternative-models) — point OpenCode at other providers
+- [Troubleshooting](/docs/troubleshooting) — fixes for install and connection problems

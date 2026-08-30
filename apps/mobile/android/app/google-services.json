@@ -1,0 +1,71 @@
+{
+  "project_info": {
+    "project_number": "780704364741",
+    "project_id": "vicoa-ivq0oy",
+    "storage_bucket": "vicoa-ivq0oy.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:780704364741:android:90a470179ff68ca056d8ac",
+        "android_client_info": {
+          "package_name": "app.vicoa"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "780704364741-0efsugo1nttv7lo30nh3h8uson1lonv7.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "app.vicoa",
+            "certificate_hash": "15eac4cafe472469f37c51f18d09c87eab9f345a"
+          }
+        },
+        {
+          "client_id": "780704364741-amuqhm16obnqagpfnk80aq19199b9skq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "app.vicoa",
+            "certificate_hash": "711955094a83ab32c61f3bff50bd42a25a46a7b7"
+          }
+        },
+        {
+          "client_id": "780704364741-ip7oqflj7rg1mdoe9l1b2tkgfchpt34n.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "app.vicoa",
+            "certificate_hash": "8b934f882e17b35d1fcd24aa994a59ae545feba2"
+          }
+        },
+        {
+          "client_id": "780704364741-evit6ouabplm9nrne6t2e33v2uhf2hah.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAsZ0dXnzXz4pwLGz71GU1_Cqv06XlFWa0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "780704364741-evit6ouabplm9nrne6t2e33v2uhf2hah.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "780704364741-tircrntvs9720p2m07mnk6ved37ptql7.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "app.vicoa",
+                "app_store_id": "6751626168"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

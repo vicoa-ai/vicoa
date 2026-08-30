@@ -1,0 +1,108 @@
+[build-system]
+requires = ["setuptools>=77.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vicoa"
+version = "1.7.14"
+description = "Vicoa allows you to run a team of coding agents anywhere, on any device"
+readme = "README.md"
+requires-python = ">=3.10"
+# SPDX expression (PEP 639): the AGPLv3 text lives in the repo-root LICENSE,
+# which is outside this project dir, so it cannot be referenced as a file here.
+license = "AGPL-3.0-or-later"
+authors = [
+    {name = "Vicoa", email = "hi@vicoa.ai"}
+]
+keywords = ["vibe-coding", "claude-code", "mobile", "ai", "agents", "codex", "mcp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "requests>=2.25.0",
+    "sseclient-py>=1.7.2",
+    "urllib3>=2.0.0",
+    "aiohttp>=3.8.0",
+    "certifi>=2020.6.20",
+    "websocket-client>=1.6.0",
+    "fastmcp>=3.2.4",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    # Server-side WebSocket protocol for uvicorn (the local desktop listener's
+    # /ws endpoint); bare uvicorn ships without one.
+    "websockets>=12.0",
+    "pydantic>=2.11.5",
+    "claude-agent-sdk>=0.1.80",
+    "anthropic>=0.25.0",
+    "pathspec>=0.11.0",
+    # Cron parsing for scheduled automations (5-field cron + IANA tz).
+    "croniter>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://vicoa.ai/"
+Repository = "https://github.com/vicoa-ai/vicoa"
+Issues = "https://github.com/vicoa-ai/vicoa/issues"
+
+[project.scripts]
+vicoa = "vicoa.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["vicoa*", "protocol*", "servers.mcp*", "servers.shared*", "integrations*"]
+
+[tool.setuptools.package-data]
+vicoa = ["_bin/**"]
+
+[tool.vicoa]
+codex_build_version = "0.134.0"
+
+
+[tool.pytest.ini_options]
+# Test discovery
+testpaths = [
+    "src/backend/tests",
+    "src/servers/tests",
+    "src/integrations/headless/tests",
+    "tests",
+]
+python_files = ["test_*.py"]
+pythonpath = [".", "src"]
+
+# Markers
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+]
+
+# Asyncio support
+asyncio_mode = "auto"
+
+# Basic options
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+]
+
+[tool.coverage.run]
+source = ["src/backend", "src/servers", "src/vicoa", "src/shared", "src/protocol"]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/migrations/*",
+    "*/alembic/*",
+]
+
+[tool.coverage.report]
+skip_covered = true
+show_missing = true 
+
+[tool.ruff]
+exclude = [
+    "src/integrations/cli_wrappers/codex",
+]

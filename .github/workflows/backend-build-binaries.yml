@@ -1,0 +1,581 @@
+name: Build Binaries
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:  # Allow manual triggers
+    inputs:
+      release_run_id:
+        description: "Release workflow run ID to source wheel artifacts from"
+        required: false
+        default: ''
+      version_tag:
+        description: "Version tag to publish (e.g. v1.3.11) - required for npm publish on manual runs"
+        required: false
+        default: ''
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: write
+  id-token: write
+  actions: read  # needed to download artifacts from other workflow runs
+
+jobs:
+  # Resolve the tag/version once; all jobs read outputs from this job.
+  # No checkout here, so this job runs at the workspace root (no
+  # working-directory default — that would point at a dir that doesn't exist).
+  resolve-context:
+    # Fork guard: this build+publish pipeline runs only in the canonical repo.
+    # It fires via workflow_run after "Release" completes; a fork that enables
+    # Actions and runs its own Release would otherwise cascade into a publish
+    # attempt with absent secrets. `&&` binds tighter than `||`, so the original
+    # event condition is parenthesized. Repeated on every job below.
+    if: github.repository == 'vicoa-ai/vicoa' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ctx.outputs.version }}
+      is_tag: ${{ steps.ctx.outputs.is_tag }}
+      tag: ${{ steps.ctx.outputs.tag }}
+    steps:
+      - name: Resolve version and tag
+        id: ctx
+        run: |
+          # workflow_run: tag is in head_branch (e.g. "v1.3.12")
+          # workflow_dispatch with version_tag input: use that
+          # workflow_dispatch without input: dev build
+          TAG=""
+          if [ -n "${{ inputs.version_tag }}" ]; then
+            TAG="${{ inputs.version_tag }}"
+          elif [ -n "${{ github.event.workflow_run.head_branch }}" ]; then
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+            if [[ "$BRANCH" == v* ]]; then
+              TAG="$BRANCH"
+            fi
+          fi
+
+          if [ -n "$TAG" ]; then
+            echo "is_tag=true" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+            echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+          else
+            echo "is_tag=false" >> $GITHUB_OUTPUT
+            echo "tag=" >> $GITHUB_OUTPUT
+            echo "version=0.0.0-dev" >> $GITHUB_OUTPUT
+          fi
+
+  build-macos-arm64:
+    needs: [resolve-context]
+    if: github.repository == 'vicoa-ai/vicoa' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')  # fork guard (see resolve-context)
+    runs-on: macos-14  # M1 runner (arm64)
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Resolve Release run ID
+        id: run_id
+        run: |
+          if [ -n "${{ inputs.release_run_id }}" ]; then
+            echo "id=${{ inputs.release_run_id }}" >> $GITHUB_OUTPUT
+          else
+            echo "id=${{ github.event.workflow_run.id }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download wheel artifact from Release run
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          run_id: ${{ steps.run_id.outputs.id }}
+          name: wheels-darwin-arm64
+          path: backend/wheels/darwin-arm64
+
+      - name: Extract Codex binary from wheel
+        run: |
+          python - <<'PY'
+          import zipfile, pathlib, stat, sys
+
+          wheels = list(pathlib.Path("wheels/darwin-arm64").glob("*cp312*.whl"))
+          if not wheels:
+              wheels = list(pathlib.Path("wheels/darwin-arm64").glob("*.whl"))
+          if not wheels:
+              print("No wheel found", file=sys.stderr)
+              sys.exit(1)
+
+          dest = pathlib.Path("src/vicoa/_bin/codex/darwin-arm64/codex")
+          dest.parent.mkdir(parents=True, exist_ok=True)
+
+          with zipfile.ZipFile(wheels[0]) as z:
+              with z.open("vicoa/_bin/codex/darwin-arm64/codex") as src:
+                  dest.write_bytes(src.read())
+
+          mode = dest.stat().st_mode
+          dest.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+          print(f"Extracted from {wheels[0]} -> {dest}")
+          PY
+
+      - name: Build binary
+        run: |
+          cd pyinstaller
+          pyinstaller vicoa.spec
+
+      - name: Test binary
+        run: |
+          ./pyinstaller/dist/vicoa/vicoa --version
+          ./pyinstaller/dist/vicoa/vicoa --help
+
+      - name: Smoke test subcommand imports
+        run: python scripts/smoke_test_binary.py ./pyinstaller/dist/vicoa/vicoa
+
+      - name: Package binary
+        run: |
+          cd pyinstaller/dist
+          zip -r vicoa-macos-arm64.zip vicoa/
+
+      - name: Build npm package
+        run: |
+          python scripts/build_npm_package.py \
+            --platform darwin-arm64 \
+            --dist-dir pyinstaller/dist/vicoa \
+            --version ${{ needs.resolve-context.outputs.version }} \
+            --output dist/npm
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vicoa-macos-arm64
+          path: backend/pyinstaller/dist/vicoa-macos-arm64.zip
+          retention-days: 1
+
+      - name: Upload npm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-darwin-arm64
+          path: backend/dist/npm/cli-darwin-arm64/
+          retention-days: 1
+
+  build-macos-x64:
+    needs: [resolve-context]
+    if: github.repository == 'vicoa-ai/vicoa' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')  # fork guard (see resolve-context)
+    # GitHub retired the macos-13 Intel runner in late 2025, so we cross-build
+    # on macos-15 (Apple Silicon) under Rosetta. PyInstaller doesn't
+    # cross-compile — it freezes the running interpreter — so we install an
+    # x86_64 Python via conda's osx-64 subdir and drive pyinstaller through
+    # `arch -x86_64`. The Rosetta layer makes the entire build chain (pip,
+    # PyInstaller, link steps) execute as x86_64, emitting an x86_64 bundle.
+    # The codex binary inside comes from the darwin-x64 wheel built upstream
+    # in release.yml (cibuildwheel cross-arch on the same runner profile).
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure Rosetta 2 is installed
+        run: |
+          if ! pgrep -q oahd; then
+            softwareupdate --install-rosetta --agree-to-license
+          fi
+
+      - name: Set up x86_64 Python via conda osx-64 subdir
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: false
+          activate-environment: ""
+          miniforge-version: latest
+
+      - name: Create x86_64 conda env
+        shell: bash -l {0}
+        run: |
+          CONDA_SUBDIR=osx-64 conda create -n dev312-x64 python=3.12 -y
+          # Sanity: confirm we really got an x86_64 interpreter
+          file "$CONDA/envs/dev312-x64/bin/python3" | grep -q "x86_64" \
+            || { echo "ERROR: dev312-x64 env is not x86_64"; exit 1; }
+
+      - name: Install dependencies (under Rosetta)
+        shell: bash -l {0}
+        run: |
+          PY="$CONDA/envs/dev312-x64/bin/python3"
+          arch -x86_64 "$PY" -m pip install --upgrade pip
+          # Pre-pin cryptography<49 for this Rosetta cross-build. cryptography
+          # 49.0.0 (released 2026-06-12) dropped its macosx_10_9_universal2
+          # wheel and only ships macosx_11_0_arm64, so a fresh resolve here
+          # falls back to a Rust-from-source build that needs OpenSSL cross-
+          # compiled for x86_64-apple-darwin — which the runner doesn't have.
+          # 48.0.1 still ships universal2 and resolves cleanly. Remove the pin
+          # once upstream ships x86_64 macOS wheels again.
+          arch -x86_64 "$PY" -m pip install 'cryptography<49'
+          arch -x86_64 "$PY" -m pip install -e .
+          arch -x86_64 "$PY" -m pip install pyinstaller
+
+      - name: Resolve Release run ID
+        id: run_id
+        run: |
+          if [ -n "${{ inputs.release_run_id }}" ]; then
+            echo "id=${{ inputs.release_run_id }}" >> $GITHUB_OUTPUT
+          else
+            echo "id=${{ github.event.workflow_run.id }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download wheel artifact from Release run
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          run_id: ${{ steps.run_id.outputs.id }}
+          name: wheels-darwin-x64
+          path: backend/wheels/darwin-x64
+
+      - name: Extract Codex binary from wheel
+        shell: bash -l {0}
+        run: |
+          "$CONDA/envs/dev312-x64/bin/python3" - <<'PY'
+          import zipfile, pathlib, stat, sys
+
+          wheels = list(pathlib.Path("wheels/darwin-x64").glob("*cp312*.whl"))
+          if not wheels:
+              wheels = list(pathlib.Path("wheels/darwin-x64").glob("*.whl"))
+          if not wheels:
+              print("No wheel found", file=sys.stderr)
+              sys.exit(1)
+
+          dest = pathlib.Path("src/vicoa/_bin/codex/darwin-x64/codex")
+          dest.parent.mkdir(parents=True, exist_ok=True)
+
+          with zipfile.ZipFile(wheels[0]) as z:
+              with z.open("vicoa/_bin/codex/darwin-x64/codex") as src:
+                  dest.write_bytes(src.read())
+
+          mode = dest.stat().st_mode
+          dest.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+          print(f"Extracted from {wheels[0]} -> {dest}")
+          PY
+
+      - name: Build binary (PyInstaller under Rosetta)
+        shell: bash -l {0}
+        run: |
+          cd pyinstaller
+          arch -x86_64 "$CONDA/envs/dev312-x64/bin/python3" -m PyInstaller --clean --noconfirm vicoa.spec
+
+      - name: Verify bundle arch
+        run: |
+          lipo -info ./pyinstaller/dist/vicoa/vicoa
+          file ./pyinstaller/dist/vicoa/vicoa | grep -q "x86_64" \
+            || { echo "ERROR: bundle is not x86_64"; exit 1; }
+          # Leakage scan: any Mach-O inside the bundle that isn't x86_64 is a bug
+          LEAKS=$(find ./pyinstaller/dist/vicoa -type f -exec file {} \; 2>/dev/null \
+            | grep "Mach-O" | grep -v "x86_64" || true)
+          if [ -n "$LEAKS" ]; then
+            echo "ERROR: non-x86_64 Mach-O files leaked into bundle:"
+            echo "$LEAKS"
+            exit 1
+          fi
+
+      - name: Test binary (under Rosetta)
+        run: |
+          arch -x86_64 ./pyinstaller/dist/vicoa/vicoa --version
+          arch -x86_64 ./pyinstaller/dist/vicoa/vicoa --help
+
+      - name: Smoke test subcommand imports
+        shell: bash -l {0}
+        run: |
+          "$CONDA/envs/dev312-x64/bin/python3" scripts/smoke_test_binary.py ./pyinstaller/dist/vicoa/vicoa
+
+      - name: Package binary
+        run: |
+          cd pyinstaller/dist
+          zip -r vicoa-macos-x64.zip vicoa/
+
+      - name: Build npm package
+        shell: bash -l {0}
+        run: |
+          "$CONDA/envs/dev312-x64/bin/python3" scripts/build_npm_package.py \
+            --platform darwin-x64 \
+            --dist-dir pyinstaller/dist/vicoa \
+            --version ${{ needs.resolve-context.outputs.version }} \
+            --output dist/npm
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vicoa-macos-x64
+          path: backend/pyinstaller/dist/vicoa-macos-x64.zip
+          retention-days: 1
+
+      - name: Upload npm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-darwin-x64
+          path: backend/dist/npm/cli-darwin-x64/
+          retention-days: 1
+
+  build-linux:
+    needs: [resolve-context]
+    if: github.repository == 'vicoa-ai/vicoa' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')  # fork guard (see resolve-context)
+    # Pinned to 22.04 (glibc 2.35), NOT ubuntu-latest: PyInstaller links the
+    # frozen daemon against the builder's glibc, so the runner sets the MINIMUM
+    # glibc of every machine that can run it. 22.04 covers Ubuntu 22.04+/Debian
+    # 12+/Fedora 36+; ubuntu-latest (24.04, glibc 2.39) would strand anyone on an
+    # older distro. Keep this in lockstep with the desktop AppImage runner
+    # (.github/workflows/desktop-release.yml `linux` job).
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Resolve Release run ID
+        id: run_id
+        run: |
+          if [ -n "${{ inputs.release_run_id }}" ]; then
+            echo "id=${{ inputs.release_run_id }}" >> $GITHUB_OUTPUT
+          else
+            echo "id=${{ github.event.workflow_run.id }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download wheel artifact from Release run
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          run_id: ${{ steps.run_id.outputs.id }}
+          name: wheels-linux-x64
+          path: backend/wheels/linux-x64
+
+      - name: Extract Codex binary and bundled libs from wheel
+        run: |
+          python - <<'PY'
+          import zipfile, pathlib, stat, sys
+
+          wheels = list(pathlib.Path("wheels/linux-x64").glob("*cp312*.whl"))
+          if not wheels:
+              wheels = list(pathlib.Path("wheels/linux-x64").glob("*.whl"))
+          if not wheels:
+              print("No wheel found", file=sys.stderr)
+              sys.exit(1)
+
+          dest_dir = pathlib.Path("src/vicoa/_bin/codex/linux-x64")
+          dest_dir.mkdir(parents=True, exist_ok=True)
+
+          extracted = []
+          with zipfile.ZipFile(wheels[0]) as z:
+              for name in z.namelist():
+                  dest = None
+                  if name == "vicoa/_bin/codex/linux-x64/codex":
+                      dest = dest_dir / "codex"
+                  elif name.startswith("vicoa.libs/") and not name.endswith("/"):
+                      # auditwheel-bundled shared libs; flatten into the codex dir
+                      dest = dest_dir / pathlib.Path(name).name
+                  if dest is not None:
+                      with z.open(name) as src:
+                          dest.write_bytes(src.read())
+                      extracted.append(dest)
+
+          if not (dest_dir / "codex").exists():
+              print("codex binary not found in wheel", file=sys.stderr)
+              sys.exit(1)
+
+          for dest in extracted:
+              dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+              print(f"Extracted {dest}")
+          PY
+
+      - name: Build binary
+        run: |
+          cd pyinstaller
+          pyinstaller vicoa.spec
+
+      - name: Test binary
+        run: |
+          ./pyinstaller/dist/vicoa/vicoa --version
+          ./pyinstaller/dist/vicoa/vicoa --help
+
+      - name: Smoke test subcommand imports
+        run: python scripts/smoke_test_binary.py ./pyinstaller/dist/vicoa/vicoa
+
+      - name: Package binary
+        run: |
+          cd pyinstaller/dist
+          tar czf vicoa-linux-x64.tar.gz vicoa/
+
+      - name: Build npm package
+        run: |
+          python scripts/build_npm_package.py \
+            --platform linux-x64 \
+            --dist-dir pyinstaller/dist/vicoa \
+            --version ${{ needs.resolve-context.outputs.version }} \
+            --output dist/npm
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vicoa-linux-x64
+          path: backend/pyinstaller/dist/vicoa-linux-x64.tar.gz
+          retention-days: 1
+
+      - name: Upload npm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-linux-x64
+          path: backend/dist/npm/cli-linux-x64/
+          retention-days: 1
+
+  build-windows:
+    needs: [resolve-context]
+    if: github.repository == 'vicoa-ai/vicoa' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')  # fork guard (see resolve-context)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Build binary
+        run: |
+          cd pyinstaller
+          pyinstaller vicoa.spec
+
+      - name: Test binary
+        run: |
+          .\pyinstaller\dist\vicoa\vicoa.exe --version
+          .\pyinstaller\dist\vicoa\vicoa.exe --help
+
+      - name: Smoke test subcommand imports
+        run: python scripts/smoke_test_binary.py .\pyinstaller\dist\vicoa\vicoa.exe
+
+      - name: Package binary
+        run: |
+          cd pyinstaller/dist
+          Compress-Archive -Path vicoa -DestinationPath vicoa-windows-x64.zip
+
+      - name: Build npm package
+        run: |
+          python scripts/build_npm_package.py `
+            --platform win32-x64 `
+            --dist-dir pyinstaller/dist/vicoa `
+            --version ${{ needs.resolve-context.outputs.version }} `
+            --output dist/npm
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vicoa-windows-x64
+          path: backend/pyinstaller/dist/vicoa-windows-x64.zip
+          retention-days: 1
+
+      - name: Upload npm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-win32-x64
+          path: backend/dist/npm/cli-win32-x64/
+          retention-days: 1
+
+  create-release:
+    needs: [resolve-context, build-macos-arm64, build-macos-x64, build-linux, build-windows]
+    if: github.repository == 'vicoa-ai/vicoa'  # fork guard (see resolve-context)
+    runs-on: ubuntu-latest
+    # npm publish uses OIDC Trusted Publishing (no token). npmjs.com's Trusted
+    # Publisher for @vicoa/cli is bound to this workflow file + the `release`
+    # environment, so the OIDC token must carry the `environment: release` claim
+    # or `npm publish` fails with E404. (The env has no protection rules, so it
+    # does not gate the job.) Removing this line broke npm publish on v1.7.11.
+    environment: release
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: backend/artifacts
+
+      # NOTE: the CLI intentionally does NOT create a GitHub release (see the
+      # matching note in backend-release.yml). The frozen daemon reaches the
+      # desktop build and end users via npm (@vicoa/cli platform packages) — no
+      # GitHub-release zips are needed — so this job now only publishes to npm.
+      # The only GitHub release page is the desktop one (desktop-release.yml).
+
+      - name: Setup Node.js for npm publish
+        if: needs.resolve-context.outputs.is_tag == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish platform packages to npm
+        if: needs.resolve-context.outputs.is_tag == 'true'
+        env:
+          VERSION: ${{ needs.resolve-context.outputs.version }}
+        run: |
+          for platform in darwin-arm64 darwin-x64 linux-x64 win32-x64; do
+            python scripts/build_npm_package.py \
+              --platform $platform \
+              --dist-dir artifacts/npm-${platform}/bin \
+              --version ${VERSION} \
+              --output dist/npm \
+              --publish
+          done
+
+      - name: Publish main @vicoa/cli to npm
+        if: needs.resolve-context.outputs.is_tag == 'true'
+        env:
+          VERSION: ${{ needs.resolve-context.outputs.version }}
+        run: |
+          python scripts/build_npm_package.py \
+            --main-only \
+            --version ${VERSION} \
+            --output dist/npm \
+            --publish
+
+      - name: Upload artifacts for manual runs
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-binaries
+          path: backend/artifacts/
+          retention-days: 1

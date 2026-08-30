@@ -1,0 +1,47 @@
+# Vicoa
+
+> Vicoa (Vibe Code Anywhere) lets you orchestrate dozens of coding agents in parallel, anywhere. Run Claude Code and other AI coding agents on any device — start on your laptop, switch seamlessly to mobile or web, get alerts when an agent needs input, and approve changes with one tap.
+
+Vicoa connects coding agents (Claude Code, Codex, OpenCode) running on your machine to a mobile app and web dashboard, with real-time notifications and cross-device sync. The backend is the source of truth; web and mobile clients stay in sync over a unified messaging system.
+
+## Core pages
+
+- [Home](https://vicoa.ai): Product overview and how Vicoa works.
+- [Features](https://vicoa.ai/features): Capabilities — cross-device coding, notifications, one-tap approvals.
+- [Coding agents](https://vicoa.ai/coding-agents): Supported agents (Claude Code, Codex, OpenCode) and integration details.
+- [Pricing](https://vicoa.ai/pricing): Plans and pricing.
+- [Blog](https://vicoa.ai/blog): Product updates, guides, and announcements.
+- [Updates](https://vicoa.ai/updates): Changelog of new features and improvements shipped to the app, web, and CLI.
+
+## Documentation
+
+- [Introduction](https://vicoa.ai/docs): What Vicoa is and how the pieces fit together.
+- [Set up Vicoa](https://vicoa.ai/docs/getting-started): Install the CLI and connect your first machine.
+- [Coding agents](https://vicoa.ai/docs/agents): Compare the supported agents and switch between them.
+- [Claude Code](https://vicoa.ai/docs/agents/claude-code): Use Claude Code with Vicoa.
+- [Codex](https://vicoa.ai/docs/agents/codex): Use Codex with Vicoa.
+- [OpenCode](https://vicoa.ai/docs/agents/opencode): Use OpenCode with Vicoa.
+- [Gemini, Cursor, Copilot, Kimi, Hermes](https://vicoa.ai/docs/agents/more-coding-agents): Additional agents available from the app and dashboard.
+- [Claude Code vs. Codex](https://vicoa.ai/docs/claude-code-and-codex): Choosing a default agent and switching per session.
+- [Start a remote session](https://vicoa.ai/docs/start-remote-session): Launch a session from mobile or web.
+- [CLI commands](https://vicoa.ai/docs/cli-commands): List sessions with `vicoa ls` and stop them with `vicoa stop`.
+- [Live preview](https://vicoa.ai/docs/live-preview): Expose a local dev server and open it on any device.
+- [Free and alternative models](https://vicoa.ai/docs/alternative-models): Run Vicoa without a paid Anthropic account.
+- [Features](https://vicoa.ai/docs/vicoa-features): Slash commands, permission modes, dictation, cross-device workflows.
+- [Version compatibility](https://vicoa.ai/docs/version-compatibility): Which CLI and app versions work together.
+- [Changelog](https://vicoa.ai/docs/changelog): Release history for the app and CLI.
+- [Mobile app changelog](https://vicoa.ai/docs/changelog/mobile-app): iOS and Android releases.
+- [CLI changelog](https://vicoa.ai/docs/changelog/vicoa-cli): CLI and daemon releases.
+- [FAQ](https://vicoa.ai/docs/faq): Common questions about setup, pricing, security, and agents.
+- [Troubleshooting](https://vicoa.ai/docs/troubleshooting): Fixes for install, connection, and startup problems.
+
+## Get started
+
+- [Sign up](https://vicoa.ai/sign-up): Create a Vicoa account.
+- [Sign in](https://vicoa.ai/sign-in): Log in to your dashboard.
+
+## Optional
+
+- [Privacy policy](https://vicoa.ai/privacy)
+- [Terms of service](https://vicoa.ai/terms)
+- [Sitemap](https://vicoa.ai/sitemap.xml)

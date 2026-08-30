@@ -1,0 +1,23 @@
+/*
+ * Bundled Nerd Font for the terminal pane.
+ *
+ * "Symbols Nerd Font Mono" is the symbols-only Nerd Font (ryanoasis/nerd-fonts
+ * v3.4.0, MIT). It carries ONLY the icon/powerline glyph ranges (U+E0A0…,
+ * U+F001…, U+F0001… Material Design Icons, etc.) and no Latin/digit glyphs, so
+ * listing it FIRST in the terminal fontFamily never affects text rendering or
+ * xterm's cell-width measurement — the browser falls through to the real
+ * monospace text font for every normal character and only reaches this font
+ * for glyphs the text font lacks (which otherwise render as "tofu" boxes).
+ *
+ * Served from /public/fonts (copied verbatim into the packaged standalone
+ * build by electron/scripts/build-renderer.mjs), so the absolute /fonts URL
+ * resolves in both `pnpm dev` and the packaged desktop app.
+ */
+@font-face {
+  font-family: 'Symbols Nerd Font Mono';
+  src: url('/fonts/SymbolsNerdFontMono-Regular.woff2') format('woff2');
+  /* One regular master; span 400–700 so bold cells resolve here too. */
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}

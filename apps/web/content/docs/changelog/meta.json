@@ -1,0 +1,9 @@
+{
+  "title": "Changelog",
+  "pages": [
+    "index",
+    "desktop-app",
+    "mobile-app",
+    "vicoa-cli"
+  ]
+}

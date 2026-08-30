@@ -1,0 +1,169 @@
+---
+title: Set up Vicoa
+description: Learn how to install and set up Vicoa to start coding anywhere with Claude Code, Codex, and OpenCode
+---
+
+# Set up Vicoa
+Install, authenticate, and start using Vicoa on your laptop, tablet, or phone.
+
+Vicoa allows you to run a team of coding agents (Claude Code, Codex, and OpenCode) anywhere, on any device. Follow this guide to get started in minutes.
+
+## Vicoa CLI System Requirements
+
+- **Operating systems**: macOS 10.15+, Ubuntu 20.04+/Debian 10+, or Windows 10+
+- **Hardware**: 4 GB RAM or more
+- **Software**: Node.js installed, one of [Claude Code](https://docs.claude.com/en/docs/claude-code/setup#system-requirements), [Codex](https://openai.com/codex/), or [OpenCode](https://opencode.ai)
+- **Network**: Internet connection required for authentication and AI processing
+- **Shell**: Works best in Bash, Zsh, Fish, or PowerShell
+
+## Video Walkthrough
+
+Watch these complete walkthroughs from CLI installation to sending messages remotely to Claude Code.
+
+### macOS / Linux
+
+<div className="relative w-full aspect-video max-w-4xl mx-auto my-6">
+  <iframe 
+    width="100%" 
+    height="100%" 
+    src="https://www.youtube.com/embed/L3Dh7gwKOSU" 
+    title="Vicoa Getting Started Tutorial" 
+    frameBorder="0" 
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+    allowFullScreen
+    className="absolute inset-0 rounded-lg"
+  />
+</div>
+
+### Windows
+
+<div className="relative w-full aspect-video max-w-4xl mx-auto my-6">
+  <iframe 
+    width="100%" 
+    height="100%" 
+    src="https://www.youtube.com/embed/0xbsN2p3uDE" 
+    title="Vicoa Windows Setup Tutorial" 
+    frameBorder="0" 
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+    allowFullScreen
+    className="absolute inset-0 rounded-lg"
+  />
+</div>
+
+## Installation
+
+
+### 1. Install Vicoa CLI
+
+```bash
+npm i -g @vicoa/cli
+```
+
+To update to the latest version at any time:
+```bash
+npm i -g @vicoa/cli@latest
+```
+
+Check your installed version:
+```bash
+vicoa --version
+```
+
+Alternatively, you can install via pip:
+
+```bash
+pip install vicoa
+```
+
+> **Mac Intel users**: The npm package does not yet include a pre-built binary for Intel Macs (`darwin-x64`). Use the pip installation method instead — see [Mac Intel installation](/docs/troubleshooting#npm-install-fails-on-mac-intel) for step-by-step instructions.
+
+> **Linux server users**: If `vicoa` fails to start with a `GLIBC_… not found` error, your server's system glibc is older than the pre-built binary requires. Use the pip installation method instead — see [GLIBC version error on Linux](/docs/troubleshooting#glibc-version-error-on-linux).
+
+Running into issues? See our [troubleshooting guide](/docs/troubleshooting).
+
+### 2. Install a coding agent (if needed)
+
+Install one of the supported coding agents before setting up Vicoa.
+
+<Tabs items={['Claude Code', 'Codex', 'OpenCode']}>
+<Tab value="Claude Code">
+
+**macOS / Linux**
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+**Windows**
+```bash
+winget install Anthropic.Claude
+```
+
+</Tab>
+<Tab value="Codex">
+
+**macOS / Linux**
+```bash
+npm i -g @openai/codex
+```
+
+**Windows** 
+
+No installation needed.
+
+</Tab>
+<Tab value="OpenCode">
+
+**macOS / Linux**
+```bash
+npm i -g opencode-ai
+```
+
+**Windows**
+```bash
+npm i -g opencode-ai
+```
+
+</Tab>
+</Tabs>
+
+
+### 3. Start a coding session
+
+**macOS / Linux**
+```bash
+vicoa
+```
+
+**Windows**
+```bash
+vicoa daemon
+```
+
+On macOS / Linux, a coding session will appear in the left sidebar of the Vicoa web app. 
+
+On Windows, click **New Session** in the left sidebar to start a session. [Learn more](/docs/start-remote-session)
+
+### 4. Web Authorization
+
+When you run `vicoa` or `vicoa daemon` for the first time, you'll be redirected to the web browswer to:
+
+1. **Create an account** or sign in if you already have one
+2. **Authorize your CLI session**
+3. Send a message to your coding agent to test the connection
+
+### 5. Mobile App
+
+- **[iOS](http://apps.apple.com/sg/app/id6751626168)**
+- **[Android](https://play.google.com/store/apps/details?id=app.vicoa)**
+
+Sign in with the same account you used on the web.
+
+## Next Steps
+
+Now that Vicoa is installed, you can start coding anywhere with Claude Code, Codex, and OpenCode. Learn how to use these agents in Vicoa [here](/docs/agents).
+
+**Need help?**
+
+- Check our [troubleshooting guide](/docs/troubleshooting) for common issues
+- Feature requests and raise issues: https://github.com/vicoa-ai/vicoa
+- Contact support at hi@vicoa.ai

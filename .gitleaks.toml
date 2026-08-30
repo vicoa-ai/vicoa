@@ -1,0 +1,72 @@
+# gitleaks config for Vicoa.
+#
+# Extends gitleaks' built-in ruleset and allowlists the *publishable* client
+# keys that are designed to ship inside the app binaries (they are not secrets;
+# see AGENTS.md and apps/mobile). Real server secrets — Stripe `sk_`/`rk_`,
+# RevenueCat `sk_`, PostHog personal `phx_`, private keys, service-account
+# JSON, .env values — are NOT allowlisted and will still be blocked.
+
+title = "Vicoa gitleaks config"
+
+[extend]
+useDefault = true
+
+# Allowlist by path: the committed Firebase client-config files. Firebase API
+# keys are identifiers, not secrets (security is enforced by Rules/App Check).
+[[allowlists]]
+description = "Firebase client config files (client identifiers, not secrets)"
+paths = [
+  '''apps/mobile/android/app/google-services\.json''',
+  '''apps/mobile/ios/Runner/GoogleService-Info\.plist''',
+  '''apps/mobile/lib/backend/firebase/firebase_config\.dart''',
+]
+
+# Allowlist by value: publishable client-key prefixes used by the mobile app.
+# These are meant to be public (they ship in every released build).
+[[allowlists]]
+description = "Publishable client keys (PostHog project, Superwall public, RevenueCat public SDK)"
+regexTarget = "match"
+regexes = [
+  '''phc_[A-Za-z0-9]{32,}''',          # PostHog project (write-only) key
+  '''pk_[A-Za-z0-9]{16,}''',           # Superwall public key
+  '''(goog|appl)_[A-Za-z0-9]{20,}''',  # RevenueCat public SDK keys
+]
+
+# False positive: a stage-daemon comment documents the release-asset cache key
+# (`...cache key: `vicoa-macos-x64.zip``). The generic-api-key rule reads the
+# `key: <token>` shape as a secret assignment. It is documentation, not a secret.
+# Matched by the exact literal only (NOT path-scoped: a path allowlist would
+# suppress the whole file and could mask a real secret added there later). This
+# match string is a public release-asset filename, so allowlisting it repo-wide
+# cannot hide any real secret.
+[[allowlists]]
+description = "stage-daemon 'cache key: <asset>.zip' comment (docs, not a secret)"
+regexTarget = "match"
+regexes = ['''key: `vicoa-(macos|windows)-x64\.zip`''']
+
+# Dependency lock files hold integrity hashes/versions, not secrets. gitleaks'
+# generic-api-key rule false-positives on them (e.g. Podfile.lock SPEC CHECKSUMS).
+[[allowlists]]
+description = "Dependency lock files (integrity hashes, not secrets)"
+paths = [
+  '''(^|/)Podfile\.lock$''',
+  '''(^|/)Package\.resolved$''',
+  '''(^|/)pubspec\.lock$''',
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)pnpm-lock\.yaml$''',
+]
+
+# Build outputs & vendored deps are gitignored (never committed), so the
+# pre-commit hook never sees them — but a manual `gitleaks dir` walks the whole
+# filesystem and would scan them. Skip the noise.
+[[allowlists]]
+description = "Build artifacts and vendored dependencies (not part of the repo)"
+paths = [
+  '''(^|/)Pods/''',
+  '''(^|/)build/''',
+  '''(^|/)\.dart_tool/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)\.next/''',
+  '''(^|/)dist/''',
+  '''(^|/)ephemeral/''',
+]

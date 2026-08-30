@@ -1,0 +1,11 @@
+name: Other
+description: Report something that isn't a bug or feature request.
+title: '[Other]: '
+body:
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Share the context, request, or issue. Include a short summary here too.
+    validations:
+      required: true

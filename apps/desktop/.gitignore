@@ -1,0 +1,9 @@
+node_modules/
+dist/
+# Packaging artifacts (never committed)
+renderer-dist/
+daemon-dist/
+dist-app/
+build/
+native/notification-status/dist/
+.daemon-cache/

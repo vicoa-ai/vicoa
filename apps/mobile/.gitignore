@@ -1,0 +1,84 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.buildlog/
+.history
+.svn/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+/build/
+
+# Firebase – this is necessary if you use Firebase since it could otherwise 
+# lead to leaking of private certificates to your repository, which is no bueno.
+.firebase/
+
+# Web related
+lib/generated_plugin_registrant.dart
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Apple Sign In secrets/keys
+*.p8
+.apple_client_secret.txt
+
+# Local dart-define values (Supabase URL/anon key) -- never commit real values.
+# Copy env.example.json to env.json and fill it in, or use ./run.sh.
+env.json
+
+# FVM Version Cache
+.fvm/
+.gstack/
+
+# Others
+/lib/onboarding/configure_setup/
+/lib/onboarding/impact/
+/lib/onboarding/impact_with_rating/
+/lib/onboarding/intro/
+/lib/onboarding/landing/
+/lib/onboarding/news/
+/lib/onboarding/news_transit/
+/lib/onboarding/notification_in_onboard/
+/lib/onboarding/onboard/
+/lib/onboarding/personalizing/
+/lib/onboarding/rating/
+/lib/onboarding/referral_code/
+/lib/onboarding/survey/
+/lib/onboarding/welcome/
+/assets/images/user1.jpg
+/assets/images/user2.jpg
+/assets/images/user3.jpg
+/assets/images/user4.jpg
+/assets/images/user5.jpg
+/assets/images/user6.jpg

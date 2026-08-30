@@ -1,0 +1,59 @@
+---
+title: Codex
+description: Learn how to use Codex with Vicoa for vibe coding anywhere from desktop, mobile, and web
+---
+
+# Codex
+
+Codex is OpenAI's coding agent that integrates seamlessly with vicoa.
+
+## Getting Started
+
+### Installation
+
+Codex is available immediately after installing vicoa:
+
+```bash
+# Install vicoa CLI
+npm i -g @vicoa/cli
+
+# Start Codex
+vicoa codex  # or vicoa --agent codex
+```
+
+### Making Codex Your Default Agent
+
+If you prefer Codex over Claude Code, set it as your default:
+
+```bash
+vicoa --set-default codex
+```
+
+After this command, simply run `vicoa` to launch Codex automatically.
+
+### Using Codex for a Single Session
+
+Keep Claude Code as your default but use Codex temporarily:
+
+```bash
+vicoa --agent codex
+```
+
+This overrides your default agent for just this session.
+
+### Codex Subcommand
+
+You can also launch Codex using the dedicated subcommand:
+
+```bash
+vicoa codex
+```
+
+This is equivalent to `vicoa --agent codex`.
+
+## Related
+
+- [Claude Code vs. Codex in Vicoa](/docs/claude-code-and-codex) — when to reach for each agent, and how to switch
+- [Start a Remote Session](/docs/start-remote-session) — run Codex from the mobile app or web dashboard
+- [CLI Commands](/docs/cli-commands) — list and stop running sessions
+- [Troubleshooting](/docs/troubleshooting) — fixes for install and connection problems

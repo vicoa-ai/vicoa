@@ -1,0 +1,80 @@
+---
+title: Version Compatibility
+description: Compatibility matrix for the Claude CLI, the Vicoa CLI, and the Vicoa mobile app — check which versions work together before you upgrade.
+---
+
+# Version Compatibility
+
+This page outlines version compatibility across the Vicoa stack. Please ensure you're using compatible versions for the best experience.
+
+## Claude CLI ↔ Vicoa CLI
+
+| Claude CLI Version | Vicoa CLI Version | Status |
+|-------------------|-------------------|---------|
+| >= 2.1.0          | >= 1.3.0         | ✅ Recommended - Full feature support |
+| < 2.1.0           | < 1.3.0          | Legacy versions - limited support |
+
+## Vicoa CLI ↔ Mobile App
+
+| Vicoa CLI Version | Mobile App Version | Status |
+|-------------------|--------------------|---------|
+| >= 1.6.8          | >= 1.7.5           | ✅ Recommended - Adds session resume (resume a stopped session from the chat menu) and context-window / rate-limit usage indicators in the composer. Pairing a new app with an older CLI still works for chat, but Resume and the usage ring won't appear. |
+| >= 1.6.1          | >= 1.6.8           | Supports Gemini, Cursor, Copilot, Kimi, and Hermes. Pairing a new app with an older CLI still works for existing agents, but the new agents and their model lists won't appear. |
+| >= 1.5.7          | >= 1.6.6           | Adds Files and Git tabs in the mobile app, backed by new daemon RPCs. Pairing a new app with an older CLI still works for chat, but the Files / Git tabs won't load. |
+| >= 1.5.6          | >= 1.6.5           | Supports switching model, thinking effort, and permission mode in coding sessions for Claude Code and Codex. |
+| >= 1.5.1          | >= 1.6.1           | Moves message delivery and session events to WebSocket. Upgrade both together for instant delivery and reliable reconnects. |
+| < 1.5.1           | < 1.6.1            | Legacy: SSE + polling. Still works but with higher latency and weaker reconnection. |
+
+> The WebSocket migration in CLI v1.5.1 and Mobile App v1.6.1 replaces the previous SSE/polling delivery path. Pairing a new client with an old one will work (the server keeps both transports available during rollout), but you only get the latency and reliability improvements when both ends are upgraded.
+
+## Version Requirements
+
+### For Full Feature Support
+
+To access all Vicoa features and ensure optimal compatibility:
+
+- **Claude CLI**: Version 2.1.0 or higher
+- **Vicoa CLI**: Version 1.6.8 or higher
+- **Mobile App**: Version 1.7.5 or higher
+
+### Legacy Versions
+
+If you're using Claude CLI < 2.1.0, Vicoa CLI < 1.3.0, or Mobile App < 1.6.1, some features may be limited or unavailable. We recommend upgrading to the latest versions.
+
+## Checking Your Current Version
+
+Check Claude CLI Version
+
+```bash
+claude --version
+```
+
+Check Vicoa CLI Version
+
+```bash
+vicoa --version
+```
+
+## Upgrading
+
+Upgrade Claude CLI
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+Refer to the [official documentation](https://code.claude.com/docs/en/overview) for more information.
+
+Upgrade Vicoa CLI
+
+```bash
+npm i -g @vicoa/cli@latest
+```
+
+Upgrade Mobile App
+
+Update the Vicoa app from the App Store (iOS) or Google Play (Android).
+
+## Need Help?
+
+If you encounter any version issues, please refer to our [Troubleshooting](/docs/troubleshooting) guide or [FAQ](/docs/faq).

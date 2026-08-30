@@ -1,0 +1,123 @@
+name: Build macOS arm64 Binary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos-arm64:
+    # See release.yml: macos-14 (Xcode 15.4) fails the codex webrtc-sys
+    # build with a C++20 / libc++ pointer_traits incompat. macos-15
+    # (Xcode 16) handles it.
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Configure Git for submodules
+        run: git config --global url."https://x-access-token:${{ secrets.GH_SUBMODULE_PAT }}@github.com/".insteadOf "git@github.com:"
+
+      - name: Initialize submodules
+        # cwd is backend/, so the pathspec resolves to the codex
+        # submodule only (not the other root submodules).
+        run: git submodule update --init --recursive src/integrations/cli_wrappers/codex
+
+      - name: Detect Codex changes
+        id: detect
+        shell: bash
+        run: |
+          # --match 'v*' keeps this off the desktop-v* tags in the shared namespace.
+          LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || echo "")
+          if [ -n "$LAST_TAG" ]; then
+            if git diff --quiet "$LAST_TAG"..HEAD -- src/integrations/cli_wrappers/codex; then
+              echo "changed=false" >> $GITHUB_OUTPUT
+            else
+              echo "changed=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+          echo "last_tag=$LAST_TAG" >> $GITHUB_OUTPUT
+
+      - name: Determine Codex build version
+        id: codex_version
+        run: |
+          VERSION=$(python - <<'PY'
+          import pathlib, tomllib
+          data = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          tool = data.get("tool", {})
+          vicoa = tool.get("vicoa", {}) if isinstance(tool, dict) else {}
+          codex_version = vicoa.get("codex_build_version", "") if isinstance(vicoa, dict) else ""
+          print(str(codex_version).strip() if codex_version else data.get("project", {}).get("version", "").strip())
+          PY
+          )
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c src/shared/requirements.txt -e .
+          pip install pyinstaller
+
+      - name: Populate Codex binary
+        env:
+          CODEX_CHANGED: ${{ steps.detect.outputs.changed }}
+          CODEX_PREV_TAG: ${{ steps.detect.outputs.last_tag }}
+          CODEX_BUILD_VERSION: ${{ steps.codex_version.outputs.value }}
+        run: bash scripts/cibw_before_build.sh
+
+      - name: Build binary
+        run: |
+          cd pyinstaller
+          pyinstaller vicoa.spec
+
+      - name: Test binary
+        run: |
+          ./pyinstaller/dist/vicoa/vicoa --version
+          ./pyinstaller/dist/vicoa/vicoa --help
+
+      - name: Smoke test subcommand imports
+        run: python scripts/smoke_test_binary.py ./pyinstaller/dist/vicoa/vicoa
+
+      - name: Extract version
+        id: get_version
+        run: echo "VERSION=0.0.0-dev.$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Package binary
+        run: |
+          cd pyinstaller/dist
+          zip -r vicoa-macos-arm64.zip vicoa/
+
+      - name: Build npm package
+        run: |
+          python scripts/build_npm_package.py \
+            --platform darwin-arm64 \
+            --dist-dir pyinstaller/dist/vicoa \
+            --version ${{ steps.get_version.outputs.VERSION }} \
+            --output dist/npm
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vicoa-macos-arm64
+          path: backend/pyinstaller/dist/vicoa-macos-arm64.zip
+          retention-days: 7
+
+      - name: Upload npm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-darwin-arm64
+          path: backend/dist/npm/cli-darwin-arm64/
+          retention-days: 7

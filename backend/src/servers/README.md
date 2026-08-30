@@ -1,0 +1,70 @@
+# Servers Directory
+
+This directory contains the write operations server for the Agent Dashboard system. It provides a unified interface for AI agents to interact with the dashboard through multiple protocols.
+
+## Overview
+
+The servers directory implements all write operations that agents need through a unified messaging system:
+- Sending messages (both informational steps and questions requiring user input)
+- Receiving user responses and feedback
+- Managing session lifecycle
+
+All operations are authenticated and multi-tenant, ensuring data isolation between users.
+
+## Architecture
+
+### Unified Server (`app.py`)
+A single server application that supports both MCP (Model Context Protocol) and REST API interfaces:
+- **MCP Interface**: For agents using the MCP protocol
+- **REST API**: For SDK clients and direct API integrations
+- Both interfaces share the same authentication and business logic
+
+### Components
+
+- **`mcp/`**: MCP protocol implementation using fastmcp
+- **`api/`**: REST API implementation (`auth.py`, `routers.py`, `ws_handler.py`)
+- **`shared/`**: Common database operations and business logic
+- **`tests/`**: Integration and unit tests
+
+## Authentication
+
+The servers use a separate authentication system from the main backend:
+- **JWT Bearer tokens** with RSA-256 signing
+- **Shorter API keys** using a weaker RSA key (appropriate for write-only operations)
+- **User context** embedded in tokens for multi-tenancy
+- **Security Note**: Both the private AND public JWT keys should be kept secure. The weaker RSA implementation (for shorter tokens) means even the public key should not be exposed
+
+## Key Features
+
+- **Unified messaging**: All agent interactions use the same message-based API
+- **Automatic session management**: Creates sessions on first interaction
+- **Message queuing**: Agents receive unread user messages when sending new messages
+- **Flexible interactions**: Messages can be informational or require user input
+- **Multi-protocol support**: Same functionality via MCP or REST API
+
+## Running the Server
+
+```bash
+# From the project root with virtual environment activated
+python -m servers.app
+```
+
+The server will be available on the configured port (default: 8080) with:
+- MCP endpoint at `/mcp/`
+- REST API at `/api/v1/`
+
+## Environment Variables
+
+- `DATABASE_URL`: PostgreSQL connection string
+- `MCP_SERVER_PORT`: Server port (default: 8080)
+- `JWT_PUBLIC_KEY`: RSA public key for token verification
+- `JWT_PRIVATE_KEY`: RSA private key for token signing (if needed)
+
+## Integration
+
+Clients can connect using:
+1. **MCP Protocol**: Via SSE or HTTP streaming transport
+2. **REST API**: Direct HTTP requests with Bearer token authentication
+3. **SDK**: Language-specific clients that handle authentication and protocol details
+
+See the root `SELF_HOSTING.md` and `docker-compose.selfhost.yml` for deployment instructions.

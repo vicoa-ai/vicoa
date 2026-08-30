@@ -1,0 +1,25 @@
+.gstack
+.vscode
+__pycache__/
+.DS_Store
+
+# PII exports (raw user emails) — never commit
+cookies.json
+secrets/
+
+# ── Secrets & credentials hardening (open-source prep) ──────────────
+# Env files anywhere; keep committed *.example templates
+.env
+.env.*
+!*.example
+# Signing keys, certs, service-account & credential files
+*.pem
+*.p12
+*.p8
+*.jks
+*.keystore
+*service-account*.json
+credentials.json
+
+.claude/
+.temp/

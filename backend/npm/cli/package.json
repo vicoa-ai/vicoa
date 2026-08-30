@@ -1,0 +1,31 @@
+{
+  "name": "@vicoa/cli",
+  "version": "0.0.0",
+  "description": "Vicoa CLI - Run a team of coding agents anywhere, any device",
+  "bin": {
+    "vicoa": "bin/vicoa.js"
+  },
+  "files": ["bin/vicoa.js", "README.md"],
+  "optionalDependencies": {
+    "@vicoa/cli-darwin-arm64": "npm:@vicoa/cli@0.0.0-darwin-arm64",
+    "@vicoa/cli-linux-x64":    "npm:@vicoa/cli@0.0.0-linux-x64",
+    "@vicoa/cli-win32-x64":    "npm:@vicoa/cli@0.0.0-win32-x64"
+  },
+  "keywords": [
+    "vicoa",
+    "ai",
+    "agent",
+    "claude code",
+    "codex",
+    "opencode",
+    "cli",
+    "coding-agent",
+    "remote control",
+    "mobile",
+    "cross-device"
+  ],
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=16"
+  }
+}

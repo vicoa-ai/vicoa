@@ -1,0 +1,1307 @@
+{
+  "@@locale": "en",
+  "tasksAllProjects": "All projects",
+  "tasksCancel": "Cancel",
+  "tasksCouldNotLoad": "Couldn't load tasks",
+  "tasksCreate": "Create",
+  "tasksDelete": "Delete",
+  "tasksDeleteConfirmBody": "This task will be permanently deleted. This can't be undone.",
+  "tasksDeleteConfirmTitle": "Delete task?",
+  "tasksDescriptionFieldLabel": "DESCRIPTION",
+  "tasksDescriptionPlaceholder": "Add details…",
+  "tasksEdit": "Edit",
+  "tasksEditTask": "Edit task",
+  "tasksLabelsFieldLabel": "LABELS",
+  "tasksNewTask": "New task",
+  "tasksDisplay": "Display",
+  "tasksInbox": "Inbox",
+  "tasksLabelsButton": "Labels",
+  "tasksPropPriority": "Priority",
+  "tasksPropProject": "Project",
+  "tasksPropStatus": "Status",
+  "tasksNoTasksSubtitle": "Create a task to plan work you can hand to an agent.",
+  "tasksNoTasksTitle": "No tasks yet",
+  "tasksPriorityFieldLabel": "PRIORITY",
+  "tasksPriorityHigh": "High",
+  "tasksPriorityLow": "Low",
+  "tasksPriorityMedium": "Medium",
+  "tasksPriorityNone": "No priority",
+  "tasksPriorityUrgent": "Urgent",
+  "tasksProjectFieldLabel": "PROJECT",
+  "tasksPullToRefresh": "Pull to refresh",
+  "tasksSave": "Save",
+  "tasksSaveFailed": "Couldn't save task. Please try again.",
+  "tasksStartSession": "Start session",
+  "tasksSubtasks": "Sub-tasks",
+  "tasksStatusBacklog": "Backlog",
+  "tasksStatusBlocked": "Blocked",
+  "tasksStatusCancelled": "Cancelled",
+  "tasksStatusDone": "Done",
+  "tasksStatusFieldLabel": "STATUS",
+  "tasksStatusInProgress": "In Progress",
+  "tasksStatusInReview": "In Review",
+  "tasksStatusTodo": "Todo",
+  "tasksTaskDeleted": "Task deleted",
+  "tasksTitle": "Tasks",
+  "tasksTitleFieldLabel": "TITLE",
+  "tasksTitlePlaceholder": "What needs to be done?",
+  "tasksTitleRequired": "Title is required",
+  "accountCautionZone": "CAUTION ZONE",
+  "accountDeleteAccount": "Delete Account",
+  "accountDeleteDialogBody": "All your data will be permanently deleted. Are you sure to proceed?",
+  "accountDeleteDialogTitle": "Delete Account?",
+  "accountEmail": "Email",
+  "accountLogOut": "Log Out",
+  "accountName": "Name",
+  "accountNameHint": "Guest",
+  "accountRegistration": "Registration",
+  "accountTitle": "Account",
+  "addToChatChooseFiles": "Files",
+  "addToChatCommands": "Commands",
+  "addToChatPhotoLibrary": "Photo",
+  "addToChatSkillsOrCommands": "Skills or Commands",
+  "addToChatTakePhoto": "Camera",
+  "agentCatalogReasoningLabel": "Reasoning - {label}",
+  "@agentCatalogReasoningLabel": {
+    "placeholders": {
+      "label": {
+        "type": "Object"
+      }
+    }
+  },
+  "agentCatalogThinkingLabel": "Thinking - {label}",
+  "@agentCatalogThinkingLabel": {
+    "placeholders": {
+      "label": {
+        "type": "Object"
+      }
+    }
+  },
+  "agentChatAddToChat": "Add to chat",
+  "agentChatAgentMode": "Agent Mode",
+  "agentChatCancelQueuedMessageTooltip": "Cancel message",
+  "agentChatRevertQueuedMessageTooltip": "Edit in input",
+  "agentChatCancelledLabel": "Cancelled",
+  "agentChatCloseFailed": "Failed to archive session. Please try again.",
+  "agentChatCopiedToClipboard": "{count, plural, =1{Copied 1 message to clipboard} other{Copied {count} messages to clipboard}}",
+  "@agentChatCopiedToClipboard": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agentChatCopyFailed": "Failed to copy messages",
+  "agentChatCopyResponse": "Copy response",
+  "agentChatDeleteFailed": "Failed to delete session. Please try again.",
+  "agentChatErrorLoadingMessages": "Error Loading Messages",
+  "agentChatInitFailed": "Failed to initialize chat",
+  "agentChatMentionFiles": "Mention files",
+  "agentChatNewMessagesCount": "{count, plural, =1{{count} message} other{{count} messages}}",
+  "@agentChatNewMessagesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "agentChatNoMessagesSelected": "No messages selected",
+  "agentChatNoMessagesToShare": "No messages to share",
+  "agentChatPermissionMode": "Permission Mode",
+  "agentChatPinFailed": "Couldn't pin session",
+  "agentChatQueuedCount": "{count, plural, =1{1 queued} other{{count} queued}}",
+  "@agentChatQueuedCount": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "agentChatQueuedLabel": "Queued",
+  "agentChatQueuedSheetTitle": "Queued messages",
+  "agentChatRenameFailed": "Failed to rename session. Please try again.",
+  "agentChatSessionReady": "Session ready",
+  "agentChatSessionRenamed": "Session renamed successfully",
+  "agentChatSessionTitle": "Session",
+  "agentChatShareFailed": "Failed to share messages",
+  "agentChatShareResponse": "Share response",
+  "agentChatShowSlashCommands": "Show slash commands",
+  "agentChatStartingYourSession": "Starting your session",
+  "agentChatThinking": "Thinking",
+  "agentChatThinkingOff": "Off",
+  "agentChatThinkingOn": "On",
+  "agentChatTranscribing": "Transcribing...",
+  "agentChatUnexpectedError": "An unexpected error occurred",
+  "agentChatUnpinFailed": "Couldn't unpin session",
+  "agentChatWaitingForMessages": "Waiting for messages",
+  "agentConfigAgent": "Agent",
+  "agentConfigBetaLabel": "{label} (Beta)",
+  "@agentConfigBetaLabel": {
+    "placeholders": {
+      "label": {
+        "type": "Object"
+      }
+    }
+  },
+  "agentConfigMode": "Mode",
+  "agentConfigModel": "Model",
+  "agentConfigNotInstalled": "Not installed",
+  "agentConfigNotInstalledPrefix": "{label} is not installed on this machine. Install it, then restart ",
+  "@agentConfigNotInstalledPrefix": {
+    "placeholders": {
+      "label": {
+        "type": "Object"
+      }
+    }
+  },
+  "agentConfigNotInstalledSuffix": " to use it.",
+  "agentConfigPanelAgent": "Agent",
+  "agentConfigPanelMode": "Mode",
+  "agentConfigPanelModel": "Model",
+  "agentConfigPanelPermission": "Permission",
+  "agentConfigPanelReasoning": "Reasoning",
+  "agentConfigPanelThinking": "Thinking",
+  "agentConfigPanelUnknownAgent": "Unknown agent — update the app to configure this.",
+  "agentConfigPermission": "Permission",
+  "agentConfigReasoningEffort": "Reasoning Effort",
+  "agentConfigThinkingEffort": "Thinking Effort",
+  "agentConfigUnknownAgent": "Unknown agent — update the app to configure this.",
+  "appLanguageTitle": "Language",
+  "appearanceChat": "Chat",
+  "appearanceCodeBlock": "Code Block",
+  "appearanceCollapseLongCode": "Collapse Long Code",
+  "appearanceCollapseToolCalls": "Collapse Tool Calls",
+  "appearanceDarkMode": "Dark Mode",
+  "@appearanceDarkMode": {
+    "description": "Label for the dark/light theme toggle"
+  },
+  "appearanceLanguage": "Language",
+  "@appearanceLanguage": {
+    "description": "Label for the app UI language selector"
+  },
+  "appearanceLinesBeforeCollapsing": "Lines before collapsing",
+  "appearanceShowFilter": "Show Filter",
+  "appearanceShowLivePreview": "Show Live Preview",
+  "appearanceTitle": "Appearance",
+  "@appearanceTitle": {
+    "description": "Title of the Appearance settings page"
+  },
+  "askUserQuestionPanelCancelling": "Cancelling...",
+  "askUserQuestionPanelQuestionNumber": "Question {number}",
+  "@askUserQuestionPanelQuestionNumber": {
+    "placeholders": {
+      "number": {
+        "type": "Object"
+      }
+    }
+  },
+  "askUserQuestionPanelSubmit": "Submit",
+  "askUserQuestionPanelSubmitting": "Submitting...",
+  "askUserQuestionPanelTypeSomething": "Type something",
+  "askUserQuestionPanelTypeYourAnswer": "Type your answer",
+  "authEmailChangeConfirmationSent": "Email change confirmation email sent",
+  "authOptionsAndConnector": " and ",
+  "authOptionsContinueWithApple": "Continue with Apple",
+  "authOptionsContinueWithEmail": "Continue with Email",
+  "authOptionsContinueWithGoogle": "Continue with Google",
+  "authOptionsLegalPrefix": "By continuing, you agree to the\n",
+  "authOptionsPrivacyPolicy": "privacy policy",
+  "authOptionsSubtitle": "Run a team of coding agents from your phone",
+  "authOptionsTermsOfUse": "terms of use",
+  "authOptionsTitle": "Let's Get Started",
+  "billingXNoOffering": "No offering available",
+  "billingXPaywallLoadError": "Error loading paywall: {error}",
+  "@billingXPaywallLoadError": {
+    "placeholders": {
+      "error": {
+        "type": "Object"
+      }
+    }
+  },
+  "chatErrorLoadMessagesFailed": "Failed to load messages. Please check your connection.",
+  "chatInputAddToChat": "Add to chat",
+  "chatInputBrowseFiles": "Browse files",
+  "chatInputCliOutdated": "Vicoa CLI could be outdated. Upgrade it to access files and changes.",
+  "chatInputModelConfig": "Model Config",
+  "chatInputOpenWebPreview": "Open web preview",
+  "chatInputPlaceholder": "Type messages, @files, /skills or commands",
+  "chatInputSessionConfig": "Session Config",
+  "chatInputSessionEnded": "Session archived. Chat is closed here",
+  "chatInputSessionReadOnly": "Session is archived. Configs are read-only.",
+  "chatInputStopTask": "Stop current task",
+  "chatOptionsInfo": "Info",
+  "chatOptionsPin": "Pin",
+  "chatOptionsRename": "Rename",
+  "chatOptionsUnpin": "Unpin",
+  "commonBack": "Back",
+  "commonCancel": "Cancel",
+  "commonClose": "Close",
+  "commonConfirm": "Confirm",
+  "commonContinue": "Continue",
+  "commonCopied": "Copied",
+  "commonCopy": "Copy",
+  "commonDelete": "Delete",
+  "commonDone": "Done",
+  "commonEdit": "Edit",
+  "commonError": "Error",
+  "commonLoading": "Loading…",
+  "commonNext": "Next",
+  "commonNo": "No",
+  "commonOk": "OK",
+  "commonRemove": "Remove",
+  "commonRetry": "Retry",
+  "commonSave": "Save",
+  "commonSearch": "Search",
+  "commonSettings": "Settings",
+  "commonShare": "Share",
+  "commonSignIn": "Sign In",
+  "commonSignOut": "Sign Out",
+  "commonSignUp": "Sign Up",
+  "commonSkip": "Skip",
+  "commonYes": "Yes",
+  "configureSetupConfiguringBest": "Your AI agent\nis almost ready",
+  "configureSetupJustAMoment": "Just a moment...",
+  "configureSetupSocialProof": "People who use Vicoa have built faster with \nAI coding agents anywhere they go.",
+  "confirmDialogAreYouSure": "Are you sure?",
+  "confirmRatingBody": "Thank you for supporting us! \n\nIf you've gave us a happy 5 stars, tap the button below to claim your free messages.",
+  "confirmRatingDoneButton": "I Have Done It",
+  "confirmRatingGiftButton": "Continue to Use",
+  "confirmRatingGiftText": "Yay! You got 50 free messages!",
+  "confirmRatingTitle": "Give us a Happy 5 Stars!",
+  "connectComputerLinkCopied": "Link copied",
+  "connectComputerLoginSameAccount": "Download the desktop app and sign in with the same account. Your computer connects automatically.",
+  "connectComputerTitle": "Connect Your Computer",
+  "connectComputerViewDocs": "View full documentation",
+  "credtiHistoryTitle": "Credit History",
+  "dateRangeXApply": "Apply",
+  "dateRangeXEndDate": "End Date",
+  "dateRangeXStartDate": "Start Date",
+  "dateRangeXTitle": "Custom Date Range",
+  "dateRangeXWeekdayFri": "Fri",
+  "dateRangeXWeekdayMon": "Mon",
+  "dateRangeXWeekdaySat": "Sat",
+  "dateRangeXWeekdaySun": "Sun",
+  "dateRangeXWeekdayThu": "Thu",
+  "dateRangeXWeekdayTue": "Tue",
+  "dateRangeXWeekdayWed": "Wed",
+  "dateToday": "Today",
+  "dateYesterday": "Yesterday",
+  "directoryPickerRecent": "Recent",
+  "directoryPickerWorkingDirectory": "Working Directory",
+  "errorStateDisplaySignInAgain": "Sign In Again",
+  "errorStateDisplayTryAgain": "Try Again",
+  "errorStateDisplayUnexpectedError": "An unexpected error occurred",
+  "fileViewerXAddToContext": "Add to context",
+  "fileViewerXBinaryFile": "Binary file ({size})",
+  "@fileViewerXBinaryFile": {
+    "placeholders": {
+      "size": {
+        "type": "Object"
+      }
+    }
+  },
+  "fileViewerXDetailNotDownloaded": "file is not downloaded",
+  "fileViewerXDetailOutdated": "file could be outdated",
+  "fileViewerXErrDefault": "Couldn’t load this file ({code}).",
+  "@fileViewerXErrDefault": {
+    "placeholders": {
+      "code": {
+        "type": "Object"
+      }
+    }
+  },
+  "fileViewerXErrMachineOffline": "Machine is offline.",
+  "fileViewerXErrNoHandler": "Update the daemon on this machine — older version doesn’t support file viewing.",
+  "fileViewerXErrNotAFile": "Not a file.",
+  "fileViewerXErrOutsideProject": "Path is outside the project.",
+  "fileViewerXErrPathNotFound": "This file no longer exists.",
+  "fileViewerXErrPermissionDenied": "Permission denied.",
+  "fileViewerXErrTimeout": "The machine took too long to respond.",
+  "fileViewerXFileNotDownloaded": "File not downloaded on this device.",
+  "fileViewerXImageTooLarge": "Image too large to preview on mobile.",
+  "fileViewerXPreviewNotAvailable": "Preview not available.",
+  "fileViewerXReconnectToView": "Reconnect the machine to view it.",
+  "fileViewerXRefresh": "Refresh",
+  "fileViewerXShowingFirstPortion": "Showing first portion of {size}. Open on desktop to see the rest.",
+  "@fileViewerXShowingFirstPortion": {
+    "placeholders": {
+      "size": {
+        "type": "Object"
+      }
+    }
+  },
+  "filesGitXBinaryFileChanged": "Binary file changed · {size}",
+  "@filesGitXBinaryFileChanged": {
+    "placeholders": {
+      "size": {
+        "type": "Object"
+      }
+    }
+  },
+  "filesGitXCollapseAllTooltip": "Collapse all",
+  "filesGitXCouldntLoadDiff": "Couldn’t load diff — {code}",
+  "@filesGitXCouldntLoadDiff": {
+    "placeholders": {
+      "code": {
+        "type": "Object"
+      }
+    }
+  },
+  "filesGitXCouldntLoadStatus": "Couldn’t load status",
+  "filesGitXDetachedAt": "(detached at {branch})",
+  "@filesGitXDetachedAt": {
+    "placeholders": {
+      "branch": {
+        "type": "Object"
+      }
+    }
+  },
+  "filesGitXDiffTruncated": "Diff truncated — open on desktop for the rest.",
+  "filesGitXExpandAllTooltip": "Expand all",
+  "filesGitXHideWhitespaceTooltip": "Hide whitespace",
+  "filesGitXNoChangesVsHead": "No changes vs HEAD.",
+  "filesGitXNoUpstream": "  ·  no upstream",
+  "filesGitXNotARepoSubtitle": "Open this directory in a git project to see changes.",
+  "filesGitXNotARepoTitle": "Not a git repository",
+  "filesGitXReconnectToSeeChanges": "Reconnect the machine to see changes.",
+  "filesGitXRefreshTooltip": "Refresh",
+  "filesGitXSectionLabel": "{label} · {count}",
+  "@filesGitXSectionLabel": {
+    "placeholders": {
+      "label": {
+        "type": "Object"
+      },
+      "count": {
+        "type": "Object"
+      }
+    }
+  },
+  "filesGitXSectionStaged": "Staged",
+  "filesGitXSectionUnstaged": "Unstaged",
+  "filesGitXSectionUntracked": "Untracked",
+  "filesGitXShowMoreLines": "{count, plural, =1{Show {count} more line} other{Show {count} more lines}}",
+  "@filesGitXShowMoreLines": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "filesGitXShowWhitespaceTooltip": "Show whitespace",
+  "filesGitXStatusNotLoaded": "Git status not loaded on this device.",
+  "filesGitXWordWrapTooltip": "Word Wrap",
+  "filesGitXWorkingTreeClean": "Working tree clean",
+  "filesScreenTabChanges": "Changes",
+  "filesScreenTabFiles": "Files",
+  "filesXErrDefault": "Couldn’t list this directory ({code}).",
+  "@filesXErrDefault": {
+    "placeholders": {
+      "code": {
+        "type": "Object"
+      }
+    }
+  },
+  "filesXErrNoHandler": "Update the daemon on this machine — older version doesn’t support file listing.",
+  "filesXErrNotADirectory": "Project path is not a directory.",
+  "filesXErrOutsideProject": "Path is outside the project root.",
+  "filesXErrPathNotFound": "The project directory was not found on the machine.",
+  "filesXErrPermissionDenied": "Permission denied reading this directory.",
+  "filesXErrTimeout": "The machine took too long to respond.",
+  "filesXMachineOffline": "Machine offline, {detail}.",
+  "@filesXMachineOffline": {
+    "placeholders": {
+      "detail": {
+        "type": "Object"
+      }
+    }
+  },
+  "filesXNoFiles": "No files",
+  "filesXNotLoaded": "Files not loaded on this device.",
+  "filesXOfflineDetailDefault": "files could be outdated",
+  "filesXProjectLabel": "project: {cwd}",
+  "@filesXProjectLabel": {
+    "placeholders": {
+      "cwd": {
+        "type": "Object"
+      }
+    }
+  },
+  "filesXReconnectToBrowse": "Reconnect the machine to browse them.",
+  "filterAgentType": "Agent Type",
+  "filterAgentTypeHeader": "AGENT TYPE",
+  "filterAll": "All",
+  "filterAllTime": "All Time",
+  "filterClosed": "Archived",
+  "filterCustomRange": "Custom Range",
+  "filterDate": "Date",
+  "filterDateRange": "Date Range",
+  "filterDateRangeHeader": "DATE RANGE",
+  "filterFilter": "Filter",
+  "filterGroupBy": "Group By",
+  "filterInProgress": "In progress",
+  "filterInReview": "In review",
+  "filterLast7Days": "Last 7 Days",
+  "filterNotClosed": "Active",
+  "filterProject": "Project",
+  "filterStatus": "Status",
+  "filterStatusHeader": "STATUS",
+  "filterTime": "Time",
+  "filterType": "Type",
+  "giftDialogFreeCredits": "Yay! You got 5 free credits!",
+  "helpFeedbackBlog": "Blog",
+  "helpFeedbackChangelog": "Changelog",
+  "helpFeedbackContactUs": "Contact Us",
+  "helpFeedbackDocumentation": "Documentation",
+  "helpFeedbackFeatureRequest": "Feature Request & Bug Reports",
+  "helpFeedbackFeedback": "Feedback",
+  "helpFeedbackTitle": "Help & Feedback",
+  "homeCloseFailed": "Failed to archive session. Please try again.",
+  "homeDeleteFailed": "Failed to delete session. Please try again.",
+  "homeErrorConnecting": "Connecting to the server. If this persists, sign in again from Account Page.",
+  "homeErrorLoadSessionsFailed": "Failed to load sessions. Please try again.",
+  "homeErrorOffline": "No internet connection. Please check your connection.",
+  "homeErrorOfflineCached": "No internet connection. Showing cached data.",
+  "homeErrorServiceUnavailable": "Unable to reach the service right now.",
+  "homeErrorServiceUnavailableRetry": "Unable to reach the service right now. Please try again shortly.",
+  "homeErrorSessionExpired": "Your session has expired. Please sign in again to continue.",
+  "homeGroupNoProject": "No Project",
+  "homeGroupPinned": "Pinned",
+  "homePinFailed": "Couldn't pin session",
+  "homeRenameFailed": "Failed to rename session. Please try again.",
+  "homeSessionClosed": "Session archived",
+  "homeSessionDeleted": "Session deleted successfully",
+  "homeSessionRenamed": "Session renamed successfully",
+  "homeUnpinFailed": "Couldn't unpin session",
+  "impactHeadline": "{phrase} with AI coding agents anywhere you go",
+  "@impactHeadline": {
+    "placeholders": {
+      "phrase": {
+        "type": "Object"
+      }
+    }
+  },
+  "impactWithRatingHeadline": "Build faster with AI coding agents anywhere you go",
+  "impactWithRatingNameMarcus": "Marcus",
+  "impactWithRatingNameSarah": "Sarah",
+  "impactWithRatingNameTom": "Tom",
+  "impactWithRatingTestimonialMarcus": "Vicoa changed how I work. I never miss opportunities to ship with all the coding agents in my phone.",
+  "impactWithRatingTestimonialSarah": "Finally! Claude Code on mobile. I can code during my commute and fix bugs on the go.",
+  "impactWithRatingTestimonialTom": "Perfect for developers on the move. Debug, refactor, and build new features from my phone. Amazing!",
+  "infoDialogAreYouSure": "Are you sure?",
+  "introLandingPage1Item1": "Send commands from anywhere",
+  "introLandingPage1Item2": "Get instant AI responses",
+  "introLandingPage1Item3": "Sync across all devices",
+  "introLandingPage1Subtitle": "Send commands to AI agent running on your computer, right from your phone.",
+  "introLandingPage1Title": "Remote AI Coding\nfrom your Phone",
+  "introLandingPage2Item1": "Instant alerts when tasks done",
+  "introLandingPage2Item2": "One-tap approvals from your phone",
+  "introLandingPage2Item3": "Chat with your agents on the go",
+  "introLandingPage2Subtitle": "Get instant alerts when your agent needs input and keep building without touching your laptop.",
+  "introLandingPage2Title": "Your Agent Works.\nYou Stay Notified.",
+  "introLandingPage3Item1": "Works with Claude Code, Codex, and OpenCode",
+  "introLandingPage3Item2": "All your agent sessions in one place",
+  "introLandingPage3Item3": "Browse past conversations",
+  "introLandingPage3Subtitle": "Monitor all your agents across projects, browse history, and more-all in one place.",
+  "introLandingPage3Title": "One Interface for\nAll Your Agents",
+  "introLandingPage4Item1": "Download the desktop app",
+  "introLandingPage4Item2": "Sign in with the same account",
+  "introLandingPage4Item3": "Paired instantly! Start coding.",
+  "introLandingPage4Subtitle": "A few clicks and you're ready to manage desktop projects right from your phone.",
+  "introLandingPage4Title": "Connect in Seconds",
+  "landingHeadline": "Remote AI coding\nfrom your phone",
+  "landingSubtitle": "Run dozens of coding agents anywhere",
+  "landingSupports": "Supports",
+  "languageAutomatic": "Automatic",
+  "languageChinese": "中文",
+  "@languageChinese": {
+    "description": "Autonym for the Simplified Chinese language (same in every locale)"
+  },
+  "languageEnglish": "English",
+  "@languageEnglish": {
+    "description": "Autonym for the English language (same in every locale)"
+  },
+  "languageFollowSystem": "Follow system",
+  "@languageFollowSystem": {
+    "description": "Language option that follows the device locale"
+  },
+  "machineActionsRemoveContent": "Are you sure you want to remove this machine? You won't be able to start new sessions from it until you run the Vicoa CLI again.",
+  "machineActionsRemoveTitle": "Remove Machine",
+  "machineActionsRemoving": "Removing machine...",
+  "machineActionsRenamePlaceholder": "Enter machine name...",
+  "machineActionsRenameTitle": "Rename Machine",
+  "machineActionsRenaming": "Renaming machine...",
+  "machineDetailAgentNotFound": "Not found",
+  "machineDetailAgents": "Agents",
+  "machineDetailCautionZone": "Caution Zone",
+  "machineDetailCouldNotLoad": "Could not load machine",
+  "machineDetailHomeDirectory": "Home directory",
+  "machineDetailHostname": "Hostname",
+  "machineDetailInstalled": "Installed",
+  "machineDetailLastHeartbeat": "Last heartbeat",
+  "machineDetailMachine": "Machine",
+  "machineDetailNotFound": "Machine not found",
+  "machineDetailOffline": "Offline",
+  "machineDetailOnline": "Online",
+  "machineDetailPlatform": "Platform",
+  "machineDetailRemoveDescription": "Remove this machine from your account. Session history will be preserved, but you will not be able to start new sessions on this machine.",
+  "machineDetailRemoveMachine": "Remove machine",
+  "machineDetailRunPrefix": "Run ",
+  "machineDetailRunSuffix": " to bring it online",
+  "machineDetailStatus": "Status",
+  "machineDetailSystem": "System",
+  "machineDetailUnknown": "Unknown",
+  "machineDetailVicoaCli": "Vicoa CLI",
+  "machinesCouldNotLoad": "Could not load machines",
+  "machinesMachineRemoved": "Machine removed",
+  "machinesNoMachinesSubtitle": "Run the Vicoa CLI on a computer to connect it, then start remote sessions from anywhere.",
+  "machinesNoMachinesYet": "No machines yet",
+  "machinesPullToRefresh": "Pull to refresh to try again.",
+  "machinesTitle": "Machines",
+  "markdownXMoreLines": "{count} more lines",
+  "@markdownXMoreLines": {
+    "placeholders": {
+      "count": {
+        "type": "Object"
+      }
+    }
+  },
+  "messageSelectionSheetCount": "{selected} of {total} selected",
+  "@messageSelectionSheetCount": {
+    "placeholders": {
+      "selected": {
+        "type": "Object"
+      },
+      "total": {
+        "type": "Object"
+      }
+    }
+  },
+  "messageSelectionSheetDeselectAll": "Deselect All",
+  "messageSelectionSheetSelectAll": "Select All",
+  "messageSelectionSheetTitle": "Select Messages",
+  "messageSelectionSheetYou": "You",
+  "newSessionAddToChat": "Add to chat",
+  "newSessionAgent": "Agent",
+  "newSessionAgentDidNotStart": "{label} didn't start on this machine.\n\nMake sure it's installed there and your Vicoa daemon is up to date, then try again.",
+  "@newSessionAgentDidNotStart": {
+    "placeholders": {
+      "label": {
+        "type": "Object"
+      }
+    }
+  },
+  "newSessionCurrentBranch": "Current branch",
+  "newSessionLoadingMachines": "Loading machines...",
+  "newSessionMachine": "Machine",
+  "newSessionNewSession": "New Session",
+  "newSessionNewWorktree": "New worktree",
+  "newSessionOffline": "(offline)",
+  "newSessionRunPrefix": "Run ",
+  "newSessionSelectMachine": "Select a machine",
+  "newSessionStartedNoStatus": "Session started but could not determine status.",
+  "newSessionTheAgent": "The agent",
+  "newSessionToBringOnline": " to bring your machine online.",
+  "newSessionUnableToStart": "Unable to Start Session",
+  "newSessionUnableToStartBody": "This could be due to:\n\n• The machine is not responding\n• Network connection issues\n• The directory path is invalid\n\nPlease check machine status and try again.",
+  "newSessionWorkingDirectory": "Working Directory",
+  "newSessionWorktree": "Worktree",
+  "newsAndConnector": " and ",
+  "newsBadNewsPrefix": "The bad news is that\n",
+  "newsCodeFromPhone": "code from your phone.",
+  "newsCodingNext12Months": "\ncoding in the next 12 months.",
+  "newsGetNotified": "get notified",
+  "newsGreatNewsPrefix": "The great news is that \n",
+  "newsJustWaiting": "just waiting for the results",
+  "newsMinutesUnit": " minutes ",
+  "newsTransitHeadline": "Some not-so-good news  \nand some great news",
+  "newsVicoaFreesYouUp": "Vicoa frees you up, you can ",
+  "newsWastedMinutes": "{minutes}+ minutes ",
+  "@newsWastedMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "Object"
+      }
+    }
+  },
+  "newsYouWillSpend": "You will spend ",
+  "newsYouWillWaste": "You will waste ",
+  "noCreditSheetGetMoreFreeMessages": "Get More Free Messages",
+  "noCreditSheetGetMoreOrUnlock": "Get more free messages or unlock unlimited access with Vicoa Pro.",
+  "noCreditSheetInsufficientCredits": "Insufficient Credits",
+  "noCreditSheetUpgradeToPro": "Upgrade to Vicoa Pro",
+  "noCreditSheetUsedAllMessages": "You've used all free messages.",
+  "notificationAllSet": "You are all set!",
+  "notificationDontMissOut": "Don't miss out notifications when your coding agent needs your input.\n",
+  "notificationEnableButton": "Enable Notification",
+  "notificationInOnboardBody": "Don't miss out notifications when your coding agent needs your input.\n",
+  "notificationInOnboardEnable": "Enable Notifications",
+  "notificationInOnboardMaybeLater": "Maybe later",
+  "notificationInOnboardTitle": "Turn on Notifications?",
+  "notificationTitle": "Notifications",
+  "notificationTurnOnPrompt": "Turn on Notification?",
+  "onboardGetNotifiedInstantly": "Get notified instantly.",
+  "onboardGetStarted": "Get Started",
+  "onboardNoMoreIdleWaiting": "No more idle waiting.",
+  "onboardPickUpWhereLeftOff": "Pick up where you left off.",
+  "onboardSlide1Body": "Start a task, let Claude Code, Codex, or OpenCode keep working while you focus elsewhere.",
+  "onboardSlide2Body": "Take AI coding agents anywhere, continue your coding on your phone.",
+  "onboardSlide3Body": "Get a ping when AI coding agents needs input, continue coding with a tap.",
+  "personalizingConfiguringBest": "Configuring the best set up for you",
+  "personalizingHeadline": "Your AI Agents\nare almost ready",
+  "personalizingSettingUp": "Setting Up",
+  "personalizingSocialProof": "People who use Vicoa get more done\nwith coding agents.",
+  "proBenefitsPrioritySupportDesc": "Get faster response times and priority support when you need help.",
+  "proBenefitsPrioritySupportTitle": "Priority Support",
+  "proBenefitsSubtitle": "You're enjoying all the premium features:",
+  "proBenefitsSyncDesc": "Seamlessly sync your conversations and data across all your devices.",
+  "proBenefitsSyncTitle": "Unlimited Cross-Device Sync",
+  "proBenefitsTitle": "Vicoa Pro Benefits",
+  "proBenefitsUnlimitedMessagesDesc": "Send unlimited messages to AI coding agents anywhere without any limits.",
+  "proBenefitsUnlimitedMessagesTitle": "Unlimited Messages",
+  "proBenefitsVoiceInputDesc": "Talk to your AI coding agents hands-free.",
+  "proBenefitsVoiceInputTitle": "Voice Input",
+  "profileAccount": "Account",
+  "profileAppearance": "Appearance",
+  "profileFreeMessages": "Free Messages",
+  "profileHelpFeedback": "Help & Feedback",
+  "profileInviteFriends": "Invite Friends & Get Rewards",
+  "profileJoinDiscord": "Join Discord",
+  "profileJoinPro": "Join Vicoa Pro",
+  "profileMachines": "Machines",
+  "profileNotifications": "Notifications",
+  "profileProMember": "Vicoa Pro Member",
+  "profileProSubtitle": "Unlimited Agents and Messages",
+  "profileReportIssue": "Report an Issue",
+  "profileSubscription": "Subscription",
+  "profileTitle": "Profile",
+  "profileTutorials": "Tutorials",
+  "profileVoiceAssistance": "Voice Assistance",
+  "ratingDevelopersLike": "+100 developers like Vicoa",
+  "ratingLetsGetStarted": "Let's get started",
+  "ratingMadeForYou": "Vicoa was made for \npeople like you",
+  "ratingTestimonialMarcus": "Vicoa changed how I work. Having OpenCode anywhere means I never miss opportunities to ship.",
+  "ratingTestimonialSarah": "Finally! Claude Code on mobile. I can code during my commute and fix bugs on the go.",
+  "ratingTestimonialTom": "Perfect for developers on the move. Debug, refactor, and build new features from my phone - amazing!",
+  "ratingTitle": "Give us a rating",
+  "realtimeStatusBannerReconnecting": "Reconnecting…",
+  "referFriendsAdditionalRewards": "Additional Rewards",
+  "referFriendsCodeUnavailableBody": "We're unable to generate your referral code at the moment. Please try again later or reach out for help.",
+  "referFriendsCodeUnavailableTitle": "Referral Code Unavailable",
+  "referFriendsComeBackToClaim": "Come back to claim free messages after your friend uses your code.",
+  "referFriendsContinueToUse": "Continue to Use",
+  "referFriendsCopiedToClipboard": "Copied to clipboard",
+  "referFriendsEmailUs": "Email us",
+  "referFriendsGotRewardMessages": "Yay! You got {count} free messages for referring friends!",
+  "@referFriendsGotRewardMessages": {
+    "placeholders": {
+      "count": {
+        "type": "Object"
+      }
+    }
+  },
+  "referFriendsGrabYourCode": "Grab Your Referral Code",
+  "referFriendsInvitedCount": "{count} invited",
+  "@referFriendsInvitedCount": {
+    "placeholders": {
+      "count": {
+        "type": "Object"
+      }
+    }
+  },
+  "referFriendsOnlyRegisteredUsers": "Only registered users can invite friends.",
+  "referFriendsShareMessage": "Hey, have you heard of Vicoa? With this app, I can run Claude Code, Codex, or OpenCode anywhere on my phone. You will get 50 free messages using my referral code: {code}. Download the app from https://apps.apple.com/app/id6751626168",
+  "@referFriendsShareMessage": {
+    "placeholders": {
+      "code": {
+        "type": "Object"
+      }
+    }
+  },
+  "referFriendsShareSubject": "Vicoa: Code with AI Anytime, Anywhere",
+  "referFriendsShareYourCode": "Share your referral code",
+  "referFriendsSignUpNow": "Sign Up Now",
+  "referFriendsSignupReward": "✅ 50 free messages when they sign up with your referral code.",
+  "referFriendsTheyGet": "They get",
+  "referFriendsTierBenefit": "{count} friends → {reward} free messages",
+  "@referFriendsTierBenefit": {
+    "placeholders": {
+      "count": {
+        "type": "Object"
+      },
+      "reward": {
+        "type": "Object"
+      }
+    }
+  },
+  "referFriendsTitle": "Invite Friends & Get Rewards",
+  "referFriendsYouGet": "You get",
+  "rpcErrorComputerOffline": "Your computer isn't connected right now. Make sure Vicoa is running on it, then try again.",
+  "rpcErrorTimeout": "Your computer took too long to respond. Check that Vicoa is running on it, then try again.",
+  "referralCodeHint": "Referral Code (Optional)",
+  "referralCodeThisIsOptional": "This is optional",
+  "referralCodeTitle": "Do you have a \nReferral Code?",
+  "relativeTimeHours": "{count}h",
+  "@relativeTimeHours": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "relativeTimeMinutes": "{count}m",
+  "@relativeTimeMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "relativeTimeNow": "now",
+  "relativeTimeSeconds": "{count}s",
+  "@relativeTimeSeconds": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "renameDialogEnterSessionName": "Enter session name...",
+  "renameDialogRenameSession": "Rename Session",
+  "reportIssueDialogFailure": "Failed to send. Please try again.",
+  "reportIssueDialogHint": "Describe the issue...",
+  "reportIssueDialogSending": "Sending...",
+  "reportIssueDialogSubmit": "Submit",
+  "reportIssueDialogSuccess": "Report sent. Thanks!",
+  "reviewDialogCharCount": "{current} / {max}",
+  "@reviewDialogCharCount": {
+    "placeholders": {
+      "current": {
+        "type": "Object"
+      },
+      "max": {
+        "type": "Object"
+      }
+    }
+  },
+  "reviewDialogCouldBeBetter": "🤔 Could be better",
+  "reviewDialogEnjoyingDescription": "We'd love to know if you are enjoying Vicoa. Your feedback helps us improve!",
+  "reviewDialogEnjoyingVicoa": "Enjoying Vicoa?",
+  "reviewDialogIssueHint": "The issue is…",
+  "reviewDialogLoveIt": "😍 Love it!",
+  "reviewDialogNeedsWorkDescription": "Something not quite right? Tell us, so we can make it work for you.",
+  "reviewDialogRateOnAppStore": "Rate on App Store",
+  "reviewDialogReviewDescription": "Your review helps spread the word and motivate us to make Vicoa even better!",
+  "reviewDialogReviewVicoa": "Review Vicoa :)",
+  "reviewDialogSendFailed": "Failed to send. Please try again.",
+  "reviewDialogSendFeedback": "Send Feedback",
+  "reviewDialogSending": "Sending…",
+  "reviewDialogThankYou": "Thank you for your feedback!",
+  "reviewDialogWhatCouldBeBetter": "What could be better?",
+  "sessionActionsArchive": "Archive",
+  "chatOptionsResume": "Resume",
+  "sessionResumeOffline": "Your computer is offline. Bring it back online to resume.",
+  "sessionResumeFailed": "Failed to resume session",
+  "sessionActionsCloseContent": "Are you sure you want to archive this session?",
+  "sessionActionsCloseTitle": "Archive Session",
+  "sessionActionsClosing": "Archiving session...",
+  "sessionActionsDeleteContent": "Are you sure you want to delete this session? This action cannot be undone.",
+  "sessionActionsDeleteTitle": "Delete Session",
+  "sessionActionsDeleting": "Deleting session...",
+  "sessionActionsRenamePlaceholder": "Enter session name...",
+  "sessionActionsRenameTitle": "Rename Session",
+  "sessionActionsRenaming": "Renaming session...",
+  "sessionInfoAgent": "Agent",
+  "sessionInfoAiAgent": "AI Agent",
+  "sessionInfoCopyId": "Copy ID",
+  "sessionInfoCreated": "Created",
+  "sessionInfoDateAtTime": "{date} at {time}",
+  "@sessionInfoDateAtTime": {
+    "placeholders": {
+      "date": {
+        "type": "Object"
+      },
+      "time": {
+        "type": "Object"
+      }
+    }
+  },
+  "sessionInfoEditTitle": "Edit title",
+  "sessionInfoId": "ID",
+  "sessionInfoIdCopied": "Session ID copied to clipboard",
+  "sessionInfoLastUpdated": "Last Updated",
+  "sessionInfoMachine": "Machine",
+  "sessionInfoNameThisSession": "Name this session",
+  "sessionInfoProject": "Project",
+  "sessionInfoRenameFailed": "Failed to rename session",
+  "sessionInfoRenamed": "Session renamed",
+  "sessionInfoSessionInfo": "Session Info",
+  "sessionInfoSessionName": "Session Name",
+  "sessionInfoSourceApp": "App",
+  "sessionInfoSourceTerminal": "Terminal",
+  "sessionInfoStartedFrom": "Started From",
+  "sessionInfoViewMachine": "View machine",
+  "sessionInfoWorktree": "Worktree",
+  "sessionListClosed": "Session archived",
+  "sessionListDeleted": "Session deleted successfully",
+  "setupReminderNotificationBody": "Download the Vicoa desktop app on your computer and sign in — start using Claude Code, Codex, and OpenCode on the go.",
+  "setupReminderNotificationTitle": "Bring coding agents to your phone 🚀",
+  "shareOptionsSheetCopiedToClipboard": "Content copied to clipboard",
+  "shareOptionsSheetCopyToClipboard": "Copy to clipboard",
+  "shareOptionsSheetShareAs": "Share as",
+  "shareOptionsSheetShareAsFile": "Share as a file",
+  "shareOptionsSheetShareAsText": "Share as text",
+  "signInDialogBody": "Please sign in to use the feature.",
+  "signInDialogLater": "I'll DO IT LATER",
+  "signInDialogTitle": "Sign In To Continue",
+  "signUpAlreadyHaveAccount": "Already have an account? ",
+  "signUpCreateAccount": "Create Account",
+  "signUpDontHaveAccount": "Don't have an account? ",
+  "signUpEmailLabel": "Email address",
+  "signUpHaveReferralCode": "I have a referral code",
+  "signUpPasswordLabel": "Password",
+  "signUpPasswordsMismatch": "Passwords don't match!",
+  "signUpReferralCodeLabel": "Referral code (optional)",
+  "signUpReferralCreditsNotGrantedBody": "We couldn't grant your referral credits. Please contact us for support if you have any questions.",
+  "signUpReferralCreditsNotGrantedTitle": "Referral Credits Not Granted",
+  "signUpReferralInvalidBody": "Your referral code doesn't seem to be valid. Please check it and try again later or remove it. If you have any questions, feel free to contact me at hi@vicoa.ai.",
+  "signUpReferralInvalidTitle": "Failed to Apply Referral Code",
+  "signUpRemoveReferralCode": "Remove referral code",
+  "signUpSignInLink": "Sign in",
+  "signUpSignUpLink": "Sign up",
+  "signUpSubtitleSignIn": "Sign in to {phrase} with AI coding agents anywhere you go",
+  "@signUpSubtitleSignIn": {
+    "placeholders": {
+      "phrase": {
+        "type": "Object"
+      }
+    }
+  },
+  "signUpSubtitleSignUp": "Sign up to run a team of coding agents\nanywhere you go",
+  "startSessionAgent": "Agent",
+  "startSessionAgentComingSoon": "{name} (Coming Soon)",
+  "@startSessionAgentComingSoon": {
+    "placeholders": {
+      "name": {
+        "type": "Object"
+      }
+    }
+  },
+  "startSessionLoadingMachines": "Loading machines...",
+  "startSessionMachine": "Machine",
+  "startSessionNewSession": "New Session",
+  "startSessionOffline": "(offline)",
+  "startSessionOrSeparator": " or ",
+  "startSessionRecent": "Recent",
+  "startSessionRunPrefix": "Run ",
+  "startSessionSelectMachine": "Select a machine",
+  "startSessionShowMore": "Show more",
+  "startSessionStartSession": "Start Session",
+  "startSessionStartedNoStatus": "Session started but could not determine status. Please try again.",
+  "startSessionToBringOnline": " to bring your machine online.",
+  "startSessionUnableToStart": "Unable to Start Session",
+  "startSessionUnableToStartBody": "This could be due to:\n\n• The machine is not responding\n• Network connection issues\n• The directory path is invalid\n\nPlease check machine status and try again.",
+  "startSessionWorkingDirectory": "Working Directory",
+  "surveyDefaultQuestion": "What is your goal?",
+  "surveyOpt1to2h": "1–2 hours",
+  "surveyOpt2to4h": "2–4 hours",
+  "surveyOpt4to8h": "4–8 hours",
+  "surveyOptCodePhone": "📱 I want to code from my phone",
+  "surveyOptDataScientist": "Data Scientist / Analyst",
+  "surveyOptDesign": "Design",
+  "surveyOptDeveloper": "Developer",
+  "surveyOptFinance": "Finance",
+  "surveyOptFounder": "Founder",
+  "surveyOptFreelancer": "Freelancer",
+  "surveyOptGt8h": ">8 hours",
+  "surveyOptLoseTrack": "🔀 I lose track of my agents' work",
+  "surveyOptLt1h": "<1 hour",
+  "surveyOptMarketing": "Marketing",
+  "surveyOptNoComputer": "I don't use computer",
+  "surveyOptNotAtComputer": "📍 I can't always be at my computer",
+  "surveyOptOthers": "Others",
+  "surveyOptProduct": "Product",
+  "surveyOptStuckDesk": "🖥️ I'm stuck at my desk coding with AI",
+  "surveyOptStudent": "Student",
+  "surveyOptTooManySessions": "🤯 I juggle too many coding sessions",
+  "surveyOptWaitAi": "⏳ I often wait for AI to finish tasks",
+  "surveyQAiTools": "Which AI coding tools\ndo you use?",
+  "surveyQDailyTime": "How long do you\ncode with AI daily?",
+  "surveyQDescribeYou": "Which best describes you?",
+  "surveyQOs": "Which operating system is\non your computer?",
+  "surveyQResonate": "Which of these do you\nresonate with?",
+  "surveySelectAllThatApply": "Select all that apply",
+  "surveyTypeYourAnswer": "Type your answer...",
+  "surveyWithImpactMotivationAlerts": "Perfect, Vicoa alerts you when AI finishes tasks.",
+  "surveyWithImpactMotivationCodeFromPhone": "Perfect, Vicoa is great for coding from your phone.",
+  "surveyWithImpactMotivationDefault": "Vicoa helps you code with AI on your phone.",
+  "surveyWithImpactMotivationFreeFromDesk": "Perfect, Vicoa frees you from your desk to code on the go.",
+  "surveyWithImpactMotivationMultipleAgents": "Perfect, Vicoa is great for managing multiple agents.",
+  "surveyWithImpactMotivationOnTrack": "Perfect, Vicoa keeps you on track of your agents.",
+  "surveyWithImpactMotivationSendCommands": "Perfect, Vicoa notifies you and allows you to send commands from your phone.",
+  "tutorialTitle": "Tutorials",
+  "usageCreditsCanStillSend": "You can still send {count} messages for free.",
+  "@usageCreditsCanStillSend": {
+    "placeholders": {
+      "count": {
+        "type": "Object"
+      }
+    }
+  },
+  "usageCreditsFreeMessages": "Free Messages",
+  "usageCreditsGetMoreFreeMessages": "Get more free messages",
+  "usageCreditsGiftComingSoon": "Coming soon: gift your free messages to friends!",
+  "usageCreditsInviteFriends": "Invite Friends",
+  "usageCreditsLearnMore": "Learn More",
+  "usageCreditsRateUs5Stars": "Rate Us 5 Stars",
+  "usageCreditsStartFreeTrialNow": "Start Free Trial Now 👋",
+  "usageCreditsUnlimitedMessagesAgents": "Unlimited Messages & Agents",
+  "usageCreditsYourMessages": "Your Messages",
+  "versionUpdateDialogBody": "A new version of Vicoa is available. Please update your app to use all of our amazing features.",
+  "versionUpdateDialogLater": "I'll DO IT LATER",
+  "versionUpdateDialogTitle": "New version available",
+  "versionUpdateDialogUpdateNow": "UPDATE NOW",
+  "videoPlayerXError": "Error playing video",
+  "videoPlayerXLoading": "Loading",
+  "voiceAssistanceDescription": "Choose the language for voice dictation in chat.",
+  "voiceAssistanceTitle": "Voice Assistance",
+  "voiceAssistanceTranscriptionLanguage": "Transcription Language",
+  "voiceLanguageSearchHint": "Search language",
+  "voiceLanguageTitle": "Voice Language",
+  "webPreviewBeta": "beta",
+  "webPreviewEnterUrl": "Enter URL",
+  "webPreviewHttpStatus": "The server returned HTTP {statusCode}.",
+  "@webPreviewHttpStatus": {
+    "placeholders": {
+      "statusCode": {
+        "type": "Object"
+      }
+    }
+  },
+  "webPreviewSiteUnreachable": "This site can't be reached",
+  "webPreviewTitle": "Live Preview",
+  "webPreviewUrlUnreachableDetails": "This URL could not be reached. {details}",
+  "@webPreviewUrlUnreachableDetails": {
+    "placeholders": {
+      "details": {
+        "type": "Object"
+      }
+    }
+  },
+  "webPreviewUrlUnreachableHint": "This URL could not be reached. Check that the preview server is running and the tunnel URL is still valid.",
+  "webPreviewWebUnavailable": "Web preview is available on iOS/Android app builds.",
+  "welcomeAnswerQuickQuestions": "Answer a few quick questions to personalize your experience",
+  "welcomeDemoCancelSubscription": "Heads up: Vicoa needs a computer to run, so if you're on a trial you may want to **cancel it to avoid charges**.\n\n[How to cancel your subscription →]({url})",
+  "@welcomeDemoCancelSubscription": {
+    "placeholders": {
+      "url": {
+        "type": "Object"
+      }
+    }
+  },
+  "welcomeDemoCardTapToSee": "Tap to see how Vicoa works",
+  "welcomeDemoCardWelcome": "Welcome to Vicoa",
+  "welcomeDemoCta": "Ready to try it for real? Pick what fits you:",
+  "welcomeDemoInstanceName": "Welcome to Vicoa 👋",
+  "welcomeDemoLatestMessage": "Ready when you are — pick how you want to start.",
+  "welcomeDemoMsg1": "👋 **Welcome to Vicoa!**\n\nVicoa lets you orchestrate dozens of coding agents in parallel, anywhere. \n\nThis sample chat shows what a coding session looks like after you start using Vicoa.👇",
+  "welcomeDemoMsg2": "How do I use Vicoa?",
+  "welcomeDemoMsg3": "📱 **Start from phone**: tap **+** button, start a new coding session.\n\n🖥️ **Start from computer**: start coding at your desk, continue on the phone.\n",
+  "welcomeDemoMsg4": "What can I do?",
+  "welcomeDemoMsg5": "- 💬 Chat with your agent\n- 🔔 Get notified when tasks done\n- ✅ Approve actions\n- 👀 See code changes\n- And many more...",
+  "welcomeDemoMsg8": "Which agents work with Vicoa?",
+  "welcomeDemoMsg9": "Whichever you already use:\n| Agent | Models |\n| --- | --- |\n| Claude Code | e.g., Opus 4.8, Opus 4.7, Sonnet 4.6 |\n| Codex | e.g., GPT-5.5, GPT-5.4 |\n| OpenCode | e.g., Z.AI, Minimax, DeepSeek |\n| Gemini | e.g., Gemini 3 Pro, Gemini 2.5 Flash |\n| Cursor | e.g., Composer, Claude, GPT |\n| Copilot | e.g., Claude, GPT, Gemini |\n| Kimi | e.g., Kimi K2.5, K2.6, K2.7 Code |\n| Hermes | 50+ models |\n\n> You bring your own agent, Vicoa just connects it.\n\nCoding agents make changes, Vicoa show you in real-time: \n\n",
+  "welcomeDemoNoComputerSubtitle": "Tell us what you want instead",
+  "welcomeDemoNoComputerTitle": "I don't have a computer with me",
+  "welcomeDemoSetupCliSubtitle": "Email me a get-started link",
+  "welcomeDemoSetupCliTitle": "I'll set up Vicoa on my computer",
+  "welcomeDemoSetupEmailSent": "📧 We've sent a get-started link to {target}.\n\n",
+  "@welcomeDemoSetupEmailSent": {
+    "placeholders": {
+      "target": {
+        "type": "Object"
+      }
+    }
+  },
+  "welcomeDemoSetupEmailTargetFallback": "your inbox",
+  "welcomeDemoSetupInstructions": "Here's how to get set up on your computer:\n\n1. Download the desktop app: **https://vicoa.ai/download**\n2. Open it and sign in with this account. Your computer and phone are connected automatically\n\nPrefer the command line? Follow the [setup guide](https://vicoa.ai/docs/getting-started).\n\nHappy building!\n",
+  "welcomeDemoSetupQuestion": "How do I start?",
+  "welcomeDemoWaitlistHeader": "Quick question",
+  "welcomeDemoWaitlistIntro": "No problem. Vicoa needs a computer today, but we're working on more. Tell us what you're after and we'll keep you posted:",
+  "welcomeDemoWaitlistOptDev": "I'm a developer. My computer is not with me right now",
+  "welcomeDemoWaitlistOptGithub": "I'm a developer. I want to connect GitHub and work fully from my phone",
+  "welcomeDemoWaitlistOptNotDev": "I'm not a developer. I just want to build apps on my phone",
+  "welcomeDemoWaitlistPrompt": "Join the waitlist",
+  "welcomeDemoWaitlistQuestion": "What do you want to do with Vicoa?",
+  "welcomeDemoWaitlistThanks": "🙌 Thank you! You're on the list. We'll reach out as soon as there's a great way for you to get started.",
+  "welcomeGladToHaveYou": "Glad to have you with us 👋",
+  "welcomeSkipForNow": "Skip for now",
+  "welcomeStartYourJourney": "Let's start your journey to \nvibe code anywhere.",
+  "worktreeActionsActiveSession": "A session is still running in this worktree.",
+  "worktreeActionsCleanupContent": "This session ran in a vicoa worktree with no remaining changes. Delete the worktree, or keep the files?",
+  "worktreeActionsCleanupTitle": "Delete worktree?",
+  "worktreeActionsDeleted": "Worktree deleted.",
+  "worktreeActionsRemoveContent": "Remove the worktree \"{branch}\"? The branch is kept, so commits on it stay safe.",
+  "@worktreeActionsRemoveContent": {
+    "placeholders": {
+      "branch": {
+        "type": "Object"
+      }
+    }
+  },
+  "worktreeActionsRemoveDirtyContent": "The worktree \"{branch}\" has uncommitted changes. Remove it anyway? The branch is kept, so any commits on it stay safe.",
+  "@worktreeActionsRemoveDirtyContent": {
+    "placeholders": {
+      "branch": {
+        "type": "Object"
+      }
+    }
+  },
+  "worktreeActionsRemoveFailed": "Couldn't remove worktree.",
+  "worktreeActionsRemoveFailedCode": "Couldn't remove worktree: {code}",
+  "@worktreeActionsRemoveFailedCode": {
+    "placeholders": {
+      "code": {
+        "type": "Object"
+      }
+    }
+  },
+  "worktreeActionsRemoveTitle": "Remove worktree",
+  "worktreeActionsRemoved": "Worktree removed.",
+  "worktreeActionsThisWorktree": "this worktree",
+  "worktreeDetailBranch": "Branch",
+  "worktreeDetailCopyPath": "Copy path",
+  "worktreeDetailInUseDescription": "A session is still running in this worktree. End it before removing.",
+  "worktreeDetailNotManagedNote": "This worktree wasn't created by Vicoa, so it can't be managed from the app.",
+  "worktreeDetailOrigin": "Origin",
+  "worktreeDetailOriginExternal": "External",
+  "worktreeDetailOriginVicoa": "Vicoa",
+  "worktreeDetailPath": "Path",
+  "worktreeDetailPathCopied": "Path copied to clipboard",
+  "worktreeDetailRemoveDescription": "Removes the worktree's checkout. The branch is kept, so commits stay safe.",
+  "worktreeDetailRemoveWorktree": "Remove worktree",
+  "worktreeDetailStatus": "Status",
+  "worktreeDetailStatusIdle": "Idle",
+  "worktreeDetailStatusInUse": "In use, a session is running",
+  "worktreeDetailWorktree": "Worktree",
+  "worktreePickerCurrentBranch": "Current branch",
+  "worktreePickerCurrentBranchSubtitle": "No worktree · run in the directory",
+  "worktreePickerDetached": "(detached)",
+  "worktreePickerExistingWorktrees": "Existing worktrees",
+  "worktreePickerExternalPath": "{path} · external",
+  "@worktreePickerExternalPath": {
+    "placeholders": {
+      "path": {
+        "type": "Object"
+      }
+    }
+  },
+  "worktreePickerLoadFailed": "Couldn't load worktrees",
+  "worktreePickerNewWorktree": "New worktree",
+  "worktreePickerNewWorktreeSubtitle": "Fork a fresh branch off HEAD",
+  "worktreePickerNotARepo": "This directory isn't a git repository — only the current branch is available.",
+  "worktreePickerWorktree": "Worktree",
+  "worktreesCouldNotLoad": "Couldn't load worktrees",
+  "worktreesDetached": "(detached)",
+  "worktreesNoWorktreesSubtitle": "Start a session in a new worktree to create one. It'll show up here for you to manage.",
+  "worktreesNoWorktreesYet": "No worktrees yet",
+  "worktreesNotAGitRepo": "Not a git repository",
+  "worktreesNotAGitRepoSubtitle": "This directory isn't a git repository.",
+  "worktreesPullToRefresh": "Pull to refresh to try again.",
+  "worktreesTitle": "Worktrees",
+  "worktreesWorktreeRemoved": "Worktree removed.",
+  "youtubeXInvalidUrl": "Invalid YouTube URL",
+  "youtubeXNoVideoUrl": "No video URL provided",
+  "sessionUsageTitle": "Usage",
+  "sessionUsageContext": "Context Window",
+  "sessionUsageTokensSuffix": "tokens",
+  "sessionUsageSessionCost": "Session cost {cost}",
+  "@sessionUsageSessionCost": {
+    "placeholders": { "cost": { "type": "Object" } }
+  },
+  "sessionUsageCredits": "Credits",
+  "sessionUsageCreditsLeft": "{amount} left",
+  "@sessionUsageCreditsLeft": {
+    "placeholders": { "amount": { "type": "Object" } }
+  },
+  "sessionUsageResetsAtTime": "Resets {time}",
+  "@sessionUsageResetsAtTime": {
+    "placeholders": { "time": { "type": "Object" } }
+  },
+  "sessionUsageResetsOnDate": "Resets {date} at {time}",
+  "@sessionUsageResetsOnDate": {
+    "placeholders": { "date": { "type": "Object" }, "time": { "type": "Object" } }
+  },
+  "sessionUsageResettingNow": "Resetting now",
+  "sessionUsageRefreshing": "Refreshing…",
+  "automationsAgent": "Agent",
+  "automationsAtMinute": "At minute",
+  "automationsChooseFolder": "Choose folder",
+  "automationsConnectMachineFirst": "Connect a machine first to create an automation.",
+  "automationsCouldNotLoad": "Couldn't load automations",
+  "automationsDate": "Date",
+  "automationsDelete": "Delete",
+  "automationsDeleteConfirmBody": "This removes the automation and its run history. Sessions it already started are kept.",
+  "automationsDeleteConfirmTitle": "Delete automation?",
+  "automationsDeleted": "Automation deleted",
+  "automationsEditTitle": "Edit Automation",
+  "automationsEmptySubtitle": "Schedule an agent to run on automatically.",
+  "automationsEmptyTitle": "No automations yet",
+  "automationsEvery": "Every",
+  "automationsEveryUnitDays": "{count, plural, =1{day} other{days}}",
+  "@automationsEveryUnitDays": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "automationsEveryUnitHours": "{count, plural, =1{hour} other{hours}}",
+  "@automationsEveryUnitHours": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "automationsEveryUnitMinutes": "{count, plural, =1{minute} other{minutes}}",
+  "@automationsEveryUnitMinutes": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "automationsEveryUnitMonths": "{count, plural, =1{month} other{months}}",
+  "@automationsEveryUnitMonths": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "automationsEveryUnitWeeks": "{count, plural, =1{week} other{weeks}}",
+  "@automationsEveryUnitWeeks": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "automationsFilterActive": "Active",
+  "automationsFilterAll": "All",
+  "automationsFilterPaused": "Paused",
+  "automationsMachineOffline": "Machine is offline — run could not start.",
+  "automationsNew": "New Automation",
+  "automationsNextRun": "Next · {when}",
+  "@automationsNextRun": {
+    "placeholders": { "when": { "type": "String" } }
+  },
+  "automationsNoRunsYet": "No runs yet.",
+  "automationsPause": "Pause",
+  "automationsProject": "Project",
+  "automationsPromptPlaceholder": "Describe what the agent should do",
+  "automationsPullToRefresh": "Pull down to try again",
+  "automationsRepeat": "Repeat",
+  "automationsRepeatCustom": "Custom",
+  "automationsRepeatDaily": "Daily",
+  "automationsRepeatHourly": "Hourly",
+  "automationsRepeatMinutely": "Minutely",
+  "automationsRepeatMonthly": "Monthly",
+  "automationsRepeatOnce": "Once",
+  "automationsRepeatWeekdays": "Weekdays",
+  "automationsRepeatWeekly": "Weekly",
+  "automationsRepeats": "Repeats",
+  "automationsResume": "Resume",
+  "automationsRunFailed": "Run failed",
+  "automationsRunNow": "Run now",
+  "automationsRunStarted": "Run started",
+  "automationsRunStatusFailed": "Failed",
+  "automationsRunStatusFired": "Ran",
+  "automationsRunStatusMissedOffline": "Missed — offline",
+  "automationsRunStatusSkipped": "Skipped",
+  "automationsRunsOn": "Runs on",
+  "automationsSaveFailed": "Couldn't save automation",
+  "automationsScheduleOnceAt": "Once · {when}",
+  "@automationsScheduleOnceAt": {
+    "placeholders": { "when": { "type": "String" } }
+  },
+  "automationsSectionDetails": "Details",
+  "automationsSectionFrequency": "Frequency",
+  "automationsSectionRunHistory": "Run history",
+  "automationsStatusPaused": "Paused",
+  "automationsSummaryDaily": "Daily at {time}",
+  "@automationsSummaryDaily": {
+    "placeholders": { "time": { "type": "String" } }
+  },
+  "automationsSummaryEveryDays": "Every {n} days at {time}",
+  "@automationsSummaryEveryDays": {
+    "placeholders": { "n": { "type": "String" }, "time": { "type": "String" } }
+  },
+  "automationsSummaryEveryHours": "Every {n} hours at :{minute}",
+  "@automationsSummaryEveryHours": {
+    "placeholders": { "n": { "type": "String" }, "minute": { "type": "String" } }
+  },
+  "automationsSummaryEveryMonths": "Every {n} months on day {days} at {time}",
+  "@automationsSummaryEveryMonths": {
+    "placeholders": { "n": { "type": "String" }, "days": { "type": "String" }, "time": { "type": "String" } }
+  },
+  "automationsSummaryEveryWeeks": "Every {n} weeks on {days} at {time}",
+  "@automationsSummaryEveryWeeks": {
+    "placeholders": { "n": { "type": "String" }, "days": { "type": "String" }, "time": { "type": "String" } }
+  },
+  "automationsSummaryHourly": "Hourly at :{minute}",
+  "@automationsSummaryHourly": {
+    "placeholders": { "minute": { "type": "String" } }
+  },
+  "automationsSummaryHourlyPlain": "Hourly",
+  "automationsSummaryEveryHoursPlain": "Every {n} hours",
+  "@automationsSummaryEveryHoursPlain": {
+    "placeholders": { "n": { "type": "String" } }
+  },
+  "automationsSummaryEveryMinutes": "Every {n} minutes",
+  "@automationsSummaryEveryMinutes": {
+    "placeholders": { "n": { "type": "String" } }
+  },
+  "automationsSummaryRecurring": "Recurring",
+  "automationsSummaryWeekdays": "Weekdays at {time}",
+  "@automationsSummaryWeekdays": {
+    "placeholders": { "time": { "type": "String" } }
+  },
+  "automationsSummaryWeekly": "Weekly on {days} at {time}",
+  "@automationsSummaryWeekly": {
+    "placeholders": { "days": { "type": "String" }, "time": { "type": "String" } }
+  },
+  "automationsTime": "Time",
+  "automationsTimeWindow": "Time window",
+  "automationsWindowAllDay": "All day",
+  "automationsWindowCustom": "Custom",
+  "automationsWindowFrom": "From",
+  "automationsWindowInvalid": "The end time must be after the start time.",
+  "automationsWindowTo": "To",
+  "automationsTitle": "Automations",
+  "automationsTitlePlaceholder": "Automation title",
+  "automationsTitleRequired": "Title is required",
+  "tabAgents": "Agents",
+  "tabAutomations": "Automations",
+  "tabProfile": "Profile",
+  "tabTasks": "Tasks",
+  "searchHint": "Search sessions, tasks, automations",
+  "searchRecent": "Recent",
+  "searchSessions": "Sessions",
+  "searchNoResults": "No results found",
+  "searchPrompt": "Type to search sessions, tasks, and automations",
+  "searchFailed": "Search failed — check your connection and try again",
+  "searchTimeout": "Search timed out — try a more specific query",
+  "searchSessionsOnly": "Showing sessions only",
+  "gettingStartedTitle": "Get started",
+  "gettingStartedProgress": "{done} of {total} done",
+  "@gettingStartedProgress": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "gettingStartedConnectTitle": "Connect a computer",
+  "gettingStartedConnectHint": "Set up Vicoa on your desktop",
+  "gettingStartedSessionTitle": "Start a session",
+  "gettingStartedSessionHint": "Spin up a coding agent",
+  "gettingStartedMessageTitle": "Send a message",
+  "gettingStartedMessageHint": "Chat with your agent",
+  "gettingStartedCollapse": "Collapse",
+  "gettingStartedDismiss": "Dismiss",
+  "gettingStartedConnectSheetTitle": "Set up Vicoa on your computer",
+  "gettingStartedConnectSheetBody": "Vicoa runs your coding agents on your computer. Set it up on your desktop, then start, watch, and steer them from your phone.",
+  "gettingStartedEmailLinkCta": "Email me the setup link",
+  "gettingStartedEmailSentCta": "Setup link sent",
+  "gettingStartedEmailSentToast": "We've sent a get-started link to {target}.",
+  "@gettingStartedEmailSentToast": {
+    "placeholders": {
+      "target": {
+        "type": "Object"
+      }
+    }
+  },
+  "gettingStartedDownloadCta": "Or open vicoa.ai/download"
+}
