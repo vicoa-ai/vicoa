@@ -87,5 +87,12 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)']
+  // Only the /dashboard/* tree needs middleware: it is the sole protected area,
+  // and the desktop /dashboard -> new-session redirect also lives under it.
+  // Matching every path (the old `/((?!api|...).*)`) ran this as a Netlify edge
+  // function on every marketing/docs/blog view — and in Supabase mode fired a
+  // getUser() network round-trip each time — burning function quota for no gain.
+  // Public pages carry no auth cookie to refresh; the Supabase browser client
+  // keeps the session alive and middleware re-syncs it on entry to /dashboard.
+  matcher: ['/dashboard/:path*']
 };
