@@ -1978,6 +1978,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get surveyOptDataScientist => '数据科学家 / 分析师';
 
   @override
+  String get surveyOptResearcher => '研究员';
+
+  @override
   String get surveyOptDesign => '设计';
 
   @override
