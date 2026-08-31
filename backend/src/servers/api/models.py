@@ -216,6 +216,25 @@ class RegisterAgentInstanceRequest(BaseModel):
             "silently dropped to null, never an error."
         ),
     )
+    repo_root: str | None = Field(
+        default=None,
+        description=(
+            "Absolute top-level path of the session's git repository — the "
+            "MAIN worktree's root, even when the session runs in a linked "
+            "worktree (whose checkout lives outside the repo). Lets the server "
+            "attribute a worktree session to the same project as its main "
+            "checkout. Probed by the SDK from the session's cwd; null for "
+            "non-git dirs. Stored on instance_metadata, like worktree_name."
+        ),
+    )
+    git_remote_url: str | None = Field(
+        default=None,
+        description=(
+            "Canonical origin remote URL of the session's repo, for "
+            "cross-machine project matching. Probed by the SDK; null when the "
+            "repo has no origin remote or is not a git dir."
+        ),
+    )
     session_config: dict | None = Field(
         default=None,
         description=(
@@ -366,6 +385,14 @@ class RegisterAgentInstanceResponse(BaseModel):
     machine_id: str | None = Field(
         default=None,
         description="Id of the machine this session runs on, if linked (D14)",
+    )
+    project_id: str | None = Field(
+        default=None,
+        description=(
+            "Formal projects-entity id, auto-matched from the working directory "
+            "(and repo root/remote for worktrees); null when no project is set "
+            "up for that checkout"
+        ),
     )
     session_config: dict | None = Field(
         default=None,

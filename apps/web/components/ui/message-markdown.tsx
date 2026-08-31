@@ -362,7 +362,7 @@ function MessageMarkdownImpl({ children, agentType, highlightQuery }: MessageMar
           );
         },
         table: ({ children }) => (
-          <div className="w-full overflow-x-auto mb-4">
+          <div className="w-full overflow-x-auto custom-scrollbar mb-4">
             <table className="w-full border border-border rounded-md text-sm">{children}</table>
           </div>
         ),

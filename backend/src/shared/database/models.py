@@ -126,6 +126,9 @@ class AgentInstance(Base):
         Index("ix_agent_instances_user_updated", "user_id", "updated_at"),
         Index("ix_agent_instances_machine_id", "machine_id"),
         Index("ix_agent_instances_task", "task_id"),
+        # Sharing/grouping lists a project's sessions newest-first
+        # (session ↔ project link). See project_id below.
+        Index("ix_agent_instances_project_started", "project_id", "started_at"),
         # Partial index so the rate-limit sweep/filter only ever scans the
         # currently-blocked rows (typically a handful) instead of the table.
         Index(
@@ -176,6 +179,26 @@ class AgentInstance(Base):
             "tasks.id",
             use_alter=True,
             name="fk_agent_instances_task_id",
+            ondelete="SET NULL",
+        ),
+        type_=PostgresUUID(as_uuid=True),
+        nullable=True,
+        default=None,
+    )
+    # Formal link to the projects entity (the session ↔ project link that
+    # unifies grouping with the task tracker). Auto-matched on register from
+    # (machine_id, working-dir path) — and, for a linked worktree, from the
+    # source repo root / git remote — against a project_directories row; see
+    # shared/database/project_matching.py. NULL when no project is set up for
+    # that checkout; the sidebar's top-level group still falls back to the
+    # `project` path string when this is NULL. use_alter because projects is
+    # defined in task_models.py (created after this table); SET NULL so deleting
+    # a project degrades its runs rather than deleting them.
+    project_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            use_alter=True,
+            name="fk_agent_instances_project_id",
             ondelete="SET NULL",
         ),
         type_=PostgresUUID(as_uuid=True),

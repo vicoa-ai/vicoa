@@ -32,13 +32,46 @@ export const HIDDEN_PROJECTS_STORAGE_KEY = 'sidebar-hidden-projects';
 /** Desktop-only (see the divergence note above): sub-group projects by worktree. */
 export const DISPLAY_WORKTREE_STORAGE_KEY = 'sidebar-display-worktree';
 
-/** Distinct project display names (last path part) present in the list. */
-export function distinctProjectNames(instances: AgentInstanceResponse[]): string[] {
-  const names = new Set<string>();
+/** Group-key for sessions with no project at all. */
+export const NO_PROJECT_KEY = '__no_project__';
+
+/**
+ * Stable identity of the project a session belongs to, for top-level grouping.
+ *
+ * Prefers the formal `project_id` (server-matched from the session's machine +
+ * working dir, and — for a worktree — its repo root/remote), so two checkouts
+ * of one repo collapse into a single group even when their folder names differ,
+ * and two unrelated repos that happen to share a basename stay apart. Falls back
+ * to the path basename when no project is linked (unchanged legacy behavior, and
+ * a UUID never collides with a basename), and to `NO_PROJECT_KEY` for sessions
+ * with no project path. Keep in sync with `projectDisplayName`.
+ */
+export function projectGroupKey(instance: AgentInstanceResponse): string {
+  if (instance.project_id) return instance.project_id;
+  return instance.project ? getLastPathPart(instance.project) : NO_PROJECT_KEY;
+}
+
+/** Human label for a project group — the path basename (never the raw id). */
+function projectDisplayName(instances: AgentInstanceResponse[]): string {
+  const first = instances.find((i) => i.project);
+  return first?.project ? getLastPathPart(first.project) : projectGroupKey(instances[0]);
+}
+
+/** Distinct project groups present in the list, as `{ key, label }` pairs. */
+export function distinctProjects(
+  instances: AgentInstanceResponse[],
+): { key: string; label: string }[] {
+  const byKey = new Map<string, string>();
   for (const instance of instances) {
-    if (instance.project) names.add(getLastPathPart(instance.project));
+    const key = projectGroupKey(instance);
+    if (key === NO_PROJECT_KEY) continue;
+    if (!byKey.has(key)) {
+      byKey.set(key, instance.project ? getLastPathPart(instance.project) : key);
+    }
   }
-  return Array.from(names).sort((a, b) => a.localeCompare(b));
+  return Array.from(byKey, ([key, label]) => ({ key, label })).sort((a, b) =>
+    a.label.localeCompare(b.label),
+  );
 }
 
 /** Distinct agent type names present in the list (for the Agent filter menu). */
@@ -126,15 +159,19 @@ function sortWorktrees(worktrees: WorktreeSessionGroup[]): WorktreeSessionGroup[
 /**
  * Split one project's sessions into its main checkout plus a group per worktree.
  *
- * `gitWorktrees` is the live `git worktree list` for the repo — the source of
- * truth for which worktrees exist:
- *   - Every worktree shows, even with no sessions (#4).
- *   - A session whose branch matches no live worktree is orphaned (its worktree
- *     was removed) and folds back into the main checkout (#3).
- * Pass `null` before that list has loaded (or when git is unavailable): sessions
- * are then grouped by their own `worktree_name` as a baseline, so worktrees
- * stay visible immediately instead of flashing flat, and nothing is treated as
- * orphaned until git actually says so.
+ * Membership is keyed on each session's OWN stored worktree (`worktree_name`,
+ * captured once at registration and immutable), NOT on a live `git worktree
+ * list`. This is deliberate: a session started in a worktree stays under that
+ * worktree even if the worktree's branch is later switched or the worktree is
+ * removed — it never silently "jumps" into the main checkout (the old
+ * live-branch cross-check did exactly that). Sessions with no `worktree_name`
+ * are the main checkout.
+ *
+ * `gitWorktrees` (the live `git worktree list`, desktop-only) is an ENRICHMENT,
+ * not the source of membership: it supplies the authoritative path/managed flag
+ * for a worktree and surfaces worktrees that currently have no session (#4).
+ * Pass `null` on web / before it resolves — grouping then runs purely off the
+ * sessions' stored fields, so the same split renders with or without git.
  *
  * `instances` is expected newest-first (as `groupSessions` returns), so each
  * worktree's most recent session leads and drives the group ordering.
@@ -145,37 +182,38 @@ export function splitProjectByWorktree(
 ): ProjectWorktreeSplit {
   const mainInstances: AgentInstanceResponse[] = [];
   const byBranch = new Map<string, AgentInstanceResponse[]>();
-  const push = (branch: string, inst: AgentInstanceResponse) => {
-    const arr = byBranch.get(branch);
-    if (arr) arr.push(inst);
-    else byBranch.set(branch, [inst]);
-  };
-
-  if (gitWorktrees === null) {
-    for (const inst of instances) {
-      if (inst.worktree_name) push(inst.worktree_name, inst);
-      else mainInstances.push(inst);
-    }
-    const worktrees = Array.from(byBranch.entries()).map(([branch, group]) => ({
-      branch,
-      path: group[0]?.project ?? '',
-      managed: isManagedWorktreePath(group[0]?.project ?? ''),
-      instances: group,
-    }));
-    return { mainInstances, worktrees: sortWorktrees(worktrees) };
-  }
-
-  const live = new Set(gitWorktrees.map((w) => w.branch));
   for (const inst of instances) {
-    if (inst.worktree_name && live.has(inst.worktree_name)) push(inst.worktree_name, inst);
-    else mainInstances.push(inst); // main checkout, or an orphaned worktree
+    if (inst.worktree_name) {
+      const arr = byBranch.get(inst.worktree_name);
+      if (arr) arr.push(inst);
+      else byBranch.set(inst.worktree_name, [inst]);
+    } else {
+      mainInstances.push(inst); // main checkout
+    }
   }
-  const worktrees = gitWorktrees.map((w) => ({
-    branch: w.branch,
-    path: w.path,
-    managed: w.managed,
-    instances: byBranch.get(w.branch) ?? [],
-  }));
+
+  // Each session's own worktree node always exists (derived from the session,
+  // so a removed/renamed worktree never drops it into main). Live git only
+  // overrides the node's path/managed and adds worktrees that have no session.
+  const live = new Map((gitWorktrees ?? []).map((w) => [w.branch, w] as const));
+  const worktrees: WorktreeSessionGroup[] = [];
+  for (const [branch, group] of byBranch) {
+    const liveInfo = live.get(branch);
+    const path = liveInfo?.path ?? group[0]?.project ?? '';
+    worktrees.push({
+      branch,
+      path,
+      managed: liveInfo ? liveInfo.managed : isManagedWorktreePath(path),
+      instances: group,
+    });
+  }
+  if (gitWorktrees) {
+    for (const w of gitWorktrees) {
+      if (!byBranch.has(w.branch)) {
+        worktrees.push({ branch: w.branch, path: w.path, managed: w.managed, instances: [] });
+      }
+    }
+  }
   return { mainInstances, worktrees: sortWorktrees(worktrees) };
 }
 
@@ -221,26 +259,32 @@ export function groupSessions(
       : statusVisible.filter((i) => i.agent_type_name === agentFilter);
 
   // Deselected projects are hidden; sessions without a project always show.
+  // Hidden set holds group keys (project_id or basename), matching the menu.
   const hidden = new Set(hiddenProjects);
   const visibleInstances =
     hidden.size === 0
       ? agentVisible
-      : agentVisible.filter((i) => !i.project || !hidden.has(getLastPathPart(i.project)));
+      : agentVisible.filter((i) => {
+          const key = projectGroupKey(i);
+          return key === NO_PROJECT_KEY || !hidden.has(key);
+        });
 
   let groups: SessionGroup[];
   if (groupBy === 'project') {
     const projectMap = new Map<string, AgentInstanceResponse[]>();
     for (const instance of visibleInstances) {
-      const key = instance.project ? getLastPathPart(instance.project) : '__no_project__';
+      const key = projectGroupKey(instance);
       if (!projectMap.has(key)) projectMap.set(key, []);
       projectMap.get(key)!.push(instance);
     }
     // User-dragged order first (indices in projectOrder), then unranked
-    // projects alphabetically, no-project always last.
+    // projects alphabetically, no-project always last. `key` is the project_id
+    // (or basename fallback); the display label is derived separately so a
+    // linked project never shows its raw id.
     groups = Array.from(projectMap.entries())
       .sort(([a], [b]) => {
-        if (a === '__no_project__') return 1;
-        if (b === '__no_project__') return -1;
+        if (a === NO_PROJECT_KEY) return 1;
+        if (b === NO_PROJECT_KEY) return -1;
         const rankA = projectOrder.indexOf(a);
         const rankB = projectOrder.indexOf(b);
         if (rankA !== -1 && rankB !== -1) return rankA - rankB;
@@ -250,7 +294,7 @@ export function groupSessions(
       })
       .map(([key, groupInstances]) => ({
         key,
-        label: key !== '__no_project__' ? key : null,
+        label: key !== NO_PROJECT_KEY ? projectDisplayName(groupInstances) : null,
         instances: groupInstances,
       }));
   } else if (groupBy === 'time') {
