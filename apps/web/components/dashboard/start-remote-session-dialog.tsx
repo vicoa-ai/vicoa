@@ -19,6 +19,7 @@ import type BackendAPI from '@/lib/backend-api';
 import type { MachineSummary, RemoteAgentType } from '@/lib/backend-api';
 import { StartEllipsisText } from '@/components/ui/start-ellipsis-text';
 import { isMachineOnline as isMachineOnlineShared } from '@/lib/session-liveness';
+import { currentPathname, openCreatedSession } from '@/lib/new-session-navigation';
 
 const LAST_REMOTE_SESSION_SELECTION_KEY = 'vicoa:last-remote-session-selection';
 const REMOTE_AGENT_OPTIONS: Array<{ value: RemoteAgentType; label: string }> = [
@@ -180,6 +181,10 @@ export function StartRemoteSessionDialog({
       return;
     }
 
+    // Where the user launched from — if they navigate away during the spawn we
+    // leave them there instead of opening the new session (see openCreatedSession).
+    const startPath = currentPathname();
+
     try {
       setIsSubmitting(true);
       setStatusMessage(null);
@@ -230,7 +235,10 @@ export function StartRemoteSessionDialog({
       onSessionRequested();
       onOpenChange(false);
       setStatusMessage(null);
-      router.push(`/dashboard/agents/${newInstanceId}`);
+      // Only open the session if the user hasn't navigated away while it spawned;
+      // otherwise leave them on their current page (it's already in the sidebar
+      // via onSessionRequested).
+      openCreatedSession(router, startPath, `/dashboard/agents/${newInstanceId}`);
     } catch (error) {
       console.error('Failed to spawn remote session', error);
       setStatusVariant('error');
