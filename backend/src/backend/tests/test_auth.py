@@ -282,3 +282,40 @@ class TestAuthPathIsReadOnly:
         assert user.id == test_user.id
         assert writes == [], f"auth path must not write: {writes}"
         assert background_tasks.tasks == [], "existing user must not be welcomed again"
+
+
+class TestCreateCliKey:
+    """The CLI key is now an opaque, DB-backed, expiring token."""
+
+    def test_cli_key_is_opaque_and_expiring(
+        self, authenticated_client, test_user, test_db
+    ):
+        from datetime import datetime, timezone
+
+        from shared.auth import get_token_hash
+        from shared.auth.agent_tokens import CLI_KEY_TTL_DAYS
+
+        response = authenticated_client.post("/api/v1/auth/cli-key")
+        assert response.status_code == 200
+        data = response.json()
+
+        raw = data["api_key"]
+        assert raw.startswith("vic_")
+        assert data["expires_at"] is not None
+        # ~90 days out (allow a day of slack for clock/serialization).
+        expires_at = datetime.fromisoformat(data["expires_at"])
+        days_left = (expires_at - datetime.now(timezone.utc)).days
+        assert CLI_KEY_TTL_DAYS - 1 <= days_left <= CLI_KEY_TTL_DAYS
+
+        # The raw secret is never stored: the row keeps only the hash and a
+        # masked prefix, and the hash matches what the verifier will compute.
+        row = (
+            test_db.query(APIKey)
+            .filter(APIKey.api_key_hash == get_token_hash(raw))
+            .first()
+        )
+        assert row is not None
+        assert row.user_id == test_user.id
+        assert row.api_key != raw
+        assert row.api_key.startswith("vic_")
+        assert row.is_active is True

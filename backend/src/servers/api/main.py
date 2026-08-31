@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from shared.config import settings
 
+from .auth_keys import auth_keys_router
 from .automations import automation_router
 from .instances import instance_router
 from .routers import agent_router
@@ -50,6 +51,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(agent_router, prefix="/api/v1")
+app.include_router(auth_keys_router, prefix="/api/v1")
 app.include_router(task_router, prefix="/api/v1")
 app.include_router(automation_router, prefix="/api/v1")
 app.include_router(instance_router, prefix="/api/v1")

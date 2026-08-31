@@ -9,6 +9,7 @@
     "src/backend/api/push_notifications.py": 3,
     "src/backend/api/teams.py": 6,
     "src/backend/api/user_settings.py": 1,
+    "src/servers/api/auth_keys.py": 1,
     "src/servers/api/routers.py": 23
   },
   "grandfathered_trigger_migrations": [

@@ -124,11 +124,18 @@ def verify_ws_credentials(creds: WsCredentials) -> str:
         except TokenVerificationError as exc:
             raise WsAuthError(f"user token rejected: {exc}") from exc
 
-    # vicoa-key: the Vicoa-issued RS256 agent API key.
+    # vicoa-key: a Vicoa-issued agent API key (opaque or RS256 JWT).
     try:
         return str(verify_agent_jwt(creds.raw_token).user_id)
     except TokenVerificationError as exc:
         raise WsAuthError(f"agent token rejected: {exc}") from exc
+    except Exception as exc:
+        # An opaque key can't be verified without its DB row, so a lookup
+        # failure surfaces here (unlike the JWT path, which degrades to "live").
+        # Close the handshake cleanly instead of leaking the exception: the WS
+        # client just reconnects, and the REST heartbeat stays the authoritative
+        # detector of a genuinely dead credential.
+        raise WsAuthError(f"agent token could not be verified: {exc}") from exc
 
 
 def is_owned(db: Session, resolved: ResolvedHello, user_id: str) -> bool:
