@@ -3830,6 +3830,12 @@ abstract class AppLocalizations {
   /// **'Data Scientist / Analyst'**
   String get surveyOptDataScientist;
 
+  /// No description provided for @surveyOptResearcher.
+  ///
+  /// In en, this message translates to:
+  /// **'Researcher'**
+  String get surveyOptResearcher;
+
   /// No description provided for @surveyOptDesign.
   ///
   /// In en, this message translates to:

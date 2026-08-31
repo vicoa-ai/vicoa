@@ -2058,6 +2058,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get surveyOptDataScientist => 'Data Scientist / Analyst';
 
   @override
+  String get surveyOptResearcher => 'Researcher';
+
+  @override
   String get surveyOptDesign => 'Design';
 
   @override
