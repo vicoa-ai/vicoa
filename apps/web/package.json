@@ -61,7 +61,7 @@
     "highlight.js": "^11.11.1",
     "jose": "^6.0.11",
     "lucide-react": "^0.511.0",
-    "next": "15.4.0-canary.47",
+    "next": "15.5.24",
     "postcss": "^8.5.3",
     "posthog-js": "^1.372.9",
     "posthog-node": "^5.33.3",

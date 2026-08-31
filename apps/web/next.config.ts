@@ -3,31 +3,23 @@ import { createMDX } from 'fumadocs-mdx/next';
 
 const withMDX = createMDX();
 
-// The desktop app bakes this flag at build time (apps/desktop/scripts/build-renderer.mjs
-// passes NEXT_PUBLIC_VICOA_DESKTOP=1 into `next build`), and next.config runs
-// inside that same build, so it can branch on it here.
-const IS_DESKTOP_BUILD = process.env.NEXT_PUBLIC_VICOA_DESKTOP === '1';
-
 const nextConfig: NextConfig = {
   // Self-contained server build (`.next/standalone`) — consumed by the desktop
   // packaging (apps/desktop/scripts/build-renderer.mjs); a no-op for the regular
   // server deploy, which keeps using `next start`.
   output: 'standalone',
-  // ppr + clientSegmentCache are Next canary features that govern client-segment
-  // prefetch/streaming. On the WINDOWS desktop build they are the prime suspect
-  // for the "blank main page" report: the packaged Windows renderer lands on the
-  // New Session route and hangs on an empty Suspense fallback (the client segment
-  // never resolves), while the identical mac build works. The desktop app is
-  // fully dynamic and auth-gated, so it gains nothing from PPR — turn both off for
-  // the desktop standalone build and keep them on for the web deploy. If the
-  // Windows blank persists with these off, the cause is elsewhere (see the
-  // renderer.log auto-capture in apps/desktop/src/window.ts).
-  experimental: IS_DESKTOP_BUILD
-    ? {}
-    : {
-        ppr: true,
-        clientSegmentCache: true,
-      },
+  // NOTE: ppr + clientSegmentCache (Next canary features) used to be enabled for
+  // the web deploy. They were removed: with `ppr: true` every prerendered route
+  // is marked partially-dynamic, so the Netlify Next runtime resumed each one
+  // through the serverless function on every request — even the fully-static
+  // marketing/docs/blog pages, which then never hit the CDN. That blew past the
+  // Netlify Functions invocation quota for zero benefit (auth state in the navbar
+  // is fetched client-side, so the server has no dynamic hole to postpone). With
+  // PPR off, those pages ship as pure static CDN assets and only the API routes
+  // and genuinely dynamic renders touch the function. Removing PPR also lets us
+  // run stable Next instead of canary (PPR is canary-only). The desktop build
+  // already ran with these off (they were the prime suspect for a Windows
+  // "blank main page" hang). Do not re-add PPR without re-checking Netlify usage.
   async redirects() {
     return [
       // `/cancel-subscription` is a short link to the help page, which is part
