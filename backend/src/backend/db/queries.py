@@ -303,6 +303,7 @@ def format_agent_instance(
         "chat_length": chat_length,
         "last_heartbeat_at": instance.last_heartbeat_at,
         "project": instance.project,
+        "project_id": str(instance.project_id) if instance.project_id else None,
         "home_dir": instance.home_dir,
         "machine_id": str(instance.machine_id) if instance.machine_id else None,
         "pinned_at": instance.pinned_at,
@@ -469,6 +470,7 @@ def get_all_agent_types_with_instances(
                 "chat_length": item["message_count"],
                 "last_heartbeat_at": instance.last_heartbeat_at,
                 "project": instance.project,
+                "project_id": str(instance.project_id) if instance.project_id else None,
                 "machine_id": str(instance.machine_id) if instance.machine_id else None,
             }
             formatted_instances.append(AgentInstanceResponse.model_validate(payload))

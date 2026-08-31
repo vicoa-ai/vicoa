@@ -121,6 +121,79 @@ def get_worktree_name(path: str | None = None) -> str | None:
     return os.path.basename(os.path.normpath(toplevel)) or None
 
 
+def get_git_identity(path: str | None = None) -> tuple[str | None, str | None]:
+    """Best-effort ``(repo_root, git_remote_url)`` for the git repo at ``path``.
+
+    Reported at registration so a session can be attached to the formal project
+    entity even when it runs in a *linked worktree*. ``repo_root`` is the MAIN
+    worktree's top-level, which for a worktree differs from its own cwd — its
+    checkout lives outside the repo (``~/vicoa/workspaces/...``) — but matches
+    the project's linked directory. ``git_remote_url`` is origin's URL, letting
+    one project span machines/worktrees by identity.
+
+    ``repo_root`` is derived like ``get_worktree_name``: for a main checkout
+    (git-dir == common-dir) it is ``--show-toplevel``; for a linked worktree it
+    is the parent of the shared common dir. Paths are resolved relative to
+    ``target`` so no modern ``--path-format`` flag is required.
+
+    Never raises: a missing git, a non-repo path, or a slow/hung git yields
+    ``(None, None)`` (or a partial pair) — registration must not fail over a
+    grouping nicety.
+    """
+    target = os.path.expanduser(path) if path else os.getcwd()
+
+    def _resolve(raw: str) -> str:
+        return os.path.normpath(os.path.join(target, raw))
+
+    repo_root: str | None = None
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                target,
+                "rev-parse",
+                "--git-dir",
+                "--git-common-dir",
+                "--show-toplevel",
+            ],
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+        if proc.returncode == 0:
+            lines = proc.stdout.decode("utf-8", errors="replace").splitlines()
+            if len(lines) >= 3:
+                git_dir, common_dir, toplevel = (line.strip() for line in lines[:3])
+                if _resolve(git_dir) == _resolve(common_dir):
+                    root_abs = _resolve(toplevel)
+                else:
+                    root_abs = os.path.dirname(_resolve(common_dir))
+                # Report in the same ~-relative form as `project` (the session
+                # cwd) so it matches a `project_directories.local_path` the UI
+                # stored as `~/…`. Absolute here never string-matches a `~/…`
+                # link, which is exactly what left worktree sessions unmatched.
+                repo_root = get_project_path(root_abs) if root_abs else None
+    except (OSError, subprocess.SubprocessError):
+        repo_root = None
+
+    git_remote_url: str | None = None
+    try:
+        proc = subprocess.run(
+            ["git", "-C", target, "remote", "get-url", "origin"],
+            capture_output=True,
+            check=False,
+            timeout=5,
+        )
+        if proc.returncode == 0:
+            url = proc.stdout.decode("utf-8", errors="replace").strip()
+            git_remote_url = url or None
+    except (OSError, subprocess.SubprocessError):
+        git_remote_url = None
+
+    return repo_root, git_remote_url
+
+
 def _is_windows() -> bool:
     """Whether we're running on Windows.
 

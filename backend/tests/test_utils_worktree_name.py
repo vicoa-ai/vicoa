@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from vicoa.utils import get_worktree_name
+from vicoa.utils import get_git_identity, get_worktree_name
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
@@ -126,3 +126,49 @@ def test_git_failure_never_raises(monkeypatch, repo: Path):
     monkeypatch.setattr(subprocess, "run", boom)
 
     assert get_worktree_name(str(repo)) is None
+
+
+# --- get_git_identity: (repo_root, git_remote_url) for session↔project match ---
+
+
+def test_git_identity_main_checkout_is_tilde_repo_root(
+    repo: Path, tmp_path: Path, monkeypatch
+):
+    """repo_root must be ~-relative (like `project`) so it matches a ~/… link.
+
+    A regression guard: reporting an absolute repo_root here is exactly what
+    left worktree sessions unmatched against a tilde `project_directories` link.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path.resolve()))
+    root, remote = get_git_identity(str(repo))
+    assert root is not None and root.startswith("~/")
+    assert root.endswith("/src/my-app")
+    assert remote is None  # no origin configured
+
+
+def test_git_identity_worktree_reports_the_main_root_in_tilde_form(
+    repo: Path, tmp_path: Path, monkeypatch
+):
+    """A worktree's cwd sits elsewhere, but repo_root is the MAIN checkout."""
+    checkout = tmp_path / "wt" / "brave-otter" / "my-app"
+    _git(repo, "worktree", "add", "-q", "-b", "brave-otter", str(checkout))
+    monkeypatch.setenv("HOME", str(tmp_path.resolve()))
+
+    root, _ = get_git_identity(str(checkout))
+    assert root is not None and root.startswith("~/")
+    assert root.endswith("/src/my-app")  # the main repo, not the worktree path
+    assert "brave-otter" not in root
+
+
+def test_git_identity_reports_origin_remote(repo: Path, monkeypatch, tmp_path: Path):
+    _git(repo, "remote", "add", "origin", "git@github.com:acme/widget.git")
+    monkeypatch.setenv("HOME", str(tmp_path.resolve()))
+
+    _, remote = get_git_identity(str(repo))
+    assert remote == "git@github.com:acme/widget.git"
+
+
+def test_git_identity_non_git_dir_is_none(tmp_path: Path):
+    plain = tmp_path / "not-a-repo"
+    plain.mkdir()
+    assert get_git_identity(str(plain)) == (None, None)

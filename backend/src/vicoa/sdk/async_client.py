@@ -13,7 +13,7 @@ from aiohttp import ClientTimeout
 
 from vicoa.constants import DEFAULT_API_URL
 from vicoa.machine_state import read_machine_id
-from vicoa.utils import get_worktree_name
+from vicoa.utils import get_git_identity, get_worktree_name
 
 from .exceptions import AuthenticationError, TimeoutError, APIError
 from .models import (
@@ -358,6 +358,8 @@ class AsyncVicoaClient:
         machine_id: Optional[str] = None,
         session_config: Optional[Dict[str, Any]] = None,
         worktree_name: Optional[str] = None,
+        repo_root: Optional[str] = None,
+        git_remote_url: Optional[str] = None,
     ) -> RegisterAgentInstanceResponse:
         """Register or update an agent instance for terminal relay sessions.
 
@@ -405,6 +407,19 @@ class AsyncVicoaClient:
         )
         if resolved_worktree:
             payload["worktree_name"] = resolved_worktree
+        # Probe the repo root + origin remote once (alongside the worktree name)
+        # so a worktree session — whose cwd sits outside the repo — can be
+        # attributed to its project by repo root/remote rather than by cwd.
+        if repo_root is None or git_remote_url is None:
+            probed_root, probed_remote = get_git_identity(project)
+            if repo_root is None:
+                repo_root = probed_root
+            if git_remote_url is None:
+                git_remote_url = probed_remote
+        if repo_root:
+            payload["repo_root"] = repo_root
+        if git_remote_url:
+            payload["git_remote_url"] = git_remote_url
         resolved_source = source or os.environ.get("VICOA_SPAWN_SOURCE")
         if resolved_source:
             payload["source"] = resolved_source

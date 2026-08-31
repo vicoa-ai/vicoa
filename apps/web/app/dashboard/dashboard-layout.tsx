@@ -525,13 +525,16 @@ function DashboardSidebar({
 
         {/* Agent Sessions (shared with the desktop sidebar). Web enables
             infinite scroll and, like desktop, tears down a closed session's
-            terminals; worktrees/⌘-shortcuts stay off (no local daemon in the
-            cloud dashboard). */}
+            terminals. Worktree sub-grouping is available here too (opt-in via
+            the Display → Worktree toggle) — it splits from stored session fields
+            and doesn't need the local daemon; only the live `git worktree list`
+            + worktree deletion stay desktop-only. ⌘-shortcuts stay off. */}
         {showSideBar ? (
           <SidebarSessions
             selectedInstanceId={activeTab === 'session' ? selectedInstanceId : null}
             onSessionOpened={handleSessionOpened}
             onAfterCloseSession={closeTerminalSession}
+            enableWorktrees
             enableInfiniteScroll
           />
         ) : (

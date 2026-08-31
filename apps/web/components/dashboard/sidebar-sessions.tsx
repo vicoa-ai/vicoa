@@ -51,7 +51,7 @@ import {
   DEFAULT_STATUS_FILTER,
   DISPLAY_WORKTREE_STORAGE_KEY,
   distinctAgentNames,
-  distinctProjectNames,
+  distinctProjects,
   filterWantsActiveOnly,
   groupSessions,
   splitProjectByWorktree,
@@ -86,6 +86,11 @@ import {
   rpcGitWorktreeRemove,
   type WorktreeInfo,
 } from '@/components/files-git-panel/rpc';
+
+// Desktop build (Electron renderer). The daemon is local here, so the live
+// `git worktree list` RPC is cheap; on web we sub-group worktrees purely from
+// stored session fields and never reach for a daemon over the relay.
+const IS_DESKTOP = process.env.NEXT_PUBLIC_VICOA_DESKTOP === '1';
 
 // Selected-row highlight, shared between session rows and the view-options menu.
 const ITEM_SELECTED = 'bg-foreground/10 text-foreground';
@@ -350,14 +355,16 @@ export function SidebarSessions({
 
   // Agent / project names present in the loaded list (submenu options).
   const agentNames = useMemo(() => distinctAgentNames(recentInstances), [recentInstances]);
-  const projectNames = useMemo(() => distinctProjectNames(recentInstances), [recentInstances]);
+  // `{ key, label }` per project group: key is the project_id (or basename
+  // fallback) used for hide/order, label is the display name.
+  const projects = useMemo(() => distinctProjects(recentInstances), [recentInstances]);
 
   // Deselected projects (hidden from the list). Stored as the hidden set so
   // newly appearing projects default to visible.
   const [hiddenProjects, setHiddenProjects] = useState<string[]>([]);
-  const toggleProjectVisible = useCallback((name: string) => {
+  const toggleProjectVisible = useCallback((key: string) => {
     setHiddenProjects((prev) => {
-      const next = prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name];
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
       setPref(HIDDEN_PROJECTS_STORAGE_KEY, next);
       return next;
     });
@@ -384,7 +391,9 @@ export function SidebarSessions({
   // reaches for a daemon it can't talk to).
   const worktreeTargets = useMemo(
     () =>
-      !worktreesOn || groupBy !== 'project'
+      // Desktop only: the daemon is local. On web the worktree split still runs
+      // (from stored fields), just without a live `git worktree list`.
+      !worktreesOn || groupBy !== 'project' || !IS_DESKTOP
         ? []
         : sidebarGroups
             .filter((g) => g.key !== 'PINNED' && g.label !== null && g.instances.length > 0)
@@ -623,9 +632,12 @@ export function SidebarSessions({
             // Any real linked worktree is removable (the daemon confines
             // removal to actual worktrees of the repo, not just managed ones);
             // we only need a machine to route the RPC to.
-            remove: repoMachineId
-              ? { machineId: repoMachineId, path: w.path, branch: w.branch }
-              : null,
+            // Worktree removal is a daemon RPC; keep it desktop-only (web shows
+            // the worktree groups read-only rather than deleting over the relay).
+            remove:
+              IS_DESKTOP && repoMachineId
+                ? { machineId: repoMachineId, path: w.path, branch: w.branch }
+                : null,
           });
         }
         if (subs.length === 0) return notSplit;
@@ -978,22 +990,22 @@ export function SidebarSessions({
                     />
                   ))}
                 </FilterSubRow>
-                {projectNames.length > 0 && (
+                {projects.length > 0 && (
                   <FilterSubRow
                     label="Project"
                     value={
                       hiddenProjects.length === 0
                         ? 'All'
-                        : `${Math.max(projectNames.length - hiddenProjects.length, 0)}/${projectNames.length}`
+                        : `${Math.max(projects.length - hiddenProjects.length, 0)}/${projects.length}`
                     }
                   >
-                    {projectNames.map((name) => (
+                    {projects.map(({ key, label }) => (
                       <FilterOptionItem
-                        key={name}
-                        label={name}
-                        selected={!hiddenProjects.includes(name)}
+                        key={key}
+                        label={label}
+                        selected={!hiddenProjects.includes(key)}
                         keepOpen
-                        onSelect={() => toggleProjectVisible(name)}
+                        onSelect={() => toggleProjectVisible(key)}
                       />
                     ))}
                   </FilterSubRow>

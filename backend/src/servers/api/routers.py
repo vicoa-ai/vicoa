@@ -42,6 +42,7 @@ from shared.database import (
     FileMentions,
 )
 from shared.database.agent_instances import create_agent_instance
+from shared.database.project_matching import resolve_project_id_for_session
 from integrations.headless.usage import project_rate_limited_until
 from shared.websocket.connection_manager import connection_manager
 from shared.websocket.envelope import (
@@ -901,6 +902,7 @@ def _format_agent_instance(instance: AgentInstance) -> RegisterAgentInstanceResp
         name=instance.name,
         instance_metadata=metadata,
         project=instance.project,
+        project_id=str(instance.project_id) if instance.project_id else None,
         home_dir=instance.home_dir,
         machine_id=str(instance.machine_id) if instance.machine_id else None,
         session_config=session_config,
@@ -979,12 +981,31 @@ def register_agent_instance_endpoint(
             # nothing to clear.
             if request.worktree_name:
                 metadata["worktree_name"] = request.worktree_name
+            # Git identity probed by the SDK from the session cwd; stored like
+            # worktree_name and used below to attribute the session to a project
+            # (a linked worktree needs its repo root/remote — its cwd sits
+            # outside the repo).
+            if request.repo_root:
+                metadata["repo_root"] = request.repo_root
+            if request.git_remote_url:
+                metadata["git_remote_url"] = request.git_remote_url
             existing.instance_metadata = metadata or None
             attributes.flag_modified(existing, "instance_metadata")
             if request.name:
                 existing.name = request.name
             if request.project:
                 existing.project = request.project
+                # Now that the wrapper has reported its real cwd (+ repo
+                # root/remote for worktrees), attach the session to a project
+                # set up for that checkout, or None.
+                existing.project_id = resolve_project_id_for_session(
+                    db,
+                    UUID(user_id),
+                    existing.machine_id,
+                    request.project,
+                    git_remote_url=request.git_remote_url,
+                    repo_root=request.repo_root,
+                )
             if request.home_dir:
                 existing.home_dir = request.home_dir
             # `session_config` is overwritten only when the wrapper explicitly
@@ -1019,7 +1040,14 @@ def register_agent_instance_endpoint(
                 metadata["source"] = request.source
             if request.worktree_name:
                 metadata["worktree_name"] = request.worktree_name
+            if request.repo_root:
+                metadata["repo_root"] = request.repo_root
+            if request.git_remote_url:
+                metadata["git_remote_url"] = request.git_remote_url
             instance_metadata = metadata or None
+            resolved_machine_id = _resolve_owned_machine_id(
+                db, request.machine_id, user_id
+            )
             instance = create_agent_instance(
                 db,
                 UUID(user_id),
@@ -1028,8 +1056,16 @@ def register_agent_instance_endpoint(
                 name=request.name,
                 instance_metadata=instance_metadata,
                 project=request.project,
+                project_id=resolve_project_id_for_session(
+                    db,
+                    UUID(user_id),
+                    resolved_machine_id,
+                    request.project,
+                    git_remote_url=request.git_remote_url,
+                    repo_root=request.repo_root,
+                ),
                 home_dir=request.home_dir,
-                machine_id=_resolve_owned_machine_id(db, request.machine_id, user_id),
+                machine_id=resolved_machine_id,
                 session_config=request.session_config,
             )
             _set_transport_metadata(instance, request.transport)

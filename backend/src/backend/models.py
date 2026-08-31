@@ -109,6 +109,10 @@ class AgentInstanceResponse(BaseModel):
     instance_metadata: dict | None = None
     session_config: dict | None = None
     project: str | None = None
+    # Formal projects-entity id, auto-matched from the working directory (the
+    # session ↔ project link). Null when no project is set up for that checkout;
+    # the sidebar's top-level group falls back to the `project` path when null.
+    project_id: str | None = None
     home_dir: str | None = None
     machine_id: str | None = None
     pinned_at: datetime | None = None

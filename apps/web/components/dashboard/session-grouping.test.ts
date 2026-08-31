@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { AgentInstanceResponse } from '@/lib/backend-api';
 import {
   distinctAgentNames,
-  distinctProjectNames,
+  distinctProjects,
   filterWantsActiveOnly,
   getLastPathPart,
   groupSessions,
+  projectGroupKey,
   splitProjectByWorktree,
 } from './session-grouping';
 
@@ -174,19 +175,37 @@ describe('splitProjectByWorktree (git-driven)', () => {
     expect(worktrees[0].path).toBe('/abs/empty/app');
   });
 
-  it('folds a session whose worktree no longer exists into main (#3)', () => {
+  it('keeps a removed worktree session under its own node — never jumps to main', () => {
     const main = make({ id: 'main', project: '~/app', ...at('2026-01-05T00:00:00.000Z') });
     const orphan = make({ id: 'orphan', project: '~/gone/app', worktree_name: 'deleted', ...at('2026-01-04T00:00:00.000Z') });
     const live = make({ id: 'live', project: '~/live/app', worktree_name: 'brave', ...at('2026-01-03T00:00:00.000Z') });
 
     const { mainInstances, worktrees } = splitProjectByWorktree(
       [main, orphan, live],
-      [wt('/abs/brave/app', 'brave')],
+      [wt('/abs/brave/app', 'brave')], // git no longer lists `deleted`
     );
 
-    expect(mainInstances.map((i) => i.id)).toEqual(['main', 'orphan']);
-    expect(worktrees.map((w) => w.branch)).toEqual(['brave']);
-    expect(worktrees[0].instances.map((i) => i.id)).toEqual(['live']);
+    // The orphan does NOT fold into main; it keeps its own worktree node,
+    // ordered by recency ahead of the still-live `brave`.
+    expect(mainInstances.map((i) => i.id)).toEqual(['main']);
+    expect(worktrees.map((w) => w.branch)).toEqual(['deleted', 'brave']);
+    const deleted = worktrees.find((w) => w.branch === 'deleted');
+    expect(deleted?.instances.map((i) => i.id)).toEqual(['orphan']);
+    expect(deleted?.path).toBe('~/gone/app'); // path derived from the session cwd
+  });
+
+  it('does not move a session when its worktree switched branches', () => {
+    const s = make({ id: 's', project: '/abs/wt/app', worktree_name: 'featX', ...at('2026-01-02T00:00:00.000Z') });
+
+    const { mainInstances, worktrees } = splitProjectByWorktree(
+      [s],
+      [wt('/abs/wt/app', 'featY')], // same path, git now reports branch featY
+    );
+
+    expect(mainInstances).toEqual([]);
+    // Session stays under its stored featX; featY surfaces as an empty node.
+    expect(worktrees.map((w) => w.branch)).toEqual(['featX', 'featY']);
+    expect(worktrees.find((w) => w.branch === 'featX')?.instances.map((i) => i.id)).toEqual(['s']);
   });
 
   it('orders worktrees by most-recent session, empty ones last', () => {
@@ -212,7 +231,7 @@ describe('splitProjectByWorktree (git-driven)', () => {
   });
 
   describe('baseline (git list not loaded → null)', () => {
-    it('groups by the sessions own worktree_name and treats none as orphaned', () => {
+    it('groups by the sessions own worktree_name, main-checkout sessions to main', () => {
       const main = make({ id: 'main', project: '~/app' });
       const w = make({ id: 'w', project: '~/vicoa/workspaces/app-worktrees/brave/app', worktree_name: 'brave' });
 
@@ -226,15 +245,58 @@ describe('splitProjectByWorktree (git-driven)', () => {
   });
 });
 
-describe('distinctProjectNames', () => {
-  it('returns sorted unique last path parts, skipping null projects', () => {
+describe('groupSessions by project_id', () => {
+  it('merges different folder names sharing a project_id, splits shared basenames', () => {
+    const laptop = make({ id: 'laptop', project: '/home/me/vicoa', project_id: 'P1' });
+    const worktree = make({
+      id: 'wt',
+      project: '/tmp/ws/vicoa-worktrees/x/vicoa',
+      project_id: 'P1',
+      worktree_name: 'x',
+    });
+    // Same basename 'vicoa' but a DIFFERENT project → a separate group.
+    const other = make({ id: 'other', project: '/work/vicoa', project_id: 'P2' });
+
+    const groups = groupSessions([laptop, worktree, other], 'all', 'project');
+    const p1 = groups.find((g) => g.key === 'P1');
+    const p2 = groups.find((g) => g.key === 'P2');
+    expect(p1?.instances.map((i) => i.id).sort()).toEqual(['laptop', 'wt']);
+    expect(p2?.instances.map((i) => i.id)).toEqual(['other']);
+    expect(p1?.label).toBe('vicoa'); // display stays the basename, not the id
+  });
+
+  it('hides a linked project by its project_id key', () => {
+    const a = make({ id: 'a', project: '/home/me/alpha', project_id: 'PA' });
+    const b = make({ id: 'b', project: '/home/me/beta', project_id: 'PB' });
+
+    const groups = groupSessions([a, b], 'all', 'project', 'all', [], ['PA']);
+    const ids = groups.flatMap((g) => g.instances.map((i) => i.id));
+    expect(ids).toEqual(['b']);
+  });
+});
+
+describe('projectGroupKey', () => {
+  it('prefers project_id, falls back to basename, then no-project sentinel', () => {
+    expect(projectGroupKey(make({ project: '/x/alpha', project_id: 'P1' }))).toBe('P1');
+    expect(projectGroupKey(make({ project: '/x/alpha' }))).toBe('alpha');
+    expect(projectGroupKey(make({ project: null }))).toBe('__no_project__');
+  });
+});
+
+describe('distinctProjects', () => {
+  it('returns {key,label}: project_id when linked, basename otherwise; skips null', () => {
     const list = [
       make({ id: '1', project: '/x/beta' }),
       make({ id: '2', project: '/y/alpha' }),
-      make({ id: '3', project: '/z/beta' }),
-      make({ id: '4', project: null }),
+      make({ id: '3', project: '/z/beta' }), // dup basename, no id → same 'beta' key
+      make({ id: '4', project: '/w/gamma', project_id: 'G1' }),
+      make({ id: '5', project: null }),
     ];
-    expect(distinctProjectNames(list)).toEqual(['alpha', 'beta']);
+    expect(distinctProjects(list)).toEqual([
+      { key: 'alpha', label: 'alpha' },
+      { key: 'beta', label: 'beta' },
+      { key: 'G1', label: 'gamma' },
+    ]);
   });
 });
 

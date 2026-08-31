@@ -53,6 +53,14 @@ export interface AgentInstanceResponse {
   latest_message_at: string | null;
   chat_length: number;
   project?: string | null;
+  /**
+   * Formal projects-entity id, auto-matched server-side from the session's
+   * (machine, working-dir) — and, for a linked worktree, its source repo
+   * root/remote. Drives the sidebar's top-level project grouping; null when no
+   * project is set up for that checkout (grouping then falls back to the
+   * `project` path basename). See session-grouping.ts `projectGroupKey`.
+   */
+  project_id?: string | null;
   home_dir?: string | null;
   pinned_at?: string | null;
   /** Host this session runs on. Null for legacy TUI-registered sessions. */

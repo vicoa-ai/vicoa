@@ -17,6 +17,7 @@ from shared.database import (
     TaskLabel,
     get_or_create_inbox,
 )
+from shared.database.project_matching import backfill_project_id_for_directory
 
 
 class InboxImmutableError(Exception):
@@ -176,6 +177,15 @@ def set_project_directory(
         )
     else:
         existing.local_path = local_path
+    # Attach sessions that already ran under this path (or whose worktree's repo
+    # root is this path) but predate the link. Only fills NULLs, never steals.
+    backfill_project_id_for_directory(
+        db,
+        user_id=user_id,
+        project_id=project_id,
+        machine_id=machine_id,
+        local_path=local_path,
+    )
     db.commit()
     db.refresh(project)
     return project

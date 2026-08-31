@@ -703,3 +703,232 @@ class TestStatusLinkage:
         )
         test_db.refresh(linked_task)
         assert linked_task.status == "done"
+
+
+class TestProjectAutoMatch:
+    """Session ↔ project auto-match (shared/database/project_matching.py)."""
+
+    def _link(self, db, user_id, machine_id, local_path, name="Proj"):
+        project = Project(user_id=user_id, name=name)
+        db.add(project)
+        db.flush()
+        db.add(
+            ProjectDirectory(
+                user_id=user_id,
+                project_id=project.id,
+                machine_id=machine_id,
+                local_path=local_path,
+            )
+        )
+        db.commit()
+        return project
+
+    def _instance(
+        self,
+        db,
+        user_id,
+        user_agent_id,
+        machine_id,
+        project,
+        project_id=None,
+        metadata=None,
+    ):
+        from shared.database import AgentInstance
+
+        inst = AgentInstance(
+            id=uuid4(),
+            user_agent_id=user_agent_id,
+            user_id=user_id,
+            status=AgentStatus.ACTIVE,
+            machine_id=machine_id,
+            project=project,
+            project_id=project_id,
+            instance_metadata=metadata or {},
+        )
+        db.add(inst)
+        db.commit()
+        return inst
+
+    def test_no_match_when_nothing_linked(self, test_db, test_user):
+        from shared.database.project_matching import resolve_project_id_for_session
+
+        machine = _make_machine(test_db, test_user.id)
+        assert (
+            resolve_project_id_for_session(
+                test_db, test_user.id, machine.id, "/home/nick/alpha"
+            )
+            is None
+        )
+
+    def test_exact_and_child_path_match(self, test_db, test_user):
+        from shared.database.project_matching import resolve_project_id_for_session
+
+        machine = _make_machine(test_db, test_user.id)
+        project = self._link(test_db, test_user.id, machine.id, "/home/nick/alpha")
+
+        assert (
+            resolve_project_id_for_session(
+                test_db, test_user.id, machine.id, "/home/nick/alpha"
+            )
+            == project.id
+        )
+        assert (
+            resolve_project_id_for_session(
+                test_db, test_user.id, machine.id, "/home/nick/alpha/src/lib"
+            )
+            == project.id
+        )
+
+    def test_path_boundary_is_respected(self, test_db, test_user):
+        """A sibling like /home/nick/alphabet must not match a link to /alpha."""
+        from shared.database.project_matching import resolve_project_id_for_session
+
+        machine = _make_machine(test_db, test_user.id)
+        self._link(test_db, test_user.id, machine.id, "/home/nick/alpha")
+        assert (
+            resolve_project_id_for_session(
+                test_db, test_user.id, machine.id, "/home/nick/alphabet"
+            )
+            is None
+        )
+
+    def test_longest_prefix_wins(self, test_db, test_user):
+        from shared.database.project_matching import resolve_project_id_for_session
+
+        machine = _make_machine(test_db, test_user.id)
+        self._link(test_db, test_user.id, machine.id, "/home/nick", name="Broad")
+        inner = self._link(
+            test_db, test_user.id, machine.id, "/home/nick/alpha", name="Inner"
+        )
+        assert (
+            resolve_project_id_for_session(
+                test_db, test_user.id, machine.id, "/home/nick/alpha/x"
+            )
+            == inner.id
+        )
+
+    def test_machine_scoped(self, test_db, test_user):
+        from shared.database.project_matching import resolve_project_id_for_session
+
+        machine_a = _make_machine(test_db, test_user.id, display_name="A")
+        machine_b = _make_machine(test_db, test_user.id, display_name="B")
+        self._link(test_db, test_user.id, machine_a.id, "/home/nick/alpha")
+        assert (
+            resolve_project_id_for_session(
+                test_db, test_user.id, machine_b.id, "/home/nick/alpha"
+            )
+            is None
+        )
+
+    def test_user_scoped(self, test_db, test_user, other_user):
+        from shared.database.project_matching import resolve_project_id_for_session
+
+        machine = _make_machine(test_db, other_user.id)
+        self._link(test_db, other_user.id, machine.id, "/home/nick/alpha")
+        # test_user querying the same machine/path sees nothing of other_user's.
+        assert (
+            resolve_project_id_for_session(
+                test_db, test_user.id, machine.id, "/home/nick/alpha"
+            )
+            is None
+        )
+
+    def test_worktree_matched_by_repo_root(self, test_db, test_user):
+        """A worktree's cwd sits outside the repo; its repo_root attributes it."""
+        from shared.database.project_matching import resolve_project_id_for_session
+
+        machine = _make_machine(test_db, test_user.id)
+        project = self._link(test_db, test_user.id, machine.id, "/home/nick/alpha")
+        worktree_cwd = "/home/nick/vicoa/workspaces/alpha-worktrees/feat/alpha"
+        # cwd alone → no match (outside the linked checkout)…
+        assert (
+            resolve_project_id_for_session(
+                test_db, test_user.id, machine.id, worktree_cwd
+            )
+            is None
+        )
+        # …but the reported repo root (the main checkout) attributes it.
+        assert (
+            resolve_project_id_for_session(
+                test_db,
+                test_user.id,
+                machine.id,
+                worktree_cwd,
+                repo_root="/home/nick/alpha",
+            )
+            == project.id
+        )
+
+    def test_remote_tier_matches_across_paths(self, test_db, test_user):
+        from shared.database.project_matching import resolve_project_id_for_session
+
+        machine = _make_machine(test_db, test_user.id)
+        project = Project(
+            user_id=test_user.id,
+            name="Remote",
+            git_remote_url="git@github.com:vicoa-ai/vicoa.git",
+        )
+        test_db.add(project)
+        test_db.commit()
+        # No linked directory at all — remote identity alone resolves it.
+        assert (
+            resolve_project_id_for_session(
+                test_db,
+                test_user.id,
+                machine.id,
+                "/some/unlinked/path",
+                git_remote_url="git@github.com:vicoa-ai/vicoa.git",
+            )
+            == project.id
+        )
+
+    def test_backfill_fills_nulls_without_stealing(
+        self, test_db, test_user, test_user_agent
+    ):
+        from shared.database.project_matching import backfill_project_id_for_directory
+
+        machine = _make_machine(test_db, test_user.id)
+        project = Project(user_id=test_user.id, name="Alpha")
+        other = Project(user_id=test_user.id, name="Other")
+        test_db.add_all([project, other])
+        test_db.flush()
+
+        under = self._instance(
+            test_db, test_user.id, test_user_agent.id, machine.id, "/home/nick/alpha/x"
+        )
+        already = self._instance(
+            test_db,
+            test_user.id,
+            test_user_agent.id,
+            machine.id,
+            "/home/nick/alpha/y",
+            project_id=other.id,
+        )
+        elsewhere = self._instance(
+            test_db, test_user.id, test_user_agent.id, machine.id, "/home/nick/beta"
+        )
+        # A worktree session: cwd outside the repo, repo_root in metadata.
+        worktree = self._instance(
+            test_db,
+            test_user.id,
+            test_user_agent.id,
+            machine.id,
+            "/home/nick/vicoa/workspaces/alpha-worktrees/feat/alpha",
+            metadata={"repo_root": "/home/nick/alpha"},
+        )
+
+        stamped = backfill_project_id_for_directory(
+            test_db,
+            user_id=test_user.id,
+            project_id=project.id,
+            machine_id=machine.id,
+            local_path="/home/nick/alpha",
+        )
+        test_db.commit()
+        assert stamped == 2  # `under` (cwd) + `worktree` (repo_root)
+        for inst in (under, already, elsewhere, worktree):
+            test_db.refresh(inst)
+        assert under.project_id == project.id
+        assert worktree.project_id == project.id  # matched by repo_root
+        assert already.project_id == other.id  # not stolen
+        assert elsewhere.project_id is None
