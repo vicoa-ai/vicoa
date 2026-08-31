@@ -25,6 +25,7 @@ def _dashboard_base() -> str:
     urls = settings.frontend_urls
     return urls[0].rstrip("/") if urls else ""
 
+
 logger = logging.getLogger(__name__)
 
 
