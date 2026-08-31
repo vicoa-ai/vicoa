@@ -44,6 +44,13 @@ PLATFORMS = {
 
 REPO_ROOT = Path(__file__).parent.parent
 
+# npm's OIDC Trusted Publishing auto-attaches a sigstore provenance statement,
+# whose verification requires package.json's `repository.url` to normalize to the
+# building GitHub repo. Without it `npm publish` fails with E422 "repository.url
+# is '', expected to match https://github.com/vicoa-ai/vicoa". Both the platform
+# variants (built below) and the main shim (npm/cli/package.json) must carry it.
+REPOSITORY = {"type": "git", "url": "git+https://github.com/vicoa-ai/vicoa.git"}
+
 
 def build_platform_package(
     platform: str, dist_dir: Path, version: str, output: Path
@@ -93,6 +100,7 @@ def build_platform_package(
         "cpu": [meta["cpu"]],
         "files": ["bin/"],
         "license": "AGPL-3.0",
+        "repository": REPOSITORY,
     }
     (pkg_dir / "package.json").write_text(json.dumps(package_json, indent=2) + "\n")
 

@@ -2,6 +2,10 @@
   "name": "@vicoa/cli",
   "version": "0.0.0",
   "description": "Vicoa CLI - Run a team of coding agents anywhere, any device",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vicoa-ai/vicoa.git"
+  },
   "bin": {
     "vicoa": "bin/vicoa.js"
   },
