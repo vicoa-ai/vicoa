@@ -610,6 +610,11 @@ export function SidebarSessions({
           : null;
         const { mainInstances, worktrees } = splitProjectByWorktree(instances, gitWorktrees);
 
+        // No worktrees → nothing to sub-group: render the project flat rather
+        // than a lone "main" bucket. This also stops a non-git folder (whose
+        // `git status` yields no branch) from showing a spurious "main" header.
+        if (worktrees.length === 0) return notSplit;
+
         const repoMachineId = instances[0]?.machine_id ?? null;
         const mainDirectory = instances.find((i) => !i.worktree_name)?.project ?? null;
         const subs: RenderedSubGroup[] = [];
