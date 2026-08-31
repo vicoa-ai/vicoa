@@ -23,3 +23,6 @@ credentials.json
 
 .claude/
 .temp/
+
+# Local Netlify folder
+.netlify
