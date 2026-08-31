@@ -70,6 +70,7 @@ import {
   type WorktreeMode,
 } from '@/lib/worktree-selection';
 import { loadPromptDraft, savePromptDraft, clearPromptDraft } from '@/lib/new-session-draft';
+import { currentPathname, openCreatedSession } from '@/lib/new-session-navigation';
 import { getDesktopConfig } from '@/lib/runtime-config';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { DesktopCollapsedLead, DesktopWindowControlsSpacer } from '@/components/desktop/window-chrome';
@@ -1150,6 +1151,11 @@ function NewSessionContent() {
   const handleSubmit = useCallback(async () => {
     if (!api || !selectedMachineId || !directory.trim() || isSubmitting) return;
 
+    // Where the user launched from. Spawning is async (RPC + waitForEntity), and
+    // if they navigate away before it finishes we must not yank them to the new
+    // session — see openCreatedSession below.
+    const startPath = currentPathname();
+
     try {
       setIsSubmitting(true);
       setErrorMessage(null);
@@ -1291,7 +1297,10 @@ function NewSessionContent() {
       }
 
       refreshData();
-      router.push(`/dashboard/agents/${newInstanceId}`);
+      // Only open the session if the user is still on the page they launched
+      // from; if they moved on during the spawn, leave them where they are (the
+      // session is already in the sidebar via refreshData).
+      openCreatedSession(router, startPath, `/dashboard/agents/${newInstanceId}`);
     } catch (error) {
       let message = 'Failed to start session. Please verify the daemon is running.';
       if (error instanceof RpcError) {
