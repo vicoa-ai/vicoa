@@ -844,6 +844,16 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
         return;
       }
 
+      // The user typed a first message (bundled into the spawn command). Mark
+      // the getting-started checklist's "Send a message" step done instantly —
+      // otherwise its server-derived total_user_messages check races the
+      // daemon's cold-start prompt POST, reads 0, latches, and the checkmark
+      // lags ~10–20s (until the card is next recreated). Mirrors the in-chat
+      // send path (agent_chat_model).
+      if (hasInitialPrompt) {
+        FFAppState().gettingStartedActivated = true;
+      }
+
       await posthogCapture('session_created', properties: {
         'agent_type': _model.selectedAgentType ?? 'claude',
         'source': 'mobile',
