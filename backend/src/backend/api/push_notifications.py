@@ -2,6 +2,7 @@
 
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
@@ -12,7 +13,7 @@ import logging
 from backend.auth.dependencies import get_current_user
 from shared.database.models import User
 from shared.database.session import get_db
-from shared.database import PushToken
+from shared.database import AgentInstance, AgentStatus, PushToken
 
 router = APIRouter(prefix="/push", tags=["push_notifications"])
 
@@ -27,6 +28,10 @@ class PushTokenResponse(BaseModel):
     token: str
     platform: str
     is_active: bool
+
+
+class BadgeCountResponse(BaseModel):
+    count: int
 
 
 @router.post("/register", response_model=dict)
@@ -108,6 +113,29 @@ def deactivate_token(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/badge-count", response_model=BadgeCountResponse)
+def get_badge_count(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Current app-icon badge value: the user's sessions awaiting their input.
+
+    The mobile app calls this on resume to reconcile the launcher badge with
+    server truth — e.g. after the user answered on the web/desktop, so the
+    badge that a push had set is cleared/decremented the next time they open
+    the app. Mirrors the count the FCM service stamps onto every push.
+    """
+    count = (
+        db.query(func.count(AgentInstance.id))
+        .filter(
+            AgentInstance.user_id == current_user.id,
+            AgentInstance.status == AgentStatus.AWAITING_INPUT,
+        )
+        .scalar()
+    ) or 0
+    return BadgeCountResponse(count=count)
 
 
 @router.get("/tokens", response_model=List[PushTokenResponse])

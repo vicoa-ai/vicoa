@@ -81,6 +81,7 @@ export 'coding_minutes_per_year.dart' show codingMinutesPerYear;
 export 'revenue_cat_service.dart' show showRevenueCatPaywall, showRevenueCatPaywallFullScreen, checkRevenueCatSubscriptionStatus, syncRevenueCatSubscriptionStatus, getRevenueCatUserId, restoreRevenueCatPurchases;
 export 'supabase_get_referral_count.dart' show supabaseGetReferralCount;
 export 'api_register_fcm_token.dart' show apiRegisterFcmToken;
+export 'app_badge.dart' show setAppBadge, clearAppBadge, apiGetBadgeCount, refreshAppBadge;
 export 'api_unregister_fcm_token.dart' show apiUnregisterFcmToken;
 export 'api_update_instance_status.dart' show apiUpdateInstanceStatus;
 export 'test_push_notifications.dart' show testPushNotifications;

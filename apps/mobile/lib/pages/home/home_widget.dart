@@ -115,6 +115,12 @@ class _HomeWidgetState extends State<HomeWidget>
 
             // FCM token is automatically set up when permissions are granted
             await notificationHandler.getFCMToken();
+
+            // Reconcile the launcher badge on cold start — the resume observer
+            // only fires on later foregrounds, so without this a stale badge
+            // from a push (or one the user already cleared elsewhere) would
+            // linger through the first session.
+            await actions.refreshAppBadge();
           }(),
         );
 
