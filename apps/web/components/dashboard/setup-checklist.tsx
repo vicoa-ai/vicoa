@@ -49,6 +49,7 @@ import {
 import { cn } from '@/lib/utils';
 import { readBrowserIdentity } from '@/lib/auth/browser-token';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
+import { subscribeOnboardingProgress } from '@/lib/onboarding-progress';
 
 const DISMISSED_KEY = 'vicoa_setup_checklist_dismissed';
 const COLLAPSED_KEY = 'vicoa_setup_checklist_collapsed';
@@ -142,9 +143,18 @@ export function SetupChecklist() {
   checksRef.current = checks;
 
   // Re-run the checks when the session set changes (a new session may have
-  // added the first message, etc.).
+  // added the first message, etc.). We key on `latest_message_at` as well as
+  // `chat_length` because sending a message advances the former live — the
+  // context's WS `onNewMessage` handler patches `latest_message_at`, but
+  // nothing updates `chat_length` on a sent message (the `instance-update`
+  // frame omits it). Without it, `instanceSig` never changes on a sent
+  // message, so `getActivity()` is never re-checked and the "Send your first
+  // message" step stays stale until a full page reload.
   const instanceSig = useMemo(
-    () => recentInstances.map((i) => `${i.id}:${i.chat_length}`).join(','),
+    () =>
+      recentInstances
+        .map((i) => `${i.id}:${i.chat_length}:${i.latest_message_at ?? ''}`)
+        .join(','),
     [recentInstances],
   );
 
@@ -192,6 +202,20 @@ export function SetupChecklist() {
     if (STEP_IDS.every((id) => c[id])) return;
     void refresh();
   }, [refresh, instanceSig, dismissed, hydrated, userId]);
+
+  // Creating a task or automation touches neither the instance list nor the WS
+  // stream, so `instanceSig` never changes and the effect above wouldn't
+  // re-check those steps. The create flows emit an onboarding-progress nudge —
+  // re-run the checks on it (still gated by the monotonic per-step cache in
+  // `refresh`, so satisfied steps are never re-fetched and an all-done card
+  // makes no calls).
+  useEffect(() => {
+    if (!hydrated || !userId || dismissed) return;
+    return subscribeOnboardingProgress(() => {
+      if (STEP_IDS.every((id) => checksRef.current[id])) return;
+      void refresh();
+    });
+  }, [refresh, dismissed, hydrated, userId]);
 
   // Persist completion (per user) so future loads skip the satisfied steps.
   useEffect(() => {

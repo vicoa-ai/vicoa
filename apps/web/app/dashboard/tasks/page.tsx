@@ -33,6 +33,7 @@ import {
   UpdateTaskRequest,
 } from '@/lib/backend-api';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
+import { notifyOnboardingProgress } from '@/lib/onboarding-progress';
 import {
   ProjectIcon,
   inlineLabelColor,
@@ -366,6 +367,7 @@ function TasksPageInner() {
         const maxPosition = tasks.reduce((max, t) => Math.max(max, t.position), 0);
         const created = await api.createTask({ ...payload, position: maxPosition + 1 });
         setTasks((prev) => [...prev, created]);
+        notifyOnboardingProgress();
         return created;
       } catch (err) {
         console.error('Failed to save task:', err);
@@ -417,6 +419,7 @@ function TasksPageInner() {
         position: maxPosition + 1,
       });
       setTasks((prev) => [...prev, created]);
+      notifyOnboardingProgress();
     },
     [api, tasks],
   );

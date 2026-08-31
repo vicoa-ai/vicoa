@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { cn, toAbsolutePath } from '@/lib/utils';
 import { isMachineOnline } from '@/lib/session-liveness';
+import { notifyOnboardingProgress } from '@/lib/onboarding-progress';
 import { Button } from '@/components/ui/button';
 import { MentionPromptField } from '@/components/mention-prompt-field';
 import type { AgentType } from '@/lib/constants/slash-commands';
@@ -178,6 +179,7 @@ export function DetailPanel({
         : await api.createAutomation({ ...base, enabled: true });
       setDirty(false);
       onSaved(saved);
+      if (!automation) notifyOnboardingProgress();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save automation');
     } finally {
