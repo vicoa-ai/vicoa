@@ -6,6 +6,7 @@ import random
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from uuid import UUID
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 import json
 
@@ -13,7 +14,7 @@ from firebase_admin import credentials, messaging, initialize_app
 from firebase_admin.exceptions import FirebaseError
 import firebase_admin
 
-from shared.database import PushToken, User
+from shared.database import AgentInstance, AgentStatus, PushToken, User
 from shared.config import settings
 from .notification_base import NotificationServiceBase
 
@@ -84,6 +85,24 @@ class FCMNotificationService(NotificationServiceBase):
         pattern = r"^[A-Za-z0-9_:-]+$"
         return bool(re.match(pattern, token))
 
+    def _awaiting_input_count(self, db: Session, user_id: UUID) -> int:
+        """Number of the user's sessions currently waiting on their input.
+
+        This is the value surfaced as the app-icon badge: agent instances the
+        user owns whose status is AWAITING_INPUT (the agent asked a question
+        that hasn't been answered yet). Recomputed on every push so the badge
+        self-corrects — including clearing to 0 — no matter which device the
+        user answered on. Backed by the (user_id, status) composite index.
+        """
+        return (
+            db.query(func.count(AgentInstance.id))
+            .filter(
+                AgentInstance.user_id == user_id,
+                AgentInstance.status == AgentStatus.AWAITING_INPUT,
+            )
+            .scalar()
+        ) or 0
+
     async def send_notification(
         self,
         db: Session,
@@ -137,6 +156,12 @@ class FCMNotificationService(NotificationServiceBase):
                 logger.warning("No valid FCM tokens to send to")
                 return False
 
+            # App-icon badge = the user's sessions currently awaiting input.
+            # Sent on every push so the OS renders/updates it in the background
+            # (iOS applies aps.badge automatically) and the Flutter foreground
+            # handler can mirror it from the data payload.
+            badge_count = self._awaiting_input_count(db, user_id)
+
             # Prepare FCM message
             notification = messaging.Notification(title=title, body=body)
 
@@ -151,6 +176,7 @@ class FCMNotificationService(NotificationServiceBase):
                 {
                     "click_action": "FLUTTER_NOTIFICATION_CLICK",
                     "sound": "default",
+                    "badge": str(badge_count),
                 }
             )
 
@@ -161,6 +187,7 @@ class FCMNotificationService(NotificationServiceBase):
                     priority="high",
                     default_sound=True,
                     default_vibrate_timings=True,
+                    notification_count=badge_count,
                 ),
                 priority="high",
             )
@@ -171,6 +198,7 @@ class FCMNotificationService(NotificationServiceBase):
                     aps=messaging.Aps(
                         alert=messaging.ApsAlert(title=title, body=body),
                         sound="default",
+                        badge=badge_count,
                         content_available=True,
                     )
                 )

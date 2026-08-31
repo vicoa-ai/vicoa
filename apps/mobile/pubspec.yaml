@@ -29,6 +29,7 @@ dependencies:
     sdk: flutter
   aligned_dialog: 0.0.6
   aligned_tooltip: ^0.0.1
+  app_badge_plus: ^1.3.4
   app_links: 6.3.2
   app_links_platform_interface: 2.0.2
   app_settings: ^5.1.1

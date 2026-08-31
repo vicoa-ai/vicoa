@@ -308,6 +308,10 @@ class PushNotificationsHandler with WidgetsBindingObserver {
       // The user may have just toggled notifications on in system Settings, or
       // a previous registration attempt may have failed silently. Re-sync.
       syncPushRegistration();
+      // Reconcile the launcher badge with server truth: a push may have set it
+      // while backgrounded, but the user could have answered on another device
+      // since — recompute so a stale (or now-zero) count is corrected on open.
+      actions.refreshAppBadge();
     }
   }
 
@@ -335,10 +339,26 @@ class PushNotificationsHandler with WidgetsBindingObserver {
       print('Message notification: ${message.notification?.title}');
     }
 
+    // iOS doesn't apply aps.badge while the app is foregrounded (we intercept
+    // the notification here), so mirror the count the backend stamped onto the
+    // payload ourselves. Background/terminated badges are handled by the OS.
+    _applyBadgeFromMessage(message);
+
     // Show local notification when app is in foreground
     if (message.notification != null) {
       await _showLocalNotification(message);
     }
+  }
+
+  /// Set the launcher badge to the awaiting-input count carried in the push
+  /// data payload (added by the backend FCM service). Silently ignores a
+  /// missing/unparseable value so a malformed push never disturbs the badge.
+  void _applyBadgeFromMessage(RemoteMessage message) {
+    final raw = message.data['badge'];
+    if (raw == null) return;
+    final count = int.tryParse(raw.toString());
+    if (count == null) return;
+    actions.setAppBadge(count);
   }
 
   Future<void> _showLocalNotification(RemoteMessage message) async {

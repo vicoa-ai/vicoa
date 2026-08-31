@@ -28,4 +28,7 @@ Future<void> signOutAndClearLocalData() async {
   await FilesCache.wipeStatic();
   await ChatMessagesCache.instance.wipeAll();
   FFAppState().clearAllUserData();
+  // Drop the launcher badge — it counts the signed-out user's awaiting
+  // sessions and would otherwise linger on the icon after logout.
+  await clearAppBadge();
 }
