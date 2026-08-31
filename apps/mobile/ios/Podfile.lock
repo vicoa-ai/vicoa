@@ -1,4 +1,6 @@
 PODS:
+  - app_badge_plus (1.3.4):
+    - Flutter
   - app_links (0.0.2):
     - Flutter
   - app_settings (5.1.1):
@@ -344,6 +346,7 @@ PODS:
     - FlutterMacOS
 
 DEPENDENCIES:
+  - app_badge_plus (from `.symlinks/plugins/app_badge_plus/ios`)
   - app_links (from `.symlinks/plugins/app_links/ios`)
   - app_settings (from `.symlinks/plugins/app_settings/ios`)
   - audio_waveforms (from `.symlinks/plugins/audio_waveforms/ios`)
@@ -434,6 +437,8 @@ SPEC REPOS:
     - SwiftyGif
 
 EXTERNAL SOURCES:
+  app_badge_plus:
+    :path: ".symlinks/plugins/app_badge_plus/ios"
   app_links:
     :path: ".symlinks/plugins/app_links/ios"
   app_settings:
@@ -516,6 +521,7 @@ CHECKOUT OPTIONS:
     :tag: 11.13.0
 
 SPEC CHECKSUMS:
+  app_badge_plus: 046883d24d97f3a7c3dfd20bbeaddb7b13e4ad7b
   app_links: 3da4c36b46cac3bf24eb897f1a6ce80bda109874
   app_settings: 5127ae0678de1dcc19f2293271c51d37c89428b2
   AppAuth: 1c1a8afa7e12f2ec3a294d9882dfa5ab7d3cb063
