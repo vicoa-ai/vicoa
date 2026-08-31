@@ -33,6 +33,7 @@ from shared.telemetry import (
 from servers.mcp.server import mcp
 
 # Import FastAPI routers
+from servers.api.auth_keys import auth_keys_router
 from servers.api.automations import automation_router
 from servers.api.instances import instance_router
 from servers.api.routers import agent_router
@@ -251,6 +252,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 app.include_router(agent_router, prefix="/api/v1")
+# In-place renewal of the presented agent key (daemon calls this every few days).
+app.include_router(auth_keys_router, prefix="/api/v1")
 # Task tracker CRUD for CLI agents (agent-facing mirror of backend/api/tasks.py).
 app.include_router(task_router, prefix="/api/v1")
 # Scheduled-automation CRUD for CLI agents (agent-facing mirror of

@@ -25,7 +25,12 @@ from shared.auth import (
     get_auth_provider,
     resolve_auth_provider_name,
 )
-from shared.auth.agent_tokens import reset_revocation_cache
+from shared.auth.agent_tokens import (
+    CLI_KEY_TTL_DAYS,
+    create_opaque_agent_token,
+    mask_agent_token,
+    reset_revocation_cache,
+)
 from .jwt_utils import create_api_key_jwt, get_token_hash
 from .utils import update_user_profile
 
@@ -290,26 +295,25 @@ async def create_cli_key(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Create a new CLI-specific API key for the current user"""
+    """Create a new CLI-specific API key for the current user.
 
-    # Always generate a new CLI key
-    try:
-        jwt_token = create_api_key_jwt(
-            user_id=str(current_user.id),
-            expires_in_days=None,  # No expiration for CLI keys
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to generate API key: {str(e)}"
-        )
+    CLI keys are opaque, DB-backed tokens (``vic_…``) that expire in
+    ``CLI_KEY_TTL_DAYS`` days and are renewed in place by a running daemon
+    (``POST /api/v1/auth/api-keys/current/renew``). This caps a leaked key's
+    lifetime instead of the old no-exp JWTs, which were valid forever. Only the
+    SHA256 hash is stored; the ``api_key`` column keeps a masked prefix, and the
+    raw token is returned to the caller exactly once, here.
+    """
 
-    # Store the new CLI key
+    raw_token = create_opaque_agent_token()
+    expires_at = datetime.now(timezone.utc) + timedelta(days=CLI_KEY_TTL_DAYS)
+
     api_key = APIKey(
         user_id=current_user.id,
         name="CLI Key",
-        api_key_hash=get_token_hash(jwt_token),
-        api_key=jwt_token,
-        expires_at=None,  # No expiration
+        api_key_hash=get_token_hash(raw_token),
+        api_key=mask_agent_token(raw_token),
+        expires_at=expires_at,
     )
 
     db.add(api_key)
@@ -319,9 +323,9 @@ async def create_cli_key(
     return APIKeyResponse(
         id=str(api_key.id),
         name=api_key.name,
-        api_key=jwt_token,
+        api_key=raw_token,  # Only returned here!
         created_at=api_key.created_at.isoformat(),
-        expires_at=None,
+        expires_at=expires_at.isoformat(),
     )
 
 

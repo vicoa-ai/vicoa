@@ -30,6 +30,7 @@ from .machine_daemon import (
     stop_background_daemon,
 )
 from .machine_state import read_machine_id
+from . import credentials_state
 from .constants import DEFAULT_API_URL, DEFAULT_AUTH_URL
 from .file_sync import sync_project_files
 from .utils import get_project_path
@@ -241,46 +242,24 @@ def save_user_config(new_data: dict):
         pass
 
 
-def load_stored_api_key():
-    """Load API key from credentials file if it exists"""
-    credentials_path = get_credentials_path()
+def load_stored_api_key(base_url: str | None = None):
+    """Load the stored API key for ``base_url`` (the deployment/profile).
 
-    if not credentials_path.exists():
-        return None
-
-    try:
-        with open(credentials_path, "r") as f:
-            data = json.load(f)
-            api_key = data.get("write_key")
-            if api_key and isinstance(api_key, str):
-                return api_key
-            else:
-                print("Warning: Invalid API key format in credentials file.")
-                return None
-    except json.JSONDecodeError:
-        print(
-            "Warning: Corrupted credentials file. Please re-authenticate with --reauth."
-        )
-        return None
-    except (KeyError, IOError) as e:
-        print(f"Warning: Error reading credentials file: {str(e)}")
-        return None
+    Delegates to :mod:`vicoa.credentials_state`, which keeps one key per
+    normalized base URL and transparently migrates the legacy single-key file.
+    A ``None`` base_url resolves the default deployment's entry.
+    """
+    return credentials_state.load_api_key(base_url)
 
 
-def save_api_key(api_key):
-    """Save API key to credentials file"""
-    credentials_path = get_credentials_path()
+def save_api_key(api_key, base_url: str | None = None):
+    """Save the API key as the credential for ``base_url``.
 
-    # Create directory if it doesn't exist
-    credentials_path.parent.mkdir(mode=0o700, exist_ok=True)
-
-    # Save the API key
-    data = {"write_key": api_key}
-    with open(credentials_path, "w") as f:
-        json.dump(data, f, indent=2)
-
-    # Set file permissions to 600 (read/write for owner only)
-    os.chmod(credentials_path, 0o600)
+    Keyed by the agent-server base URL the daemon authenticates against (not the
+    auth URL where the key is minted), so a self-host login never clobbers the
+    cloud token.
+    """
+    credentials_state.save_api_key(base_url, api_key)
 
 
 class AuthHTTPServer(HTTPServer):
@@ -636,8 +615,10 @@ def ensure_api_key(args):
     if env_api_key:
         return env_api_key
 
-    # Try to load from storage
-    api_key = load_stored_api_key()
+    # Try to load from storage, keyed by the deployment this invocation targets
+    # so a self-host key and the cloud key can coexist.
+    base_url = getattr(args, "base_url", None) or DEFAULT_API_URL
+    api_key = load_stored_api_key(base_url)
     if api_key:
         return api_key
 
@@ -649,7 +630,7 @@ def ensure_api_key(args):
     auth_url = getattr(args, "auth_url", None) or DEFAULT_AUTH_URL
     try:
         api_key = authenticate_via_browser(auth_url)
-        save_api_key(api_key)
+        save_api_key(api_key, base_url)
         print("Vicoa CLI connected. API key saved.")
         return api_key
     except Exception as e:
@@ -1008,7 +989,8 @@ def cmd_machine_daemon(args):
 
 
 def cmd_ls(args) -> None:
-    api_key = load_stored_api_key() or os.environ.get("VICOA_API_KEY")
+    base_url = getattr(args, "base_url", None) or DEFAULT_API_URL
+    api_key = load_stored_api_key(base_url) or os.environ.get("VICOA_API_KEY")
     _cmd_ls(args, api_key=api_key)
 
 
@@ -1999,7 +1981,7 @@ Examples:
             else:
                 print("Starting Vicoa CLI connection...")
             api_key = authenticate_via_browser(args.auth_url)
-            save_api_key(api_key)
+            save_api_key(api_key, getattr(args, "base_url", None) or DEFAULT_API_URL)
             print("Vicoa CLI connected. API key saved.")
             sys.exit(0)
         except Exception as e:

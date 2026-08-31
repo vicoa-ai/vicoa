@@ -41,10 +41,11 @@ def _resolve_api_key(args) -> str:
     Agents run non-interactively, so unlike ``ensure_api_key`` this fails fast
     with an actionable message instead of launching the OAuth flow.
     """
+    base_url = getattr(args, "base_url", None) or DEFAULT_API_URL
     key = (
         getattr(args, "api_key", None)
         or os.environ.get("VICOA_API_KEY")
-        or _load_stored_api_key()
+        or _load_stored_api_key(base_url)
     )
     if not key:
         print(
@@ -56,12 +57,12 @@ def _resolve_api_key(args) -> str:
     return key
 
 
-def _load_stored_api_key() -> Optional[str]:
+def _load_stored_api_key(base_url: Optional[str] = None) -> Optional[str]:
     # Deferred import: cli.py imports this module, so importing it at module
     # load time would be circular.
     from vicoa.cli import load_stored_api_key
 
-    return load_stored_api_key()
+    return load_stored_api_key(base_url)
 
 
 def _client(args, api_key: str):

@@ -60,6 +60,14 @@ DEFAULT_POLL_INTERVAL_SECONDS = 5
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30
 REQUEST_TIMEOUT_SECONDS = 15
 
+# Opaque CLI keys expire in ~90 days; the server only extends one with <7 days
+# left. Checking every ~3 days lands ~2 renewal attempts inside that window well
+# before expiry, so a machine whose daemon is alive never has to re-login. The
+# daemon calls unconditionally — the server-side threshold makes it a no-op
+# until it's actually due (and a no-op forever for grandfathered no-exp keys).
+RENEW_ENDPOINT = "/api/v1/auth/api-keys/current/renew"
+RENEW_CHECK_INTERVAL_SECONDS = 3 * 24 * 3600
+
 
 @dataclass
 class MachineRegistration:
@@ -536,6 +544,9 @@ class MachineDaemon:
         # shutdown path. A plain ``vicoa daemon`` never requests a stop (its
         # lifetime is the process's), so both stay inert outside the desktop.
         self._stop_requested = Event()
+        # Wakes the background key-renewal loop out of its long sleep so it exits
+        # promptly on shutdown or a dead credential.
+        self._stop_renewal = Event()
         self._ws_client: Optional[SpawnRequestWsClient] = None
         # Terminals opened on THIS machine from another device (the remote
         # `pty-*` path). Built lazily on first use — a daemon that never serves
@@ -597,6 +608,7 @@ class MachineDaemon:
         ``ws_url`` set, so it never sits in the legacy SSE loop.
         """
         self._stop_requested.set()
+        self._stop_renewal.set()
         client = self._ws_client
         if client is not None:
             client.stop()
@@ -642,6 +654,30 @@ class MachineDaemon:
         response = self.session.post(url, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
         self._raise_for_auth(response)
         return response
+
+    # ------------------------------------------------------------------
+    # Credential renewal — keeps an opaque CLI key from lapsing while the
+    # daemon is alive (server extends its expiry in place; the token is
+    # unchanged, so machine identity is never reset).
+    # ------------------------------------------------------------------
+    def _renewal_loop(self) -> None:
+        # Renew once at startup so a key that lapsed toward expiry during a long
+        # offline gap is pushed forward immediately, then on a slow heartbeat.
+        self._try_renew()
+        while not self._stop_renewal.wait(RENEW_CHECK_INTERVAL_SECONDS):
+            self._try_renew()
+
+    def _try_renew(self) -> None:
+        try:
+            self._post(RENEW_ENDPOINT).raise_for_status()
+        except AuthenticationError:
+            # The credential is already dead — the heartbeat/main loop owns the
+            # fatal-auth exit. Stop looping so we don't hammer a 401.
+            self._stop_renewal.set()
+        except RequestException as exc:
+            # Transient (network, 5xx, or a Postgres hiccup surfacing as 500):
+            # the key is unchanged, so just try again next cycle.
+            logger.debug("[daemon] key renewal deferred: %s", exc)
 
     def _patch(self, path: str, payload: dict[str, Any]) -> Response:
         url = f"{self.base_url}{path}"
@@ -2296,6 +2332,10 @@ class MachineDaemon:
     def run(self) -> None:
         try:
             self.register_machine()
+            # Renew the credential in the background now that registration has
+            # proven the session works. daemon=True so it never blocks exit;
+            # the finally below wakes it out of its long sleep.
+            Thread(target=self._renewal_loop, name="key-renewal", daemon=True).start()
             self.send_heartbeat()
             self._catchup_poll()
             self._listen_for_spawn_requests()
@@ -2307,6 +2347,8 @@ class MachineDaemon:
         except KeyboardInterrupt:
             print("[daemon] shutting down")
             return
+        finally:
+            self._stop_renewal.set()
 
         if self._fatal_auth.is_set():
             self._handle_fatal_auth()
