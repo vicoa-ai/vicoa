@@ -26,6 +26,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+# Committed config file locations relative to the repo root, in priority order.
+# `.vicoa/config.json` (namespaced — mirrors the `~/.vicoa/` home convention and
+# leaves room for other repo-level vicoa files) is preferred; a bare `vicoa.json`
+# at the root is the discoverable, Paseo-style (`paseo.json`) fallback. Both hold
+# the same wrapped shape (hooks under a `"worktree"` key).
+COMMITTED_CONFIG_FILES: tuple[str, ...] = (".vicoa/config.json", "vicoa.json")
+
 
 def normalize_lifecycle_commands(value: Any) -> list[str]:
     """Coerce a hook value (``str | list[str] | None``) to a command list.

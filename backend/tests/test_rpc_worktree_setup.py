@@ -146,6 +146,39 @@ class TestReadCommittedConfig:
         (tmp_path / "vicoa.json").write_text("{ not json")
         assert ws.read_committed_config_commands(str(tmp_path), "setup") == []
 
+    def test_reads_dot_vicoa_config_json(self, tmp_path: Path) -> None:
+        vicoa_dir = tmp_path / ".vicoa"
+        vicoa_dir.mkdir()
+        (vicoa_dir / "config.json").write_text(
+            json.dumps({"worktree": {"setup": ["pnpm i"]}})
+        )
+        assert ws.read_committed_config_commands(str(tmp_path), "setup") == ["pnpm i"]
+
+    def test_dot_vicoa_takes_precedence_over_root(self, tmp_path: Path) -> None:
+        vicoa_dir = tmp_path / ".vicoa"
+        vicoa_dir.mkdir()
+        (vicoa_dir / "config.json").write_text(
+            json.dumps({"worktree": {"setup": ["from-dotdir"]}})
+        )
+        (tmp_path / "vicoa.json").write_text(
+            json.dumps({"worktree": {"setup": ["from-root"]}})
+        )
+        assert ws.read_committed_config_commands(str(tmp_path), "setup") == [
+            "from-dotdir"
+        ]
+
+    def test_empty_dot_vicoa_falls_through_to_root(self, tmp_path: Path) -> None:
+        vicoa_dir = tmp_path / ".vicoa"
+        vicoa_dir.mkdir()
+        # Present but empty (no worktree hooks) → the root file still wins.
+        (vicoa_dir / "config.json").write_text(json.dumps({"other": 1}))
+        (tmp_path / "vicoa.json").write_text(
+            json.dumps({"worktree": {"setup": ["from-root"]}})
+        )
+        assert ws.read_committed_config_commands(str(tmp_path), "setup") == [
+            "from-root"
+        ]
+
 
 class TestRunWorktreeSetup:
     def test_no_config_is_vacuous_success(self, tmp_path: Path) -> None:

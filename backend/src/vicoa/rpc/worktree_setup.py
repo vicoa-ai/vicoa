@@ -440,23 +440,35 @@ def run_commands(
 
 
 def read_committed_config_commands(source_repo: str, hook: HookName) -> list[str]:
-    """Read ``vicoa.json`` from the source repo working tree, return its hook.
+    """Read the committed worktree config from the repo, return one hook's commands.
 
-    Working tree (not committed HEAD) so users can iterate on the config without
-    committing. Any read/parse error yields ``[]`` — a broken file must never
-    break a spawn. Import kept local so the daemon's hot import path stays lean.
+    Looks for ``.vicoa/config.json`` first, then a root ``vicoa.json`` (see
+    ``COMMITTED_CONFIG_FILES``) — the first that exists AND parses to a non-empty
+    config wins, so a stray empty file never shadows the other. Read from the
+    working tree (not committed HEAD) so users can iterate without committing. Any
+    read/parse error yields ``[]`` — a broken file must never break a spawn.
+    Import kept local so the daemon's hot import path stays lean.
     """
     import json
 
-    from protocol.worktree_config import parse_committed_config
+    from protocol.worktree_config import (
+        COMMITTED_CONFIG_FILES,
+        WorktreeConfig,
+        parse_committed_config,
+    )
 
-    path = Path(os.path.expanduser(source_repo)).resolve() / "vicoa.json"
-    try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
-        return []
-    config = parse_committed_config(data)
+    root = Path(os.path.expanduser(source_repo)).resolve()
+    config = WorktreeConfig()
+    for rel in COMMITTED_CONFIG_FILES:
+        try:
+            with open(root / rel, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        parsed = parse_committed_config(data)
+        if not parsed.is_empty():
+            config = parsed
+            break
     return config.setup if hook == "setup" else config.teardown
 
 
