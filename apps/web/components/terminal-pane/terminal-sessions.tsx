@@ -46,6 +46,10 @@ export interface TerminalTabInfo {
   id: string;
   machineId: string;
   cwd: string;
+  /** One-shot input written to the shell once it's live (worktree setup: e.g.
+   *  `npm ci && npm run build\r`). Transient — deliberately excluded from
+   *  `toSavedTerminals`, so it never persists or re-runs on a restore. */
+  initialInput?: string;
 }
 
 export interface SessionTerminals {
@@ -78,8 +82,14 @@ interface Viewport {
 interface TerminalSessionsApi {
   sessions: Record<string, SessionTerminals>;
   /** Create a terminal tab for a session and make it active. Returns the new
-      tab's id so callers can focus exactly that pane (see focusTerminal). */
-  addTerminal: (instanceId: string, machineId: string, cwd: string) => string;
+      tab's id so callers can focus exactly that pane (see focusTerminal).
+      `initialInput` is written to the shell once it's live (worktree setup). */
+  addTerminal: (
+    instanceId: string,
+    machineId: string,
+    cwd: string,
+    initialInput?: string,
+  ) => string;
   /** Close a tab: its pane unmounts and the pty is killed. */
   closeTerminal: (instanceId: string, terminalId: string) => void;
   setActiveTerminal: (instanceId: string, terminalId: string | null) => void;
@@ -136,23 +146,28 @@ export function TerminalSessionsProvider({ children }: { children: React.ReactNo
     }
   }, [sessions]);
 
-  const addTerminal = useCallback((instanceId: string, machineId: string, cwd: string) => {
-    counterRef.current += 1;
-    // Renderer state only — Math.random is fine here.
-    const id = `term-${counterRef.current}-${Math.random().toString(36).slice(2, 8)}`;
-    hydratedRef.current.add(instanceId);
-    setSessions((prev) => {
-      const current = prev[instanceId] ?? EMPTY_SESSION_TERMINALS;
-      return {
-        ...prev,
-        [instanceId]: {
-          terminals: [...current.terminals, { id, machineId, cwd }],
-          activeId: id,
-        },
-      };
-    });
-    return id;
-  }, []);
+  const addTerminal = useCallback(
+    (instanceId: string, machineId: string, cwd: string, initialInput?: string) => {
+      counterRef.current += 1;
+      // Renderer state only — Math.random is fine here.
+      const id = `term-${counterRef.current}-${Math.random().toString(36).slice(2, 8)}`;
+      hydratedRef.current.add(instanceId);
+      setSessions((prev) => {
+        const current = prev[instanceId] ?? EMPTY_SESSION_TERMINALS;
+        const tab: TerminalTabInfo = { id, machineId, cwd };
+        if (initialInput) tab.initialInput = initialInput;
+        return {
+          ...prev,
+          [instanceId]: {
+            terminals: [...current.terminals, tab],
+            activeId: id,
+          },
+        };
+      });
+      return id;
+    },
+    [],
+  );
 
   const restoreSession = useCallback((instanceId: string, machineId: string) => {
     // First reopen of this session this app-run wins; a later remount of the
@@ -369,7 +384,11 @@ function TerminalKeepAlive({
           : { display: 'none' }
       }
     >
-      <TerminalPane createTransport={createTransport} cwd={info.cwd} />
+      <TerminalPane
+        createTransport={createTransport}
+        cwd={info.cwd}
+        initialInput={info.initialInput}
+      />
     </div>
   );
 }

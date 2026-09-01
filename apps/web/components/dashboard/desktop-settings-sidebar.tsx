@@ -1,11 +1,13 @@
 'use client';
 
-import { Suspense, useCallback } from 'react';
+import { Suspense, useCallback, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, Bot, Keyboard, Monitor, Settings, User } from 'lucide-react';
+import { ArrowLeft, Bot, Folder, Keyboard, Monitor, Settings, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { DesktopTitlebarLead } from '@/components/desktop/window-chrome';
+import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
+import { projectSettingsTargets } from '@/components/dashboard/session-grouping';
 
 /**
  * Left panel while the desktop app is on /dashboard/settings: replaces the
@@ -26,10 +28,14 @@ export const DESKTOP_SETTINGS_TABS = [
   { id: 'shortcuts', label: 'Keyboard shortcuts', Icon: Keyboard },
 ] as const;
 
-export type DesktopSettingsTab = (typeof DESKTOP_SETTINGS_TABS)[number]['id'];
+export type DesktopSettingsTab =
+  | (typeof DESKTOP_SETTINGS_TABS)[number]['id']
+  | 'project';
 
-/** Resolve the ?tab= param to a known tab (general is the default). */
+/** Resolve the ?tab= param to a known tab (general is the default). `project`
+    is the dynamic per-project pane (carries machineId+dir params). */
 export function activeSettingsTab(tabParam: string | null): DesktopSettingsTab {
+  if (tabParam === 'project') return 'project';
   return DESKTOP_SETTINGS_TABS.some((tab) => tab.id === tabParam)
     ? (tabParam as DesktopSettingsTab)
     : 'general';
@@ -51,6 +57,10 @@ function DesktopSettingsSidebarInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tab = activeSettingsTab(searchParams.get('tab'));
+  const activeMachineId = searchParams.get('machineId') ?? '';
+  const activeDir = searchParams.get('dir') ?? '';
+  const { recentInstances } = useAgentDashboard();
+  const projectTargets = useMemo(() => projectSettingsTargets(recentInstances), [recentInstances]);
 
   const backToApp = useCallback(() => {
     let target: string | null = null;
@@ -97,7 +107,7 @@ function DesktopSettingsSidebarInner() {
               router.replace(id === 'general' ? '/dashboard/settings' : `/dashboard/settings?tab=${id}`)
             }
             className={cn(
-              'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
+              'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
               tab === id
                 ? 'bg-foreground/10 text-foreground'
                 : 'text-muted-foreground hover:bg-foreground/10 hover:text-foreground',
@@ -107,6 +117,42 @@ function DesktopSettingsSidebarInner() {
             {label}
           </button>
         ))}
+
+        {projectTargets.length > 0 && (
+          <>
+            <div className="px-2 pt-4 pb-1 text-xs font-light text-muted-foreground/70">
+              Projects
+            </div>
+            {projectTargets.map((target) => {
+              const active =
+                tab === 'project' &&
+                activeMachineId === target.machineId &&
+                activeDir === target.dir;
+              return (
+                <button
+                  key={target.key}
+                  type="button"
+                  onClick={() =>
+                    router.replace(
+                      `/dashboard/settings?tab=project&machineId=${encodeURIComponent(
+                        target.machineId,
+                      )}&dir=${encodeURIComponent(target.dir)}&label=${encodeURIComponent(target.label)}`,
+                    )
+                  }
+                  className={cn(
+                    'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
+                    active
+                      ? 'bg-foreground/10 text-foreground'
+                      : 'text-muted-foreground hover:bg-foreground/10 hover:text-foreground',
+                  )}
+                >
+                  <Folder className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{target.label}</span>
+                </button>
+              );
+            })}
+          </>
+        )}
       </nav>
     </aside>
   );

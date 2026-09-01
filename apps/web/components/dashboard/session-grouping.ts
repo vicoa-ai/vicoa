@@ -74,6 +74,46 @@ export function distinctProjects(
   );
 }
 
+/** A project the Settings page can open a per-project pane for: its stable
+ *  group key + label, plus the machine and repo dir needed to route the
+ *  committed-config file RPC (see WorktreeSetupSection). */
+export interface ProjectSettingsTarget {
+  key: string;
+  label: string;
+  machineId: string;
+  dir: string;
+}
+
+/**
+ * Per-project settings targets, one per project group present in the list.
+ *
+ * `dir` is the repo's *main* checkout (a session with no `worktree_name`),
+ * falling back to any session's cwd — the same directory the sidebar's project
+ * "+" and "Project settings" action use, so the config resolves to the repo
+ * root rather than a worktree. Groups with no reachable machine or no directory
+ * (nothing to route a file RPC to) are dropped.
+ */
+export function projectSettingsTargets(
+  instances: AgentInstanceResponse[],
+): ProjectSettingsTarget[] {
+  const byKey = new Map<string, AgentInstanceResponse[]>();
+  for (const instance of instances) {
+    const key = projectGroupKey(instance);
+    if (key === NO_PROJECT_KEY) continue;
+    const list = byKey.get(key);
+    if (list) list.push(instance);
+    else byKey.set(key, [instance]);
+  }
+  const targets: ProjectSettingsTarget[] = [];
+  for (const [key, list] of byKey) {
+    const machineId = list[0]?.machine_id ?? null;
+    const dir = list.find((i) => !i.worktree_name)?.project ?? list[0]?.project ?? null;
+    if (!machineId || !dir) continue;
+    targets.push({ key, label: projectDisplayName(list), machineId, dir });
+  }
+  return targets.sort((a, b) => a.label.localeCompare(b.label));
+}
+
 /** Distinct agent type names present in the list (for the Agent filter menu). */
 export function distinctAgentNames(instances: AgentInstanceResponse[]): string[] {
   const names = new Set<string>();

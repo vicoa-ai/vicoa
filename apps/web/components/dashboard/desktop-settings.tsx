@@ -69,6 +69,7 @@ import {
 import { activeSettingsTab } from './desktop-settings-sidebar';
 import { ProvidersSettingsSection } from './providers-settings-section';
 import { MachinesSettingsSection } from './machines-settings-section';
+import { WorktreeSetupSection } from './worktree-setup-section';
 import { useMobileSidebarHidden, setMobileSidebarHidden } from '@/lib/mobile-sidebar-pref';
 
 /**
@@ -93,12 +94,47 @@ export function DesktopSettings() {
             <ProvidersSettingsSection />
           ) : tab === 'machines' ? (
             <MachinesSettingsSection />
+          ) : tab === 'project' ? (
+            <ProjectSection
+              machineId={searchParams.get('machineId') ?? ''}
+              dir={searchParams.get('dir') ?? ''}
+              label={searchParams.get('label') ?? ''}
+            />
           ) : (
             <GeneralSection />
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+/** Per-project settings pane (worktree setup, room to grow). Reached from the
+ *  sidebar project 3-dots → "Project settings" and the settings nav's Projects
+ *  group; carries the repo's machineId + dir. */
+function ProjectSection({
+  machineId,
+  dir,
+  label,
+}: {
+  machineId: string;
+  dir: string;
+  label: string;
+}) {
+  return (
+    <section className="flex flex-col gap-6">
+      <div>
+        <SectionTitle>{label || 'Project settings'}</SectionTitle>
+        {dir && <p className="mt-1 truncate text-xs text-muted-foreground">{dir}</p>}
+      </div>
+      {machineId && dir ? (
+        <WorktreeSetupSection machineId={machineId} dir={dir} />
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Pick a project from the list to edit its settings.
+        </p>
+      )}
+    </section>
   );
 }
 

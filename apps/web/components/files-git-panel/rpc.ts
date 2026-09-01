@@ -451,6 +451,39 @@ export async function rpcGitWorktreeRemove(
   }
 }
 
+/** Trust a repo's committed `vicoa.json` so its worktree setup/teardown commands
+ *  may run on this machine (persisted daemon-side, per repo path). `directory` is
+ *  the SOURCE repo the setup came from, not the worktree. */
+export async function rpcWorktreeTrustGrant(
+  machineId: string,
+  directory: string,
+): Promise<void> {
+  const result = await getRpcClient(machineId).callRpc(machineId, 'worktree-trust-grant', {
+    directory,
+  });
+  if (typeof result.error === 'string') {
+    throw new RpcError(result.error);
+  }
+}
+
+/** Run a worktree's setup commands in the background on the daemon (no terminal).
+ *  The fallback where the client can't open a PTY (Windows) — output goes to the
+ *  daemon log. `directory` is the SOURCE repo (trust key + config source);
+ *  `worktreePath` is where the commands run. Requires the repo to be trusted. */
+export async function rpcWorktreeRunSetup(
+  machineId: string,
+  worktreePath: string,
+  directory: string,
+): Promise<void> {
+  const result = await getRpcClient(machineId).callRpc(machineId, 'worktree-run-setup', {
+    worktree_path: worktreePath,
+    directory,
+  });
+  if (typeof result.error === 'string') {
+    throw new RpcError(result.error);
+  }
+}
+
 // ── Commit history (git-log / git-commit-files / git-commit-diff) ─────────────
 
 export interface CommitRef {

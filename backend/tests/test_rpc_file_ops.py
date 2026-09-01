@@ -407,3 +407,19 @@ def test_write_file_traversal_returns_outside_project(git_repo: Path):
 
     result = write_file(cwd=str(git_repo), path="../escape", content="x", force=True)
     assert result == {"error": "outside_project"}
+
+
+def test_write_file_creates_missing_parent_dir(git_repo: Path):
+    from vicoa.rpc.file_ops import read_file, write_file
+
+    # No `.vicoa/` dir yet — a new namespaced config still writes cleanly.
+    assert not (git_repo / ".vicoa").exists()
+    result = write_file(
+        cwd=str(git_repo),
+        path=".vicoa/config.json",
+        content="{}\n",
+        base_hash=None,
+    )
+    assert "error" not in result
+    assert (git_repo / ".vicoa" / "config.json").read_text() == "{}\n"
+    assert read_file(cwd=str(git_repo), path=".vicoa/config.json")["content"] == "{}\n"

@@ -103,6 +103,89 @@ def test_spawn_with_new_worktree_creates_and_spawns_in_it(
     assert Path(result["worktree_path"]).is_dir()
 
 
+def test_spawn_new_worktree_surfaces_setup_commands(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    import json
+
+    # Config in the source repo working tree (need not be committed) — the client
+    # runs these, visibly, in the new session's terminal.
+    (committed_repo / "vicoa.json").write_text(
+        json.dumps({"worktree": {"setup": ["npm ci", "npm run build"]}})
+    )
+    daemon = _prep_daemon(monkeypatch)
+    _patch_popen(monkeypatch, {})
+
+    result = daemon.spawn_session_rpc(
+        {
+            "params": {
+                "directory": str(committed_repo),
+                "agent": "claude",
+                "worktree": {"new": True},
+            }
+        }
+    )
+
+    assert result.get("setup_commands") == ["npm ci", "npm run build"]
+    # Untrusted by default — the web asks before auto-running a cloned repo's setup.
+    assert result.get("setup_trusted") is False
+    # The client exports these before typing setup into the terminal (that shell
+    # doesn't inherit the hook env the engine sets in its own subprocess).
+    setup_env = result.get("setup_env")
+    assert isinstance(setup_env, dict)
+    assert setup_env["VICOA_ROOT_PATH"] == str(committed_repo)
+    assert setup_env["VICOA_WORKTREE_PATH"] == result["worktree_path"]
+    assert setup_env["VICOA_BRANCH_NAME"] == result["branch"]
+
+
+def test_spawn_new_worktree_setup_trusted_after_grant(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    import json
+
+    from vicoa.rpc.worktree_trust import grant_repo_trust
+
+    (committed_repo / "vicoa.json").write_text(
+        json.dumps({"worktree": {"setup": ["npm ci"]}})
+    )
+    grant_repo_trust(str(committed_repo))
+    daemon = _prep_daemon(monkeypatch)
+    _patch_popen(monkeypatch, {})
+
+    result = daemon.spawn_session_rpc(
+        {
+            "params": {
+                "directory": str(committed_repo),
+                "agent": "claude",
+                "worktree": {"new": True},
+            }
+        }
+    )
+
+    assert result.get("setup_commands") == ["npm ci"]
+    assert result.get("setup_trusted") is True
+
+
+def test_spawn_new_worktree_without_config_has_no_setup_commands(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    daemon = _prep_daemon(monkeypatch)
+    _patch_popen(monkeypatch, {})
+
+    result = daemon.spawn_session_rpc(
+        {
+            "params": {
+                "directory": str(committed_repo),
+                "agent": "claude",
+                "worktree": {"new": True},
+            }
+        }
+    )
+
+    assert "worktree_path" in result
+    assert "setup_commands" not in result
+
+
 def test_spawn_without_worktree_is_unchanged(
     monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
 ):
