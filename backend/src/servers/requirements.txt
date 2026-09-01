@@ -13,5 +13,9 @@ firebase-admin>=6.2.0
 twilio>=8.0.0
 sendgrid>=6.10.0
 
+# Agent integrations (integrations/headless/claude_code.py); also declared in
+# pyproject.toml for the vicoa daemon.
+claude-agent-sdk>=0.1.80
+
 # Shared dependencies
 -r ../shared/requirements.txt
