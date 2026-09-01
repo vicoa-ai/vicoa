@@ -139,6 +139,31 @@ function saveErrorMessage(code: string): string {
   return byCode[code] ?? code;
 }
 
+/** A `Record<string, string>` (e.g. the worktree hook env from the daemon), or
+ *  `{}` for anything else — so a malformed hand-off can't inject odd values. */
+function asStringRecord(value: unknown): Record<string, string> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof v === 'string') out[k] = v;
+  }
+  return out;
+}
+
+/** POSIX single-quote a value so spaces/specials survive being typed into a shell. */
+function shSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/** `export K='v' … && ` prefix (empty when no vars) so the setup command chain —
+ *  and the interactive shell left after it — sees the VICOA_* hook env. The
+ *  terminal shell doesn't inherit it the way the daemon engine's subprocess does. */
+function envExportPrefix(env: Record<string, string>): string {
+  const pairs = Object.entries(env).filter(([, v]) => v.length > 0);
+  if (pairs.length === 0) return '';
+  return `export ${pairs.map(([k, v]) => `${k}=${shSingleQuote(v)}`).join(' ')} && `;
+}
+
 export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, overlay, canMaximize, pendingAction, openFileRequest }: FilesGitPanelProps) {
   // `desktop` is present exactly when the Electron preload injected a desktop
   // config. Safe to read directly — this component never server-renders
@@ -237,14 +262,14 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
   // (Windows) it falls back to a background run on the daemon (output → daemon
   // log); `sourceRepo` is the config source + trust key for that path.
   const startWorktreeSetup = useCallback(
-    (commands: string[], sourceRepo: string) => {
+    (commands: string[], sourceRepo: string, env: Record<string, string>) => {
       if (!cwd) return;
       if (canUseTerminal) {
         const id = addSessionTerminal(
           instanceId,
           termMachineId,
           cwd,
-          `${commands.join(' && ')}\r`,
+          `${envExportPrefix(env)}${commands.join(' && ')}\r`,
         );
         focusTerminal(instanceId, id);
         return;
@@ -264,6 +289,7 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
   const [pendingSetup, setPendingSetup] = useState<{
     commands: string[];
     sourceRepo: string;
+    env: Record<string, string>;
   } | null>(null);
 
   // A freshly-created worktree may carry setup commands (committed vicoa.json),
@@ -289,20 +315,22 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
       return;
     }
     if (typeof payload !== 'object' || payload === null) return;
-    const { commands, trusted, sourceRepo } = payload as {
+    const { commands, trusted, sourceRepo, env } = payload as {
       commands?: unknown;
       trusted?: unknown;
       sourceRepo?: unknown;
+      env?: unknown;
     };
     const setup = Array.isArray(commands)
       ? commands.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
       : [];
     if (setup.length === 0) return;
     const repo = typeof sourceRepo === 'string' ? sourceRepo : '';
+    const envMap = asStringRecord(env);
     if (trusted === true) {
-      startWorktreeSetup(setup, repo);
+      startWorktreeSetup(setup, repo, envMap);
     } else {
-      setPendingSetup({ commands: setup, sourceRepo: repo });
+      setPendingSetup({ commands: setup, sourceRepo: repo, env: envMap });
     }
   }, [cwd, instanceId, startWorktreeSetup]);
 
@@ -320,7 +348,7 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
         /* grant failed — run once anyway; trust just isn't remembered */
       }
     }
-    startWorktreeSetup(p.commands, p.sourceRepo);
+    startWorktreeSetup(p.commands, p.sourceRepo, p.env);
   }, [pendingSetup, termMachineId, startWorktreeSetup]);
 
   // Split layout: terminals dock below/above the files area instead of being

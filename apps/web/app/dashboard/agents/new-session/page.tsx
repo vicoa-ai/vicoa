@@ -123,7 +123,12 @@ function markSessionHasPrompt(instanceId: string, hasPrompt: boolean) {
  */
 function markSessionSetupCommands(
   instanceId: string,
-  payload: { commands: string[]; trusted: boolean; sourceRepo: string },
+  payload: {
+    commands: string[];
+    trusted: boolean;
+    sourceRepo: string;
+    env: Record<string, string>;
+  },
 ) {
   try {
     if (instanceId && payload.commands.length > 0) {
@@ -1269,6 +1274,16 @@ function NewSessionContent() {
           : [],
         trusted: result.setup_trusted === true,
         sourceRepo: spawn.directory,
+        // VICOA_* hook env resolved by the daemon; the session view exports it
+        // before typing setup into the terminal (that shell doesn't inherit it).
+        env:
+          result.setup_env && typeof result.setup_env === 'object'
+            ? Object.fromEntries(
+                Object.entries(result.setup_env as Record<string, unknown>).filter(
+                  (entry): entry is [string, string] => typeof entry[1] === 'string',
+                ),
+              )
+            : {},
       });
       await getWsClient().waitForEntity('agent_instances', newInstanceId);
 

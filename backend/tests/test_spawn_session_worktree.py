@@ -129,6 +129,13 @@ def test_spawn_new_worktree_surfaces_setup_commands(
     assert result.get("setup_commands") == ["npm ci", "npm run build"]
     # Untrusted by default — the web asks before auto-running a cloned repo's setup.
     assert result.get("setup_trusted") is False
+    # The client exports these before typing setup into the terminal (that shell
+    # doesn't inherit the hook env the engine sets in its own subprocess).
+    setup_env = result.get("setup_env")
+    assert isinstance(setup_env, dict)
+    assert setup_env["VICOA_SOURCE_CHECKOUT_PATH"] == str(committed_repo)
+    assert setup_env["VICOA_WORKTREE_PATH"] == result["worktree_path"]
+    assert setup_env["VICOA_BRANCH_NAME"] == result["branch"]
 
 
 def test_spawn_new_worktree_setup_trusted_after_grant(

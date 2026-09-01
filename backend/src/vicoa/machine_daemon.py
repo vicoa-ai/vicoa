@@ -2134,7 +2134,10 @@ class MachineDaemon:
             # The daemon owns config discovery; the client only decides where to
             # show it. Best-effort: never fail a launched spawn over setup.
             try:
-                from vicoa.rpc.worktree_setup import read_committed_config_commands
+                from vicoa.rpc.worktree_setup import (
+                    read_committed_config_commands,
+                    worktree_env_vars,
+                )
                 from vicoa.rpc.worktree_trust import is_repo_trusted
 
                 source_repo = str(params.get("directory") or "")
@@ -2145,6 +2148,15 @@ class MachineDaemon:
                     # tells it whether to run silently or ask first (a cloned
                     # repo's vicoa.json is untrusted until the user approves it).
                     result["setup_trusted"] = is_repo_trusted(source_repo)
+                    # The terminal shell doesn't inherit the hook env the engine
+                    # sets, so hand the client the same VICOA_* vars to export
+                    # before it types setup — else `$VICOA_BRANCH_NAME` & co. are
+                    # empty there. The daemon is the source of truth for these.
+                    result["setup_env"] = worktree_env_vars(
+                        worktree_path=str(worktree_info["path"]),
+                        source_repo=source_repo,
+                        branch_name=str(worktree_info["branch"]),
+                    )
             except Exception as exc:  # noqa: BLE001 - setup resolve is best-effort
                 print(f"[daemon] worktree setup resolve failed: {exc}")
         return result

@@ -157,6 +157,30 @@ def _shell_invocation(command: str) -> list[str]:
     return ["bash", "-lc", command]
 
 
+def worktree_env_vars(
+    *,
+    worktree_path: str,
+    source_repo: str,
+    branch_name: str,
+    project_id: str | None = None,
+) -> dict[str, str]:
+    """The ``VICOA_*`` variables a worktree hook's environment carries.
+
+    Single source of truth for the hook env contract, shared by the engine
+    (which runs hooks in a subprocess with these set) and the spawn result (so
+    the web can export the *same* vars before typing setup into a terminal —
+    otherwise ``$VICOA_BRANCH_NAME`` & co. are empty in that shell).
+    """
+    env: dict[str, str] = {
+        "VICOA_WORKTREE_PATH": worktree_path,
+        "VICOA_SOURCE_CHECKOUT_PATH": source_repo,
+        "VICOA_BRANCH_NAME": branch_name,
+    }
+    if project_id:
+        env["VICOA_PROJECT_ID"] = project_id
+    return env
+
+
 def _build_env(
     *,
     worktree_path: str,
@@ -168,11 +192,14 @@ def _build_env(
     # BASH_ENV would let a startup file rewrite the environment behind our back;
     # drop it so the shell the command runs in is predictable (matches Paseo).
     env.pop("BASH_ENV", None)
-    env["VICOA_WORKTREE_PATH"] = worktree_path
-    env["VICOA_SOURCE_CHECKOUT_PATH"] = source_repo
-    env["VICOA_BRANCH_NAME"] = branch_name
-    if project_id:
-        env["VICOA_PROJECT_ID"] = project_id
+    env.update(
+        worktree_env_vars(
+            worktree_path=worktree_path,
+            source_repo=source_repo,
+            branch_name=branch_name,
+            project_id=project_id,
+        )
+    )
     return env
 
 
