@@ -1,0 +1,17 @@
+{
+  "worktree": {
+    "setup": [
+      "echo '=== vicoa worktree setup ==='",
+      "echo \"branch=$VICOA_BRANCH_NAME\"",
+      "echo \"source=$VICOA_ROOT_PATH\"",
+      "echo \"worktree=$VICOA_WORKTREE_PATH\"",
+      "echo '--- copying env files ---'",
+      "cp \"$VICOA_ROOT_PATH/apps/web/.env\" \"$VICOA_WORKTREE_PATH/apps/web/.env\" && echo 'copied apps/web/.env'",
+      "cp \"$VICOA_ROOT_PATH/backend/.env\" \"$VICOA_WORKTREE_PATH/backend/.env\" && echo 'copied backend/.env'",
+      "cp \"$VICOA_ROOT_PATH/apps/mobile/env.json\" \"$VICOA_WORKTREE_PATH/apps/mobile/env.json\" && echo 'copied apps/mobile/env.json'",
+      "echo '--- pnpm install (apps/web) ---'",
+      "cd \"$VICOA_WORKTREE_PATH/apps/web\" && pnpm install",
+      "echo '=== vicoa worktree setup done ==='"
+    ]
+  }
+}
