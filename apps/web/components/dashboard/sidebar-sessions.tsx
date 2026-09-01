@@ -87,11 +87,6 @@ import {
   type WorktreeInfo,
 } from '@/components/files-git-panel/rpc';
 
-// Desktop build (Electron renderer). The daemon is local here, so the live
-// `git worktree list` RPC is cheap; on web we sub-group worktrees purely from
-// stored session fields and never reach for a daemon over the relay.
-const IS_DESKTOP = process.env.NEXT_PUBLIC_VICOA_DESKTOP === '1';
-
 // Selected-row highlight, shared between session rows and the view-options menu.
 const ITEM_SELECTED = 'bg-foreground/10 text-foreground';
 
@@ -391,9 +386,12 @@ export function SidebarSessions({
   // reaches for a daemon it can't talk to).
   const worktreeTargets = useMemo(
     () =>
-      // Desktop only: the daemon is local. On web the worktree split still runs
-      // (from stored fields), just without a live `git worktree list`.
-      !worktreesOn || groupBy !== 'project' || !IS_DESKTOP
+      // Runs on web too: `git worktree list` goes over the RPC relay to the
+      // session's machine (the same path the new-session worktree picker uses),
+      // so a worktree with no sessions yet still surfaces. A failed/offline
+      // fetch degrades to the session-derived split (the hook catches errors),
+      // so this never blocks the sidebar.
+      !worktreesOn || groupBy !== 'project'
         ? []
         : sidebarGroups
             .filter((g) => g.key !== 'PINNED' && g.label !== null && g.instances.length > 0)
@@ -636,13 +634,12 @@ export function SidebarSessions({
             worktreeBranch: w.branch || undefined,
             // Any real linked worktree is removable (the daemon confines
             // removal to actual worktrees of the repo, not just managed ones);
-            // we only need a machine to route the RPC to.
-            // Worktree removal is a daemon RPC; keep it desktop-only (web shows
-            // the worktree groups read-only rather than deleting over the relay).
-            remove:
-              IS_DESKTOP && repoMachineId
-                ? { machineId: repoMachineId, path: w.path, branch: w.branch }
-                : null,
+            // we only need a reachable machine to route the RPC to — so this
+            // works on web over the relay, not just desktop. An offline machine
+            // just makes the delete RPC reject, surfaced to the user.
+            remove: repoMachineId
+              ? { machineId: repoMachineId, path: w.path, branch: w.branch }
+              : null,
           });
         }
         if (subs.length === 0) return notSplit;
