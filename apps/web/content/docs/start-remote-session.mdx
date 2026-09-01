@@ -60,6 +60,21 @@ Once the daemon connects, the machine shows up with its hostname in both the mob
 6. Confirm with **Start Session**
 
 
+## 4. Start a session from the terminal
+
+You don't have to open an app — `vicoa session start` spawns a remote session on any registered machine over the same path the dashboard uses. Point it at a machine, a directory, and an agent, and the target machine's daemon launches it headless:
+
+```bash
+# On this machine's daemon, running Claude Code
+vicoa session start --dir ~/projects/my-app
+
+# On another machine (matched by name), running Codex with a first prompt
+vicoa session start --machine laptop --dir ~/projects/api \
+  --agent codex --prompt "Run the test suite and fix the failures"
+```
+
+The target machine's `vicoa daemon` must be connected; if it looks offline, `start` refuses unless you pass `--allow-offline` to queue the request until it reconnects. Discover your options with `vicoa session start --list-machines` and `vicoa session start --list-models`. See the [CLI Commands reference](/docs/cli-commands#vicoa-session-start) for the full flag list.
+
 ## Troubleshooting
 
 - **Machine not appearing:** Ensure `vicoa daemon` is still running and that the machine is connected to the internet.
