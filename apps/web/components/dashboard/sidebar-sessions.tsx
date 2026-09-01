@@ -9,6 +9,8 @@ import {
   Archive,
   ChevronRight,
   Kanban,
+  MoreHorizontal,
+  GitBranch,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -1043,6 +1045,87 @@ export function SidebarSessions({
                 const { isDraggableProject, split, newSessionDirectory, subs } = entry;
                 if (!split && instances.length === 0) return null;
                 const isGroupCollapsed = label !== null && collapsedGroups.has(key);
+                // A project's committed `.vicoa/config.json` is edited on the
+                // repo's machine, so the "Worktree setup" action needs both a
+                // machine to route the file RPC and the repo's directory.
+                const projectMachineId = instances[0]?.machine_id ?? null;
+                const worktreeSettingsHref =
+                  projectMachineId && newSessionDirectory
+                    ? `/dashboard/settings/worktree?machineId=${encodeURIComponent(
+                        projectMachineId,
+                      )}&dir=${encodeURIComponent(newSessionDirectory)}${
+                        label ? `&label=${encodeURIComponent(label)}` : ''
+                      }`
+                    : null;
+                const projectHeader = label ? (
+                  // Wrapper carries the drag handle and hover group so the
+                  // collapse toggle, actions menu, and "+" can be sibling buttons
+                  // (a button cannot nest inside a button).
+                  <div
+                    draggable={isDraggableProject}
+                    onDragStart={
+                      isDraggableProject
+                        ? (event) => {
+                            event.dataTransfer.effectAllowed = 'move';
+                            event.dataTransfer.setData('text/plain', key);
+                            setDraggingProject(key);
+                          }
+                        : undefined
+                    }
+                    onDragEnd={isDraggableProject ? handleProjectDragEnd : undefined}
+                    className={cn(
+                      'group/label flex w-full items-center gap-1 px-2 py-1 mt-2 first:mt-0',
+                      isDraggableProject && 'cursor-grab active:cursor-grabbing',
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleGroupCollapsed(key)}
+                      aria-expanded={!isGroupCollapsed}
+                      className="flex min-w-0 flex-1 items-center gap-1 text-left"
+                    >
+                      <span className="text-xs font-light text-muted-foreground/70 truncate">
+                        {label}
+                      </span>
+                      <ChevronRight
+                        className={cn(
+                          'h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform group-hover/label:text-muted-foreground',
+                          !isGroupCollapsed && 'rotate-90',
+                        )}
+                      />
+                    </button>
+                    {worktreeSettingsHref && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            title="Project actions"
+                            aria-label="Project actions"
+                            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-muted-foreground/20 hover:text-foreground group-hover/label:opacity-100 focus:opacity-100"
+                          >
+                            <MoreHorizontal className="h-3 w-3" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="font-mono">
+                          <DropdownMenuItem
+                            className="cursor-pointer gap-2 text-xs"
+                            onSelect={() => router.push(worktreeSettingsHref)}
+                          >
+                            <GitBranch className="h-3.5 w-3.5" />
+                            Worktree setup
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                    {newSessionDirectory && (
+                      <NewSessionButton
+                        directory={newSessionDirectory}
+                        label={label}
+                        onNavigate={router.push}
+                      />
+                    )}
+                  </div>
+                ) : null;
                 return (
                   <div
                     key={key}
@@ -1061,52 +1144,23 @@ export function SidebarSessions({
                         : undefined
                     }
                   >
-                    {label && (
-                      // Wrapper carries the drag handle and hover group so the
-                      // collapse toggle and "+" can be sibling buttons (a button
-                      // cannot nest inside a button).
-                      <div
-                        draggable={isDraggableProject}
-                        onDragStart={
-                          isDraggableProject
-                            ? (event) => {
-                                event.dataTransfer.effectAllowed = 'move';
-                                event.dataTransfer.setData('text/plain', key);
-                                setDraggingProject(key);
-                              }
-                            : undefined
-                        }
-                        onDragEnd={isDraggableProject ? handleProjectDragEnd : undefined}
-                        className={cn(
-                          'group/label flex w-full items-center gap-1 px-2 py-1 mt-2 first:mt-0',
-                          isDraggableProject && 'cursor-grab active:cursor-grabbing',
-                        )}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => toggleGroupCollapsed(key)}
-                          aria-expanded={!isGroupCollapsed}
-                          className="flex min-w-0 flex-1 items-center gap-1 text-left"
-                        >
-                          <span className="text-xs font-light text-muted-foreground/70 truncate">
-                            {label}
-                          </span>
-                          <ChevronRight
-                            className={cn(
-                              'h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform group-hover/label:text-muted-foreground',
-                              !isGroupCollapsed && 'rotate-90',
-                            )}
-                          />
-                        </button>
-                        {newSessionDirectory && (
-                          <NewSessionButton
-                            directory={newSessionDirectory}
-                            label={label}
-                            onNavigate={router.push}
-                          />
-                        )}
-                      </div>
-                    )}
+                    {projectHeader &&
+                      (worktreeSettingsHref ? (
+                        <ContextMenu>
+                          <ContextMenuTrigger asChild>{projectHeader}</ContextMenuTrigger>
+                          <ContextMenuContent className="font-mono">
+                            <ContextMenuItem
+                              className="cursor-pointer gap-2 text-xs"
+                              onSelect={() => router.push(worktreeSettingsHref)}
+                            >
+                              <GitBranch className="h-3.5 w-3.5" />
+                              Worktree setup
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                        </ContextMenu>
+                      ) : (
+                        projectHeader
+                      ))}
                     {!isGroupCollapsed && (
                       <div className="space-y-0.5">
                         {!split
