@@ -100,6 +100,8 @@ Start a background agent with no local terminal UI, driven entirely from the web
 vicoa headless --agent codex --prompt "Run the test suite and summarize failures"
 ```
 
+> **`vicoa headless` vs `vicoa session start`:** `headless` starts a background agent **on this machine**, right here. [`vicoa session start`](#vicoa-session-start) asks the backend to spawn one on **any** of your registered machines (including this one) — the terminal equivalent of the dashboard's "New Session". Reach for `session start` to launch a session on a different box, or when you want the same machine/agent/model picker the apps use.
+
 ## vicoa ls
 
 List the active agent instances on the current machine, grouped by kind. This reads local OS processes — it only sees agents running on *this* box.
@@ -141,7 +143,74 @@ Works on macOS, Linux, and Windows.
 
 ## vicoa session
 
-The `session` commands read from the backend, so they cover every session you own regardless of which machine started it. They are read-only and safe to run anytime.
+The `session` commands talk to the backend, so they cover every session you own regardless of which machine started it. The read verbs (`ls`, `get`) are safe to run anytime; `start`, `update`, `message`, and `continue` change state or start real work.
+
+### vicoa session start
+
+Start a **new** session on one of your machines — the terminal equivalent of the desktop/web **"New Session"** composer. It picks a machine, directory, agent, and model/config, then hands the target machine's daemon a spawn request over REST (the same spawn path the apps drive). The session runs **headless** on that machine and streams to the mobile app and web dashboard, just like a remote session started from the UI.
+
+```bash
+# Start Claude Code on this host's daemon, in a directory
+vicoa session start --dir ~/projects/my-app
+
+# Pick a machine by name/hostname substring; name it and kick off with a prompt
+vicoa session start --machine laptop --dir ~/projects/api \
+  --name "Fix CI" --prompt "Run the test suite and fix the failures"
+
+# Codex with a model + reasoning effort, and block until it's actually running
+vicoa session start --dir ~/projects/api \
+  --agent codex --model gpt-5.5 --effort medium --wait
+```
+
+> **`vicoa session start` needs the target machine's daemon running.** The request is only picked up once that machine's `vicoa daemon` is connected. If the daemon looks offline, `start` refuses by default — pass `--allow-offline` to queue the request until the machine next reconnects.
+
+**Where it runs**
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--machine <ID\|NAME>` | this host's daemon | Target machine: full id, id prefix, or a display-name/hostname substring (`--list-machines` to see them) |
+| `--dir <PATH>` | — (**required**) | Directory on the target machine to start the session in |
+| `--allow-offline` | off | Queue the request even if the daemon looks offline (it runs when the daemon next reconnects) |
+
+**What to run**
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--agent <name>` | `claude` | Agent to run: `claude`, `codex`, `opencode`, `cursor`, `gemini`, `copilot`, `kimi`, or `hermes` (not `amp`) |
+| `--model <slug>` | agent default | Model slug (`--list-models` to see options per agent) |
+| `--effort <level>` | agent default | Reasoning/thinking effort — **claude & codex only** |
+| `--permission-mode <mode>` | agent default | Permission mode (claude/codex/ACP agents) |
+| `--opencode-mode <build\|plan>` | — | OpenCode agent mode (opencode only) |
+| `--name <text>` | — | Name for the new session |
+| `--prompt <text>` | — | Optional first user message; omit to start the session blank |
+| `--task <TASK_UUID>` | — | Link the new session to a task (full UUID, from `vicoa task ls`) |
+
+**Kick-off & discovery**
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--wait` | off | Poll until the session leaves `STARTING` (needs the daemon online) |
+| `--wait-timeout <SECS>` | 60 | How long to wait with `--wait` |
+| `--list-machines` | off | List your registered machines (id, name, hostname, online status) and exit |
+| `--list-models` | off | List agents/models/efforts/modes (optionally filtered by `--agent`) and exit |
+| `--json` | | Emit the spawn result as JSON, including `agent_instance_id` and `machine_id` |
+
+Discover what's available before you start:
+
+```bash
+vicoa session start --list-machines               # which machines can run a session
+vicoa session start --list-models                 # every agent's models/efforts/modes
+vicoa session start --list-models --agent codex    # just Codex's options
+```
+
+`session start` returns immediately with the new session id (the daemon launches it out of band), then points you at follow-ups:
+
+```
+Started claude session on Laptop in ~/projects/api — session inst-123.
+Track it with `vicoa session get inst-123` or send input with `vicoa session message inst-123 '...'`.
+```
+
+Add `--wait` when you want the command to block until the session is actually `ACTIVE` (or surfaces the error the daemon reported) instead of returning as soon as the request is accepted.
 
 ### vicoa session ls
 
@@ -150,12 +219,14 @@ List your sessions, newest first.
 ```bash
 vicoa session ls                      # newest 50
 vicoa session ls --active --limit 20  # only still-running, cap at 20
+vicoa session ls --rate-limited       # only sessions currently blocked by a rate limit
 vicoa session ls --json
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--active` | off | Only sessions still running |
+| `--rate-limited` | off | Only sessions a rate-limit window is currently blocking (adds a `RESET` column showing when each unblocks) |
 | `--limit N` | 50 | Max sessions to return (1–100) |
 | `--json` | | Raw JSON `{items, total, ...}` |
 
@@ -206,6 +277,24 @@ vicoa session update 3f9c1a2b --unlink-task
 | `--unlink-task` | Clear the task link (mutually exclusive with `--task`) |
 
 Linking drives the task's status from the session's status: a running linked session flips its task to `in_progress`.
+
+### vicoa session message
+
+Send a message into a running session — it's delivered to the agent as user input and flips the session `ACTIVE`, the same as typing in the app. Pairs naturally with `session start`: start a session blank, then drive it with `message`. The id accepts a full UUID or an 8-character prefix.
+
+```bash
+vicoa session message 3f9c1a2b "run the tests and fix any failures"
+```
+
+If the target machine is offline the message can't be delivered — retry once its daemon is back.
+
+### vicoa session continue
+
+Shorthand that sends the literal text `continue` into a session — handy after a rate-limit window resets (see `vicoa session ls --rate-limited`).
+
+```bash
+vicoa session continue 3f9c1a2b
+```
 
 ## vicoa stop
 
@@ -430,7 +519,9 @@ vicoa session ls --active --json | jq '.items[].id'
 | `Authentication failed … run vicoa --reauth` (HTTP 401) | Your key is invalid or expired — run `vicoa --reauth`. |
 | `No Vicoa API key found` | Sign in with `vicoa --auth`, set `VICOA_API_KEY`, or pass `--api-key`. |
 | `No machine to run on` (automation create) | Run `vicoa daemon` on the target machine first, or pass `--machine-id`. |
-| `'<ref>' is ambiguous` / `No session found matching` | The 8-char prefix collided or aged out — use more characters or the full UUID. |
+| `Daemon on <machine> looks offline` (session start) | Start `vicoa daemon` on that machine, or pass `--allow-offline` to queue the request until it reconnects. |
+| `--dir is required to start a session` | `vicoa session start` needs `--dir <PATH>`; run it with `--list-machines` / `--list-models` first to see your options. |
+| `'<ref>' is ambiguous` / `No session found matching` | The 8-char prefix (or `--machine` name) collided or aged out — use more characters or the full UUID/id. |
 | `404` on `task get/update/delete` | Tasks and automations need the **full UUID**; only `session` commands and `vicoa stop` accept an 8-char prefix. |
 | `Nothing to update — pass at least one field` | `update` is a PATCH; pass at least one flag, e.g. `--status done`. |
 | `Aborted (pass --yes to delete non-interactively)` | Re-run `delete` with `-y`. |

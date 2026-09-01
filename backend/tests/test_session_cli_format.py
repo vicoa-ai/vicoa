@@ -9,6 +9,7 @@ on what counts as a control message or a tool use.
 import json
 import re
 import types
+from datetime import datetime, timedelta, timezone
 
 from vicoa.commands import instance as I
 
@@ -16,6 +17,11 @@ from vicoa.commands import instance as I
 # the assertion is independent of the machine's local timezone (the raw UTC is
 # converted to local time before display).
 _TIMESTAMP_RE = re.compile(r"\[\d{4}-\d\d-\d\d \d\d:\d\d\]")
+
+
+def _iso_ago(seconds: float) -> str:
+    """ISO-8601 UTC timestamp ``seconds`` in the past — for heartbeat freshness."""
+    return (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
 
 
 class TestControlEnvelope:
@@ -308,6 +314,262 @@ class TestGetRoleFilter:
         self._patch_request(monkeypatch)
         I._cmd_get(self._args(role="user", all_messages=True), "key")
         assert "--limit counts all senders" not in capsys.readouterr().out
+
+
+class TestBuildSpawnMetadata:
+    """`session start` metadata mirrors the web's toSpawnMetadata per agent."""
+
+    def _args(self, **over):
+        base = {
+            "model": None,
+            "effort": None,
+            "permission_mode": None,
+            "opencode_mode": None,
+            "name": None,
+        }
+        base.update(over)
+        return types.SimpleNamespace(**base)
+
+    def test_claude_effort_dual_writes_enable_thinking(self):
+        meta = I._validate_and_build_metadata(
+            self._args(
+                model="claude-sonnet-5",
+                effort="high",
+                permission_mode="default",
+                name="demo",
+            ),
+            "claude",
+        )
+        assert meta == {
+            "name": "demo",
+            "model": "claude-sonnet-5",
+            "thinking_effort": "high",
+            "enable_thinking": True,
+            "permission_mode": "default",
+        }
+
+    def test_claude_effort_off_sets_enable_thinking_false(self):
+        meta = I._validate_and_build_metadata(self._args(effort="off"), "claude")
+        assert meta["thinking_effort"] == "off"
+        assert meta["enable_thinking"] is False
+
+    def test_codex_uses_reasoning_effort_key(self):
+        meta = I._validate_and_build_metadata(
+            self._args(model="gpt-5.5", effort="medium", permission_mode="default"),
+            "codex",
+        )
+        assert meta == {
+            "model": "gpt-5.5",
+            "reasoning_effort": "medium",
+            "permission_mode": "default",
+        }
+
+    def test_opencode_default_model_dropped_mode_mapped(self):
+        meta = I._validate_and_build_metadata(
+            self._args(model="default", opencode_mode="plan"), "opencode"
+        )
+        assert meta == {"agent_mode": "plan"}
+
+    def test_opencode_explicit_model_kept(self):
+        meta = I._validate_and_build_metadata(
+            self._args(model="opencode/big-pickle"), "opencode"
+        )
+        assert meta == {"model": "opencode/big-pickle"}
+
+    def test_generic_acp_passes_model_and_permission(self):
+        meta = I._validate_and_build_metadata(
+            self._args(model="composer-2.5", permission_mode="plan"), "cursor"
+        )
+        assert meta == {"model": "composer-2.5", "permission_mode": "plan"}
+
+    def test_invalid_effort_exits(self):
+        import pytest
+
+        with pytest.raises(SystemExit) as exc:
+            I._validate_and_build_metadata(self._args(effort="bogus"), "claude")
+        assert exc.value.code == 2
+
+    def test_invalid_permission_mode_exits(self):
+        import pytest
+
+        with pytest.raises(SystemExit) as exc:
+            I._validate_and_build_metadata(
+                self._args(permission_mode="acceptEdits"), "codex"
+            )
+        assert exc.value.code == 2
+
+
+class TestSessionStart:
+    def _args(self, **over):
+        base = {
+            "json": True,
+            "list_machines": False,
+            "list_models": False,
+            "machine": "Laptop",
+            "dir": "/tmp/proj",
+            "agent": "claude",
+            "model": "claude-sonnet-5",
+            "effort": "high",
+            "permission_mode": "default",
+            "opencode_mode": None,
+            "name": "demo",
+            "prompt": "do it",
+            "task": None,
+            "wait": False,
+            "wait_timeout": 60.0,
+            "allow_offline": False,
+        }
+        base.update(over)
+        return types.SimpleNamespace(**base)
+
+    def _fake_request(self, calls, *, machines=None):
+        machines = machines or [
+            {
+                "machine_id": "mach-1234",
+                "display_name": "Laptop",
+                "hostname": "host",
+                "last_heartbeat_at": _iso_ago(5),  # fresh -> online
+            }
+        ]
+
+        def fake_request(args, api_key, method, endpoint, *, params=None, json=None):
+            calls.append((method, endpoint, json))
+            if method == "GET" and endpoint == "/api/v1/machines":
+                return {"machines": machines}
+            if method == "POST" and endpoint.endswith("/spawn-requests"):
+                return {"request_id": "req-1", "agent_instance_id": "inst-1"}
+            if method == "GET" and endpoint.startswith("/api/v1/agent-instances/"):
+                return {"status": "ACTIVE"}
+            return None
+
+        return fake_request
+
+    def test_posts_spawn_request_with_metadata(self, monkeypatch, capsys):
+        calls = []
+        monkeypatch.setattr(I, "request", self._fake_request(calls))
+        rc = I._cmd_start(self._args(), "key")
+        assert rc == 0
+        post = [c for c in calls if c[0] == "POST"][0]
+        assert post[1] == "/api/v1/machines/mach-1234/spawn-requests"
+        assert post[2]["directory"] == "/tmp/proj"
+        assert post[2]["agent"] == "claude"
+        assert post[2]["prompt"] == "do it"
+        assert post[2]["metadata"]["model"] == "claude-sonnet-5"
+        assert post[2]["metadata"]["thinking_effort"] == "high"
+        assert post[2]["metadata"]["name"] == "demo"
+        out = json.loads(capsys.readouterr().out)
+        assert out["agent_instance_id"] == "inst-1"
+        assert out["machine_id"] == "mach-1234"
+
+    def test_blank_prompt_omitted(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(I, "request", self._fake_request(calls))
+        I._cmd_start(self._args(prompt="   "), "key")
+        post = [c for c in calls if c[0] == "POST"][0]
+        assert "prompt" not in post[2]
+
+    def test_task_link_patches_instance(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(I, "request", self._fake_request(calls))
+        I._cmd_start(self._args(task="task-uuid"), "key")
+        patch = [c for c in calls if c[0] == "PATCH"][0]
+        assert patch[1] == "/api/v1/agent-instances/inst-1"
+        assert patch[2] == {"task_id": "task-uuid"}
+
+    def test_missing_dir_returns_2(self, monkeypatch):
+        def boom(*a, **k):
+            raise AssertionError("request() must not run without --dir")
+
+        monkeypatch.setattr(I, "request", boom)
+        assert I._cmd_start(self._args(dir=None), "key") == 2
+
+    def test_no_machine_and_no_local_daemon_exits(self, monkeypatch):
+        import pytest
+
+        calls = []
+        monkeypatch.setattr(I, "request", self._fake_request(calls))
+        monkeypatch.setattr(I, "_local_machine_id", lambda args: None)
+        with pytest.raises(SystemExit) as exc:
+            I._cmd_start(self._args(machine=None), "key")
+        assert exc.value.code == 1
+
+    def test_defaults_to_local_machine(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(I, "request", self._fake_request(calls))
+        monkeypatch.setattr(I, "_local_machine_id", lambda args: "mach-1234")
+        rc = I._cmd_start(self._args(machine=None), "key")
+        assert rc == 0
+        post = [c for c in calls if c[0] == "POST"][0]
+        assert post[1] == "/api/v1/machines/mach-1234/spawn-requests"
+
+    def test_offline_machine_refused_by_default(self, monkeypatch, capsys):
+        calls = []
+        machines = [
+            {
+                "machine_id": "mach-1234",
+                "display_name": "Laptop",
+                "hostname": "host",
+                "last_heartbeat_at": _iso_ago(600),  # stale -> offline
+            }
+        ]
+        monkeypatch.setattr(I, "request", self._fake_request(calls, machines=machines))
+        rc = I._cmd_start(self._args(), "key")
+        assert rc == 1
+        assert not any(c[0] == "POST" for c in calls)
+        assert "offline" in capsys.readouterr().err
+
+    def test_offline_machine_allow_offline_queues(self, monkeypatch, capsys):
+        calls = []
+        machines = [
+            {
+                "machine_id": "mach-1234",
+                "display_name": "Laptop",
+                "hostname": "host",
+                "last_heartbeat_at": _iso_ago(600),  # stale -> offline
+            }
+        ]
+        monkeypatch.setattr(I, "request", self._fake_request(calls, machines=machines))
+        rc = I._cmd_start(self._args(json=False, allow_offline=True), "key")
+        assert rc == 0
+        assert any(c[0] == "POST" for c in calls)
+        assert "Queued" in capsys.readouterr().out
+
+    def test_machine_resolved_by_name_substring(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(I, "request", self._fake_request(calls))
+        I._cmd_start(self._args(machine="lap"), "key")
+        post = [c for c in calls if c[0] == "POST"][0]
+        assert post[1] == "/api/v1/machines/mach-1234/spawn-requests"
+
+    def test_ambiguous_machine_exits(self, monkeypatch):
+        import pytest
+
+        calls = []
+        machines = [
+            {"machine_id": "m-1", "display_name": "Laptop A", "hostname": "a"},
+            {"machine_id": "m-2", "display_name": "Laptop B", "hostname": "b"},
+        ]
+        monkeypatch.setattr(I, "request", self._fake_request(calls, machines=machines))
+        with pytest.raises(SystemExit) as exc:
+            I._cmd_start(self._args(machine="laptop"), "key")
+        assert exc.value.code == 1
+
+    def test_list_machines_short_circuits(self, monkeypatch, capsys):
+        calls = []
+        monkeypatch.setattr(I, "request", self._fake_request(calls))
+        rc = I._cmd_start(self._args(list_machines=True), "key")
+        assert rc == 0
+        # Only the machines GET runs — no spawn.
+        assert all(c[0] == "GET" for c in calls)
+        assert not any("spawn-requests" in c[1] for c in calls)
+
+    def test_wait_polls_until_not_starting(self, monkeypatch, capsys):
+        calls = []
+        monkeypatch.setattr(I, "request", self._fake_request(calls))
+        monkeypatch.setattr(I, "_wait_for_status", lambda *a, **k: "ACTIVE")
+        out_rc = I._cmd_start(self._args(wait=True), "key")
+        assert out_rc == 0
+        assert json.loads(capsys.readouterr().out)["status"] == "ACTIVE"
 
 
 class TestRateLimitedLsParams:

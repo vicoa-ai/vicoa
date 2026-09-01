@@ -1781,6 +1781,92 @@ Examples:
         help="Output raw JSON instead of a table",
     )
 
+    # Agents that can be spawned map to catalog ids (excludes 'amp', which the
+    # spawn endpoint's catalog doesn't cover). Generic ACP agents are included.
+    spawn_agent_choices = ["claude", "codex", "opencode", *GENERIC_ACP_AGENT_CHOICES]
+    session_start = session_sub.add_parser(
+        "start",
+        parents=[session_common],
+        help="Start a new session on a machine (like the desktop 'New Session')",
+    )
+    session_start.add_argument(
+        "--machine",
+        metavar="ID|NAME",
+        help="Target machine: id, or a display-name/hostname substring "
+        "(`--list-machines` to see them). Defaults to this host's daemon.",
+    )
+    session_start.add_argument(
+        "--dir",
+        metavar="PATH",
+        help="Directory on the target machine to start the session in",
+    )
+    session_start.add_argument(
+        "--allow-offline",
+        action="store_true",
+        dest="allow_offline",
+        help="Queue the request even if the target daemon looks offline "
+        "(it runs when the daemon next reconnects)",
+    )
+    session_start.add_argument(
+        "--agent",
+        choices=spawn_agent_choices,
+        default=None,
+        help="Agent to run (default: claude); also filters --list-models",
+    )
+    session_start.add_argument(
+        "--model",
+        help="Model slug (`--list-models` to see options per agent)",
+    )
+    session_start.add_argument(
+        "--effort",
+        help="Reasoning effort — claude thinking_effort / codex reasoning_effort",
+    )
+    session_start.add_argument(
+        "--permission-mode",
+        dest="permission_mode",
+        help="Permission mode (claude/codex/ACP agents)",
+    )
+    session_start.add_argument(
+        "--opencode-mode",
+        dest="opencode_mode",
+        help="OpenCode agent mode (build|plan)",
+    )
+    session_start.add_argument(
+        "--prompt",
+        help="Optional first user message; omit to start the session blank",
+    )
+    session_start.add_argument("--name", help="Name for the new session")
+    session_start.add_argument(
+        "--task",
+        metavar="TASK_ID",
+        help="Link the new session to this task (full UUID from `vicoa task ls`)",
+    )
+    session_start.add_argument(
+        "--wait",
+        action="store_true",
+        help="Poll until the session leaves STARTING (needs the daemon online)",
+    )
+    session_start.add_argument(
+        "--wait-timeout",
+        dest="wait_timeout",
+        type=float,
+        default=60.0,
+        metavar="SECS",
+        help="Seconds to wait with --wait (default 60)",
+    )
+    session_start.add_argument(
+        "--list-machines",
+        action="store_true",
+        dest="list_machines",
+        help="List your registered machines and exit",
+    )
+    session_start.add_argument(
+        "--list-models",
+        action="store_true",
+        dest="list_models",
+        help="List agents/models/efforts/modes (optionally filtered by --agent) and exit",
+    )
+
     session_ls = session_sub.add_parser(
         "ls", parents=[session_common], help="List your agent sessions"
     )
