@@ -249,6 +249,15 @@ def write_file(
 
     data = content.encode("utf-8")
     parent = abs_file.parent
+    # Create missing parent dirs so a caller can write a namespaced file (e.g.
+    # `.vicoa/config.json`) into a repo that has no such dir yet. `abs_file` is
+    # already confined inside the project by `resolve_inside_project`, so its
+    # parent is too — this can't `mkdir` outside the project root.
+    if not parent.exists():
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return {"error": "permission_denied"}
     try:
         fd, tmp_name = tempfile.mkstemp(dir=parent, prefix=".vicoa-tmp-", suffix=".tmp")
     except (PermissionError, FileNotFoundError):

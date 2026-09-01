@@ -10,7 +10,7 @@ import {
   ChevronRight,
   Kanban,
   MoreHorizontal,
-  GitBranch,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -1045,13 +1045,14 @@ export function SidebarSessions({
                 const { isDraggableProject, split, newSessionDirectory, subs } = entry;
                 if (!split && instances.length === 0) return null;
                 const isGroupCollapsed = label !== null && collapsedGroups.has(key);
-                // A project's committed `.vicoa/config.json` is edited on the
-                // repo's machine, so the "Worktree setup" action needs both a
-                // machine to route the file RPC and the repo's directory.
+                // "Project settings" opens the per-project pane in Settings
+                // (its worktree config is a committed `.vicoa/config.json`
+                // edited on the repo's machine), so it needs both a machine to
+                // route the file RPC and the repo's directory.
                 const projectMachineId = instances[0]?.machine_id ?? null;
-                const worktreeSettingsHref =
+                const projectSettingsHref =
                   projectMachineId && newSessionDirectory
-                    ? `/dashboard/settings/worktree?machineId=${encodeURIComponent(
+                    ? `/dashboard/settings?tab=project&machineId=${encodeURIComponent(
                         projectMachineId,
                       )}&dir=${encodeURIComponent(newSessionDirectory)}${
                         label ? `&label=${encodeURIComponent(label)}` : ''
@@ -1094,7 +1095,7 @@ export function SidebarSessions({
                         )}
                       />
                     </button>
-                    {worktreeSettingsHref && (
+                    {projectSettingsHref && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button
@@ -1109,10 +1110,10 @@ export function SidebarSessions({
                         <DropdownMenuContent align="end" className="font-mono">
                           <DropdownMenuItem
                             className="cursor-pointer gap-2 text-xs"
-                            onSelect={() => router.push(worktreeSettingsHref)}
+                            onSelect={() => router.push(projectSettingsHref)}
                           >
-                            <GitBranch className="h-3.5 w-3.5" />
-                            Worktree setup
+                            <SlidersHorizontal className="h-3.5 w-3.5" />
+                            Project settings
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -1145,16 +1146,16 @@ export function SidebarSessions({
                     }
                   >
                     {projectHeader &&
-                      (worktreeSettingsHref ? (
+                      (projectSettingsHref ? (
                         <ContextMenu>
                           <ContextMenuTrigger asChild>{projectHeader}</ContextMenuTrigger>
                           <ContextMenuContent className="font-mono">
                             <ContextMenuItem
                               className="cursor-pointer gap-2 text-xs"
-                              onSelect={() => router.push(worktreeSettingsHref)}
+                              onSelect={() => router.push(projectSettingsHref)}
                             >
-                              <GitBranch className="h-3.5 w-3.5" />
-                              Worktree setup
+                              <SlidersHorizontal className="h-3.5 w-3.5" />
+                              Project settings
                             </ContextMenuItem>
                           </ContextMenuContent>
                         </ContextMenu>

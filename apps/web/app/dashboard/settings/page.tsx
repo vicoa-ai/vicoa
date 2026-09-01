@@ -4,9 +4,12 @@ import { useMemo, useState, useEffect, type FormEvent, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import useSWR, { useSWRConfig } from 'swr';
-import { Loader2, LogOut, Trash2, PlayCircle } from 'lucide-react';
+import { Loader2, LogOut, Trash2, PlayCircle, Folder } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
+import { projectSettingsTargets } from '@/components/dashboard/session-grouping';
+import { WorktreeSetupSection } from '@/components/dashboard/worktree-setup-section';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
@@ -63,6 +66,8 @@ function SettingsContent() {
   const router = useRouter();
   const { mutate } = useSWRConfig();
   const { data: supabaseUser } = useSWR<SupabaseUser | null>('/api/supabase-user', fetcher);
+  const { recentInstances } = useAgentDashboard();
+  const projectTargets = useMemo(() => projectSettingsTargets(recentInstances), [recentInstances]);
 
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -75,10 +80,17 @@ function SettingsContent() {
     setShowOnboarding(true);
   };
 
+  // A `?tab=project` (with machineId+dir params) selects the per-project pane;
+  // otherwise it's one of the static top-level tabs (default: profile).
   const activeTab = useMemo(() => {
     const tabFromParams = searchParams.get('tab');
+    if (tabFromParams === 'project') return 'project';
     return tabs.some((tab) => tab.id === tabFromParams) ? tabFromParams! : defaultTab;
   }, [searchParams]);
+
+  const projectMachineId = searchParams.get('machineId') ?? '';
+  const projectDir = searchParams.get('dir') ?? '';
+  const projectLabel = searchParams.get('label') ?? '';
 
   const handleLogout = async () => {
     if (isLoggingOut) return;
@@ -113,13 +125,25 @@ function SettingsContent() {
   };
 
   const getNavHref = (tabId: string) => {
-    if (tabId === defaultTab) {
-      return '/dashboard/settings';
-    }
     const params = new URLSearchParams(searchParams.toString());
+    // Drop the per-project params so a static tab never carries a stale
+    // machine/dir over from a project pane.
+    params.delete('machineId');
+    params.delete('dir');
+    params.delete('label');
+    if (tabId === defaultTab) {
+      params.delete('tab');
+      const qs = params.toString();
+      return qs ? `/dashboard/settings?${qs}` : '/dashboard/settings';
+    }
     params.set('tab', tabId);
     return `/dashboard/settings?${params.toString()}`;
   };
+
+  const getProjectHref = (machineId: string, dir: string, label: string) =>
+    `/dashboard/settings?tab=project&machineId=${encodeURIComponent(machineId)}&dir=${encodeURIComponent(
+      dir,
+    )}&label=${encodeURIComponent(label)}`;
 
 
   return (
@@ -136,7 +160,7 @@ function SettingsContent() {
           </p> */}
         </div>
         <div className="flex flex-col lg:flex-row gap-8">
-          <nav className="lg:w-48 shrink-0">
+          <nav className="lg:w-48 shrink-0 space-y-4">
             <div className="rounded-xl border border-border/70 bg-card p-1">
               {tabs.map((tab) => (
                 <Link
@@ -154,6 +178,37 @@ function SettingsContent() {
                 </Link>
               ))}
             </div>
+            {projectTargets.length > 0 && (
+              <div>
+                <div className="px-2 pb-1.5 text-xs font-light text-muted-foreground/70">
+                  Projects
+                </div>
+                <div className="rounded-xl border border-border/70 bg-card p-1">
+                  {projectTargets.map((target) => {
+                    const active =
+                      activeTab === 'project' &&
+                      projectMachineId === target.machineId &&
+                      projectDir === target.dir;
+                    return (
+                      <Link
+                        key={target.key}
+                        href={getProjectHref(target.machineId, target.dir, target.label)}
+                        className={cn(
+                          'flex items-center gap-2 rounded-lg px-4 py-2 text-sm transition-colors',
+                          active
+                            ? 'bg-muted text-foreground font-medium'
+                            : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                        )}
+                        scroll={false}
+                      >
+                        <Folder className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{target.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </nav>
           <div className="flex-1 space-y-8">
             {activeTab === 'profile' && (
@@ -280,6 +335,28 @@ function SettingsContent() {
                           </DialogContent>
                         </Dialog>
                   </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {activeTab === 'project' && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="truncate">
+                    {projectLabel || 'Project settings'}
+                  </CardTitle>
+                  {projectDir && (
+                    <p className="truncate font-mono text-xs text-muted-foreground">{projectDir}</p>
+                  )}
+                </CardHeader>
+                <CardContent>
+                  {projectMachineId && projectDir ? (
+                    <WorktreeSetupSection machineId={projectMachineId} dir={projectDir} />
+                  ) : (
+                    <div className="text-sm text-muted-foreground">
+                      Pick a project from the list to edit its settings.
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
