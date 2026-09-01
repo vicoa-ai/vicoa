@@ -45,6 +45,16 @@ import {
   EMPTY_SESSION_TERMINALS,
   useTerminalSessions,
 } from '@/components/terminal-pane/terminal-sessions';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { rpcWorktreeRunSetup, rpcWorktreeTrustGrant } from './rpc';
 import { usePanelState } from './use-panel-state';
 import { useFilesTab } from './use-files-tab';
 import { useGitTab } from './use-git-tab';
@@ -220,6 +230,98 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
     if (!desktop || isWindows || !machineId || !cwd) return;
     restoreSession(instanceId, machineId);
   }, [desktop, isWindows, machineId, cwd, instanceId, restoreSession]);
+
+  // Run a worktree's setup. Where a terminal is available (desktop/web, non-
+  // Windows) it runs — visibly — in a new terminal tab, typed stop-on-failure via
+  // `&&`, leaving an interactive shell after (Paseo-style). Where no PTY exists
+  // (Windows) it falls back to a background run on the daemon (output → daemon
+  // log); `sourceRepo` is the config source + trust key for that path.
+  const startWorktreeSetup = useCallback(
+    (commands: string[], sourceRepo: string) => {
+      if (!cwd) return;
+      if (canUseTerminal) {
+        const id = addSessionTerminal(
+          instanceId,
+          termMachineId,
+          cwd,
+          `${commands.join(' && ')}\r`,
+        );
+        focusTerminal(instanceId, id);
+        return;
+      }
+      // No terminal (Windows): let the daemon run it in the background.
+      if (sourceRepo) {
+        void rpcWorktreeRunSetup(termMachineId, cwd, sourceRepo).catch(() => {
+          /* daemon offline / untrusted — setup just doesn't run this time */
+        });
+      }
+    },
+    [canUseTerminal, cwd, addSessionTerminal, instanceId, termMachineId, focusTerminal],
+  );
+
+  // Untrusted committed vicoa.json awaiting the user's confirm (a cloned repo
+  // could ship a malicious setup command); null when nothing is pending.
+  const [pendingSetup, setPendingSetup] = useState<{
+    commands: string[];
+    sourceRepo: string;
+  } | null>(null);
+
+  // A freshly-created worktree may carry setup commands (committed vicoa.json),
+  // handed over by the new-session page via sessionStorage. Run them once, then
+  // clear the hand-off so a later visit or panel remount never reruns setup. A
+  // trusted repo runs straight away; an untrusted one asks first. Runs on every
+  // platform — the terminal-vs-background choice is inside startWorktreeSetup.
+  useEffect(() => {
+    if (!cwd || typeof window === 'undefined') return;
+    const key = `vicoa.session.${instanceId}.setupCommands`;
+    let raw: string | null;
+    try {
+      raw = window.sessionStorage.getItem(key);
+      if (raw !== null) window.sessionStorage.removeItem(key);
+    } catch {
+      return; // sessionStorage unavailable — setup just won't auto-run
+    }
+    if (raw === null) return;
+    let payload: unknown;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (typeof payload !== 'object' || payload === null) return;
+    const { commands, trusted, sourceRepo } = payload as {
+      commands?: unknown;
+      trusted?: unknown;
+      sourceRepo?: unknown;
+    };
+    const setup = Array.isArray(commands)
+      ? commands.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+      : [];
+    if (setup.length === 0) return;
+    const repo = typeof sourceRepo === 'string' ? sourceRepo : '';
+    if (trusted === true) {
+      startWorktreeSetup(setup, repo);
+    } else {
+      setPendingSetup({ commands: setup, sourceRepo: repo });
+    }
+  }, [cwd, instanceId, startWorktreeSetup]);
+
+  // Confirm → trust the repo for next time (persisted daemon-side, per repo/
+  // machine) and run setup now. A grant failure (daemon offline) still runs it
+  // this once; the next spawn re-asks.
+  const confirmWorktreeSetup = useCallback(async () => {
+    const p = pendingSetup;
+    if (!p) return;
+    setPendingSetup(null);
+    if (p.sourceRepo) {
+      try {
+        await rpcWorktreeTrustGrant(termMachineId, p.sourceRepo);
+      } catch {
+        /* grant failed — run once anyway; trust just isn't remembered */
+      }
+    }
+    startWorktreeSetup(p.commands, p.sourceRepo);
+  }, [pendingSetup, termMachineId, startWorktreeSetup]);
 
   // Split layout: terminals dock below/above the files area instead of being
   // ordinary tabs. Only meaningful where terminals are offered at all.
@@ -1740,6 +1842,34 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
       {body}
       {!panel.splitTop && dock}
     </div>
+    <Dialog
+      open={pendingSetup !== null}
+      onOpenChange={(open) => {
+        if (!open) setPendingSetup(null);
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Run this worktree&apos;s setup?</DialogTitle>
+          <DialogDescription>
+            This repository&apos;s <code className="font-mono">vicoa.json</code> wants to run
+            these setup commands in the new worktree. Only run them if you trust this
+            repository.
+          </DialogDescription>
+        </DialogHeader>
+        <pre className="custom-scrollbar max-h-48 overflow-auto rounded bg-muted p-3 text-xs font-mono">
+          {pendingSetup?.commands.join('\n')}
+        </pre>
+        <DialogFooter>
+          <Button variant="outline" className="cursor-pointer" onClick={() => setPendingSetup(null)}>
+            Not now
+          </Button>
+          <Button className="cursor-pointer" onClick={() => void confirmWorktreeSetup()}>
+            Run setup
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     </TooltipProvider>
   );
 

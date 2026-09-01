@@ -111,6 +111,30 @@ function markSessionHasPrompt(instanceId: string, hasPrompt: boolean) {
   } catch { /* sessionStorage unavailable — chat page falls back to idle */ }
 }
 
+/**
+ * Hand a new worktree's setup commands (from the spawn-session result) to the
+ * session view, which auto-opens a terminal and runs them there — visibly. Same
+ * one-app-run sessionStorage hand-off as markSessionHasPrompt; the FilesGitPanel
+ * reads and clears it once, so setup never re-runs on a later visit.
+ *
+ * `trusted` is the daemon's verdict on the committed vicoa.json (false for a repo
+ * the user hasn't approved on this machine → the panel confirms before running);
+ * `sourceRepo` is the checkout the commands came from, needed to grant trust.
+ */
+function markSessionSetupCommands(
+  instanceId: string,
+  payload: { commands: string[]; trusted: boolean; sourceRepo: string },
+) {
+  try {
+    if (instanceId && payload.commands.length > 0) {
+      sessionStorage.setItem(
+        `vicoa.session.${instanceId}.setupCommands`,
+        JSON.stringify(payload),
+      );
+    }
+  } catch { /* sessionStorage unavailable — setup just won't auto-run */ }
+}
+
 /** Upload one picked image against a now-existing instance. Resolves to the
  * attachment id, or null when the upload failed — the caller sends whatever
  * made it through rather than failing the (already created) session. */
@@ -1237,6 +1261,15 @@ function NewSessionContent() {
       const newInstanceId = String(result.agent_instance_id ?? '');
       // A prompt or images both mean a first message is on its way.
       markSessionHasPrompt(newInstanceId, !!finalPrompt || images.length > 0);
+      // A fresh worktree may carry setup commands (committed vicoa.json) for the
+      // session view to auto-run in its terminal. Absent for non-worktree spawns.
+      markSessionSetupCommands(newInstanceId, {
+        commands: Array.isArray(result.setup_commands)
+          ? result.setup_commands.filter((c): c is string => typeof c === 'string')
+          : [],
+        trusted: result.setup_trusted === true,
+        sourceRepo: spawn.directory,
+      });
       await getWsClient().waitForEntity('agent_instances', newInstanceId);
 
       // Link the run to its task (§8b): the row exists now (waitForEntity),

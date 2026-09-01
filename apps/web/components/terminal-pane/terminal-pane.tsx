@@ -46,7 +46,16 @@ export interface TerminalPaneProps {
   createTransport: () => PtyTransport;
   cwd: string;
   className?: string;
+  /** Written to the shell once, right after its first output (or a short
+   *  fallback delay) — worktree setup commands run here, visibly. Sent on the
+   *  first spawn only; a manual restart does not resend it. */
+  initialInput?: string;
 }
+
+// How long to wait for the shell's first output before writing `initialInput`
+// anyway. A login shell always prints a prompt, so the first-output path
+// normally wins; this only covers a silent shell so setup can't hang unsent.
+const INITIAL_INPUT_FALLBACK_MS = 750;
 
 type PaneStatus =
   | { kind: 'loading' }
@@ -55,13 +64,22 @@ type PaneStatus =
   | { kind: 'exited'; exitCode: number | null }
   | { kind: 'error'; message: string };
 
-export function TerminalPane({ createTransport, cwd, className }: TerminalPaneProps) {
+export function TerminalPane({
+  createTransport,
+  cwd,
+  className,
+  initialInput,
+}: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // The terminal lives in refs so parent re-renders never touch it. The
   // transport factory is read through a ref at effect start: prop-identity
   // churn must not re-spawn — only a real cwd change does (effect deps below).
   const createTransportRef = useRef(createTransport);
   createTransportRef.current = createTransport;
+  // Read at effect start like the transport factory — `initialInput` is fixed
+  // per tab, so it must not be an effect dep (that would re-spawn the shell).
+  const initialInputRef = useRef(initialInput);
+  initialInputRef.current = initialInput;
   const termRef = useRef<Terminal | null>(null);
   const respawnRef = useRef<(() => void) | null>(null);
   const [status, setStatus] = useState<PaneStatus>({ kind: 'loading' });
@@ -77,6 +95,21 @@ export function TerminalPane({ createTransport, cwd, className }: TerminalPanePr
     let fitTimer: number | null = null;
     let initialFitRafId: number | null = null;
     const unsubs: Array<() => void> = [];
+
+    // Worktree setup: one-shot input written once the shell is live, then
+    // cleared so a manual restart (which reuses spawn/onData) never resends it.
+    let pendingInitialInput = initialInputRef.current || null;
+    let initialInputTimer: number | null = null;
+    const flushInitialInput = (): void => {
+      if (initialInputTimer !== null) {
+        window.clearTimeout(initialInputTimer);
+        initialInputTimer = null;
+      }
+      if (pendingInitialInput === null || disposed) return;
+      const data = pendingInitialInput;
+      pendingInitialInput = null;
+      boundTransport.write(data);
+    };
 
     setStatus({ kind: 'loading' });
 
@@ -131,6 +164,12 @@ export function TerminalPane({ createTransport, cwd, className }: TerminalPanePr
           if (!disposed) {
             setStatus({ kind: 'running' });
             term.focus();
+            // Fallback: send setup even if the shell prints nothing. The
+            // first-output path (onData below) normally fires first and clears
+            // this timer.
+            if (pendingInitialInput !== null && initialInputTimer === null) {
+              initialInputTimer = window.setTimeout(flushInitialInput, INITIAL_INPUT_FALLBACK_MS);
+            }
           }
         } catch (err) {
           if (!disposed) {
@@ -140,7 +179,14 @@ export function TerminalPane({ createTransport, cwd, className }: TerminalPanePr
       };
       respawnRef.current = () => void spawn();
 
-      unsubs.push(boundTransport.onData((bytes) => term.write(bytes)));
+      unsubs.push(
+        boundTransport.onData((bytes) => {
+          term.write(bytes);
+          // First output ⇒ the shell is up and has (almost always) printed its
+          // prompt: safe to type the setup commands now.
+          flushInitialInput();
+        }),
+      );
       unsubs.push(
         boundTransport.onExit((exitCode) => {
           if (!disposed) setStatus({ kind: 'exited', exitCode });
@@ -207,6 +253,7 @@ export function TerminalPane({ createTransport, cwd, className }: TerminalPanePr
       // Disposal order (Orca): pending timers/rAF -> observer -> listeners ->
       // transport -> terminal.
       if (fitTimer !== null) window.clearTimeout(fitTimer);
+      if (initialInputTimer !== null) window.clearTimeout(initialInputTimer);
       if (initialFitRafId !== null) cancelAnimationFrame(initialFitRafId);
       observer?.disconnect();
       observer = null;

@@ -148,12 +148,183 @@ def test_git_worktree_remove_dispatched_to_handler(
     assert result == {"ok": True}
 
 
+def test_git_worktree_remove_runs_teardown_first(
+    daemon: MachineDaemon, committed_repo: Path, home: Path
+):
+    import json
+
+    from vicoa.rpc.worktree_ops import create_worktree
+    from vicoa.rpc.worktree_trust import grant_repo_trust
+
+    # Teardown only fires for a trusted repo (the source repo, keyed by path).
+    grant_repo_trust(str(committed_repo))
+    created = create_worktree(str(committed_repo))
+    # Marker lands in the source repo (survives the removal) so we can prove the
+    # teardown ran against the worktree before `git worktree remove` deleted it.
+    marker = committed_repo / "teardown_ran"
+    (Path(created["path"]) / "vicoa.json").write_text(
+        json.dumps({"worktree": {"teardown": [f"touch {marker}"]}})
+    )
+    frame = {
+        "method": "git-worktree-remove",
+        "params": {
+            "cwd": str(committed_repo),
+            "worktree_path": created["path"],
+            "force": True,
+        },
+    }
+    result = daemon._handle_rpc_request(frame)
+    assert result == {"ok": True}
+    assert marker.exists()
+    assert not Path(created["path"]).exists()
+
+
+def test_git_worktree_remove_teardown_failure_does_not_block(
+    daemon: MachineDaemon, committed_repo: Path, home: Path
+):
+    import json
+
+    from vicoa.rpc.worktree_ops import create_worktree
+    from vicoa.rpc.worktree_trust import grant_repo_trust
+
+    grant_repo_trust(str(committed_repo))
+    created = create_worktree(str(committed_repo))
+    (Path(created["path"]) / "vicoa.json").write_text(
+        json.dumps({"worktree": {"teardown": "exit 7"}})
+    )
+    frame = {
+        "method": "git-worktree-remove",
+        "params": {
+            "cwd": str(committed_repo),
+            "worktree_path": created["path"],
+            "force": True,
+        },
+    }
+    # A failing teardown is non-fatal — the removal still succeeds.
+    result = daemon._handle_rpc_request(frame)
+    assert result == {"ok": True}
+    assert not Path(created["path"]).exists()
+
+
+def test_git_worktree_remove_skips_teardown_when_untrusted(
+    daemon: MachineDaemon, committed_repo: Path, home: Path
+):
+    import json
+
+    from vicoa.rpc.worktree_ops import create_worktree
+
+    # No trust grant → the untrusted repo's teardown must NOT run.
+    created = create_worktree(str(committed_repo))
+    marker = committed_repo / "teardown_ran"
+    (Path(created["path"]) / "vicoa.json").write_text(
+        json.dumps({"worktree": {"teardown": [f"touch {marker}"]}})
+    )
+    result = daemon._handle_rpc_request(
+        {
+            "method": "git-worktree-remove",
+            "params": {
+                "cwd": str(committed_repo),
+                "worktree_path": created["path"],
+                "force": True,
+            },
+        }
+    )
+    assert result == {"ok": True}
+    assert not marker.exists()  # teardown skipped
+    assert not Path(created["path"]).exists()  # removal still happened
+
+
+def test_worktree_trust_grant_dispatched(
+    daemon: MachineDaemon, committed_repo: Path, home: Path
+):
+    from vicoa.rpc.worktree_trust import is_repo_trusted
+
+    assert is_repo_trusted(str(committed_repo)) is False
+    result = daemon._handle_rpc_request(
+        {"method": "worktree-trust-grant", "params": {"directory": str(committed_repo)}}
+    )
+    assert result == {"ok": True}
+    assert is_repo_trusted(str(committed_repo)) is True
+
+
+def test_worktree_trust_grant_requires_directory(daemon: MachineDaemon):
+    result = daemon._handle_rpc_request(
+        {"method": "worktree-trust-grant", "params": {}}
+    )
+    assert "error" in result
+
+
+def test_worktree_run_setup_untrusted_is_refused(
+    daemon: MachineDaemon, committed_repo: Path, home: Path
+):
+    import json
+
+    from vicoa.rpc.worktree_ops import create_worktree
+
+    created = create_worktree(str(committed_repo))
+    (committed_repo / "vicoa.json").write_text(
+        json.dumps({"worktree": {"setup": ["touch should_not_run"]}})
+    )
+    result = daemon._handle_rpc_request(
+        {
+            "method": "worktree-run-setup",
+            "params": {
+                "worktree_path": created["path"],
+                "directory": str(committed_repo),
+            },
+        }
+    )
+    assert result == {"error": "untrusted"}
+
+
+def test_worktree_run_setup_trusted_runs_in_background(
+    daemon: MachineDaemon, committed_repo: Path, home: Path
+):
+    import json
+    import time
+
+    from vicoa.rpc.worktree_ops import create_worktree
+    from vicoa.rpc.worktree_trust import grant_repo_trust
+
+    grant_repo_trust(str(committed_repo))
+    created = create_worktree(str(committed_repo))
+    # Marker outside the worktree so it survives; config on the source repo.
+    marker = committed_repo / "bg_setup_ran"
+    (committed_repo / "vicoa.json").write_text(
+        json.dumps({"worktree": {"setup": [f"touch {marker}"]}})
+    )
+    result = daemon._handle_rpc_request(
+        {
+            "method": "worktree-run-setup",
+            "params": {
+                "worktree_path": created["path"],
+                "directory": str(committed_repo),
+            },
+        }
+    )
+    assert result.get("ok") is True
+    # Background thread — poll briefly for the effect.
+    deadline = time.monotonic() + 5
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert marker.exists()
+
+
+def test_worktree_run_setup_requires_paths(daemon: MachineDaemon):
+    result = daemon._handle_rpc_request(
+        {"method": "worktree-run-setup", "params": {"worktree_path": "/tmp/x"}}
+    )
+    assert "error" in result
+
+
 def test_worktree_methods_are_advertised(daemon: MachineDaemon):
     # The server routes a method to this daemon only if it advertises it on
     # connect, so dispatch support is useless unless the method is announced.
     advertised = daemon._supported_rpc_methods()
     assert "git-worktree-list" in advertised
     assert "git-worktree-remove" in advertised
+    assert "worktree-trust-grant" in advertised
+    assert "worktree-run-setup" in advertised
 
 
 def _head(repo: Path) -> str:
