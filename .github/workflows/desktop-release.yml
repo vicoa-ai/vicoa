@@ -268,35 +268,70 @@ jobs:
         with:
           fetch-depth: 0 # need the tag history to compute the previous desktop release
 
-      - name: Publish the release (un-draft) with auto-generated notes
+      - name: Publish the release (un-draft) with a full changelog
         # electron-builder uploaded the assets to a DRAFT release tagged
         # v<version> in vicoa-ai/vicoa. Flip it live only now that every asset from
         # every platform finished uploading, so the updater never sees a
-        # half-built release. Set the body to GitHub's auto-generated, PR-based
-        # notes (grouped per .github/release.yml). `gh release edit` has no
-        # --generate-notes, so call the REST generate-notes endpoint first, then
-        # set the body. previous_tag_name uses the unambiguous desktop-v* trigger
-        # tag — NOT the shared v* release namespace the daemon tooling historically
-        # tagged into — so the PR range is always the prior DESKTOP release.
+        # half-built release, and give it a v-prefixed title + a full changelog.
+        #
+        # We build the body ourselves rather than calling GitHub's generate-notes:
+        # generate-notes lists merged PRs ONLY (direct-to-main commits — version
+        # bumps, hotfixes — vanish) and needs a previous_tag_name that shares
+        # history. Instead we list EVERY commit since the previous desktop release,
+        # grouped by conventional-commit type, each linked to its PR (squash-merge
+        # `(#N)` suffix) or commit. Base = the most recent published GitHub release
+        # that isn't us (every release here is a desktop release); desktop-v* trigger
+        # tags get cleaned up so we don't rely on them, and we fall back to the repo
+        # root when the previous tag shares no history (the pre-open-source v0.1.18
+        # tag lives on the old, unrelated pre-fold history).
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           git fetch --tags --force
+          REPO=vicoa-ai/vicoa
+          REPO_URL="https://github.com/$REPO"
           VERSION=$(node -p "require('./apps/desktop/package.json').version")
           TAG="v$VERSION"
-          PREV=$(git tag --list 'desktop-v*' --sort=-version:refname \
-                   | grep -vx "desktop-v$VERSION" | head -n1 || true)
-          echo "Publishing $TAG to vicoa-ai/vicoa (previous desktop tag: ${PREV:-<none>})"
-          if [ -n "$PREV" ]; then
-            BODY=$(gh api -X POST repos/vicoa-ai/vicoa/releases/generate-notes \
-                     -f tag_name="$TAG" -f previous_tag_name="$PREV" --jq .body)
+          DAEMON=$(node -p "require('./apps/desktop/package.json').vicoaDaemonVersion")
+
+          PREV_TAG=$(gh api "repos/$REPO/releases" --paginate \
+            --jq 'map(select(.draft==false).tag_name) | map(select(. != "'"$TAG"'")) | .[0] // ""')
+          if [ -n "$PREV_TAG" ] && git merge-base "$PREV_TAG" HEAD >/dev/null 2>&1; then
+            BASE="$PREV_TAG"
           else
-            BODY=$(gh api -X POST repos/vicoa-ai/vicoa/releases/generate-notes \
-                     -f tag_name="$TAG" --jq .body)
+            BASE=$(git rev-list --max-parents=0 HEAD | tail -1)
           fi
-          printf '%s' "$BODY" | gh release edit "$TAG" \
-            --repo vicoa-ai/vicoa \
-            --draft=false \
-            --latest \
-            --notes-file -
+          echo "Publishing $TAG — changelog range ${BASE}..HEAD (previous release: ${PREV_TAG:-<root>})"
+
+          render() {  # $1 = section title, $2 = "hash<TAB>subject" lines
+            [ -z "$2" ] && return 0
+            printf '## %s\n' "$1"
+            printf '%s\n' "$2" | while IFS="$(printf '\t')" read -r sha subj; do
+              [ -n "$sha" ] || continue
+              if printf '%s' "$subj" | grep -qE '\(#[0-9]+\)$'; then
+                pr=$(printf '%s' "$subj" | sed -E 's/.*\(#([0-9]+)\)$/\1/')
+                clean=$(printf '%s' "$subj" | sed -E 's/ *\(#[0-9]+\)$//')
+                printf '* %s in %s/pull/%s\n' "$clean" "$REPO_URL" "$pr"
+              else
+                printf '* %s in %s/commit/%s\n' "$subj" "$REPO_URL" "$sha"
+              fi
+            done
+            printf '\n'
+          }
+
+          ALL=$(git log --no-merges --format="%h%x09%s" "${BASE}..HEAD")
+          FEATS=$(printf '%s\n' "$ALL" | awk -F'\t' 'NF && $2 ~ /^feat/')
+          FIXES=$(printf '%s\n' "$ALL" | awk -F'\t' 'NF && $2 ~ /^fix/')
+          OTHER=$(printf '%s\n' "$ALL" | awk -F'\t' 'NF && $2 !~ /^(feat|fix)/')
+
+          {
+            printf 'Bundles Vicoa CLI daemon [%s](https://www.npmjs.com/package/@vicoa/cli/v/%s).\n\n' "$DAEMON" "${DAEMON#v}"
+            render '🚀 Features'    "$FEATS"
+            render '🐛 Fixes'       "$FIXES"
+            render '🧹 Maintenance' "$OTHER"
+            printf '**Full Changelog**: %s/compare/%s...%s\n' "$REPO_URL" "$BASE" "$TAG"
+          } > "$RUNNER_TEMP/notes.md"
+
+          gh release edit "$TAG" --repo "$REPO" \
+            --draft=false --latest --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
