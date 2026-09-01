@@ -11,8 +11,10 @@ from uuid import uuid4
 
 import pytest
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from jose import jwt as jose_jwt
+from jose.backends.cryptography_backend import CryptographyECKey, CryptographyRSAKey
+from jose.constants import ALGORITHMS
 
 from shared.auth import agent_tokens, builtin_provider, passwords, provider
 from shared.auth.base import Principal, TokenVerificationError
@@ -37,6 +39,28 @@ _PUBLIC_PEM = (
 
 _SUPABASE_SECRET = "test-supabase-hs256-secret"
 _SUPABASE_URL = "https://project.supabase.co"
+
+# Asymmetric signing keys, as a Supabase project has after migrating away from
+# the legacy HS256 secret. The public halves become the JWKS the provider
+# fetches; the private halves stand in for GoTrue signing the access token.
+_EC_KEY = ec.generate_private_key(ec.SECP256R1())
+_EC_PRIVATE_PEM = _EC_KEY.private_bytes(
+    serialization.Encoding.PEM,
+    serialization.PrivateFormat.PKCS8,
+    serialization.NoEncryption(),
+).decode()
+_EC_KID = "ec-signing-key-1"
+_EC_JWK = {
+    **CryptographyECKey(_EC_KEY.public_key(), ALGORITHMS.ES256).to_dict(),
+    "kid": _EC_KID,
+    "use": "sig",
+}
+_RSA_KID = "rsa-signing-key-1"
+_RSA_JWK = {
+    **CryptographyRSAKey(_PUBLIC_PEM, ALGORITHMS.RS256).to_dict(),
+    "kid": _RSA_KID,
+    "use": "sig",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -287,6 +311,91 @@ def test_without_a_secret_local_verification_defers_to_the_network(
 
     monkeypatch.setattr(instance, "_verify_over_network", _remote)
     token = _supabase_token()
+
+    instance.verify_user_token(token)
+
+    assert called == [token]
+
+
+# --- Supabase provider (asymmetric / JWKS after signing-key migration) --------
+
+
+def _supabase_asym_token(private_pem: str, alg: str, kid: str, **overrides) -> str:
+    claims = {
+        "sub": str(uuid4()),
+        "aud": "authenticated",
+        "iss": f"{_SUPABASE_URL}/auth/v1",
+        "exp": int(time.time()) + 3600,
+        "email": "user@example.com",
+        "user_metadata": {"display_name": "Example User"},
+    }
+    claims.update(overrides)
+    return jose_jwt.encode(claims, private_pem, algorithm=alg, headers={"kid": kid})
+
+
+def test_supabase_es256_tokens_verify_via_jwks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After migrating to JWT signing keys, access tokens are ES256 and verified
+    against the published JWKS. This path has no network fallback once the key is
+    found, so it must work before the migration is switched on."""
+    monkeypatch.setattr(settings, "supabase_url", _SUPABASE_URL)
+    monkeypatch.setattr(settings, "supabase_jwt_secret", "")  # mirrors prod today
+    user_id = uuid4()
+    token = _supabase_asym_token(_EC_PRIVATE_PEM, "ES256", _EC_KID, sub=str(user_id))
+
+    instance = SupabaseAuthProvider()
+    monkeypatch.setattr(
+        instance, "_get_jwks", lambda *, force_refresh: {"keys": [_EC_JWK]}
+    )
+
+    result = instance.verify_user_token(token)
+
+    assert result == Principal(
+        user_id=user_id,
+        kind="user",
+        email="user@example.com",
+        display_name="Example User",
+    )
+
+
+def test_supabase_rs256_tokens_verify_via_jwks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RSA signing keys are the other asymmetric option Supabase offers."""
+    monkeypatch.setattr(settings, "supabase_url", _SUPABASE_URL)
+    monkeypatch.setattr(settings, "supabase_jwt_secret", "")
+    user_id = uuid4()
+    token = _supabase_asym_token(_PRIVATE_PEM, "RS256", _RSA_KID, sub=str(user_id))
+
+    instance = SupabaseAuthProvider()
+    monkeypatch.setattr(
+        instance, "_get_jwks", lambda *, force_refresh: {"keys": [_RSA_JWK]}
+    )
+
+    result = instance.verify_user_token(token)
+
+    assert result.user_id == user_id
+
+
+def test_an_unknown_signing_key_defers_to_the_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A token whose `kid` is not in the JWKS falls back rather than hard-fails —
+    this is what keeps tokens signed by a rotated-out key working."""
+    monkeypatch.setattr(settings, "supabase_url", _SUPABASE_URL)
+    monkeypatch.setattr(settings, "supabase_jwt_secret", "")
+    token = _supabase_asym_token(_EC_PRIVATE_PEM, "ES256", "rotated-out-kid")
+
+    instance = SupabaseAuthProvider()
+    monkeypatch.setattr(instance, "_get_jwks", lambda *, force_refresh: {"keys": []})
+    called: list[str] = []
+
+    def _remote(tok: str) -> Principal:
+        called.append(tok)
+        return Principal(user_id=uuid4())
+
+    monkeypatch.setattr(instance, "_verify_over_network", _remote)
 
     instance.verify_user_token(token)
 
