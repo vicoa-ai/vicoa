@@ -5,6 +5,12 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.7.15
+31 August, 2026
+- Add per-profile credentials with expiring, renewable CLI keys
+- Link sessions to their project via a new `agent_instances.project_id` (plus `repo_root` for worktrees), so sidebar grouping stays stable across restarts
+- Fix `@vicoa/cli` npm publish failing sigstore provenance verification by declaring `repository.url` in the generated packages
+
 ### v1.7.12
 24 August, 2026
 - Detect and report ACP agent startup failures and silently-empty turns instead of leaving a dead session
