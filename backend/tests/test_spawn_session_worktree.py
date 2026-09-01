@@ -133,7 +133,7 @@ def test_spawn_new_worktree_surfaces_setup_commands(
     # doesn't inherit the hook env the engine sets in its own subprocess).
     setup_env = result.get("setup_env")
     assert isinstance(setup_env, dict)
-    assert setup_env["VICOA_SOURCE_CHECKOUT_PATH"] == str(committed_repo)
+    assert setup_env["VICOA_ROOT_PATH"] == str(committed_repo)
     assert setup_env["VICOA_WORKTREE_PATH"] == result["worktree_path"]
     assert setup_env["VICOA_BRANCH_NAME"] == result["branch"]
 

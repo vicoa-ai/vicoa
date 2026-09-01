@@ -172,8 +172,11 @@ def worktree_env_vars(
     otherwise ``$VICOA_BRANCH_NAME`` & co. are empty in that shell).
     """
     env: dict[str, str] = {
-        "VICOA_WORKTREE_PATH": worktree_path,
-        "VICOA_SOURCE_CHECKOUT_PATH": source_repo,
+        # Absolute, ~-expanded, slash-normalised paths. The web exports these
+        # verbatim into the terminal, so a literal `~` (never expanded inside
+        # quotes) or a trailing slash would break `cp "$VICOA_ROOT_PATH/..."`.
+        "VICOA_WORKTREE_PATH": os.path.normpath(os.path.expanduser(worktree_path)),
+        "VICOA_ROOT_PATH": os.path.normpath(os.path.expanduser(source_repo)),
         "VICOA_BRANCH_NAME": branch_name,
     }
     if project_id:

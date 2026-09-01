@@ -74,6 +74,19 @@ class TestRunCommands:
         assert "feat/x" in out
         assert "proj-123" in out
 
+    def test_worktree_env_vars_expands_and_normalises_paths(self) -> None:
+        env = ws.worktree_env_vars(
+            worktree_path="~/wt//",
+            source_repo="~/repo/",
+            branch_name="feat/x",
+        )
+        home = os.path.expanduser("~")
+        # ~-expanded and slash-normalised, so `cp "$VICOA_ROOT_PATH/..."` typed
+        # into the terminal resolves a real path (a literal ~ would not).
+        assert env["VICOA_ROOT_PATH"] == os.path.join(home, "repo")
+        assert env["VICOA_WORKTREE_PATH"] == os.path.join(home, "wt")
+        assert "VICOA_SOURCE_CHECKOUT_PATH" not in env
+
 
 class TestStreaming:
     def test_events_bracket_each_command(self, tmp_path: Path) -> None:
