@@ -60,6 +60,7 @@ from integrations.headless.permission import (
     format_dict_as_markdown as _format_dict_as_markdown,  # re-exported for tests
 )
 from integrations.headless.subagent import SubAgentTracker, build_metadata
+from integrations.headless.thinking import build_thinking_metadata
 
 try:
     from claude_agent_sdk import (
@@ -70,6 +71,7 @@ try:
         SystemMessage,
         ResultMessage,
         TextBlock,
+        ThinkingBlock,
         ToolUseBlock,
         ToolResultBlock,
         CLINotFoundError,
@@ -1269,6 +1271,27 @@ class HeadlessClaudeRunner:
         )
         return ""
 
+    @staticmethod
+    def _thinking_text(message) -> str:
+        """Concatenated text of every ``ThinkingBlock`` in an AssistantMessage.
+
+        ``format_message_content`` deliberately ignores ``ThinkingBlock`` (it
+        renders only text + tool-use), so the model's reasoning is surfaced
+        separately as its own metadata-tagged "thinking" card — see
+        ``integrations.headless.thinking``. Returns ``""`` when there is no
+        thinking to show, which is the common case on models that emit
+        ``display="omitted"`` thinking (Opus 4.7+ / Fable 5) where the block
+        carries a signature but no text.
+        """
+        if not isinstance(message, AssistantMessage):
+            return ""
+        parts = [
+            block.thinking
+            for block in message.content
+            if isinstance(block, ThinkingBlock) and getattr(block, "thinking", "")
+        ]
+        return "\n\n".join(p.strip() for p in parts if p and p.strip())
+
     def _remember_tasks_in_message(self, message) -> None:
         """Cache Task/Agent launch inputs so child messages can be labelled.
 
@@ -1768,6 +1791,27 @@ class HeadlessClaudeRunner:
                 )
             return
 
+        # Surface the model's reasoning as its own collapsed "thinking" card
+        # (metadata-tagged) BEFORE the turn's text/tool-use, matching the
+        # order the blocks arrive in. ``_thinking_text`` returns "" when
+        # there's nothing to show, so non-thinking turns POST nothing extra.
+        thinking_text = self._thinking_text(message)
+        if thinking_text:
+            self.logger.info("thinking card: emitting %d chars", len(thinking_text))
+            await self.send_to_vicoa(thinking_text, build_thinking_metadata("claude"))
+        elif isinstance(message, AssistantMessage) and any(
+            isinstance(b, ThinkingBlock) for b in message.content
+        ):
+            # Diagnostic: the model emitted a ThinkingBlock but its text is empty
+            # (display="omitted" on Opus 4.7+ / Fable 5), so there's no card to
+            # show. Distinguishes "model omitted thinking" from "no thinking at
+            # all" (thinking disabled / model didn't reason) when debugging why a
+            # session shows no Thinking card.
+            self.logger.info(
+                "thinking card: ThinkingBlock present but text empty "
+                "(model display=omitted); nothing to show"
+            )
+
         formatted_content = self.format_message_content(message)
         if formatted_content:
             await self.send_to_vicoa(formatted_content)
@@ -1832,11 +1876,25 @@ class HeadlessClaudeRunner:
         if isinstance(message, UserMessage):
             return True
 
+        subagent_type, description = self._subagent_tracker.label_for(parent_id)
+
+        # A sub-agent reasons too. Surface its thinking as a collapsed card
+        # that stays grouped under the sub-agent (both metadata keys present),
+        # emitted before the sub-agent's own text/tool-use for correct order.
+        thinking_text = self._thinking_text(message)
+        if thinking_text:
+            await self.send_to_vicoa(
+                thinking_text,
+                {
+                    **build_metadata(parent_id, subagent_type, description),
+                    **build_thinking_metadata("claude"),
+                },
+            )
+
         formatted = self.format_message_content(message)
         if not formatted:
             return True
 
-        subagent_type, description = self._subagent_tracker.label_for(parent_id)
         await self.send_to_vicoa(
             formatted, build_metadata(parent_id, subagent_type, description)
         )

@@ -36,6 +36,7 @@ from integrations.headless.codex.transport import (
     CodexTransportClosed,
 )
 from integrations.headless.permission import PermissionReplyRegistry
+from integrations.headless.thinking import build_thinking_metadata
 from integrations.headless.session_lifecycle import (
     WRAPPER_STOP_STATUSES as _WRAPPER_STOP_STATUSES,
 )
@@ -1061,11 +1062,18 @@ class CodexAppServerSession:
             item_type,
             len(content),
         )
+        # Reasoning items become a collapsed "thinking" card (metadata-tagged)
+        # instead of an inline reasoning bubble; the rendered text still rides
+        # in ``content`` so pre-card clients degrade to inline text.
+        message_metadata = (
+            build_thinking_metadata("codex") if item_type == "reasoning" else None
+        )
         try:
             await self.vicoa_client.send_message(
                 content=content,
                 agent_type=self.agent_type,
                 agent_instance_id=self.instance_id,
+                message_metadata=message_metadata,
             )
         except Exception:
             logger.exception(

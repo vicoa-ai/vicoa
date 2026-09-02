@@ -8,6 +8,7 @@ import { hasAnsiCodes, parseAnsiToHtml } from '@/components/ui/ansi-render';
 import { ToolUseLine, isToolUseContent } from '@/components/dashboard/tool-use-display';
 import { AskUserQuestionPanel, type AskUserQuestionSubmitPayload, parseAskUserQuestionPayload } from '@/components/dashboard/ask-user-question-panel';
 import { ChatAttachments, extractChatAttachments } from '@/components/chat-attachments';
+import { StandaloneThinkingCard, parseThinkingPayload } from '@/components/dashboard/thinking-card';
 import { CollapsibleUserMessage } from '@/components/dashboard/collapsible-user-message';
 import { stripPermissionModeCommandTokens } from '@/lib/session-control-messages';
 import { CONTROL_COMMAND_JSON_REGEX, isControlEnvelope } from '@/lib/control-messages';
@@ -105,6 +106,21 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
 
   const hasAnsi = isUser && hasAnsiCodes(userVisibleContent);
   const shouldUseMonospace = hasAnsi;
+
+  // Model reasoning (Claude ThinkingBlock / Codex reasoning) renders as a
+  // collapsed "Thinking" card instead of a plain agent bubble — same wrapper
+  // chrome as a tool-group line, works both top-level and (compact) nested in
+  // a SubagentGroup. Detected via message_metadata.thinking; agent-only.
+  const thinking = !isUser ? parseThinkingPayload(message) : null;
+  if (thinking) {
+    return (
+      <div className={compact ? 'flex justify-start' : 'flex justify-start mb-1'}>
+        <div className="rounded-xl px-4 py-0.5 flex-1 min-w-0 text-sm leading-relaxed font-mono">
+          <StandaloneThinkingCard content={userVisibleContent} agentType={agentType} />
+        </div>
+      </div>
+    );
+  }
 
   // Shared bubble chrome, now applied to the image bubble and the text bubble
   // independently (they used to be one element).

@@ -15,5 +15,7 @@ export 'subagent_group.dart'
         subagentToolUseIdOf,
         subagentTypeOf,
         subagentDescriptionOf;
+export 'thinking_group.dart'
+    show ThinkingGroup, isThinkingMessage, thinkingDisplayBody;
 export 'custom_date_range_sheet.dart' show CustomDateRangeSheet;
 export 'chat_options_menu.dart' show ChatOptionsMenu;

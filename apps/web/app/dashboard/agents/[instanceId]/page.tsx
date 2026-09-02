@@ -26,6 +26,7 @@ import { MessageItem, resolveAgentType, DateSeparator, ThinkingIndicator, vibing
 import { ChatFindBar } from '@/components/dashboard/chat-find-bar';
 import { FindHighlightProvider } from '@/components/dashboard/chat-find-context';
 import { groupSubagents } from '@/components/dashboard/subagent-grouping';
+import { parseThinkingPayload } from '@/components/dashboard/thinking-card';
 import { FilesGitPanel, FilesGitPanelToggle, usePanelState, type PanelPendingAction } from '@/components/files-git-panel';
 import { ChatInput, PermissionModeValue, OpencodeAgentModeValue, type ChatUploadedAttachment, type ChatInputHandle } from '@/components/chat-input';
 import { collectComposerDrop } from '@/lib/chat-drop';
@@ -1292,8 +1293,13 @@ function AgentInstanceContent() {
         // Interactive messages (AskUserQuestion, permission prompts) look like
         // tool uses but must render through MessageItem so their panels /
         // option buttons show — never fold them into a tool group.
+        // Reasoning rows render as their own collapsed "Thinking" card via
+        // MessageItem — never fold them into a tool-group (which would bypass
+        // that card and render them as a tool line).
         const isInteractive =
-          msg.requires_user_input || parseAskUserQuestionPayload(msg) !== null;
+          msg.requires_user_input ||
+          parseAskUserQuestionPayload(msg) !== null ||
+          parseThinkingPayload(msg) !== null;
         const isToolUse =
           !isInteractive &&
           !USER_SENDER_TYPES.has(msg.sender_type) &&

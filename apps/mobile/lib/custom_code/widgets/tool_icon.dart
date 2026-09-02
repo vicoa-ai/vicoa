@@ -39,6 +39,7 @@ IconData iconForToolName(String toolName) {
   }
   if (key == 'read') return Icons.remove_red_eye_outlined; // Eye
   if (key == 'askuserquestion') return Icons.help_outline; // MessageCircleQuestion
+  if (key == 'thinking') return Icons.lightbulb_outline; // Lightbulb (reasoning)
   if (isAgentToolName(toolName)) return Icons.smart_toy_outlined; // Bot
   if (key == 'search' || key == 'grep' || key == 'glob') return Icons.search; // Search
   if (key == 'list') return Icons.list; // List
