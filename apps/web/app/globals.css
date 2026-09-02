@@ -120,7 +120,7 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
+    --background: 0 20% 99%; /* #FDFCFC — soft off-white page background */
     --foreground: 222.2 84% 4.9%;
     --card: 0 0% 100%;
     --card-foreground: 222.2 84% 4.9%;
@@ -163,10 +163,10 @@
     --menu-border: 214.3 31.8% 91.4%;
     --menu-elevated: 0 0% 97%;
 
-    /* Desktop app-shell surfaces (light). Nav is a subtle cool gray so it reads
-       as clearly distinct from the white content canvas (not just a hair off). */
-    --surface-nav: 220 20% 96.5%;
-    --surface-canvas: 0 0% 100%;
+    /* Desktop app-shell surfaces (light). Nav + canvas match the page bg
+       (#FDFCFC); separation comes from borders + the pure-white composer/cards. */
+    --surface-nav: 0 20% 99%; /* #FDFCFC */
+    --surface-canvas: 0 20% 99%; /* #FDFCFC */
 
     /* Semantic status colours (light — one step darker for contrast on white). */
     --success: 160 84% 34%;
@@ -174,10 +174,10 @@
     --info: 221 83% 53%;
 
     /* Chat surfaces (light). User bubble is a gentle, reduced tint (not the
-       heavier --muted); composer is a soft off-white so it separates from the
-       white page even before its border/shadow. */
+       heavier --muted); composer is pure white so it pops off the #FDFCFC
+       canvas (helped by its border + shadow). */
     --user-bubble: 214 32% 97%;
-    --composer: 210 40% 97.5%;
+    --composer: 0 0% 100%; /* pure white */
 
     /* Git commit-graph lane colors (used raw as var(--…), not HSL-wrapped).
        Rendered only on the always-dark files/git panel, so one definition. */
