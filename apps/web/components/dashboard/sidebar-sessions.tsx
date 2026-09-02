@@ -89,7 +89,7 @@ import {
 } from '@/components/files-git-panel/rpc';
 
 // Selected-row highlight, shared between session rows and the view-options menu.
-const ITEM_SELECTED = 'bg-foreground/10 text-foreground';
+const ITEM_SELECTED = 'bg-foreground/[0.08] dark:bg-foreground/10 text-foreground';
 
 // Group-by options. Order + labels mirror the web sidebar.
 const GROUP_BY_OPTIONS: { value: GroupBy; label: string }[] = [
@@ -908,7 +908,7 @@ export function SidebarSessions({
                 e.preventDefault();
                 void handleArchive(instance);
               }}
-              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground"
             >
               <Archive className="h-3 w-3" />
             </button>
@@ -962,7 +962,7 @@ export function SidebarSessions({
               aria-label="Kanban"
               onClick={() => router.push('/dashboard/kanban')}
               className={cn(
-                'flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground',
+                'flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground',
                 pathname === '/dashboard/kanban' && ITEM_SELECTED,
               )}
             >
@@ -974,14 +974,14 @@ export function SidebarSessions({
                   type="button"
                   title="View options"
                   aria-label="View options"
-                  className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
+                  className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground"
                 >
                   <ListFilter className="h-3.5 w-3.5" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="end"
-                className="w-48 border-white/10 bg-[#333331] font-mono text-[11px]"
+                className="w-48 border-menu-border bg-menu-elevated font-mono text-[11px]"
               >
                 {/* Nested filter menu: each row is a dimension with its current
                     value; the options live in a submenu. Single-choice picks
@@ -1318,7 +1318,7 @@ function FilterSubRow({
         <span className="flex-1 text-foreground/90">{label}</span>
         <span className="max-w-24 truncate font-normal text-muted-foreground">{value}</span>
       </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent className="w-40 border-white/10 bg-[#333331] font-mono text-[11px]">
+      <DropdownMenuSubContent className="w-40 border-menu-border bg-menu-elevated font-mono text-[11px]">
         {children}
       </DropdownMenuSubContent>
     </DropdownMenuSub>

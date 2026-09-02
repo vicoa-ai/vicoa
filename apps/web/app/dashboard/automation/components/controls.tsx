@@ -11,7 +11,7 @@ import {
 import { DAY_LABELS } from '../lib/frequency';
 
 export const ROW_TRIGGER =
-  'flex h-7 max-w-full items-center gap-1.5 rounded-lg px-2 text-sm text-foreground/90 transition-colors hover:bg-foreground/10 disabled:opacity-50';
+  'flex h-7 max-w-full items-center gap-1.5 rounded-lg px-2 text-sm text-foreground/90 transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 disabled:opacity-50';
 
 /** A right-aligned enum picker rendered as a "value ⌄" dropdown. */
 export function ValueDropdown<T extends string>({
@@ -129,7 +129,7 @@ export function WeekdayPicker({
                 'h-7 w-9 rounded-md text-xs font-medium transition-colors',
                 value.includes(d)
                   ? 'bg-foreground text-background'
-                  : 'bg-muted/40 text-muted-foreground hover:bg-foreground/10',
+                  : 'bg-muted/40 text-muted-foreground hover:bg-foreground/[0.06] dark:hover:bg-foreground/10',
               )}
             >
               {dayLabel}
@@ -174,7 +174,7 @@ export function MonthdayPicker({
                 'h-7 rounded-md text-xs transition-colors',
                 value.includes(d)
                   ? 'bg-foreground text-background'
-                  : 'bg-muted/40 text-muted-foreground hover:bg-foreground/10',
+                  : 'bg-muted/40 text-muted-foreground hover:bg-foreground/[0.06] dark:hover:bg-foreground/10',
               )}
             >
               {d}

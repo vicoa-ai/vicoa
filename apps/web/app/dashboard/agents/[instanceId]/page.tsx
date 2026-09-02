@@ -2179,7 +2179,7 @@ function AgentInstanceContent() {
           <div>
             <span className="font-medium">Status: </span>
             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground">
-              <span className="w-2 h-2 rounded-full bg-gray-400 mr-1.5" />
+              <span className="w-2 h-2 rounded-full bg-muted-foreground mr-1.5" />
               {instance.status}
             </span>
           </div>

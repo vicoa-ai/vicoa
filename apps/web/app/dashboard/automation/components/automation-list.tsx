@@ -143,7 +143,7 @@ export function AutomationList({
                         <button
                           type="button"
                           onClick={(e) => e.stopPropagation()}
-                          className="flex-shrink-0 rounded-md p-1 text-muted-foreground opacity-0 hover:bg-foreground/10 hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
+                          className="flex-shrink-0 rounded-md p-1 text-muted-foreground opacity-0 hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
                           title="Actions"
                         >
                           <MoreHorizontal className="h-4 w-4" />

@@ -172,7 +172,7 @@ const LIFTED_DROPDOWN_SIDE_OFFSET = 8;
     Same surface as the prompt box; hover ≈ the dropdown-item highlight
     composited over it. */
 const SETUP_CHIP_CLASS =
-  'flex h-7 min-w-0 items-center gap-1.5 rounded-lg bg-[#2D2D2D] px-2.5 text-xs font-mono text-foreground/90 transition-colors hover:bg-[#3B3B3A] disabled:cursor-not-allowed disabled:opacity-50';
+  'flex h-7 min-w-0 items-center gap-1.5 rounded-lg bg-background dark:bg-menu px-2.5 text-xs font-mono text-foreground/90 transition-colors hover:bg-menu-elevated disabled:cursor-not-allowed disabled:opacity-50';
 
 /**
  * Compose the initial prompt seeded from a task (plan §6): the task title +
@@ -1589,7 +1589,7 @@ function NewSessionContent() {
       </div>
 
       {/* Chat-style input pinned to bottom */}
-      <div className="flex-shrink-0 bg-muted/10 p-4">
+      <div className="flex-shrink-0 p-4">
         <div className="max-w-4xl mx-auto">
           {/* Setup chips: machine · working dir · worktree (when supported) */}
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
@@ -1729,7 +1729,7 @@ function NewSessionContent() {
             </TaskPickerPopover>
           </div>
 
-          <div ref={promptContainerRef} className="w-full bg-[#2D2D2D] rounded-3xl px-4 py-3 relative font-mono flex gap-3">
+          <div ref={promptContainerRef} className="w-full bg-composer border border-border/50 rounded-3xl px-4 py-3 relative font-mono flex gap-3 shadow-sm">
             {/* Slash command suggestions */}
             {showSlashCommands && (
               <SlashCommandSuggestions

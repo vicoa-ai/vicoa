@@ -57,8 +57,8 @@ export function TaskDisplayMenu({
         </Button>
       </PopoverTrigger>
       {/* Match the neighbouring header dropdowns (project filter, view) which
-          use bg-[#2D2D2D] rather than the lighter bg-popover. */}
-      <PopoverContent align="end" className="w-64 bg-[#2D2D2D] p-0 text-sm">
+          use bg-menu rather than the lighter bg-popover. */}
+      <PopoverContent align="end" className="w-64 bg-menu p-0 text-sm">
         <label className="flex cursor-pointer items-center justify-between border-b px-3 py-2.5">
           <span>Show sub-tasks</span>
           <Switch checked={showSubTasks} onCheckedChange={onShowSubTasksChange} />

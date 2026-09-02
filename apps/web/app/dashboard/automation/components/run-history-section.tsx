@@ -23,7 +23,7 @@ const STATUS_META: Record<
   { icon: LucideIcon; color: string; label: string }
 > = {
   fired: { icon: CheckCircle2, color: 'text-green-500', label: 'Ran' },
-  missed_offline: { icon: CircleAlert, color: 'text-amber-500', label: 'Missed — offline' },
+  missed_offline: { icon: CircleAlert, color: 'text-warning', label: 'Missed — offline' },
   failed: { icon: XCircle, color: 'text-red-500', label: 'Failed' },
   skipped: { icon: MinusCircle, color: 'text-muted-foreground', label: 'Skipped' },
 };

@@ -214,7 +214,7 @@ export function MachinesSettingsSection() {
           )}
         </SectionCard>
         {loadError && (
-          <p className="mt-2 text-xs text-amber-500">
+          <p className="mt-2 text-xs text-warning">
             Couldn’t reach the server — this list may be out of date.
           </p>
         )}

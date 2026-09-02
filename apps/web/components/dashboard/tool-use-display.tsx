@@ -50,7 +50,7 @@ function DiffStat({ stat }: { stat: string }) {
   const [plus, minus] = stat.split(/\s+/);
   return (
     <span className="flex shrink-0 items-center gap-1 text-xs">
-      {plus && <span className="text-emerald-500">{plus}</span>}
+      {plus && <span className="text-success">{plus}</span>}
       {minus && <span className="text-red-400">{minus}</span>}
     </span>
   );

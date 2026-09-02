@@ -111,7 +111,7 @@ function TimeColumn({
             'block w-full rounded-md px-2 py-1 text-center text-sm transition-colors',
             n === selected
               ? 'bg-foreground text-background'
-              : 'text-foreground/80 hover:bg-foreground/10',
+              : 'text-foreground/80 hover:bg-foreground/[0.06] dark:hover:bg-foreground/10',
           )}
         >
           {pad2(n)}

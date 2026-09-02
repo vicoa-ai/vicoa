@@ -332,7 +332,7 @@ function DashboardSidebar({
   return (
     <aside
       ref={sidebarRef}
-      className={`fixed inset-y-0 left-0 z-50 bg-[#272726] border-r border-border flex flex-col xl:relative xl:translate-x-0 transform transition-[transform] duration-300 ease-in-out font-mono text-sm ${
+      className={`fixed inset-y-0 left-0 z-50 bg-surface-nav border-r border-border flex flex-col xl:relative xl:translate-x-0 transform transition-[transform] duration-300 ease-in-out font-mono text-sm ${
         isMobileOpen ? 'translate-x-0' : '-translate-x-full'
       } xl:block`}
       style={{ width: showSideBar ? sidebarWidth : 56 }}
@@ -346,7 +346,7 @@ function DashboardSidebar({
       )}
 
       {/* Sidebar content */}
-      <div className="relative z-50 flex flex-col h-full bg-[#272726]">
+      <div className="relative z-50 flex flex-col h-full bg-surface-nav">
         {/* Logo Header */}
         <div className={cn("flex items-center", showSideBar ? "justify-between pl-5 pr-3 pt-2 pb-3" : "justify-center px-2 py-3")}>
           {!showSideBar ? (
@@ -908,7 +908,7 @@ function DashboardShell({
           />
         )}
 
-        <div className={cn('flex-1 flex flex-col min-w-0 xl:ml-0 overflow-hidden', IS_DESKTOP && 'relative bg-[#171717]')}>
+        <div className={cn('flex-1 flex flex-col min-w-0 xl:ml-0 overflow-hidden', IS_DESKTOP && 'relative bg-surface-canvas')}>
           {!isInstancePage && !IS_DESKTOP && <div className="xl:hidden h-16"></div>}
           {/* Windows: every non-instance page reserves a real titlebar-height
               strip (in flow, so content sits below it) so nothing is overlapped

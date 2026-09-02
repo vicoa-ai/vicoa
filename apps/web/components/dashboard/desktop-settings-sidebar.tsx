@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, Bot, Folder, Keyboard, Monitor, Puzzle, Settings, User } from 'lucide-react';
+import { ArrowLeft, Bot, Folder, Keyboard, Monitor, Palette, Puzzle, Settings, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { DesktopTitlebarLead } from '@/components/desktop/window-chrome';
@@ -22,6 +22,7 @@ export const DESKTOP_LAST_APP_PATH_KEY = 'desktop-last-app-path';
 
 export const DESKTOP_SETTINGS_TABS = [
   { id: 'general', label: 'General', Icon: Settings },
+  { id: 'appearance', label: 'Appearance', Icon: Palette },
   { id: 'profile', label: 'Profile', Icon: User },
   { id: 'providers', label: 'Providers', Icon: Bot },
   { id: 'machines', label: 'Machines', Icon: Monitor },
@@ -47,7 +48,7 @@ export function DesktopSettingsSidebar() {
     // useSearchParams needs a Suspense boundary during prerender; the fallback
     // keeps the panel's frame so the layout doesn't jump.
     <Suspense
-      fallback={<aside className="w-64 shrink-0 border-r border-border bg-[#272726]" aria-hidden />}
+      fallback={<aside className="w-64 shrink-0 border-r border-border bg-surface-nav" aria-hidden />}
     >
       <DesktopSettingsSidebarInner />
     </Suspense>
@@ -74,7 +75,7 @@ function DesktopSettingsSidebarInner() {
   }, [router]);
 
   return (
-    <aside className="relative z-10 flex h-full w-64 shrink-0 flex-col border-r border-border bg-[#272726] font-mono text-sm">
+    <aside className="relative z-10 flex h-full w-64 shrink-0 flex-col border-r border-border bg-surface-nav font-mono text-sm">
       {/* Titlebar strip (window drag region), reserving the traffic lights. */}
       <div
         style={DRAG_REGION}
@@ -88,7 +89,7 @@ function DesktopSettingsSidebarInner() {
           type="button"
           onClick={backToApp}
           style={NO_DRAG}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Back to app
@@ -111,7 +112,7 @@ function DesktopSettingsSidebarInner() {
               'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
               tab === id
                 ? 'bg-foreground/10 text-foreground'
-                : 'text-muted-foreground hover:bg-foreground/10 hover:text-foreground',
+                : 'text-muted-foreground hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground',
             )}
           >
             <Icon className="h-3.5 w-3.5 shrink-0" />
@@ -144,7 +145,7 @@ function DesktopSettingsSidebarInner() {
                     'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
                     active
                       ? 'bg-foreground/10 text-foreground'
-                      : 'text-muted-foreground hover:bg-foreground/10 hover:text-foreground',
+                      : 'text-muted-foreground hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground',
                   )}
                 >
                   <Folder className="h-3.5 w-3.5 shrink-0" />

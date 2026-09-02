@@ -109,7 +109,7 @@ function QueuedMessageRow({
               aria-label="Bring queued message back to input"
               className={cn(
                 'mt-0.5 inline-flex shrink-0 items-center justify-center rounded-full p-0.5 text-muted-foreground/60',
-                'hover:bg-white/10 hover:text-foreground disabled:opacity-50 disabled:pointer-events-none',
+                'hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground disabled:opacity-50 disabled:pointer-events-none',
               )}
             >
               <Undo2 className="h-3.5 w-3.5" />
@@ -129,7 +129,7 @@ function QueuedMessageRow({
             aria-label="Remove queued message"
             className={cn(
               'mt-0.5 inline-flex shrink-0 items-center justify-center rounded-full p-0.5 text-muted-foreground/60',
-              'hover:bg-white/10 hover:text-foreground disabled:opacity-50 disabled:pointer-events-none',
+              'hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground disabled:opacity-50 disabled:pointer-events-none',
             )}
           >
             {isCancelling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
@@ -162,7 +162,7 @@ export function QueuedMessagesBar({
   if (items.length === 0) return null;
 
   return (
-    <div className="mx-auto w-[90%] rounded-t-3xl bg-[#2D2D2D] px-3 pt-2 pb-1.5 border-b border-white/5">
+    <div className="mx-auto w-[90%] rounded-t-3xl bg-menu px-3 pt-2 pb-1.5 border-b border-menu-border">
       <TooltipProvider delayDuration={300}>
         <div className="flex max-h-40 flex-col gap-1 overflow-y-auto">
           {items.map((item) => (

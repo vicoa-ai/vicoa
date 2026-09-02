@@ -91,6 +91,8 @@ export function DesktopSettings() {
         <div className="mx-auto w-full max-w-3xl px-8 pb-12">
           {tab === 'shortcuts' ? (
             <ShortcutsSection />
+          ) : tab === 'appearance' ? (
+            <AppearanceSection />
           ) : tab === 'profile' ? (
             <ProfileSection />
           ) : tab === 'providers' ? (
@@ -316,8 +318,8 @@ const AUTHORIZATION_LABELS: Record<NotificationAuthorizationStatus, string> = {
 };
 
 const AUTHORIZATION_COLORS: Record<NotificationAuthorizationStatus, string> = {
-  authorized: 'text-emerald-500',
-  denied: 'text-amber-500',
+  authorized: 'text-success',
+  denied: 'text-warning',
   'not-determined': 'text-muted-foreground',
   unknown: 'text-muted-foreground',
 };
@@ -356,6 +358,27 @@ const NOTIFICATION_MODE_LABELS: Record<NotificationMode, string> = {
   unfocused: 'Only when unfocused',
   always: 'Always',
 };
+
+/** Appearance tab: theme selection (base modes + plugin themes). Its own tab so
+ *  it has room to grow (e.g. accent tint, density) beyond the single Theme row. */
+function AppearanceSection() {
+  return (
+    <section>
+      <SectionTitle>Appearance</SectionTitle>
+      <div className="mt-8">
+        <h2 className="mb-3 text-sm text-foreground/90">Theme</h2>
+        <SettingsCard>
+          <SettingsRow
+            title="Theme"
+            description="Base mode, or a theme installed from a plugin"
+          >
+            <ThemeSelect />
+          </SettingsRow>
+        </SettingsCard>
+      </div>
+    </section>
+  );
+}
 
 function GeneralSection() {
   const [mounted, setMounted] = useState(false);
@@ -423,17 +446,6 @@ function GeneralSection() {
     <section>
       <SectionTitle>General</SectionTitle>
       <div className="mt-8">
-        <h2 className="mb-3 text-sm text-foreground/90">Appearance</h2>
-        <SettingsCard>
-          <SettingsRow
-            title="Theme"
-            description="Base mode, or a theme installed from a plugin"
-          >
-            <ThemeSelect />
-          </SettingsRow>
-        </SettingsCard>
-      </div>
-      <div className="mt-8">
         <h2 className="mb-3 text-sm text-foreground/90">Notifications</h2>
         <SettingsCard>
           <SettingsRow
@@ -448,14 +460,14 @@ function GeneralSection() {
                 <SelectValue>{NOTIFICATION_MODE_LABELS[mode]}</SelectValue>
               </SelectTrigger>
               {/* Match DropdownMenuContent (e.g. the chat page's ··· menu):
-                  same #2D2D2D surface + foreground/10 hover instead of the
+                  same --menu surface + foreground/10 hover instead of the
                   select's default popover/accent pair. */}
-              <SelectContent align="end" className="bg-[#2D2D2D] font-mono">
+              <SelectContent align="end" className="bg-menu font-mono">
                 {(Object.keys(NOTIFICATION_MODE_LABELS) as NotificationMode[]).map((value) => (
                   <SelectItem
                     key={value}
                     value={value}
-                    className="cursor-pointer text-xs focus:bg-foreground/10 focus:text-foreground"
+                    className="cursor-pointer text-xs focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 focus:text-foreground"
                   >
                     {NOTIFICATION_MODE_LABELS[value]}
                   </SelectItem>
@@ -475,16 +487,16 @@ function GeneralSection() {
                 >
                   <SelectValue>{silencePhone ? 'Silence while focused' : 'Always send'}</SelectValue>
                 </SelectTrigger>
-                <SelectContent align="end" className="bg-[#2D2D2D] font-mono">
+                <SelectContent align="end" className="bg-menu font-mono">
                   <SelectItem
                     value="silence"
-                    className="cursor-pointer text-xs focus:bg-foreground/10 focus:text-foreground"
+                    className="cursor-pointer text-xs focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 focus:text-foreground"
                   >
                     Silence while focused
                   </SelectItem>
                   <SelectItem
                     value="always"
-                    className="cursor-pointer text-xs focus:bg-foreground/10 focus:text-foreground"
+                    className="cursor-pointer text-xs focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 focus:text-foreground"
                   >
                     Always send
                   </SelectItem>
@@ -539,11 +551,11 @@ function GeneralSection() {
               >
                 <SelectValue>{mobileHidden ? 'Hidden' : 'Shown'}</SelectValue>
               </SelectTrigger>
-              <SelectContent align="end" className="bg-[#2D2D2D] font-mono">
-                <SelectItem value="shown" className="cursor-pointer text-xs focus:bg-foreground/10 focus:text-foreground">
+              <SelectContent align="end" className="bg-menu font-mono">
+                <SelectItem value="shown" className="cursor-pointer text-xs focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 focus:text-foreground">
                   Shown
                 </SelectItem>
-                <SelectItem value="hidden" className="cursor-pointer text-xs focus:bg-foreground/10 focus:text-foreground">
+                <SelectItem value="hidden" className="cursor-pointer text-xs focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 focus:text-foreground">
                   Hidden
                 </SelectItem>
               </SelectContent>
@@ -603,7 +615,7 @@ function CliCommandCard() {
         </SettingsRow>
         {result && (
           <div className="px-4 py-3 text-xs">
-            <div className={result.ok ? 'text-emerald-500' : 'text-amber-500'}>{result.message}</div>
+            <div className={result.ok ? 'text-success' : 'text-warning'}>{result.message}</div>
             {result.detail && (
               <div className="mt-1 whitespace-pre-wrap text-muted-foreground">{result.detail}</div>
             )}
@@ -865,7 +877,7 @@ function ShortcutRow({ label, children }: { label: string; children: React.React
 
 function Keycap({ children }: { children: React.ReactNode }) {
   return (
-    <kbd className="flex h-5 min-w-5 items-center justify-center rounded border border-border/70 bg-[#2D2D2D] px-1 font-mono text-[10px] text-muted-foreground">
+    <kbd className="flex h-5 min-w-5 items-center justify-center rounded border border-border/70 bg-menu px-1 font-mono text-[10px] text-muted-foreground">
       {children}
     </kbd>
   );

@@ -63,6 +63,17 @@ THEME_TOKEN_WHITELIST: frozenset[str] = frozenset(
         "sidebar-border",
         "sidebar-ring",
         "message-text",
+        "menu",
+        "menu-foreground",
+        "menu-border",
+        "menu-elevated",
+        "surface-nav",
+        "surface-canvas",
+        "success",
+        "warning",
+        "info",
+        "user-bubble",
+        "composer",
         "radius",
     }
 )

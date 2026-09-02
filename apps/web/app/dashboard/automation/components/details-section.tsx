@@ -27,7 +27,7 @@ export interface WorktreeDraft {
 }
 
 const VALUE_TRIGGER =
-  'flex h-7 max-w-full items-center gap-1.5 rounded-lg px-2 text-sm text-foreground/90 transition-colors hover:bg-foreground/10 disabled:opacity-50';
+  'flex h-7 max-w-full items-center gap-1.5 rounded-lg px-2 text-sm text-foreground/90 transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 disabled:opacity-50';
 
 function machineLabel(m: MachineSummary): string {
   return m.display_name || m.hostname || `Machine ${m.machine_id.slice(0, 6)}`;

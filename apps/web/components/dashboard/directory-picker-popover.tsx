@@ -62,7 +62,7 @@ export function DirectoryPickerPopover({
         // editor, AND lift it visually (thicker bordered, stronger shadow)
         // so it clearly sits apart from the trigger card rather than blending
         // in. Opens downward, flipping up on collision (Radix avoidCollisions).
-        className="w-[max(var(--radix-popover-trigger-width),18rem)] rounded-xl p-3 space-y-3 border border-foreground/15 bg-[#2D2D2D] shadow-xl"
+        className="w-[max(var(--radix-popover-trigger-width),18rem)] rounded-xl p-3 space-y-3 border border-foreground/15 bg-menu shadow-xl"
         // Radix's default auto-focus triggers the browser's "select-all"
         // behavior on inputs containing existing text. Prevent it and place
         // the cursor at the end instead — the user is almost always editing,
@@ -97,8 +97,8 @@ export function DirectoryPickerPopover({
               }
             }}
             // Borderless: the field reads as editable through its darker
-            // inset surface against the #2D2D2D popover instead of a border.
-            className="font-mono text-xs md:text-xs h-8 rounded-md border-0 bg-black/25 dark:bg-black/25 shadow-none focus-visible:ring-0 focus-visible:border-0"
+            // inset surface against the --menu popover instead of a border.
+            className="font-mono text-xs md:text-xs h-8 rounded-md border-0 bg-foreground/5 shadow-none focus-visible:ring-0 focus-visible:border-0"
           />
         </div>
 
@@ -114,12 +114,12 @@ export function DirectoryPickerPopover({
                   type="button"
                   onClick={() => commit(path)}
                   // Match shadcn DropdownMenuItem's *actual* hover token —
-                  // `focus:bg-foreground/10` (Radix promotes hover into
+                  // `focus:bg-foreground/[0.06] dark:focus:bg-foreground/10` (Radix promotes hover into
                   // focus on the menu items). On a plain <button> the
-                  // equivalent is `hover:bg-foreground/10` (+ focus-visible
+                  // equivalent is `hover:bg-foreground/[0.06] dark:hover:bg-foreground/10` (+ focus-visible
                   // for keyboard nav). bg-accent looked identical to the
                   // popover BG in this theme, so the hover wasn't visible.
-                  className="flex w-full items-center gap-1.5 rounded-sm px-2.5 py-1 text-[11px] text-popover-foreground transition-colors hover:bg-foreground/10 focus-visible:bg-foreground/10 focus-visible:outline-none cursor-pointer"
+                  className="flex w-full items-center gap-1.5 rounded-sm px-2.5 py-1 text-[11px] text-popover-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 focus-visible:bg-foreground/10 focus-visible:outline-none cursor-pointer"
                   title={path}
                 >
                   <Folder className="h-3 w-3 flex-shrink-0" />
@@ -143,7 +143,7 @@ export function DirectoryPickerPopover({
                   if (path) commit(path);
                 });
               }}
-              className="flex w-full items-center gap-1.5 rounded-sm px-2.5 py-1.5 text-[11px] font-mono text-popover-foreground transition-colors hover:bg-foreground/10 focus-visible:bg-foreground/10 focus-visible:outline-none cursor-pointer"
+              className="flex w-full items-center gap-1.5 rounded-sm px-2.5 py-1.5 text-[11px] font-mono text-popover-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 focus-visible:bg-foreground/10 focus-visible:outline-none cursor-pointer"
             >
               <FolderOpen className="h-3 w-3 flex-shrink-0" />
               Open folder…

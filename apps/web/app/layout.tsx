@@ -140,6 +140,18 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
+        {/* Pre-hydration theme class. `<html>` ships with `dark` as the no-JS
+            default; this blocking script runs before first paint and swaps in
+            the user's stored choice so light-mode users never see a dark flash.
+            Mirrors theme-provider.tsx: storageKey `ui-theme`, `system` resolves
+            via matchMedia, and `plugin:` themes fall back to their dark base
+            until the provider resolves the real base post-mount. Must stay a
+            raw <script> (not next/script, which defers). */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('ui-theme')||'dark';var c='dark';if(t==='light')c='light';else if(t==='system')c=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';else if(t.indexOf('plugin:')===0)c='dark';var e=document.documentElement;e.classList.remove('light','dark');e.classList.add(c);}catch(e){}})();`,
+          }}
+        />
         <Script
           src="https://www.googletagmanager.com/gtag/js?id=G-EWZH9BN2RK"
           strategy="lazyOnload"

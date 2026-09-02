@@ -3,22 +3,36 @@ import { MessageCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CLOSED_STATUSES } from '@/components/dashboard/session-grouping';
 
-// `isOpenAI` really means "monochrome dark glyph that needs inverting on dark
-// surfaces" — the monochrome brand marks reuse it alongside openai.svg.
-// `boxedWhite` is the alternative for a dark glyph we'd rather not invert:
-// on a dark surface it renders as-is on a white rounded chip (keeps detail).
-const AGENT_LOGOS: { match: string; src: string; alt: string; isOpenAI?: boolean; boxedWhite?: boolean }[] = [
+// Brand-mark treatment, per logo. The marks were authored for the old
+// always-dark UI, so several need theme-aware handling now that a light theme
+// exists (all applied only when `whiteForOpenAI`, i.e. on the themed surfaces):
+//   • `isOpenAI` — a monochrome dark glyph (currentColor → black). Inverts to
+//     white on a DARK theme; stays dark (legible) on light. (Codex, Cursor, Copilot)
+//   • `invertForLight` — a two-tone mark built for dark (near-white outer): invert
+//     it on LIGHT so the outer goes dark, leave it untouched on dark. (OpenCode)
+//   • `darkPlate` — a white-on-transparent mark that vanishes on light: sit it on a
+//     dark rounded plate (only where needed; transparent on dark). (Kimi)
+//   • `boxedWhite` — a dark glyph we'd rather not invert: a white rounded chip. (Hermes)
+const AGENT_LOGOS: {
+  match: string;
+  src: string;
+  alt: string;
+  isOpenAI?: boolean;
+  invertForLight?: boolean;
+  darkPlate?: boolean;
+  boxedWhite?: boolean;
+}[] = [
   { match: 'claude',    src: '/images/integrations/claude-color.svg',  alt: 'Claude' },
   { match: 'codex',     src: '/images/integrations/openai.svg',        alt: 'Codex', isOpenAI: true },
-  { match: 'opencode',  src: '/images/integrations/opencode.svg',      alt: 'OpenCode' },
+  { match: 'opencode',  src: '/images/integrations/opencode.svg',      alt: 'OpenCode', invertForLight: true },
   { match: 'cursor',    src: '/images/integrations/cursor.svg',        alt: 'Cursor', isOpenAI: true },
   { match: 'gemini',    src: '/images/integrations/gemini-color.svg',  alt: 'Gemini' },
   { match: 'copilot',   src: '/images/integrations/githubcopilot.svg', alt: 'Copilot', isOpenAI: true },
-  { match: 'kimi',      src: '/images/integrations/kimi-color.svg',    alt: 'Kimi' },
+  { match: 'kimi',      src: '/images/integrations/kimi-color.svg',    alt: 'Kimi', darkPlate: true },
   { match: 'hermes',    src: '/images/integrations/hermes.svg',        alt: 'Hermes', boxedWhite: true },
 ];
 
-export function getAgentLogoSrc(agentTypeName: string | null | undefined): { src: string; alt: string; isOpenAI?: boolean; boxedWhite?: boolean } | null {
+export function getAgentLogoSrc(agentTypeName: string | null | undefined): { src: string; alt: string; isOpenAI?: boolean; invertForLight?: boolean; darkPlate?: boolean; boxedWhite?: boolean } | null {
   if (!agentTypeName) return null;
   const name = agentTypeName.toLowerCase();
   return AGENT_LOGOS.find(({ match }) => name.includes(match)) ?? null;
@@ -65,6 +79,32 @@ export function AgentTypeIcon({
     );
   }
 
+  // Kimi (white-on-transparent): invisible on a light surface. Sit it on a dark
+  // rounded plate in light (bg-foreground = near-black), transparent in dark
+  // where the surface already supplies the contrast.
+  if (whiteForOpenAI && logo.darkPlate) {
+    const glyph = Math.round(size * 0.82);
+    return (
+      <span
+        className={cn(
+          'flex-shrink-0 inline-flex items-center justify-center bg-foreground dark:bg-transparent',
+          className,
+        )}
+        style={{ width: size, height: size, borderRadius: size * 0.24 }}
+      >
+        <Image
+          src={logo.src}
+          alt={logo.alt}
+          width={glyph}
+          height={glyph}
+          unoptimized
+          className={cn(spinning && 'animate-logo-fade')}
+          style={{ width: glyph, height: glyph }}
+        />
+      </span>
+    );
+  }
+
   return (
     <Image
       src={logo.src}
@@ -75,7 +115,10 @@ export function AgentTypeIcon({
       className={cn(
         'flex-shrink-0',
         spinning && 'animate-logo-fade',
-        whiteForOpenAI && logo.isOpenAI && 'invert',
+        // Monochrome dark glyphs go white only on a dark theme; dark & legible on light.
+        whiteForOpenAI && logo.isOpenAI && 'dark:invert',
+        // Two-tone marks built for dark invert on light, natural on dark.
+        whiteForOpenAI && logo.invertForLight && 'invert dark:invert-0',
         className
       )}
       style={{ width: size, height: size }}

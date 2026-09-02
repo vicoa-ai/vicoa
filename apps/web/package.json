@@ -7,6 +7,9 @@
     "build": "next build",
     "start": "next start",
     "blog:cover": "tsx scripts/generate-blog-cover.ts",
+    "check:theme": "node scripts/check-theme-colors.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit && node scripts/check-theme-colors.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

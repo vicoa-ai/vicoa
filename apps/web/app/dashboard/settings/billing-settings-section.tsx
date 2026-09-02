@@ -119,7 +119,7 @@ export function BillingSettingsSection({
             <ul className="mt-6 space-y-3">
               {freePlanFeatures.map((feature) => (
                 <li key={feature} className="flex items-start gap-3">
-                  <Check className="mt-0.5 h-5 w-5 flex-shrink-0 text-slate-600 dark:text-slate-400" />
+                  <Check className="mt-0.5 h-5 w-5 flex-shrink-0 text-muted-foreground" />
                   <span className="text-sm text-foreground/80">{feature}</span>
                 </li>
               ))}
