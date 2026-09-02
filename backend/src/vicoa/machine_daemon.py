@@ -1805,6 +1805,34 @@ class MachineDaemon:
             from vicoa.rpc import skills_ops
 
             return skills_ops.uninstall_skill(**(frame.get("params") or {}))
+        if method == "plugin-catalog":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.plugin_catalog(**(frame.get("params") or {}))
+        if method == "plugin-list":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.plugin_list(**(frame.get("params") or {}))
+        if method == "plugin-install":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.install_plugin(**(frame.get("params") or {}))
+        if method == "plugin-remove":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.remove_plugin(**(frame.get("params") or {}))
+        if method == "plugin-enable":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.set_plugin_enabled(**(frame.get("params") or {}))
+        if method == "plugin-set-enabled":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.set_plugins_enabled(**(frame.get("params") or {}))
+        if method == "plugin-trust-grant":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.grant_plugin_trust(**(frame.get("params") or {}))
         if method == "git-status":
             from vicoa.rpc import git_ops
 
@@ -1890,6 +1918,13 @@ class MachineDaemon:
             "get-skill",
             "install-skill",
             "uninstall-skill",
+            "plugin-catalog",
+            "plugin-list",
+            "plugin-install",
+            "plugin-remove",
+            "plugin-enable",
+            "plugin-set-enabled",
+            "plugin-trust-grant",
             "git-status",
             "git-diff",
             "git-log",
