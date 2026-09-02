@@ -121,7 +121,7 @@ export function ProjectDisplaySection({
       <div className="flex items-center gap-3">
         <ProjectIconEditor
           project={project}
-          triggerClassName="size-12"
+          triggerClassName="size-12 border border-border"
           iconClassName="size-8"
           onUploadImage={async (file) => {
             await api.uploadProjectIcon(project.id, file);

@@ -376,8 +376,19 @@ export function SidebarSessions({
   }, [api]);
   useEffect(() => {
     refreshProjects();
-    // linkedProjectIds re-runs this when a session's project link appears/changes.
-  }, [refreshProjects, linkedProjectIds]);
+    // Re-run when a session's project link appears/changes (linkedProjectIds)
+    // and when navigating back to a dashboard route (pathname) — so an icon/name
+    // edited in /dashboard/settings shows up without a hard refresh. The image
+    // <img src> is cache-busted by the project's updated_at, so a refetched row
+    // reloads the picture.
+  }, [refreshProjects, linkedProjectIds, pathname]);
+
+  // Also refresh when the window/tab regains focus (edited in another tab/window).
+  useEffect(() => {
+    const onFocus = () => refreshProjects();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refreshProjects]);
 
   // Archive a project → it (and its sessions) leave every device's sidebar
   // (§5b). Optimistically drop it locally, then reconcile from the server.
@@ -1204,7 +1215,10 @@ export function SidebarSessions({
                         projectHeader
                       ))}
                     {!isGroupCollapsed && (
-                      <div className="space-y-0.5">
+                      // Indent sessions a step in from their group header so they
+                      // read as children, not siblings — matching the worktree
+                      // split's pl-2, whether or not worktree display is on.
+                      <div className={cn('space-y-0.5', !split && 'pl-2')}>
                         {!split
                           ? instances.map(renderSession)
                           : subs.map((rsub) => {
