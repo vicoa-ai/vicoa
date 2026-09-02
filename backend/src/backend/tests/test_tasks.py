@@ -932,3 +932,202 @@ class TestProjectAutoMatch:
         assert worktree.project_id == project.id  # matched by repo_root
         assert already.project_id == other.id  # not stolen
         assert elsewhere.project_id is None
+
+
+class TestProjectAutoCreate:
+    """Match-or-create + self-heal (resolve_or_create_project_id_for_session)."""
+
+    def _count(self, db, user_id):
+        return (
+            db.query(Project)
+            .filter(Project.user_id == user_id, Project.is_inbox.is_(False))
+            .count()
+        )
+
+    def test_new_git_repo_creates_project_and_directory(self, test_db, test_user):
+        from shared.database.project_matching import (
+            resolve_or_create_project_id_for_session,
+        )
+
+        machine = _make_machine(test_db, test_user.id)
+        pid = resolve_or_create_project_id_for_session(
+            test_db,
+            test_user.id,
+            machine.id,
+            "/home/nick/alpha",
+            git_remote_url="git@github.com:vicoa-ai/alpha.git",
+            repo_root="/home/nick/alpha",
+            home_dir="/home/nick",
+        )
+        test_db.commit()
+        assert pid is not None
+        project = test_db.get(Project, pid)
+        assert project.name == "alpha"  # repo basename
+        assert project.git_remote_url == "git@github.com:vicoa-ai/alpha.git"
+        assert not project.is_inbox and not project.is_archived
+        dirs = (
+            test_db.query(ProjectDirectory)
+            .filter(ProjectDirectory.project_id == pid)
+            .all()
+        )
+        assert len(dirs) == 1
+        assert dirs[0].machine_id == machine.id
+        assert dirs[0].local_path == "/home/nick/alpha"
+
+    def test_second_call_same_repo_is_idempotent(self, test_db, test_user):
+        """A repeat register (incl. the concurrent-race re-check path) reuses it."""
+        from shared.database.project_matching import (
+            resolve_or_create_project_id_for_session,
+        )
+
+        machine = _make_machine(test_db, test_user.id)
+        args = dict(
+            git_remote_url="git@github.com:vicoa-ai/alpha.git",
+            repo_root="/home/nick/alpha",
+            home_dir="/home/nick",
+        )
+        first = resolve_or_create_project_id_for_session(
+            test_db, test_user.id, machine.id, "/home/nick/alpha", **args
+        )
+        test_db.commit()
+        second = resolve_or_create_project_id_for_session(
+            test_db, test_user.id, machine.id, "/home/nick/alpha", **args
+        )
+        test_db.commit()
+        assert first == second
+        assert self._count(test_db, test_user.id) == 1
+
+    def test_register_into_archived_project_unarchives(self, test_db, test_user):
+        from shared.database.project_matching import (
+            resolve_or_create_project_id_for_session,
+        )
+
+        machine = _make_machine(test_db, test_user.id)
+        project = Project(
+            user_id=test_user.id,
+            name="alpha",
+            git_remote_url="git@github.com:vicoa-ai/alpha.git",
+            is_archived=True,
+            archived_at=datetime.now(timezone.utc),
+        )
+        test_db.add(project)
+        test_db.commit()
+
+        pid = resolve_or_create_project_id_for_session(
+            test_db,
+            test_user.id,
+            machine.id,
+            "/home/nick/alpha",
+            git_remote_url="git@github.com:vicoa-ai/alpha.git",
+            repo_root="/home/nick/alpha",
+        )
+        test_db.commit()
+        assert pid == project.id  # matched, not duplicated
+        test_db.refresh(project)
+        assert not project.is_archived and project.archived_at is None
+        assert self._count(test_db, test_user.id) == 1
+
+    def test_second_machine_same_remote_reuses_project(self, test_db, test_user):
+        from shared.database.project_matching import (
+            resolve_or_create_project_id_for_session,
+        )
+
+        machine_a = _make_machine(test_db, test_user.id, display_name="A")
+        machine_b = _make_machine(test_db, test_user.id, display_name="B")
+        remote = "git@github.com:vicoa-ai/alpha.git"
+        pid_a = resolve_or_create_project_id_for_session(
+            test_db,
+            test_user.id,
+            machine_a.id,
+            "/a/alpha",
+            git_remote_url=remote,
+            repo_root="/a/alpha",
+        )
+        test_db.commit()
+        pid_b = resolve_or_create_project_id_for_session(
+            test_db,
+            test_user.id,
+            machine_b.id,
+            "/b/alpha",
+            git_remote_url=remote,
+            repo_root="/b/alpha",
+        )
+        test_db.commit()
+        assert pid_a == pid_b
+        assert self._count(test_db, test_user.id) == 1
+        dirs = (
+            test_db.query(ProjectDirectory)
+            .filter(ProjectDirectory.project_id == pid_a)
+            .all()
+        )
+        assert {d.machine_id for d in dirs} == {machine_a.id, machine_b.id}
+
+    def test_non_git_scratch_folder_creates_named_project(self, test_db, test_user):
+        from shared.database.project_matching import (
+            resolve_or_create_project_id_for_session,
+        )
+
+        machine = _make_machine(test_db, test_user.id)
+        pid = resolve_or_create_project_id_for_session(
+            test_db,
+            test_user.id,
+            machine.id,
+            "/home/nick/scratch",
+            home_dir="/home/nick",
+        )
+        test_db.commit()
+        assert pid is not None
+        assert test_db.get(Project, pid).name == "scratch"
+
+    def test_home_dir_is_not_a_project(self, test_db, test_user):
+        from shared.database.project_matching import (
+            resolve_or_create_project_id_for_session,
+        )
+
+        machine = _make_machine(test_db, test_user.id)
+        pid = resolve_or_create_project_id_for_session(
+            test_db,
+            test_user.id,
+            machine.id,
+            "/home/nick",
+            home_dir="/home/nick",
+        )
+        test_db.commit()
+        assert pid is None
+        assert self._count(test_db, test_user.id) == 0
+
+    def test_existing_broad_link_not_narrowed_by_subdir(self, test_db, test_user):
+        """A session in a subdir of a linked repo keeps the broad link intact."""
+        from shared.database.project_matching import (
+            resolve_or_create_project_id_for_session,
+        )
+
+        machine = _make_machine(test_db, test_user.id)
+        project = Project(user_id=test_user.id, name="alpha")
+        test_db.add(project)
+        test_db.flush()
+        test_db.add(
+            ProjectDirectory(
+                user_id=test_user.id,
+                project_id=project.id,
+                machine_id=machine.id,
+                local_path="/home/nick/alpha",
+            )
+        )
+        test_db.commit()
+
+        pid = resolve_or_create_project_id_for_session(
+            test_db,
+            test_user.id,
+            machine.id,
+            "/home/nick/alpha/src/lib",
+        )
+        test_db.commit()
+        assert pid == project.id
+        dirs = (
+            test_db.query(ProjectDirectory)
+            .filter(ProjectDirectory.project_id == project.id)
+            .all()
+        )
+        assert len(dirs) == 1
+        assert dirs[0].local_path == "/home/nick/alpha"  # not narrowed

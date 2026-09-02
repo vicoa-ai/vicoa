@@ -35,9 +35,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { EmojiPicker } from '@/components/ui/emoji-picker';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { DirectoryPickerPopover } from '@/components/dashboard/directory-picker-popover';
+import { ProjectIconEditor } from '@/components/dashboard/project-icon-editor';
 import { INLINE_LABEL_COLORS, LabelChip, ProjectIcon } from '@/components/dashboard/task-ui';
 import {
   MachineSummary,
@@ -58,6 +58,10 @@ export interface TaskSettingsHandlers {
     projectId: string,
     patch: { name?: string; icon?: string | null; is_archived?: boolean },
   ) => Promise<void>;
+  /** Upload a custom image icon ('user' source — wins over the git seed). */
+  uploadProjectIcon: (projectId: string, file: File) => Promise<void>;
+  /** Clear the image icon → re-eligible for the git-avatar seed / generated default. */
+  clearProjectIcon: (projectId: string) => Promise<void>;
   deleteProject: (project: ProjectResponse) => Promise<void>;
   setProjectDirectory: (
     projectId: string,
@@ -166,7 +170,7 @@ export function TaskSettingsDialog({
       description={
         confirming?.kind === 'label'
           ? 'Are you sure you want to delete this label? It will be removed from every task that uses it. This action cannot be undone.'
-          : 'Are you sure you want to delete this project? Its tasks will be deleted with it. This action cannot be undone.'
+          : 'Deleting a project removes its tasks (this can’t be undone) — and if a session later runs in its folder, the project re-appears automatically. To hide it for good, use Archive instead.'
       }
       subject={
         confirming?.kind === 'label' ? (
@@ -303,10 +307,20 @@ function ProjectRow({
   onRequestDelete: () => void;
 }) {
   const [name, setName] = useState(project.name);
-  const [iconPickerOpen, setIconPickerOpen] = useState(false);
 
   // Re-seed when the project is replaced by a server response.
   useEffect(() => setName(project.name), [project.name]);
+
+  // "Reset to default" → the generated square. The backend clears the image AND
+  // emoji and pins icon_source so it won't be re-seeded back into an image.
+  const resetIconToDefault = () => handlers.clearProjectIcon(project.id);
+
+  // Picking an emoji must win over a current image (render order is
+  // image → emoji), so drop the image first.
+  const setEmoji = async (emoji: string) => {
+    if (project.icon_image_uri) await handlers.clearProjectIcon(project.id);
+    await handlers.updateProject(project.id, { icon: emoji });
+  };
 
   const commitName = () => {
     const trimmed = name.trim();
@@ -323,33 +337,15 @@ function ProjectRow({
   return (
     <div className={cn('rounded-lg border', project.is_archived && 'opacity-60')}>
       <div className="flex items-center gap-2 px-2 py-1.5">
-        <Popover open={iconPickerOpen} onOpenChange={setIconPickerOpen}>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              aria-label={`Icon for ${project.name}`}
-              className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-sm transition-colors hover:bg-accent"
-            >
-              <ProjectIcon project={project} />
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-auto p-0">
-            <EmojiPicker
-              onSelect={(emoji) => {
-                setIconPickerOpen(false);
-                void handlers.updateProject(project.id, { icon: emoji });
-              }}
-              onClear={
-                project.icon
-                  ? () => {
-                      setIconPickerOpen(false);
-                      void handlers.updateProject(project.id, { icon: null });
-                    }
-                  : undefined
-              }
-            />
-          </PopoverContent>
-        </Popover>
+        <ProjectIconEditor
+          project={project}
+          triggerClassName="size-7"
+          iconClassName="size-5"
+          onUploadImage={(file) => handlers.uploadProjectIcon(project.id, file)}
+          onSetEmoji={setEmoji}
+          onClearEmoji={() => handlers.updateProject(project.id, { icon: null })}
+          onResetToDefault={resetIconToDefault}
+        />
 
         <input
           value={name}

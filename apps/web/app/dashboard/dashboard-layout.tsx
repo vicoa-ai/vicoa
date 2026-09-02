@@ -31,6 +31,7 @@ import {
   Flag,
   PanelLeft,
   Search,
+  Settings,
 } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { AgentDashboardProvider, useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
@@ -552,6 +553,8 @@ function DashboardSidebar({
       {/* User Menu at Bottom */}
         <div className="border-border p-1">
           {user ? (
+            <div className={cn('flex items-center', showSideBar ? 'gap-1' : 'flex-col')}>
+            <div className={cn(showSideBar && 'min-w-0 flex-1')}>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -667,6 +670,20 @@ function DashboardSidebar({
                 </div>
               </DropdownMenuContent>
             </DropdownMenu>
+            </div>
+            {/* Settings shortcut beside the avatar — straight to the page,
+                skipping the account menu (session ask). Expanded rail only. */}
+            {showSideBar && (
+              <Link
+                href="/dashboard/settings"
+                title="Settings"
+                aria-label="Settings"
+                className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <Settings className="h-4 w-4" />
+              </Link>
+            )}
+            </div>
           ) : (
             <div className="text-center p-2">
               <div className="text-sm text-muted-foreground">Not logged in</div>

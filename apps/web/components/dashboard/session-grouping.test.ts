@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentInstanceResponse } from '@/lib/backend-api';
+import type { AgentInstanceResponse, ProjectResponse } from '@/lib/backend-api';
 import {
   distinctAgentNames,
   distinctProjects,
@@ -29,6 +29,25 @@ const make = (over: Partial<AgentInstanceResponse>): AgentInstanceResponse => ({
   ...base,
   ...over,
 });
+
+const proj = (over: Partial<ProjectResponse> & { id: string }): ProjectResponse => ({
+  name: over.id,
+  git_remote_url: null,
+  color: null,
+  icon: null,
+  icon_image_uri: null,
+  icon_source: null,
+  is_inbox: false,
+  is_archived: false,
+  archived_at: null,
+  directories: [],
+  created_at: '2026-01-01T00:00:00.000Z',
+  updated_at: '2026-01-01T00:00:00.000Z',
+  ...over,
+});
+
+const projectMap = (...ps: ProjectResponse[]) =>
+  new Map(ps.map((p) => [p.id, p]));
 
 describe('getLastPathPart', () => {
   it('returns the last segment, ignoring trailing slashes', () => {
@@ -126,20 +145,30 @@ describe('groupSessions project order', () => {
   });
 });
 
-describe('groupSessions hidden projects', () => {
-  it('hides deselected projects, keeps no-project sessions and pinned ones', () => {
-    const a = make({ id: 'a', project: '/x/alpha' });
-    const b = make({ id: 'b', project: '/x/beta' });
+describe('groupSessions archived projects', () => {
+  it('drops archived projects, keeps no-project sessions and pinned ones', () => {
+    const a = make({ id: 'a', project: '/x/alpha', project_id: 'PA' });
+    const b = make({ id: 'b', project: '/x/beta', project_id: 'PB' });
     const none = make({ id: 'n', project: null });
+    // Pinned sessions bypass filters (explicit "keep visible"), even if archived.
     const pinnedBeta = make({
       id: 'pinned-beta',
       project: '/x/beta',
+      project_id: 'PB',
       pinned_at: '2026-01-01T00:00:00.000Z',
     });
 
-    const groups = groupSessions([a, b, none, pinnedBeta], 'all', 'time', 'all', [], ['beta']);
+    const map = projectMap(proj({ id: 'PA' }), proj({ id: 'PB', is_archived: true }));
+    const groups = groupSessions([a, b, none, pinnedBeta], 'all', 'time', 'all', [], map);
     const ids = groups.flatMap((g) => g.instances.map((i) => i.id));
     expect(ids).toEqual(['pinned-beta', 'a', 'n']);
+  });
+
+  it('labels a project group with the DB name, not the path basename', () => {
+    const a = make({ id: 'a', project: '/home/me/alpha', project_id: 'PA' });
+    const map = projectMap(proj({ id: 'PA', name: 'Alpha Project' }));
+    const groups = groupSessions([a], 'all', 'project', 'all', [], map);
+    expect(groups.find((g) => g.key === 'PA')?.label).toBe('Alpha Project');
   });
 });
 
@@ -265,11 +294,12 @@ describe('groupSessions by project_id', () => {
     expect(p1?.label).toBe('vicoa'); // display stays the basename, not the id
   });
 
-  it('hides a linked project by its project_id key', () => {
+  it('drops an archived linked project by its project_id', () => {
     const a = make({ id: 'a', project: '/home/me/alpha', project_id: 'PA' });
     const b = make({ id: 'b', project: '/home/me/beta', project_id: 'PB' });
 
-    const groups = groupSessions([a, b], 'all', 'project', 'all', [], ['PA']);
+    const map = projectMap(proj({ id: 'PA', is_archived: true }), proj({ id: 'PB' }));
+    const groups = groupSessions([a, b], 'all', 'project', 'all', [], map);
     const ids = groups.flatMap((g) => g.instances.map((i) => i.id));
     expect(ids).toEqual(['b']);
   });

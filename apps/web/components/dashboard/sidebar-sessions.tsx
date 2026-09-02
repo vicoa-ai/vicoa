@@ -10,7 +10,7 @@ import {
   ChevronRight,
   Kanban,
   MoreHorizontal,
-  SlidersHorizontal,
+  Settings,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -42,7 +42,8 @@ import {
 } from '@/components/dashboard/session-actions-menu';
 import { NewSessionButton } from '@/components/dashboard/new-session-button';
 import { WorktreeSubGroupHeader } from '@/components/dashboard/worktree-sub-group-header';
-import type { AgentInstanceResponse } from '@/lib/backend-api';
+import type { AgentInstanceResponse, ProjectResponse } from '@/lib/backend-api';
+import { ProjectIcon } from '@/components/dashboard/task-ui';
 import {
   formatSidebarTime,
   getSessionTitle,
@@ -53,12 +54,10 @@ import {
   DEFAULT_STATUS_FILTER,
   DISPLAY_WORKTREE_STORAGE_KEY,
   distinctAgentNames,
-  distinctProjects,
   filterWantsActiveOnly,
   groupSessions,
   splitProjectByWorktree,
   GROUP_BY_STORAGE_KEY,
-  HIDDEN_PROJECTS_STORAGE_KEY,
   PROJECT_ORDER_STORAGE_KEY,
   STATUS_FILTER_OPTIONS,
   STATUS_FILTER_STORAGE_KEY,
@@ -318,10 +317,6 @@ export function SidebarSessions({
     if (Array.isArray(savedOrder) && savedOrder.every((k) => typeof k === 'string')) {
       setProjectOrder(savedOrder);
     }
-    const savedHidden = getPref<string[]>(HIDDEN_PROJECTS_STORAGE_KEY);
-    if (Array.isArray(savedHidden) && savedHidden.every((k) => typeof k === 'string')) {
-      setHiddenProjects(savedHidden);
-    }
     const savedWorktrees = getPref<boolean>(DISPLAY_WORKTREE_STORAGE_KEY);
     if (typeof savedWorktrees === 'boolean') setDisplayWorktrees(savedWorktrees);
     const filter = getPref<StatusFilter>(STATUS_FILTER_STORAGE_KEY) ?? DEFAULT_STATUS_FILTER;
@@ -350,22 +345,72 @@ export function SidebarSessions({
     setPref(DISPLAY_WORKTREE_STORAGE_KEY, value);
   }, []);
 
-  // Agent / project names present in the loaded list (submenu options).
+  // Agent names present in the loaded list (submenu options).
   const agentNames = useMemo(() => distinctAgentNames(recentInstances), [recentInstances]);
-  // `{ key, label }` per project group: key is the project_id (or basename
-  // fallback) used for hide/order, label is the display name.
-  const projects = useMemo(() => distinctProjects(recentInstances), [recentInstances]);
 
-  // Deselected projects (hidden from the list). Stored as the hidden set so
-  // newly appearing projects default to visible.
-  const [hiddenProjects, setHiddenProjects] = useState<string[]>([]);
-  const toggleProjectVisible = useCallback((key: string) => {
-    setHiddenProjects((prev) => {
-      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
-      setPref(HIDDEN_PROJECTS_STORAGE_KEY, next);
-      return next;
-    });
-  }, []);
+  // The DB projects, by id — the source of truth for a group's name, icon, and
+  // archived state (identity-unification §5a/§5b). Refetched when the set of
+  // linked project ids changes so an auto-created project's name/icon appears
+  // and a just-archived one drops out. Empty until it loads → grouping falls
+  // back to the path basename (unchanged legacy behavior).
+  const [projectsById, setProjectsById] = useState<Map<string, ProjectResponse>>(
+    () => new Map(),
+  );
+  const linkedProjectIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const instance of recentInstances) {
+      if (instance.project_id) ids.add(instance.project_id);
+    }
+    return Array.from(ids).sort().join(',');
+  }, [recentInstances]);
+  const refreshProjects = useCallback(() => {
+    if (!api) return;
+    // include_archived so the map carries the archived flag (grouping needs it
+    // to drop archived groups); an unknown/loading id defaults to visible.
+    api
+      .listProjects(true)
+      .then((list) => setProjectsById(new Map(list.map((p) => [p.id, p]))))
+      .catch(() => {
+        /* best-effort: grouping falls back to basenames until it loads */
+      });
+  }, [api]);
+  useEffect(() => {
+    refreshProjects();
+    // Re-run when a session's project link appears/changes (linkedProjectIds)
+    // and when navigating back to a dashboard route (pathname) — so an icon/name
+    // edited in /dashboard/settings shows up without a hard refresh. The image
+    // <img src> is cache-busted by the project's updated_at, so a refetched row
+    // reloads the picture.
+  }, [refreshProjects, linkedProjectIds, pathname]);
+
+  // Also refresh when the window/tab regains focus (edited in another tab/window).
+  useEffect(() => {
+    const onFocus = () => refreshProjects();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refreshProjects]);
+
+  // Archive a project → it (and its sessions) leave every device's sidebar
+  // (§5b). Optimistically drop it locally, then reconcile from the server.
+  const handleArchiveProject = useCallback(
+    async (projectId: string) => {
+      if (!api) return;
+      setProjectsById((prev) => {
+        const next = new Map(prev);
+        const project = next.get(projectId);
+        if (project) next.set(projectId, { ...project, is_archived: true });
+        return next;
+      });
+      try {
+        await api.updateProject(projectId, { is_archived: true });
+      } catch (err) {
+        console.error('Failed to archive project:', err);
+      } finally {
+        refreshProjects();
+      }
+    },
+    [api, refreshProjects],
+  );
 
   // Custom project order (drag-and-drop when grouped by project). Reordered
   // live during dragover, persisted on drag end.
@@ -375,8 +420,8 @@ export function SidebarSessions({
   // Worktree display is applied in a second pass (renderLayout) with live git
   // data, so grouping itself stays a pure function of the sessions.
   const sidebarGroups = useMemo(
-    () => groupSessions(recentInstances, statusFilter, groupBy, agentFilter, projectOrder, hiddenProjects),
-    [recentInstances, statusFilter, groupBy, agentFilter, projectOrder, hiddenProjects],
+    () => groupSessions(recentInstances, statusFilter, groupBy, agentFilter, projectOrder, projectsById),
+    [recentInstances, statusFilter, groupBy, agentFilter, projectOrder, projectsById],
   );
 
   // Bumped after a worktree is removed so the per-project git views refetch
@@ -994,26 +1039,6 @@ export function SidebarSessions({
                     />
                   ))}
                 </FilterSubRow>
-                {projects.length > 0 && (
-                  <FilterSubRow
-                    label="Project"
-                    value={
-                      hiddenProjects.length === 0
-                        ? 'All'
-                        : `${Math.max(projects.length - hiddenProjects.length, 0)}/${projects.length}`
-                    }
-                  >
-                    {projects.map(({ key, label }) => (
-                      <FilterOptionItem
-                        key={key}
-                        label={label}
-                        selected={!hiddenProjects.includes(key)}
-                        keepOpen
-                        onSelect={() => toggleProjectVisible(key)}
-                      />
-                    ))}
-                  </FilterSubRow>
-                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -1045,19 +1070,26 @@ export function SidebarSessions({
                 const { isDraggableProject, split, newSessionDirectory, subs } = entry;
                 if (!split && instances.length === 0) return null;
                 const isGroupCollapsed = label !== null && collapsedGroups.has(key);
-                // "Project settings" opens the per-project pane in Settings
-                // (its worktree config is a committed `.vicoa/config.json`
-                // edited on the repo's machine), so it needs both a machine to
-                // route the file RPC and the repo's directory.
                 const projectMachineId = instances[0]?.machine_id ?? null;
-                const projectSettingsHref =
-                  projectMachineId && newSessionDirectory
-                    ? `/dashboard/settings?tab=project&machineId=${encodeURIComponent(
-                        projectMachineId,
-                      )}&dir=${encodeURIComponent(newSessionDirectory)}${
-                        label ? `&label=${encodeURIComponent(label)}` : ''
-                      }`
-                    : null;
+                // The DB project this group maps to (only meaningful when
+                // grouping by project — time/status keys aren't project ids).
+                // Drives the leading icon, the Archive action, and the settings
+                // link's project identity.
+                const dbProject = groupBy === 'project' ? projectsById.get(key) : undefined;
+                const canArchiveProject =
+                  dbProject !== undefined && !dbProject.is_inbox && !dbProject.is_archived;
+                // "Project settings" opens the per-project pane in Settings:
+                // Display (name/icon) keys off project_id; the worktree-config
+                // section needs a machine + repo dir to route its daemon RPC.
+                const projectSettingsHref = (() => {
+                  if (!dbProject && !(projectMachineId && newSessionDirectory)) return null;
+                  const params = new URLSearchParams({ tab: 'project' });
+                  if (dbProject) params.set('projectId', dbProject.id);
+                  if (projectMachineId) params.set('machineId', projectMachineId);
+                  if (newSessionDirectory) params.set('dir', newSessionDirectory);
+                  if (label) params.set('label', label);
+                  return `/dashboard/settings?${params.toString()}`;
+                })();
                 const projectHeader = label ? (
                   // Wrapper carries the drag handle and hover group so the
                   // collapse toggle, actions menu, and "+" can be sibling buttons
@@ -1083,9 +1115,18 @@ export function SidebarSessions({
                       type="button"
                       onClick={() => toggleGroupCollapsed(key)}
                       aria-expanded={!isGroupCollapsed}
-                      className="flex min-w-0 flex-1 items-center gap-1 text-left"
+                      className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                     >
-                      <span className="text-xs font-light text-muted-foreground/70 truncate">
+                      {/* Project groups show the DB project's icon/image/emoji
+                          (or a generated square from the name); time/status
+                          groups have no project identity, so no icon (§5a). */}
+                      {groupBy === 'project' && (
+                        <ProjectIcon
+                          project={dbProject ?? { id: key, name: label, is_inbox: false }}
+                          className="size-4"
+                        />
+                      )}
+                      <span className="truncate text-[0.8rem] font-normal text-muted-foreground">
                         {label}
                       </span>
                       <ChevronRight
@@ -1095,7 +1136,7 @@ export function SidebarSessions({
                         )}
                       />
                     </button>
-                    {projectSettingsHref && (
+                    {(projectSettingsHref || canArchiveProject) && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button
@@ -1108,13 +1149,24 @@ export function SidebarSessions({
                           </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="font-mono">
-                          <DropdownMenuItem
-                            className="cursor-pointer gap-2 text-xs"
-                            onSelect={() => router.push(projectSettingsHref)}
-                          >
-                            <SlidersHorizontal className="h-3.5 w-3.5" />
-                            Project settings
-                          </DropdownMenuItem>
+                          {projectSettingsHref && (
+                            <DropdownMenuItem
+                              className="cursor-pointer gap-2 text-xs"
+                              onSelect={() => router.push(projectSettingsHref)}
+                            >
+                              <Settings className="h-3.5 w-3.5" />
+                              Project settings
+                            </DropdownMenuItem>
+                          )}
+                          {canArchiveProject && dbProject && (
+                            <DropdownMenuItem
+                              className="cursor-pointer gap-2 text-xs"
+                              onSelect={() => void handleArchiveProject(dbProject.id)}
+                            >
+                              <Archive className="h-3.5 w-3.5" />
+                              Archive project
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     )}
@@ -1154,7 +1206,7 @@ export function SidebarSessions({
                               className="cursor-pointer gap-2 text-xs"
                               onSelect={() => router.push(projectSettingsHref)}
                             >
-                              <SlidersHorizontal className="h-3.5 w-3.5" />
+                              <Settings className="h-3.5 w-3.5" />
                               Project settings
                             </ContextMenuItem>
                           </ContextMenuContent>
@@ -1163,7 +1215,10 @@ export function SidebarSessions({
                         projectHeader
                       ))}
                     {!isGroupCollapsed && (
-                      <div className="space-y-0.5">
+                      // Indent sessions a step in from their group header so they
+                      // read as children, not siblings — matching the worktree
+                      // split's pl-2, whether or not worktree display is on.
+                      <div className={cn('space-y-0.5', !split && 'pl-2')}>
                         {!split
                           ? instances.map(renderSession)
                           : subs.map((rsub) => {

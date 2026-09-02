@@ -4,13 +4,26 @@ Human-authored task tracker: issue-style tasks grouped by project. Distinct
 from agent sessions — the Kanban tab is sessions; this is the human backlog.
 """
 
+import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
+from shared import project_icons, storage
 from shared.database.models import User
 from shared.database.session import get_db
+from shared.images import InvalidImageError, process_image
 
 from ..auth.dependencies import get_current_user
 from ..db import task_queries
@@ -38,16 +51,38 @@ from ..models import (
     UpdateTaskRequest,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["tasks"])
+
+# Bounds the request body for an icon upload; decode memory is bounded
+# separately by shared.images.MAX_PIXELS.
+MAX_ICON_UPLOAD_BYTES = 8 * 1024 * 1024
+# The raster types process_image emits — served inline; anything else is a bug.
+_INLINE_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
 
 @router.get("/projects", response_model=list[ProjectResponse])
 def list_projects_endpoint(
+    background_tasks: BackgroundTasks,
     include_archived: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[ProjectResponse]:
     projects = task_queries.list_projects(db, current_user.id, include_archived)
+    # Lazy, best-effort default-icon seed (§4e): first fetch of a git-backed
+    # project with no icon set kicks off a background owner-avatar seed. The
+    # task re-checks eligibility, so duplicate enqueues are harmless.
+    for project in projects:
+        if (
+            not project.is_inbox
+            and project.git_remote_url
+            and project.icon_source is None
+            and not project.icon_image_uri
+            # An emoji is an explicit choice — never overwrite it with a git seed.
+            and not project.icon
+        ):
+            background_tasks.add_task(project_icons.seed_project_icon, project.id)
     return [ProjectResponse.model_validate(p) for p in projects]
 
 
@@ -161,6 +196,110 @@ def delete_project_directory_endpoint(
             status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
         )
     return ProjectResponse.model_validate(project)
+
+
+@router.put("/projects/{project_id}/icon", response_model=ProjectResponse)
+def upload_project_icon_endpoint(
+    project_id: UUID,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProjectResponse:
+    """Set a project's image icon from an upload (§4d). 'user' beats a git seed."""
+    project = task_queries.get_accessible_project(db, current_user.id, project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+
+    raw = file.file.read(MAX_ICON_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_ICON_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Image exceeds {MAX_ICON_UPLOAD_BYTES // (1024 * 1024)}MB limit",
+        )
+    if not raw:
+        raise HTTPException(status_code=400, detail="File is empty")
+    try:
+        processed = process_image(raw)
+    except InvalidImageError as exc:
+        raise HTTPException(
+            status_code=400, detail="Not a valid image in a supported format"
+        ) from exc
+
+    key = storage.project_icon_key(str(project_id))
+    try:
+        storage.upload_attachment(key, processed.data, processed.mime_type)
+    except Exception as exc:
+        logger.exception("project icon upload to S3 failed")
+        raise HTTPException(status_code=502, detail="Failed to store image") from exc
+
+    updated = task_queries.set_project_icon(
+        db,
+        current_user.id,
+        project_id,
+        icon_image_uri=project_icons.icon_served_url(project_id),
+        icon_source="user",
+    )
+    assert updated is not None  # access re-checked above under the same session
+    return ProjectResponse.model_validate(updated)
+
+
+@router.get("/projects/{project_id}/icon")
+def get_project_icon_endpoint(
+    project_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Serve a project's icon bytes (uploaded or git-seeded)."""
+    project = task_queries.get_accessible_project(db, current_user.id, project_id)
+    if project is None or not project.icon_image_uri:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project icon not found"
+        )
+    try:
+        data, content_type = storage.download_object(
+            storage.project_icon_key(str(project_id))
+        )
+    except Exception as exc:
+        logger.exception("project icon download from S3 failed")
+        raise HTTPException(status_code=502, detail="Failed to fetch image") from exc
+    if content_type not in _INLINE_IMAGE_TYPES:
+        content_type = "application/octet-stream"
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            # Short-lived: the URL is stable across replacements, so clients
+            # cache-bust with the project's updated_at instead of relying on this.
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.delete("/projects/{project_id}/icon", response_model=ProjectResponse)
+def delete_project_icon_endpoint(
+    project_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProjectResponse:
+    """Reset the icon to the generated default (drops the image AND emoji, and
+    pins icon_source so the git seed does not re-add an image)."""
+    project = task_queries.get_accessible_project(db, current_user.id, project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+    if project.icon_image_uri:
+        try:
+            storage.delete_object(storage.project_icon_key(str(project_id)))
+        except Exception:
+            # Orphaned S3 object is harmless; never fail the reset on it.
+            logger.warning("project icon S3 delete failed for %s", project_id)
+    updated = task_queries.reset_project_icon(db, current_user.id, project_id)
+    assert updated is not None
+    return ProjectResponse.model_validate(updated)
 
 
 @router.get("/task-labels", response_model=list[TaskLabelResponse])

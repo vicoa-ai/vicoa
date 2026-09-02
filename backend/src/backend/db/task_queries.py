@@ -4,12 +4,15 @@ All queries are user-scoped. The Inbox project is the per-user "No project"
 bucket: lazily created, never archivable or deletable.
 """
 
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from shared.database import (
+    AgentInstance,
     Machine,
     Project,
     ProjectDirectory,
@@ -18,6 +21,17 @@ from shared.database import (
     get_or_create_inbox,
 )
 from shared.database.project_matching import backfill_project_id_for_directory
+
+logger = logging.getLogger(__name__)
+
+# A project with no session activity for this long — and no open tasks —
+# auto-archives (project-identity-unification §4b), the counterweight to
+# auto-create. A new session revives it instantly via the §4a self-heal rule.
+STALE_PROJECT_DAYS = 30
+
+# Tasks in these terminal states don't count as "open work" keeping a project
+# alive for auto-archive purposes.
+_CLOSED_TASK_STATUSES = ("done", "cancelled")
 
 
 class InboxImmutableError(Exception):
@@ -47,21 +61,92 @@ class ParentTaskError(Exception):
         self.not_found = not_found
 
 
+def _latest_activity_subquery(db: Session, user_id: UUID):
+    """Newest session start per project, for recency ordering / staleness."""
+    return (
+        db.query(
+            AgentInstance.project_id.label("pid"),
+            func.max(AgentInstance.started_at).label("last_at"),
+        )
+        .filter(AgentInstance.user_id == user_id)
+        .group_by(AgentInstance.project_id)
+        .subquery()
+    )
+
+
+def autoarchive_stale_projects(
+    db: Session, user_id: UUID, days: int = STALE_PROJECT_DAYS
+) -> int:
+    """Archive non-Inbox projects idle for ``days`` with no open tasks (§4b).
+
+    The counterweight to auto-create: touching a repo mints a project, so
+    long-untouched ones fall out of the way on their own. Conservative —
+    requires the project itself to predate the cutoff, its newest session (if
+    any) to predate it, and no open tasks — and fully reversible via the §4a
+    self-heal (a new session un-archives). Returns how many were archived.
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+    latest = _latest_activity_subquery(db, user_id)
+    open_task_projects = (
+        select(Task.project_id)
+        .where(
+            Task.user_id == user_id,
+            Task.status.notin_(_CLOSED_TASK_STATUSES),
+        )
+        .distinct()
+    )
+    stale = (
+        db.query(Project)
+        .outerjoin(latest, latest.c.pid == Project.id)
+        .filter(
+            Project.user_id == user_id,
+            Project.is_inbox.is_(False),
+            Project.is_archived.is_(False),
+            Project.created_at < cutoff,
+            or_(latest.c.last_at.is_(None), latest.c.last_at < cutoff),
+            Project.id.notin_(open_task_projects),
+        )
+        .all()
+    )
+    for project in stale:
+        project.is_archived = True
+        project.archived_at = now
+    if stale:
+        db.commit()
+        logger.info(
+            "auto-archived %d stale project(s) for user %s", len(stale), user_id
+        )
+    return len(stale)
+
+
 def list_projects(
     db: Session, user_id: UUID, include_archived: bool = False
 ) -> list[Project]:
-    """All the user's projects, Inbox first then by name.
+    """All the user's projects: Inbox first, then most-recent activity, then name.
 
-    Lazily creates the Inbox so clients always have the "No project" bucket
-    to group by.
+    Lazily creates the Inbox so clients always have the "No project" bucket to
+    group by, and opportunistically auto-archives stale projects (on every fetch,
+    including the sidebar's include_archived read) so the counterweight to
+    auto-create needs no scheduler.
     """
     get_or_create_inbox(db, user_id)
     db.commit()
+    autoarchive_stale_projects(db, user_id)
 
-    query = db.query(Project).filter(Project.user_id == user_id)
+    latest = _latest_activity_subquery(db, user_id)
+    query = (
+        db.query(Project)
+        .outerjoin(latest, latest.c.pid == Project.id)
+        .filter(Project.user_id == user_id)
+    )
     if not include_archived:
         query = query.filter(Project.is_archived.is_(False))
-    return query.order_by(Project.is_inbox.desc(), Project.name.asc()).all()
+    return query.order_by(
+        Project.is_inbox.desc(),
+        latest.c.last_at.desc().nullslast(),
+        Project.name.asc(),
+    ).all()
 
 
 def create_project(
@@ -90,6 +175,55 @@ def _get_project(db: Session, user_id: UUID, project_id: UUID) -> Project | None
         .filter(Project.id == project_id, Project.user_id == user_id)
         .first()
     )
+
+
+def get_accessible_project(
+    db: Session, user_id: UUID, project_id: UUID
+) -> Project | None:
+    """The single project-access predicate (plan §9 constraint 3).
+
+    Every project-scoped read that isn't already a list — today just icon
+    serving/upload — routes through here so swapping single-owner scoping for
+    team membership later is one function, not dozens of call sites. Currently:
+    the project exists and belongs to ``user_id``.
+    """
+    return _get_project(db, user_id, project_id)
+
+
+def set_project_icon(
+    db: Session,
+    user_id: UUID,
+    project_id: UUID,
+    *,
+    icon_image_uri: str | None,
+    icon_source: str | None,
+) -> Project | None:
+    """Point a project at an uploaded/seeded icon (or clear it). None if foreign."""
+    project = _get_project(db, user_id, project_id)
+    if project is None:
+        return None
+    project.icon_image_uri = icon_image_uri
+    project.icon_source = icon_source
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def reset_project_icon(db: Session, user_id: UUID, project_id: UUID) -> Project | None:
+    """Reset to the generated default: drop the image AND emoji, and pin
+    ``icon_source='user'`` so the git-avatar seed does NOT re-add an image on the
+    next fetch. Renders as the generated initial-square. None if foreign."""
+    project = _get_project(db, user_id, project_id)
+    if project is None:
+        return None
+    project.icon_image_uri = None
+    project.icon = None
+    # Sentinel: an explicit user reset. NULL would make the project seed-eligible
+    # again, which is exactly the "reset keeps turning back into the image" bug.
+    project.icon_source = "user"
+    db.commit()
+    db.refresh(project)
+    return project
 
 
 def update_project(

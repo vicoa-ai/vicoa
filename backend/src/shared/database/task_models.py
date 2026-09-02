@@ -78,6 +78,14 @@ class Project(Base):
     )
     color: Mapped[str | None] = mapped_column(String(16), default=None)
     icon: Mapped[str | None] = mapped_column(String(64), default=None)
+    # Image icon (project-identity-unification §4d): a served URL pointing at
+    # OUR storage (never an external hot-link), plus who set it. icon_source
+    # governs precedence and re-seed safety: 'user' (uploaded) always wins over
+    # 'git' (owner avatar seeded from the remote); NULL ⇒ fall back to the emoji
+    # `icon`/`color` default. The S3 object is keyed by project_id alone (not
+    # user_id) so a project can later move to a team without rekeying (§9).
+    icon_image_uri: Mapped[str | None] = mapped_column(Text, default=None)
+    icon_source: Mapped[str | None] = mapped_column(String(16), default=None)
     # The per-user "No project" bucket; non-archivable, non-deletable.
     is_inbox: Mapped[bool] = mapped_column(default=False)
     is_archived: Mapped[bool] = mapped_column(default=False)
