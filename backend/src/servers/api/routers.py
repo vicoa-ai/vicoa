@@ -42,7 +42,9 @@ from shared.database import (
     FileMentions,
 )
 from shared.database.agent_instances import create_agent_instance
-from shared.database.project_matching import resolve_project_id_for_session
+from shared.database.project_matching import (
+    resolve_or_create_project_id_for_session,
+)
 from integrations.headless.usage import project_rate_limited_until
 from shared.websocket.connection_manager import connection_manager
 from shared.websocket.envelope import (
@@ -997,14 +999,17 @@ def register_agent_instance_endpoint(
                 existing.project = request.project
                 # Now that the wrapper has reported its real cwd (+ repo
                 # root/remote for worktrees), attach the session to a project
-                # set up for that checkout, or None.
-                existing.project_id = resolve_project_id_for_session(
+                # set up for that checkout — auto-creating one if this is the
+                # first session in an unseen dir/repo (plan §4a), or None for
+                # paths not worth a project (home dir, etc.).
+                existing.project_id = resolve_or_create_project_id_for_session(
                     db,
                     UUID(user_id),
                     existing.machine_id,
                     request.project,
                     git_remote_url=request.git_remote_url,
                     repo_root=request.repo_root,
+                    home_dir=request.home_dir or existing.home_dir,
                 )
             if request.home_dir:
                 existing.home_dir = request.home_dir
@@ -1056,13 +1061,14 @@ def register_agent_instance_endpoint(
                 name=request.name,
                 instance_metadata=instance_metadata,
                 project=request.project,
-                project_id=resolve_project_id_for_session(
+                project_id=resolve_or_create_project_id_for_session(
                     db,
                     UUID(user_id),
                     resolved_machine_id,
                     request.project,
                     git_remote_url=request.git_remote_url,
                     repo_root=request.repo_root,
+                    home_dir=request.home_dir,
                 ),
                 home_dir=request.home_dir,
                 machine_id=resolved_machine_id,
