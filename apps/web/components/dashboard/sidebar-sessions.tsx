@@ -1059,25 +1059,26 @@ export function SidebarSessions({
                 const { isDraggableProject, split, newSessionDirectory, subs } = entry;
                 if (!split && instances.length === 0) return null;
                 const isGroupCollapsed = label !== null && collapsedGroups.has(key);
-                // "Project settings" opens the per-project pane in Settings
-                // (its worktree config is a committed `.vicoa/config.json`
-                // edited on the repo's machine), so it needs both a machine to
-                // route the file RPC and the repo's directory.
                 const projectMachineId = instances[0]?.machine_id ?? null;
-                const projectSettingsHref =
-                  projectMachineId && newSessionDirectory
-                    ? `/dashboard/settings?tab=project&machineId=${encodeURIComponent(
-                        projectMachineId,
-                      )}&dir=${encodeURIComponent(newSessionDirectory)}${
-                        label ? `&label=${encodeURIComponent(label)}` : ''
-                      }`
-                    : null;
                 // The DB project this group maps to (only meaningful when
                 // grouping by project — time/status keys aren't project ids).
-                // Drives the leading icon and the Archive action.
+                // Drives the leading icon, the Archive action, and the settings
+                // link's project identity.
                 const dbProject = groupBy === 'project' ? projectsById.get(key) : undefined;
                 const canArchiveProject =
                   dbProject !== undefined && !dbProject.is_inbox && !dbProject.is_archived;
+                // "Project settings" opens the per-project pane in Settings:
+                // Display (name/icon) keys off project_id; the worktree-config
+                // section needs a machine + repo dir to route its daemon RPC.
+                const projectSettingsHref = (() => {
+                  if (!dbProject && !(projectMachineId && newSessionDirectory)) return null;
+                  const params = new URLSearchParams({ tab: 'project' });
+                  if (dbProject) params.set('projectId', dbProject.id);
+                  if (projectMachineId) params.set('machineId', projectMachineId);
+                  if (newSessionDirectory) params.set('dir', newSessionDirectory);
+                  if (label) params.set('label', label);
+                  return `/dashboard/settings?${params.toString()}`;
+                })();
                 const projectHeader = label ? (
                   // Wrapper carries the drag handle and hover group so the
                   // collapse toggle, actions menu, and "+" can be sibling buttons

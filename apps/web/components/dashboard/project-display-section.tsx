@@ -42,11 +42,15 @@ function resolveProject(
 }
 
 export function ProjectDisplaySection({
+  projectId,
   machineId,
   dir,
 }: {
-  machineId: string;
-  dir: string;
+  /** Preferred: the DB project id (from the Projects nav). */
+  projectId?: string;
+  /** Legacy fallback (sidebar "Project settings" link): resolve by directory. */
+  machineId?: string;
+  dir?: string;
 }) {
   // undefined = loading, null = no project linked to this directory yet.
   const [project, setProject] = useState<ProjectResponse | null | undefined>(undefined);
@@ -55,13 +59,17 @@ export function ProjectDisplaySection({
   const refresh = useCallback(async () => {
     try {
       const projects = await getBackendAPI(true).listProjects(true);
-      const match = resolveProject(projects, machineId, dir);
+      const match = projectId
+        ? (projects.find((p) => p.id === projectId) ?? null)
+        : machineId && dir
+          ? resolveProject(projects, machineId, dir)
+          : null;
       setProject(match ?? null);
       if (match) setName(match.name);
     } catch {
       setProject(null);
     }
-  }, [machineId, dir]);
+  }, [projectId, machineId, dir]);
 
   useEffect(() => {
     void refresh();
