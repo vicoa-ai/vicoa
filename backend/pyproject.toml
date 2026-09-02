@@ -37,7 +37,7 @@ dependencies = [
     # /ws endpoint); bare uvicorn ships without one.
     "websockets>=12.0",
     "pydantic>=2.11.5",
-    "claude-agent-sdk>=0.1.80",
+    "claude-agent-sdk>=0.2.151",
     "anthropic>=0.25.0",
     "pathspec>=0.11.0",
     # Cron parsing for scheduled automations (5-field cron + IANA tz).
