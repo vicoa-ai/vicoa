@@ -24,7 +24,7 @@ from typing import Any
 
 
 AGENT_CATALOG: dict[str, Any] = {
-    "version": "2026-07-18-1",
+    "version": "2026-09-02-1",
     "min_cli_version": "1.20.0",
     "min_client_version": "0.42.0",
     "agents": [
@@ -41,13 +41,21 @@ AGENT_CATALOG: dict[str, Any] = {
                 # with the depth-of-reasoning to justify the agent-level `high`
                 # baseline being bumped. `default_thinking_effort` overrides
                 # `is_default` when this model is selected.
-                # Fable 5 is natively 1M-context (max == default), so it has
-                # no `[1m]` variant. Premium-priced and thinking-always-on, so
-                # it is not the picker default. `xhigh` is the recommended
-                # coding/agentic effort tier.
+                # Fable 5 and Opus 5 are natively 1M-context (max == default),
+                # so they have no `[1m]` variant — see
+                # ``integrations/headless/usage.py`` (_CLAUDE_CONTEXT_WINDOWS).
+                # Fable 5 is premium-priced and thinking-always-on, so it is not
+                # the picker default. `xhigh` is the recommended coding/agentic
+                # effort tier for both.
                 {
                     "id": "claude-fable-5",
                     "label": "Fable 5",
+                    "default_thinking_effort": "xhigh",
+                    "permission_modes": ["auto"],
+                },
+                {
+                    "id": "claude-opus-5",
+                    "label": "Opus 5",
                     "default_thinking_effort": "xhigh",
                     "permission_modes": ["auto"],
                 },
@@ -113,9 +121,20 @@ AGENT_CATALOG: dict[str, Any] = {
                 {"id": "low", "label": "Low"},
                 {"id": "off", "label": "Off"},
             ],
+            # `auto` is the default for every model that opts into it (Sonnet
+            # 4.6+, Opus 4.7+, Opus 5, Fable 5), mirroring Claude Code — which
+            # now starts new sessions in auto mode by default. `auto` stays
+            # `opt_in`, so models that don't support it (Opus 4.6, Haiku 4.5)
+            # fall through to `default` via the per-model filter (see
+            # reconcileAgainst / pickWithModelFilter in the web/mobile catalogs).
             "permission_modes": [
-                {"id": "default", "label": "Default", "is_default": True},
-                {"id": "auto", "label": "Auto mode", "opt_in": True},
+                {"id": "default", "label": "Default"},
+                {
+                    "id": "auto",
+                    "label": "Auto mode",
+                    "opt_in": True,
+                    "is_default": True,
+                },
                 {"id": "acceptEdits", "label": "Accept Edits"},
                 {"id": "plan", "label": "Plan"},
                 {"id": "bypassPermissions", "label": "Skip permissions (Yolo)"},

@@ -26,6 +26,7 @@ from ..format_utils import format_content_block
 # so the table is maintained in lock-step with the catalog. When upstream
 # adds a model, add it here too — existing tests guard the parsing path.
 _CLAUDE_LABEL_TO_SLUG: Dict[str, str] = {
+    "Opus 5": "claude-opus-5",
     "Opus 4.8": "claude-opus-4-8",
     "Opus 4.8 1M": "claude-opus-4-8[1m]",
     "Opus 4.7": "claude-opus-4-7",

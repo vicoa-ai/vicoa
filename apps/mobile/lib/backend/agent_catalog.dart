@@ -416,7 +416,7 @@ String sessionConfigSummary(AgentCatalog catalog, SessionConfig config) {
 /// the flag today; this comment is the rule.
 const String _agentCatalogFallbackJson = r'''
 {
-  "version": "2026-07-13-1",
+  "version": "2026-09-02-1",
   "min_cli_version": "1.20.0",
   "min_client_version": "0.42.0",
   "agents": [
@@ -425,6 +425,7 @@ const String _agentCatalogFallbackJson = r'''
       "label": "Claude Code",
       "models": [
         {"id": "claude-fable-5", "label": "Fable 5", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
+        {"id": "claude-opus-5", "label": "Opus 5", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
         {"id": "claude-opus-4-8", "label": "Opus 4.8", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
         {"id": "claude-opus-4-8[1m]", "label": "Opus 4.8 1M", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
         {"id": "claude-opus-4-7", "label": "Opus 4.7", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
@@ -446,8 +447,8 @@ const String _agentCatalogFallbackJson = r'''
         {"id": "off", "label": "Off"}
       ],
       "permission_modes": [
-        {"id": "default", "label": "Default", "is_default": true},
-        {"id": "auto", "label": "Auto mode", "opt_in": true},
+        {"id": "default", "label": "Default"},
+        {"id": "auto", "label": "Auto mode", "opt_in": true, "is_default": true},
         {"id": "acceptEdits", "label": "Accept Edits"},
         {"id": "plan", "label": "Plan"},
         {"id": "bypassPermissions", "label": "Skip permissions (Yolo)"}

@@ -381,7 +381,7 @@ export function savePersistedSelection(payload: Partial<PersistedSelection>): vo
 // ---------------------------------------------------------------------------
 
 export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
-  version: "2026-07-18-1",
+  version: "2026-09-02-1",
   min_cli_version: "1.20.0",
   min_client_version: "0.42.0",
   agents: [
@@ -391,9 +391,10 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
       models: [
         // Opus 4.7+ default to xhigh via `default_thinking_effort` (per-model
         // override of the agent-level `high` is_default).
-        // Fable 5 is natively 1M-context (no `[1m]` variant), premium-priced,
-        // thinking-always-on — offered but not the picker default.
+        // Fable 5 and Opus 5 are natively 1M-context (no `[1m]` variant); Fable 5
+        // is premium-priced and thinking-always-on — offered but not the picker default.
         { id: "claude-fable-5", label: "Fable 5", default_thinking_effort: "xhigh", permission_modes: ["auto"] },
+        { id: "claude-opus-5", label: "Opus 5", default_thinking_effort: "xhigh", permission_modes: ["auto"] },
         { id: "claude-opus-4-8", label: "Opus 4.8", default_thinking_effort: "xhigh", permission_modes: ["auto"] },
         { id: "claude-opus-4-8[1m]", label: "Opus 4.8 1M", default_thinking_effort: "xhigh", permission_modes: ["auto"] },
         { id: "claude-opus-4-7", label: "Opus 4.7", default_thinking_effort: "xhigh", permission_modes: ["auto"] },
@@ -414,9 +415,13 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
         { id: "low", label: "Low" },
         { id: "off", label: "Off" },
       ],
+      // `auto` is the default for every model that opts into it (Sonnet 4.6+,
+      // Opus 4.7+, Opus 5, Fable 5), mirroring Claude Code's auto-by-default.
+      // It stays `opt_in`, so models that don't support it (Opus 4.6, Haiku 4.5)
+      // fall through to `default` via pickWithModelFilter.
       permission_modes: [
-        { id: "default", label: "Default", is_default: true },
-        { id: "auto", label: "Auto mode", opt_in: true },
+        { id: "default", label: "Default" },
+        { id: "auto", label: "Auto mode", opt_in: true, is_default: true },
         { id: "acceptEdits", label: "Accept Edits" },
         { id: "plan", label: "Plan" },
         { id: "bypassPermissions", label: "Skip permissions (Yolo)" },

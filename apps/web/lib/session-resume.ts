@@ -14,6 +14,7 @@
  */
 
 import { getWsClient } from '@/lib/ws-client';
+import { toSpawnMetadata, type SessionConfig } from '@/lib/agent-catalog';
 import {
   LIVENESS_STARTUP_GRACE_MS,
   isClosedByDesign,
@@ -225,6 +226,36 @@ export function agentSessionHandle(
   return meta.codex_thread_id ?? meta.acp_session_id ?? undefined;
 }
 
+/**
+ * Rebuild the daemon spawn `metadata` from the session's stored config so a
+ * resume relaunches with the SAME model, thinking effort, and permission mode
+ * it had.
+ *
+ * Resume used to send no `metadata` at all, so the daemon saw nothing to
+ * restore and fell back to its own defaults (permission mode `default`, no
+ * model/effort flags) — an `auto`-mode session came back running as `default`.
+ * `session_config` is the source of truth persisted on the row; run it through
+ * the same `toSpawnMetadata` the new-session spawn uses so the two paths agree.
+ * Returns `{}` when the row recorded no config (legacy rows) — the caller then
+ * omits `metadata` and the daemon keeps its own fallback.
+ */
+export function resumeSpawnMetadata(
+  instance: ResumableInstance
+): Record<string, unknown> {
+  const cfg = instance.session_config ?? {};
+  const str = (v: unknown): string | undefined =>
+    typeof v === 'string' && v.trim() ? v : undefined;
+  const config: SessionConfig = {
+    agent: resumeAgentSlug(instance),
+    model: str(cfg.model),
+    thinking_effort: str(cfg.thinking_effort),
+    reasoning_effort: str(cfg.reasoning_effort),
+    permission_mode: str(cfg.permission_mode),
+    opencode_mode: str(cfg.opencode_mode),
+  };
+  return toSpawnMetadata(config);
+}
+
 export interface ResumeResult {
   agentInstanceId?: string;
 }
@@ -243,6 +274,9 @@ export async function resumeSession(
   }
 
   const handle = agentSessionHandle(instance);
+  // Carry the stored model / effort / permission mode through the resume so the
+  // relaunched session isn't silently reset to the daemon's defaults.
+  const metadata = resumeSpawnMetadata(instance);
   const result = await getWsClient().callRpc(instance.machine_id, 'spawn-session', {
     directory: expandProjectPath(instance.project, instance.home_dir),
     agent: resumeAgentSlug(instance),
@@ -250,6 +284,7 @@ export async function resumeSession(
       agent_instance_id: instance.id,
       agent_session_id: handle,
     },
+    ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
   });
 
   if (result.error) {

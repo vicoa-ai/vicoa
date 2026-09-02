@@ -24,6 +24,7 @@ from .model_env_parser import parse_anthropic_model_env
 # JSONLMonitor's /effort handler overrides this whenever the user changes
 # effort mid-session, so this is just the best initial guess.
 _MODEL_DEFAULT_THINKING: dict[str, str] = {
+    "claude-opus-5": "xhigh",
     "claude-opus-4-7": "xhigh",
     "claude-opus-4-8": "xhigh",
     "claude-sonnet-4-6": "high",

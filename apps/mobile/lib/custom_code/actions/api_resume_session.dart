@@ -7,6 +7,9 @@ import 'package:flutter/material.dart';
 // `RpcException` is not re-exported by the index.dart barrel; pull it from its
 // own file to read the wire error code. Same pattern as fetch_slash_commands.
 import 'ws_client.dart' show RpcException;
+// SessionConfig.toSpawnMetadata rebuilds the daemon metadata from the stored
+// config so a resume keeps its model / effort / permission mode.
+import '/backend/agent_catalog.dart';
 
 /// Relaunch a stopped session on the machine it came from.
 ///
@@ -34,11 +37,21 @@ Future<Map<String, dynamic>> apiResumeSession(
   String directory, {
   String agent = 'claude',
   String? agentSessionId,
+  Map<String, dynamic>? sessionConfig,
 }) async {
   try {
     if (machineId.isEmpty || agentInstanceId.isEmpty || directory.isEmpty) {
       return {'success': false, 'error': 'Session cannot be resumed: missing machine or folder'};
     }
+
+    // Rebuild the daemon `metadata` from the stored config so the resumed
+    // session keeps its model / thinking effort / permission mode. Without this
+    // the daemon sees no metadata and falls back to its defaults (permission
+    // mode `default`), so an `auto`-mode session came back running as
+    // `default`. Mirrors the web's resumeSpawnMetadata (session-resume.ts).
+    final metadata = (sessionConfig != null && sessionConfig.isNotEmpty)
+        ? SessionConfig.fromJson({...sessionConfig, 'agent': agent}).toSpawnMetadata()
+        : <String, dynamic>{};
 
     final result = await VicoaWsClient.instance.callRpc(
       machineId,
@@ -50,6 +63,7 @@ Future<Map<String, dynamic>> apiResumeSession(
           'agent_instance_id': agentInstanceId,
           if (agentSessionId != null && agentSessionId.isNotEmpty) 'agent_session_id': agentSessionId,
         },
+        if (metadata.isNotEmpty) 'metadata': metadata,
       },
     );
 

@@ -55,13 +55,15 @@ class TestAgentCatalogShape:
         assert auto.get("opt_in") is True
 
     def test_modern_models_opt_into_auto(self):
-        """Sonnet 4.6+, Opus 4.7+, and Fable 5 per-model arrays opt into `auto`."""
+        """Sonnet 4.6+, Opus 4.7+, Opus 5, and Fable 5 per-model arrays opt into `auto`."""
         claude = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "claude")
         for model in claude["models"]:
             model_id = model["id"]
-            is_opus_47_plus = model_id.startswith(
-                "claude-opus-4-7"
-            ) or model_id.startswith("claude-opus-4-8")
+            is_opus_47_plus = (
+                model_id.startswith("claude-opus-4-7")
+                or model_id.startswith("claude-opus-4-8")
+                or model_id.startswith("claude-opus-5")
+            )
             is_sonnet_46_plus = model_id.startswith(
                 "claude-sonnet-4-6"
             ) or model_id.startswith("claude-sonnet-5")
@@ -76,13 +78,15 @@ class TestAgentCatalogShape:
                 assert "auto" not in perm_opts, f"{model_id} must NOT opt into `auto`"
 
     def test_opus_47_plus_default_to_xhigh(self):
-        """Opus 4.7/4.8 and Fable 5 per-model `default_thinking_effort` → `xhigh`."""
+        """Opus 4.7/4.8, Opus 5, and Fable 5 per-model `default_thinking_effort` → `xhigh`."""
         claude = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "claude")
         for model in claude["models"]:
             model_id = model["id"]
-            is_opus_47_plus = model_id.startswith(
-                "claude-opus-4-7"
-            ) or model_id.startswith("claude-opus-4-8")
+            is_opus_47_plus = (
+                model_id.startswith("claude-opus-4-7")
+                or model_id.startswith("claude-opus-4-8")
+                or model_id.startswith("claude-opus-5")
+            )
             # Fable 5 is the deepest-reasoning tier, so it shares the xhigh
             # baseline with Opus 4.7+.
             is_fable_5 = model_id.startswith("claude-fable-5")
