@@ -2190,6 +2190,9 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
         sessionConfig: _instanceMap('session_config'),
       ),
       agentSessionId: actions.resumeAgentSessionHandle(metadata),
+      // Carry the stored model / effort / permission mode through so the
+      // resumed session isn't reset to the daemon's defaults.
+      sessionConfig: _instanceMap('session_config'),
     );
     if (!mounted) return;
     if (result['success'] != true) {

@@ -12,6 +12,7 @@ import {
   resumeAgentSlug,
   resumeBlockedMessage,
   resumeBlockedReason,
+  resumeSpawnMetadata,
   type ResumableInstance,
 } from './session-resume';
 
@@ -150,6 +151,51 @@ describe('resumeAgentSlug', () => {
     expect(
       resumeAgentSlug(inst({ agent_type_name: name, session_config: null }))
     ).toBe(expected);
+  });
+});
+
+describe('resumeSpawnMetadata', () => {
+  it('rebuilds the daemon metadata from the stored config so resume keeps model/effort/mode', () => {
+    // The bug this fixes: resume sent no metadata, so the daemon fell back to
+    // permission mode `default` — an `auto` session came back as `default`.
+    expect(
+      resumeSpawnMetadata(
+        inst({
+          session_config: {
+            agent: 'claude',
+            model: 'claude-opus-5',
+            thinking_effort: 'xhigh',
+            permission_mode: 'auto',
+          },
+        })
+      )
+    ).toEqual({
+      model: 'claude-opus-5',
+      thinking_effort: 'xhigh',
+      // Dual-written for old daemons alongside thinking_effort.
+      enable_thinking: true,
+      permission_mode: 'auto',
+    });
+  });
+
+  it('maps codex reasoning_effort', () => {
+    expect(
+      resumeSpawnMetadata(
+        inst({
+          agent_type_name: 'Codex',
+          session_config: {
+            agent: 'codex',
+            model: 'gpt-5.5',
+            reasoning_effort: 'high',
+            permission_mode: 'default',
+          },
+        })
+      )
+    ).toEqual({ model: 'gpt-5.5', reasoning_effort: 'high', permission_mode: 'default' });
+  });
+
+  it('is empty for a legacy row with no stored config (daemon keeps its fallback)', () => {
+    expect(resumeSpawnMetadata(inst({ session_config: null }))).toEqual({});
   });
 });
 
