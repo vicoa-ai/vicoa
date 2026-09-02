@@ -89,7 +89,7 @@ function DesktopSettingsSidebarInner() {
           type="button"
           onClick={backToApp}
           style={NO_DRAG}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Back to app
@@ -112,7 +112,7 @@ function DesktopSettingsSidebarInner() {
               'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
               tab === id
                 ? 'bg-foreground/10 text-foreground'
-                : 'text-muted-foreground hover:bg-foreground/10 hover:text-foreground',
+                : 'text-muted-foreground hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground',
             )}
           >
             <Icon className="h-3.5 w-3.5 shrink-0" />
@@ -145,7 +145,7 @@ function DesktopSettingsSidebarInner() {
                     'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
                     active
                       ? 'bg-foreground/10 text-foreground'
-                      : 'text-muted-foreground hover:bg-foreground/10 hover:text-foreground',
+                      : 'text-muted-foreground hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground',
                   )}
                 >
                   <Folder className="h-3.5 w-3.5 shrink-0" />

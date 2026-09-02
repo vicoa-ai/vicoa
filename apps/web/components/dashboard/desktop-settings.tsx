@@ -467,7 +467,7 @@ function GeneralSection() {
                   <SelectItem
                     key={value}
                     value={value}
-                    className="cursor-pointer text-xs focus:bg-foreground/10 focus:text-foreground"
+                    className="cursor-pointer text-xs focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 focus:text-foreground"
                   >
                     {NOTIFICATION_MODE_LABELS[value]}
                   </SelectItem>
@@ -490,13 +490,13 @@ function GeneralSection() {
                 <SelectContent align="end" className="bg-menu font-mono">
                   <SelectItem
                     value="silence"
-                    className="cursor-pointer text-xs focus:bg-foreground/10 focus:text-foreground"
+                    className="cursor-pointer text-xs focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 focus:text-foreground"
                   >
                     Silence while focused
                   </SelectItem>
                   <SelectItem
                     value="always"
-                    className="cursor-pointer text-xs focus:bg-foreground/10 focus:text-foreground"
+                    className="cursor-pointer text-xs focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 focus:text-foreground"
                   >
                     Always send
                   </SelectItem>
@@ -552,10 +552,10 @@ function GeneralSection() {
                 <SelectValue>{mobileHidden ? 'Hidden' : 'Shown'}</SelectValue>
               </SelectTrigger>
               <SelectContent align="end" className="bg-menu font-mono">
-                <SelectItem value="shown" className="cursor-pointer text-xs focus:bg-foreground/10 focus:text-foreground">
+                <SelectItem value="shown" className="cursor-pointer text-xs focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 focus:text-foreground">
                   Shown
                 </SelectItem>
-                <SelectItem value="hidden" className="cursor-pointer text-xs focus:bg-foreground/10 focus:text-foreground">
+                <SelectItem value="hidden" className="cursor-pointer text-xs focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 focus:text-foreground">
                   Hidden
                 </SelectItem>
               </SelectContent>

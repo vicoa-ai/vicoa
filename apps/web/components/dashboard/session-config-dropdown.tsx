@@ -74,7 +74,7 @@ export function ModeIcon({ value, className }: { value: string; className?: stri
 }
 
 const CHIP_CLASS =
-  'flex h-6 max-w-44 min-w-0 shrink items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50';
+  'flex h-6 max-w-44 min-w-0 shrink items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50';
 
 export function TickItem({
   label,
@@ -99,7 +99,7 @@ export function TickItem({
       title={label}
       disabled={disabled}
       onClick={onClick}
-      className="group/item relative flex w-full cursor-pointer select-none items-center gap-2 rounded-sm border-0 px-3 py-1.5 text-xs outline-none transition-colors duration-100 hover:bg-foreground/10 hover:text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+      className="group/item relative flex w-full cursor-pointer select-none items-center gap-2 rounded-sm border-0 px-3 py-1.5 text-xs outline-none transition-colors duration-100 hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
     >
       {leading}
       <span className="min-w-0 flex-1 truncate text-left">{label}</span>

@@ -65,7 +65,7 @@ export function DesktopNotificationNudge() {
         type="button"
         aria-label="Dismiss"
         onClick={() => dismissNotificationNudge()}
-        className="ml-1 flex h-4 w-4 cursor-pointer items-center justify-center rounded hover:bg-foreground/10 hover:text-foreground"
+        className="ml-1 flex h-4 w-4 cursor-pointer items-center justify-center rounded hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground"
       >
         <X className="h-3 w-3" />
       </button>

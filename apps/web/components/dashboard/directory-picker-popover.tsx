@@ -114,12 +114,12 @@ export function DirectoryPickerPopover({
                   type="button"
                   onClick={() => commit(path)}
                   // Match shadcn DropdownMenuItem's *actual* hover token —
-                  // `focus:bg-foreground/10` (Radix promotes hover into
+                  // `focus:bg-foreground/[0.06] dark:focus:bg-foreground/10` (Radix promotes hover into
                   // focus on the menu items). On a plain <button> the
-                  // equivalent is `hover:bg-foreground/10` (+ focus-visible
+                  // equivalent is `hover:bg-foreground/[0.06] dark:hover:bg-foreground/10` (+ focus-visible
                   // for keyboard nav). bg-accent looked identical to the
                   // popover BG in this theme, so the hover wasn't visible.
-                  className="flex w-full items-center gap-1.5 rounded-sm px-2.5 py-1 text-[11px] text-popover-foreground transition-colors hover:bg-foreground/10 focus-visible:bg-foreground/10 focus-visible:outline-none cursor-pointer"
+                  className="flex w-full items-center gap-1.5 rounded-sm px-2.5 py-1 text-[11px] text-popover-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 focus-visible:bg-foreground/10 focus-visible:outline-none cursor-pointer"
                   title={path}
                 >
                   <Folder className="h-3 w-3 flex-shrink-0" />
@@ -143,7 +143,7 @@ export function DirectoryPickerPopover({
                   if (path) commit(path);
                 });
               }}
-              className="flex w-full items-center gap-1.5 rounded-sm px-2.5 py-1.5 text-[11px] font-mono text-popover-foreground transition-colors hover:bg-foreground/10 focus-visible:bg-foreground/10 focus-visible:outline-none cursor-pointer"
+              className="flex w-full items-center gap-1.5 rounded-sm px-2.5 py-1.5 text-[11px] font-mono text-popover-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 focus-visible:bg-foreground/10 focus-visible:outline-none cursor-pointer"
             >
               <FolderOpen className="h-3 w-3 flex-shrink-0" />
               Open folder…

@@ -100,7 +100,7 @@ export function TaskViewsBar({
                   type="button"
                   aria-label="View options"
                   className={cn(
-                    'mr-0.5 flex size-5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-foreground/10 group-hover/tab:opacity-100 data-[state=open]:opacity-100',
+                    'mr-0.5 flex size-5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 group-hover/tab:opacity-100 data-[state=open]:opacity-100',
                     active && 'opacity-70',
                   )}
                   onClick={(e) => e.stopPropagation()}

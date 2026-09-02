@@ -102,7 +102,7 @@ export function SidebarUpdateCallout() {
             type="button"
             aria-label="Dismiss"
             onClick={handleDismiss}
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground"
           >
             <X className="h-3 w-3" />
           </button>

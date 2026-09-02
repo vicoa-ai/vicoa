@@ -109,7 +109,7 @@ function QueuedMessageRow({
               aria-label="Bring queued message back to input"
               className={cn(
                 'mt-0.5 inline-flex shrink-0 items-center justify-center rounded-full p-0.5 text-muted-foreground/60',
-                'hover:bg-foreground/10 hover:text-foreground disabled:opacity-50 disabled:pointer-events-none',
+                'hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground disabled:opacity-50 disabled:pointer-events-none',
               )}
             >
               <Undo2 className="h-3.5 w-3.5" />
@@ -129,7 +129,7 @@ function QueuedMessageRow({
             aria-label="Remove queued message"
             className={cn(
               'mt-0.5 inline-flex shrink-0 items-center justify-center rounded-full p-0.5 text-muted-foreground/60',
-              'hover:bg-foreground/10 hover:text-foreground disabled:opacity-50 disabled:pointer-events-none',
+              'hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground disabled:opacity-50 disabled:pointer-events-none',
             )}
           >
             {isCancelling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}

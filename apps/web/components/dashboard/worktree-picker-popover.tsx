@@ -99,7 +99,7 @@ export function WorktreePickerPopover({
         <button
           type="button"
           onClick={() => select("none", null)}
-          className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-[11px] text-popover-foreground transition-colors hover:bg-foreground/10 cursor-pointer"
+          className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-[11px] text-popover-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 cursor-pointer"
         >
           <GitBranch className="h-3 w-3 flex-shrink-0" />
           <span className="flex-1 text-left">Current branch</span>
@@ -110,7 +110,7 @@ export function WorktreePickerPopover({
           <button
             type="button"
             onClick={() => select("new", null)}
-            className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-[11px] text-popover-foreground transition-colors hover:bg-foreground/10 cursor-pointer"
+            className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-[11px] text-popover-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 cursor-pointer"
           >
             <Plus className="h-3 w-3 flex-shrink-0" />
             <span className="flex-1 text-left">New worktree</span>
@@ -148,7 +148,7 @@ export function WorktreePickerPopover({
                 return (
                   <div
                     key={wt.path}
-                    className="flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-[11px] hover:bg-foreground/10"
+                    className="flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-[11px] hover:bg-foreground/[0.06] dark:hover:bg-foreground/10"
                   >
                     <button
                       type="button"

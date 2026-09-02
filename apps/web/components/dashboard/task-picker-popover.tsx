@@ -123,7 +123,7 @@ export function TaskPickerPopover({
         <button
           type="button"
           onClick={() => select(null)}
-          className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-[11px] text-popover-foreground transition-colors hover:bg-foreground/10 cursor-pointer"
+          className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-[11px] text-popover-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 cursor-pointer"
         >
           <CircleSlash className="h-3 w-3 flex-shrink-0" />
           <span className="flex-1 text-left">No task</span>
@@ -164,7 +164,7 @@ export function TaskPickerPopover({
                     key={task.id}
                     type="button"
                     onClick={() => select(task)}
-                    className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-[11px] text-popover-foreground transition-colors hover:bg-foreground/10 cursor-pointer"
+                    className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-[11px] text-popover-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 cursor-pointer"
                     title={task.title}
                   >
                     <StatusIcon status={task.status} className="h-3 w-3" />

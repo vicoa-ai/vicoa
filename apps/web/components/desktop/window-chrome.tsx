@@ -100,7 +100,7 @@ export function DesktopWindowControls() {
         onClick={() => bridge?.minimize()}
         aria-label="Minimize"
         title="Minimize"
-        className={`${CONTROL_BTN} hover:bg-foreground/10 hover:text-foreground`}
+        className={`${CONTROL_BTN} hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground`}
       >
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1">
           <path d="M0 5 H10" />
@@ -111,7 +111,7 @@ export function DesktopWindowControls() {
         onClick={() => bridge?.toggleMaximize()}
         aria-label={maximized ? 'Restore' : 'Maximize'}
         title={maximized ? 'Restore' : 'Maximize'}
-        className={`${CONTROL_BTN} hover:bg-foreground/10 hover:text-foreground`}
+        className={`${CONTROL_BTN} hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground`}
       >
         {maximized ? (
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1">

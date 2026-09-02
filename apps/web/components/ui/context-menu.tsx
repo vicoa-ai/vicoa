@@ -37,7 +37,7 @@ function ContextMenuItem({
     <ContextMenuPrimitive.Item
       data-slot="context-menu-item"
       className={cn(
-        "focus:bg-foreground/10 focus:text-foreground relative flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 focus:text-foreground relative flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}
@@ -55,7 +55,7 @@ function ContextMenuSubTrigger({
     <ContextMenuPrimitive.SubTrigger
       data-slot="context-menu-sub-trigger"
       className={cn(
-        "focus:bg-foreground/10 focus:text-foreground data-[state=open]:bg-foreground/10 relative flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 focus:text-foreground data-[state=open]:bg-foreground/[0.06] dark:data-[state=open]:bg-foreground/10 relative flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}
