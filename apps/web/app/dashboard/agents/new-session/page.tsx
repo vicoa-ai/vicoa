@@ -1589,7 +1589,7 @@ function NewSessionContent() {
       </div>
 
       {/* Chat-style input pinned to bottom */}
-      <div className="flex-shrink-0 bg-muted/10 p-4">
+      <div className="flex-shrink-0 p-4">
         <div className="max-w-4xl mx-auto">
           {/* Setup chips: machine · working dir · worktree (when supported) */}
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
@@ -1729,7 +1729,7 @@ function NewSessionContent() {
             </TaskPickerPopover>
           </div>
 
-          <div ref={promptContainerRef} className="w-full bg-transparent border border-border/50 rounded-3xl px-4 py-3 relative font-mono flex gap-3">
+          <div ref={promptContainerRef} className="w-full bg-composer border border-border/50 rounded-3xl px-4 py-3 relative font-mono flex gap-3 shadow-sm">
             {/* Slash command suggestions */}
             {showSlashCommands && (
               <SlashCommandSuggestions
