@@ -608,6 +608,10 @@ class ProjectResponse(BaseModel):
     git_remote_url: str | None = None
     color: str | None = None
     icon: str | None = None
+    # Served image-icon URL + who set it ('user' | 'git' | None). Clients render
+    # the fallback chain icon_image_uri → emoji icon/color → generated default.
+    icon_image_uri: str | None = None
+    icon_source: str | None = None
     is_inbox: bool
     is_archived: bool
     archived_at: datetime | None = None
