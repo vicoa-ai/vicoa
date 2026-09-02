@@ -126,13 +126,13 @@ def list_projects(
     """All the user's projects: Inbox first, then most-recent activity, then name.
 
     Lazily creates the Inbox so clients always have the "No project" bucket to
-    group by, and opportunistically auto-archives stale projects on the default
-    (non-archived) fetch so the counterweight to auto-create needs no scheduler.
+    group by, and opportunistically auto-archives stale projects (on every fetch,
+    including the sidebar's include_archived read) so the counterweight to
+    auto-create needs no scheduler.
     """
     get_or_create_inbox(db, user_id)
     db.commit()
-    if not include_archived:
-        autoarchive_stale_projects(db, user_id)
+    autoarchive_stale_projects(db, user_id)
 
     latest = _latest_activity_subquery(db, user_id)
     query = (

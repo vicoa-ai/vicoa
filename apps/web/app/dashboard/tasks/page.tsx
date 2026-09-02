@@ -443,6 +443,26 @@ function TasksPageInner() {
           void refreshProjects();
         }
       },
+      uploadProjectIcon: async (projectId, file) => {
+        if (!api) return;
+        try {
+          await api.uploadProjectIcon(projectId, file);
+          await refreshProjects();
+        } catch (err) {
+          console.error('Failed to upload project icon:', err);
+          alert(err instanceof Error ? err.message : 'Failed to upload icon');
+        }
+      },
+      clearProjectIcon: async (projectId) => {
+        if (!api) return;
+        try {
+          await api.deleteProjectIcon(projectId);
+          await refreshProjects();
+        } catch (err) {
+          console.error('Failed to clear project icon:', err);
+          alert(err instanceof Error ? err.message : 'Failed to clear icon');
+        }
+      },
       // Confirmation lives in the settings dialog (ConfirmDeleteDialog), so
       // these two just delete.
       deleteProject: async (project) => {

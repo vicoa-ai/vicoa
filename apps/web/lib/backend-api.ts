@@ -346,6 +346,15 @@ export interface ProjectResponse {
   git_remote_url: string | null;
   color: string | null;
   icon: string | null;
+  /**
+   * Served URL for an uploaded/seeded image icon, or null. Rendered via the
+   * same-origin proxy (see lib/project-icons.ts `projectIconSrc`) since an
+   * <img> can't carry the backend bearer. Fallback chain when null: emoji
+   * `icon` → generated initial-square.
+   */
+  icon_image_uri: string | null;
+  /** Who set the image: 'user' (upload, wins) | 'git' (seeded) | null. */
+  icon_source: string | null;
   /** The per-user "No project" bucket; not archivable or deletable. */
   is_inbox: boolean;
   is_archived: boolean;
@@ -1123,6 +1132,37 @@ class BackendAPI {
     return this.request<ProjectResponse>(`/api/v1/projects/${projectId}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
+    });
+  }
+
+  /** Upload a project's image icon (multipart). Sets icon_source='user'. */
+  async uploadProjectIcon(projectId: string, file: File | Blob): Promise<ProjectResponse> {
+    const headers = await this.getHeaders();
+    // Let the browser set the multipart boundary; a fixed JSON type breaks it.
+    delete headers['Content-Type'];
+    const form = new FormData();
+    form.append('file', file);
+    const response = await fetch(
+      `${this.config.baseUrl}/api/v1/projects/${projectId}/icon`,
+      { method: 'PUT', headers, body: form },
+    );
+    if (!response.ok) {
+      let message = `Backend API error: ${response.status} ${response.statusText}`;
+      try {
+        const body = await response.json();
+        if (typeof body?.detail === 'string' && body.detail.trim()) message = body.detail;
+      } catch {
+        // fall back to the generic HTTP error
+      }
+      throw Object.assign(new Error(message), { status: response.status });
+    }
+    return response.json();
+  }
+
+  /** Clear a project's image icon → falls back to emoji/generated (re-seedable). */
+  async deleteProjectIcon(projectId: string): Promise<ProjectResponse> {
+    return this.request<ProjectResponse>(`/api/v1/projects/${projectId}/icon`, {
+      method: 'DELETE',
     });
   }
 

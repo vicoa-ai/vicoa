@@ -1,4 +1,4 @@
-import type { AgentInstanceResponse } from '@/lib/backend-api';
+import type { AgentInstanceResponse, ProjectResponse } from '@/lib/backend-api';
 import { isManagedWorktreePath } from '@/lib/worktree-selection';
 
 /**
@@ -28,7 +28,6 @@ export const STATUS_FILTER_STORAGE_KEY = 'sidebar-status-filter';
 export const GROUP_BY_STORAGE_KEY = 'sidebar-group-by';
 export const AGENT_FILTER_STORAGE_KEY = 'sidebar-agent-filter';
 export const PROJECT_ORDER_STORAGE_KEY = 'sidebar-project-order';
-export const HIDDEN_PROJECTS_STORAGE_KEY = 'sidebar-hidden-projects';
 /** Desktop-only (see the divergence note above): sub-group projects by worktree. */
 export const DISPLAY_WORKTREE_STORAGE_KEY = 'sidebar-display-worktree';
 
@@ -51,10 +50,21 @@ export function projectGroupKey(instance: AgentInstanceResponse): string {
   return instance.project ? getLastPathPart(instance.project) : NO_PROJECT_KEY;
 }
 
-/** Human label for a project group — the path basename (never the raw id). */
-function projectDisplayName(instances: AgentInstanceResponse[]): string {
+/**
+ * Human label for a project group. Prefers the DB project's `name` when the
+ * group is a linked project (identity-unification §5a) so the sidebar and Tasks
+ * board show the same identity; falls back to the path basename for sessions
+ * with no linked project. Never the raw id.
+ */
+function projectDisplayName(
+  instances: AgentInstanceResponse[],
+  projectsById?: Map<string, ProjectResponse>,
+): string {
+  const key = projectGroupKey(instances[0]);
+  const dbName = projectsById?.get(key)?.name;
+  if (dbName) return dbName;
   const first = instances.find((i) => i.project);
-  return first?.project ? getLastPathPart(first.project) : projectGroupKey(instances[0]);
+  return first?.project ? getLastPathPart(first.project) : key;
 }
 
 /** Distinct project groups present in the list, as `{ key, label }` pairs. */
@@ -269,7 +279,7 @@ export function groupSessions(
   groupBy: GroupBy,
   agentFilter: string = 'all',
   projectOrder: string[] = [],
-  hiddenProjects: string[] = [],
+  projectsById?: Map<string, ProjectResponse>,
 ): SessionGroup[] {
   const sortedInstances = [...instances].sort((a, b) => {
     const aTime = new Date(a.latest_message_at || a.started_at).getTime();
@@ -298,15 +308,15 @@ export function groupSessions(
       ? statusVisible
       : statusVisible.filter((i) => i.agent_type_name === agentFilter);
 
-  // Deselected projects are hidden; sessions without a project always show.
-  // Hidden set holds group keys (project_id or basename), matching the menu.
-  const hidden = new Set(hiddenProjects);
+  // Archived projects drop out of the sidebar (cross-device declutter, §5b —
+  // replaces the old per-device localStorage hide). Sessions with no project, or
+  // whose project isn't loaded yet, always show.
   const visibleInstances =
-    hidden.size === 0
+    !projectsById || projectsById.size === 0
       ? agentVisible
       : agentVisible.filter((i) => {
-          const key = projectGroupKey(i);
-          return key === NO_PROJECT_KEY || !hidden.has(key);
+          const project = i.project_id ? projectsById.get(i.project_id) : undefined;
+          return !project?.is_archived;
         });
 
   let groups: SessionGroup[];
@@ -334,7 +344,10 @@ export function groupSessions(
       })
       .map(([key, groupInstances]) => ({
         key,
-        label: key !== NO_PROJECT_KEY ? projectDisplayName(groupInstances) : null,
+        label:
+          key !== NO_PROJECT_KEY
+            ? projectDisplayName(groupInstances, projectsById)
+            : null,
         instances: groupInstances,
       }));
   } else if (groupBy === 'time') {
