@@ -54,7 +54,7 @@
   --color-sidebar-border: hsl(var(--sidebar-border));
   --color-sidebar-ring: hsl(var(--sidebar-ring));
 
-  --color-inline-code: #ABB0F4;
+  --color-inline-code: hsl(var(--inline-code));
   --color-message-text: hsl(var(--message-text));
 
   /* Menu / overlay surfaces — grayer than --popover, used by dropdowns,
@@ -163,9 +163,10 @@
     --menu-border: 214.3 31.8% 91.4%;
     --menu-elevated: 0 0% 97%;
 
-    /* Desktop app-shell surfaces (light). Nav + canvas match the page bg
-       (#FDFCFC); separation comes from borders + the pure-white composer/cards. */
-    --surface-nav: 0 20% 99%; /* #FDFCFC */
+    /* Desktop app-shell surfaces (light). Nav is a hair grayer than the page bg
+       so the left column reads as distinct; canvas matches the page bg so the
+       pure-white composer/cards pop. */
+    --surface-nav: 300 8% 97.5%; /* #F9F8F9 */
     --surface-canvas: 0 20% 99%; /* #FDFCFC */
 
     /* Semantic status colours (light — one step darker for contrast on white). */
@@ -178,6 +179,8 @@
        canvas (helped by its border + shadow). */
     --user-bubble: 214 32% 97%;
     --composer: 0 0% 100%; /* pure white */
+    --inline-code: 243 70% 56%; /* readable indigo on white (dark uses the pale
+      #ABB0F4, which is far too light against a light surface) */
 
     /* Git commit-graph lane colors (used raw as var(--…), not HSL-wrapped).
        Rendered only on the always-dark files/git panel, so one definition. */
@@ -246,6 +249,7 @@
        (#212B36), composer = --menu (#2D2D2D). Pinned here so dark is identical. */
     --user-bubble: 205 23% 12.9%;
     --composer: 0 0% 18%;
+    --inline-code: 236 77% 81.5%; /* #ABB0F4 — unchanged from before */
   }
 }
 
