@@ -1729,7 +1729,7 @@ function NewSessionContent() {
             </TaskPickerPopover>
           </div>
 
-          <div ref={promptContainerRef} className="w-full bg-composer border border-border/50 rounded-3xl px-4 py-3 relative font-mono flex gap-3 shadow-sm">
+          <div ref={promptContainerRef} className="w-full bg-transparent border border-border/50 rounded-3xl px-4 py-3 relative font-mono flex gap-3">
             {/* Slash command suggestions */}
             {showSlashCommands && (
               <SlashCommandSuggestions
