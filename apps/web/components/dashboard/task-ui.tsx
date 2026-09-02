@@ -432,16 +432,16 @@ export function ProjectIcon({
   }
 
   // A real (non-Inbox) project with a name and no icon gets a generated square:
-  // a soft tint of the hashed palette color with the initial in that same color
-  // (a light, pastel feel rather than a hard saturated fill).
+  // a light tint of the hashed palette color with the initial in the theme's
+  // foreground color (a soft, pastel feel — not a hard saturated fill).
   if (project && !project.is_inbox && project.name) {
     const color = projectAvatarColor(project.id ?? project.name);
     return (
       <span
         aria-hidden="true"
-        style={{ backgroundColor: `${color}2b`, color }}
+        style={{ backgroundColor: `${color}1f` }}
         className={cn(
-          'inline-flex items-center justify-center rounded-[0.28em] text-[10px] font-semibold leading-none',
+          'inline-flex items-center justify-center rounded-[0.28em] text-[10px] font-semibold leading-none text-foreground/80',
           box,
         )}
       >

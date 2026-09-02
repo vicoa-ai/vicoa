@@ -98,8 +98,9 @@ def seed_project_icon(project_id: UUID) -> None:
         if project is None or project.is_inbox:
             return
         # Only NULL icon_source is eligible: 'git' = already attempted, 'user' =
-        # uploaded (must win). icon_image_uri set = already have one.
-        if project.icon_source is not None or project.icon_image_uri:
+        # uploaded / explicitly reset (must win). icon_image_uri set = already
+        # have one; an emoji `icon` is an explicit choice we must not overwrite.
+        if project.icon_source is not None or project.icon_image_uri or project.icon:
             return
         avatar = owner_avatar_url(project.git_remote_url)
         if avatar is None:

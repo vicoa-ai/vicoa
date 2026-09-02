@@ -209,6 +209,23 @@ def set_project_icon(
     return project
 
 
+def reset_project_icon(db: Session, user_id: UUID, project_id: UUID) -> Project | None:
+    """Reset to the generated default: drop the image AND emoji, and pin
+    ``icon_source='user'`` so the git-avatar seed does NOT re-add an image on the
+    next fetch. Renders as the generated initial-square. None if foreign."""
+    project = _get_project(db, user_id, project_id)
+    if project is None:
+        return None
+    project.icon_image_uri = None
+    project.icon = None
+    # Sentinel: an explicit user reset. NULL would make the project seed-eligible
+    # again, which is exactly the "reset keeps turning back into the image" bug.
+    project.icon_source = "user"
+    db.commit()
+    db.refresh(project)
+    return project
+
+
 def update_project(
     db: Session, user_id: UUID, project_id: UUID, fields: dict
 ) -> Project | None:

@@ -170,6 +170,25 @@ class TestGitSeed:
         assert refreshed.icon_source == "user"
         assert refreshed.icon_image_uri == "/api/v1/projects/x/icon"
 
+    def test_seed_never_clobbers_emoji(
+        self, test_db, test_user, fake_icon_storage, monkeypatch
+    ):
+        # An emoji is an explicit choice — a git remote must not overwrite it.
+        project = self._make_project(
+            test_db,
+            test_user.id,
+            git_remote_url="git@github.com:vicoa-ai/alpha.git",
+            icon="🚀",
+        )
+        monkeypatch.setattr(
+            icons.httpx, "Client", lambda *a, **k: _FakeClient(_png_bytes())
+        )
+        icons.seed_project_icon(project.id)
+        test_db.expire_all()
+        refreshed = test_db.get(Project, project.id)
+        assert refreshed.icon == "🚀"
+        assert refreshed.icon_image_uri is None
+
 
 class TestIconEndpoints:
     def _project(self, client):
@@ -195,10 +214,41 @@ class TestIconEndpoints:
         deleted = authenticated_client.delete(f"/api/v1/projects/{pid}/icon")
         assert deleted.status_code == 200
         assert deleted.json()["icon_image_uri"] is None
-        assert deleted.json()["icon_source"] is None
+        # Reset pins the sentinel so the git seed won't re-add an image.
+        assert deleted.json()["icon_source"] == "user"
         assert (
             authenticated_client.get(f"/api/v1/projects/{pid}/icon").status_code == 404
         )
+
+    def test_reset_clears_image_and_emoji_and_blocks_reseed(
+        self, authenticated_client, test_db, fake_icon_storage
+    ):
+        # A git-backed project with an uploaded image + emoji.
+        project = authenticated_client.post(
+            "/api/v1/projects",
+            json={
+                "name": "Alpha",
+                "icon": "🚀",
+                "git_remote_url": "git@github.com:o/r.git",
+            },
+        ).json()
+        pid = project["id"]
+        authenticated_client.put(
+            f"/api/v1/projects/{pid}/icon",
+            files={"file": ("icon.png", _png_bytes(), "image/png")},
+        )
+
+        reset = authenticated_client.delete(f"/api/v1/projects/{pid}/icon").json()
+        assert reset["icon_image_uri"] is None
+        assert reset["icon"] is None
+        # Sentinel keeps the git seed from re-adding an image on the next fetch.
+        assert reset["icon_source"] == "user"
+
+        # Listing projects must not flip it back to seed-eligible.
+        listed = authenticated_client.get("/api/v1/projects").json()
+        row = next(p for p in listed if p["id"] == pid)
+        assert row["icon_image_uri"] is None
+        assert row["icon_source"] == "user"
 
     def test_upload_rejects_non_image(self, authenticated_client, fake_icon_storage):
         project = self._project(authenticated_client)

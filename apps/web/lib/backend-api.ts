@@ -1159,7 +1159,8 @@ class BackendAPI {
     return response.json();
   }
 
-  /** Clear a project's image icon → falls back to emoji/generated (re-seedable). */
+  /** Reset a project's icon to the generated default: clears the image AND emoji
+   *  and pins it so the git seed won't re-add an image. */
   async deleteProjectIcon(projectId: string): Promise<ProjectResponse> {
     return this.request<ProjectResponse>(`/api/v1/projects/${projectId}/icon`, {
       method: 'DELETE',

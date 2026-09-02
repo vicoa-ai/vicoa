@@ -11,6 +11,7 @@ import { Loader2 } from 'lucide-react';
 
 import { ProjectIconEditor } from '@/components/dashboard/project-icon-editor';
 import { getBackendAPI, type ProjectResponse } from '@/lib/backend-api';
+import { cn } from '@/lib/utils';
 
 /** True when `sessionPath` is `linkedPath` or nested under it (path boundary). */
 function pathAtOrUnder(sessionPath: string, linkedPath: string): boolean {
@@ -94,6 +95,8 @@ export function ProjectDisplaySection({
   }
 
   const api = getBackendAPI(true);
+  const isImage = Boolean(project.icon_image_uri);
+  const isEmoji = !isImage && Boolean(project.icon);
 
   const commitName = async () => {
     const trimmed = name.trim();
@@ -121,13 +124,18 @@ export function ProjectDisplaySection({
       <div className="flex items-center gap-3">
         <ProjectIconEditor
           project={project}
-          triggerClassName="size-12 border border-border"
-          iconClassName="size-8"
+          // Border only for a (transparent) emoji, so it reads as a framed box;
+          // an image or the generated square is already self-contained. Same
+          // height (h-9) as the name input beside it.
+          triggerClassName={cn('h-9 w-9', isEmoji && 'border border-border')}
+          iconClassName={isEmoji ? 'size-9 text-xl' : 'size-9'}
           onUploadImage={async (file) => {
             await api.uploadProjectIcon(project.id, file);
             await refresh();
           }}
           onSetEmoji={async (emoji) => {
+            // Emoji wins over a current image (render order image → emoji).
+            if (project.icon_image_uri) await api.deleteProjectIcon(project.id);
             await api.updateProject(project.id, { icon: emoji });
             await refresh();
           }}
@@ -136,8 +144,7 @@ export function ProjectDisplaySection({
             await refresh();
           }}
           onResetToDefault={async () => {
-            if (project.icon_image_uri) await api.deleteProjectIcon(project.id);
-            if (project.icon) await api.updateProject(project.id, { icon: null });
+            await api.deleteProjectIcon(project.id);
             await refresh();
           }}
         />
@@ -152,7 +159,7 @@ export function ProjectDisplaySection({
               e.currentTarget.blur();
             }
           }}
-          className="min-w-0 flex-1 rounded-md border bg-transparent px-2.5 py-1.5 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className="h-9 min-w-0 flex-1 rounded-md border bg-transparent px-2.5 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
           aria-label="Project name"
         />
       </div>

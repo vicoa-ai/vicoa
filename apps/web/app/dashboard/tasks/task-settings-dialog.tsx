@@ -311,11 +311,15 @@ function ProjectRow({
   // Re-seed when the project is replaced by a server response.
   useEffect(() => setName(project.name), [project.name]);
 
-  // "Reset to default" drops any custom image AND emoji so the project falls
-  // back to the git-avatar seed (if the remote has one) or the generated square.
-  const resetIconToDefault = async () => {
+  // "Reset to default" → the generated square. The backend clears the image AND
+  // emoji and pins icon_source so it won't be re-seeded back into an image.
+  const resetIconToDefault = () => handlers.clearProjectIcon(project.id);
+
+  // Picking an emoji must win over a current image (render order is
+  // image → emoji), so drop the image first.
+  const setEmoji = async (emoji: string) => {
     if (project.icon_image_uri) await handlers.clearProjectIcon(project.id);
-    if (project.icon) await handlers.updateProject(project.id, { icon: null });
+    await handlers.updateProject(project.id, { icon: emoji });
   };
 
   const commitName = () => {
@@ -338,7 +342,7 @@ function ProjectRow({
           triggerClassName="size-7"
           iconClassName="size-5"
           onUploadImage={(file) => handlers.uploadProjectIcon(project.id, file)}
-          onSetEmoji={(emoji) => handlers.updateProject(project.id, { icon: emoji })}
+          onSetEmoji={setEmoji}
           onClearEmoji={() => handlers.updateProject(project.id, { icon: null })}
           onResetToDefault={resetIconToDefault}
         />

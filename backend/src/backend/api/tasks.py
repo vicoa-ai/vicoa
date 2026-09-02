@@ -79,6 +79,8 @@ def list_projects_endpoint(
             and project.git_remote_url
             and project.icon_source is None
             and not project.icon_image_uri
+            # An emoji is an explicit choice — never overwrite it with a git seed.
+            and not project.icon
         ):
             background_tasks.add_task(project_icons.seed_project_icon, project.id)
     return [ProjectResponse.model_validate(p) for p in projects]
@@ -282,7 +284,8 @@ def delete_project_icon_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ProjectResponse:
-    """Clear the image icon → falls back to emoji/generated; re-eligible for seed."""
+    """Reset the icon to the generated default (drops the image AND emoji, and
+    pins icon_source so the git seed does not re-add an image)."""
     project = task_queries.get_accessible_project(db, current_user.id, project_id)
     if project is None:
         raise HTTPException(
@@ -292,11 +295,9 @@ def delete_project_icon_endpoint(
         try:
             storage.delete_object(storage.project_icon_key(str(project_id)))
         except Exception:
-            # Orphaned S3 object is harmless; never fail the clear on it.
+            # Orphaned S3 object is harmless; never fail the reset on it.
             logger.warning("project icon S3 delete failed for %s", project_id)
-    updated = task_queries.set_project_icon(
-        db, current_user.id, project_id, icon_image_uri=None, icon_source=None
-    )
+    updated = task_queries.reset_project_icon(db, current_user.id, project_id)
     assert updated is not None
     return ProjectResponse.model_validate(updated)
 
