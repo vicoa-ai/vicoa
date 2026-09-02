@@ -55,6 +55,9 @@ import { useDesktopNotificationNavigation } from '@/lib/hooks/use-desktop-sessio
 import { DesktopConnectionBanner } from '@/components/dashboard/desktop-connection-banner';
 import { DesktopNotificationNudge } from '@/components/dashboard/desktop-notification-nudge';
 import { DesktopChromeProvider } from '@/components/dashboard/desktop-chrome-context';
+import { PluginSidebarItems } from '@/components/plugins/plugin-sidebar-items';
+import { PluginCatalogSync } from '@/components/plugins/plugin-catalog-sync';
+import { PluginTrustGate } from '@/components/plugins/plugin-trust-gate';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { DesktopTitlebarLead, useDesktopWindows } from '@/components/desktop/window-chrome';
 import type { AgentInstanceResponse } from '@/lib/backend-api';
@@ -491,6 +494,13 @@ function DashboardSidebar({
             <Layers2 className={cn("h-4 w-4", showSideBar && "mr-2")} />
             {showSideBar ? 'Skills' : null}
           </Button>
+
+          {/* Nav entries contributed by installed plugins (Tier 1). */}
+          <PluginSidebarItems
+            slot="nav"
+            collapsed={!showSideBar}
+            onNavigate={onMobileClose}
+          />
 
           {/* Workspace search across sessions, tasks, automations (also ⌘K). */}
           <Button
@@ -1069,6 +1079,10 @@ export default function DashboardLayout({
             their keep-alive provider wraps the whole dashboard shell. */}
         <TerminalSessionsProvider>
         <OnboardingModal />
+        {/* Plugin system (Tier 1): keep the registry in sync with each machine's
+            daemon, and surface the first-load trust prompt for new plugins. */}
+        <PluginCatalogSync />
+        <PluginTrustGate />
         <DashboardShell
           children={children}
           activeTab={activeTab}

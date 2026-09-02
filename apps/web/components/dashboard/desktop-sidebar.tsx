@@ -25,6 +25,7 @@ import { ReportIssueDialog } from '@/components/dashboard/report-issue-dialog';
 import { SidebarUpdateCallout } from '@/components/dashboard/sidebar-update-callout';
 import { comboKeycaps, getShortcutCombo } from '@/lib/desktop-shortcuts';
 import { SidebarSessions } from '@/components/dashboard/sidebar-sessions';
+import { PluginSidebarItems } from '@/components/plugins/plugin-sidebar-items';
 import { SetupChecklist } from '@/components/dashboard/setup-checklist';
 import { useTerminalSessions } from '@/components/terminal-pane/terminal-sessions';
 
@@ -259,6 +260,9 @@ export function DesktopSidebar({
           <BookOpen className="h-4 w-4 mr-1.5" />
           Skills
         </Button>
+
+        {/* Nav entries contributed by installed plugins (Tier 1). */}
+        <PluginSidebarItems slot="nav" />
 
         {/* Workspace search across sessions, tasks, automations (also ⌘K). */}
         <Button

@@ -5,6 +5,7 @@ import { GeistMono } from 'geist/font/mono';
 import Script from 'next/script';
 import { SWRConfig } from 'swr';
 import { ThemeProvider } from '@/components/theme-provider';
+import { PluginThemeStyle } from '@/components/plugins/plugin-theme-style';
 import { PostHogIdentify } from '@/components/posthog-identify';
 import { DesktopAuthGate } from '@/components/dashboard/desktop-auth-gate';
 import { DesktopAuthHandoff } from '@/components/dashboard/desktop-auth-handoff';
@@ -201,6 +202,9 @@ export default function RootLayout({
         />
         <PostHogIdentify />
         <ThemeProvider defaultTheme="dark">
+          {/* Injects token overrides for the active plugin theme (Tier 1); renders
+              nothing for the built-in dark/light/system themes. */}
+          <PluginThemeStyle />
           <SWRConfig value={{}}>
             {/* Desktop: mint the CLI key whenever a Supabase session appears in
                 local mode. Mounted here (not just in the dashboard layout) so it

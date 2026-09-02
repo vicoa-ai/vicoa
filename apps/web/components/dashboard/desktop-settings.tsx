@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { getDesktopConfig, type DesktopRuntimeConfig } from '@/lib/runtime-config';
+import { ThemeSelect } from '@/components/plugins/theme-select';
 import {
   checkForUpdates,
   downloadUpdate,
@@ -69,6 +70,7 @@ import {
 import { activeSettingsTab } from './desktop-settings-sidebar';
 import { ProvidersSettingsSection } from './providers-settings-section';
 import { MachinesSettingsSection } from './machines-settings-section';
+import { PluginsSettingsSection } from './plugins-settings-section';
 import { WorktreeSetupSection } from './worktree-setup-section';
 import { ProjectDisplaySection } from './project-display-section';
 import { useMobileSidebarHidden, setMobileSidebarHidden } from '@/lib/mobile-sidebar-pref';
@@ -95,6 +97,8 @@ export function DesktopSettings() {
             <ProvidersSettingsSection />
           ) : tab === 'machines' ? (
             <MachinesSettingsSection />
+          ) : tab === 'plugins' ? (
+            <PluginsSettingsSection />
           ) : tab === 'project' ? (
             <ProjectSection
               projectId={searchParams.get('projectId') ?? ''}
@@ -418,6 +422,17 @@ function GeneralSection() {
   return (
     <section>
       <SectionTitle>General</SectionTitle>
+      <div className="mt-8">
+        <h2 className="mb-3 text-sm text-foreground/90">Appearance</h2>
+        <SettingsCard>
+          <SettingsRow
+            title="Theme"
+            description="Base mode, or a theme installed from a plugin"
+          >
+            <ThemeSelect />
+          </SettingsRow>
+        </SettingsCard>
+      </div>
       <div className="mt-8">
         <h2 className="mb-3 text-sm text-foreground/90">Notifications</h2>
         <SettingsCard>

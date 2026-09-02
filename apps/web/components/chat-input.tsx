@@ -10,6 +10,11 @@ import { MentionTextarea } from '@/components/mention-textarea';
 import type { SlashCommand, AgentType } from '@/lib/constants/slash-commands';
 import { SessionConfigChips } from '@/components/dashboard/session-config-dropdown';
 import { AddToChatMenu } from '@/components/dashboard/add-to-chat-menu';
+import {
+  PluginComposerActions,
+  usePluginComposerMenuItems,
+} from '@/components/plugins/plugin-composer-actions';
+import type { ComposerContext } from '@/lib/plugins/composer';
 import { ChatUsageIndicator } from '@/components/chat-usage-indicator';
 import { fetchClaudeUsageWindows } from '@/lib/claude-usage';
 import type { SessionUsage } from '@/lib/backend-api';
@@ -508,6 +513,52 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
     requestAnimationFrame(() => fileInputRef.current?.click());
   }, []);
 
+  // ---- Plugin composer bridge (Tier 1) ----------------------------------
+  // The narrowed handle a plugin action gets: insert text at the caret, or open
+  // one of the built-in pickers. Nothing here exposes composer internals.
+  const insertAtCaret = useCallback(
+    (text: string) => {
+      const el = textareaRef.current;
+      const start = el?.selectionStart ?? message.length;
+      const end = el?.selectionEnd ?? start;
+      const next = message.slice(0, start) + text + message.slice(end);
+      setMessage(next);
+      autoResizeTextarea();
+      const pos = start + text.length;
+      requestAnimationFrame(() => {
+        const t = textareaRef.current;
+        if (t) {
+          t.focus({ preventScroll: true });
+          t.setSelectionRange(pos, pos);
+        }
+      });
+    },
+    [message, setMessage, autoResizeTextarea],
+  );
+
+  const openComposerPanel = useCallback(
+    (panel: 'mention' | 'commands' | 'files' | 'folder') => {
+      if (panel === 'mention') handleInsertMention();
+      else if (panel === 'commands') handleInsertSlash();
+      else if (panel === 'files') handleAddFiles();
+      else if (panel === 'folder') handleInsertFolder();
+    },
+    [handleInsertMention, handleInsertSlash, handleAddFiles, handleInsertFolder],
+  );
+
+  const composerCtx = useMemo<ComposerContext>(
+    () => ({
+      instanceId,
+      machineId,
+      cwd: projectPath ?? null,
+      agentType,
+      insertText: insertAtCaret,
+      openPanel: openComposerPanel,
+    }),
+    [instanceId, machineId, projectPath, agentType, insertAtCaret, openComposerPanel],
+  );
+  const pluginMenuItems = usePluginComposerMenuItems(composerCtx);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Handle slash command navigation
     if (showSlashCommands) {
@@ -785,6 +836,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
             onCommands={handleInsertSlash}
             hasSkills={hasSkills}
             disabled={disabled || !canSendMessage}
+            extraItems={pluginMenuItems}
           />
 
           {showControlSettings && (
@@ -818,6 +870,9 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
               Claude session refreshes the rate-limit windows from the
               machine's daemon (Codex limits stay in-band only). */}
           <ChatUsageIndicator usage={usage} fetchLimits={usageFetchLimits} />
+
+          {/* Standalone toolbar buttons contributed by plugins (Tier 1). */}
+          <PluginComposerActions ctx={composerCtx} disabled={disabled || !canSendMessage} />
 
         </div>
 
