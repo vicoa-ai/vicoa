@@ -10,7 +10,7 @@ import {
   ChevronRight,
   Kanban,
   MoreHorizontal,
-  SlidersHorizontal,
+  Settings,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -1154,7 +1154,7 @@ export function SidebarSessions({
                               className="cursor-pointer gap-2 text-xs"
                               onSelect={() => router.push(projectSettingsHref)}
                             >
-                              <SlidersHorizontal className="h-3.5 w-3.5" />
+                              <Settings className="h-3.5 w-3.5" />
                               Project settings
                             </DropdownMenuItem>
                           )}
@@ -1206,7 +1206,7 @@ export function SidebarSessions({
                               className="cursor-pointer gap-2 text-xs"
                               onSelect={() => router.push(projectSettingsHref)}
                             >
-                              <SlidersHorizontal className="h-3.5 w-3.5" />
+                              <Settings className="h-3.5 w-3.5" />
                               Project settings
                             </ContextMenuItem>
                           </ContextMenuContent>

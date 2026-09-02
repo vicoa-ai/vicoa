@@ -21,29 +21,32 @@ export function projectIconSrc(project: IconProject | null | undefined): string 
   return `/api/projects/${project.id}/icon${version}`;
 }
 
-// Generated fallback — a paseo-style initial-square: a stable hash of the
-// project's identity picks one of a fixed, theme-friendly palette. Deterministic
-// so a project keeps the same color across sessions and devices.
+// Generated fallback — an initial-square filled with one of a fixed palette,
+// picked by a stable hash of the project's identity. The palette is paseo's
+// `IDENTITY_COLORS` (packages/app/src/styles/identity-colors.ts): muted,
+// low-chroma tones tuned to one 4.2–4.8:1 contrast band against a white letter,
+// so the color *identifies* a project without shouting. Deterministic → a
+// project keeps its color across sessions and devices.
 export const PROJECT_AVATAR_PALETTE = [
-  '#ef4444', // red
-  '#f97316', // orange
-  '#eab308', // yellow
-  '#22c55e', // green
-  '#14b8a6', // teal
-  '#3b82f6', // blue
-  '#6366f1', // indigo
-  '#a855f7', // purple
-  '#ec4899', // pink
-  '#64748b', // slate
+  '#7a6aa8', // violet
+  '#3d7ea6', // sky
+  '#388068', // emerald
+  '#a4673a', // orange
+  '#b05c80', // pink
+  '#6a70b8', // indigo
+  '#368080', // teal
+  '#b06260', // red
+  '#8f7838', // amber
+  '#5179b0', // blue
 ] as const;
 
+// paseo's hashIdentityKey (hash*31 + charCode, unsigned) so the mapping matches.
 function hashString(seed: string): number {
   let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash << 5) - hash + seed.charCodeAt(i);
-    hash |= 0; // 32-bit
+  for (const character of seed) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
   }
-  return Math.abs(hash);
+  return hash;
 }
 
 /** Deterministic palette color for a project (seeded by id, then name). */

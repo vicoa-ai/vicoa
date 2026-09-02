@@ -415,7 +415,7 @@ export function ProjectIcon({
         src={src}
         alt=""
         aria-hidden="true"
-        className={cn('rounded-[0.28em] object-cover', box)}
+        className={cn('rounded-md object-cover', box)}
       />
     );
   }
@@ -432,16 +432,17 @@ export function ProjectIcon({
   }
 
   // A real (non-Inbox) project with a name and no icon gets a generated square:
-  // a light tint of the hashed palette color with the initial in the theme's
-  // foreground color (a soft, pastel feel — not a hard saturated fill).
+  // a muted paseo-palette fill with a white initial (the palette is tuned for a
+  // white letter on top). Same rounded-md as the image variant so every icon
+  // shape shares one corner radius.
   if (project && !project.is_inbox && project.name) {
     const color = projectAvatarColor(project.id ?? project.name);
     return (
       <span
         aria-hidden="true"
-        style={{ backgroundColor: `${color}1f` }}
+        style={{ backgroundColor: color }}
         className={cn(
-          'inline-flex items-center justify-center rounded-[0.28em] text-[10px] font-semibold leading-none text-foreground/80',
+          'inline-flex items-center justify-center rounded-md text-[10px] font-semibold leading-none text-white',
           box,
         )}
       >
