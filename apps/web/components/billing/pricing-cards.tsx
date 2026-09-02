@@ -52,19 +52,22 @@ export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
   const freeFeatures = [
     'Unlimited desktop app (Mac, Windows, Linux)',
     '20 messages/month on mobile',
-    'Run multiple agents in parallel',
-    'Claude Code, Codex, Cursor & more',
-    'Bring your own subscriptions & keys',
+    'Parallel agents, one git worktree each',
+    'Claude Code, Codex, OpenCode, Cursor & more',
+    'Bring your own keys & subscriptions',
+    'Git diffs, file editing & terminals',
     'Community support',
   ];
 
   const proFeatures = [
     'Everything in Free',
-    'Unlimited messages everywhere',
+    'Unlimited messages, everywhere',
+    'Unlimited sessions from any device',
+    'Remote connections to all your machines',
+    'Tasks, sub-tasks & automations',
+    'Live preview & talk to code',
     ...(isAnnual ? [`${trialDays}-day free trial`] : []),
-    'No commitment, cancel anytime',
-    'Priority support',
-    'Early feature access',
+    'Priority support & early access',
   ];
 
   const teamsFeatures = [

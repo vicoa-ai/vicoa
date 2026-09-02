@@ -1,4 +1,4 @@
-import { Check, Mail, Clock, Users, MessageSquare } from 'lucide-react';
+import { Check, Mail } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { FAQSection, type FAQItem } from '@/components/faq-section';
@@ -92,41 +92,6 @@ export default async function PricingPage() {
         </div>
       </section>
 
-      {/* Trust Indicators */}
-      <section className="py-16 sm:py-20 bg-muted/30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12">
-            <h2 className="text-2xl sm:text-3xl lg:text-4xl text-foreground mb-4">
-              Trusted by Developers Worldwide
-            </h2>
-            <p className="text-base sm:text-lg text-muted-foreground max-w-2xl mx-auto">
-              Join thousands of developers coding from anywhere
-            </p>
-          </div>
-
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8 max-w-4xl mx-auto">
-            <TrustIndicator
-              icon={<Users className="h-6 w-6" />}
-              title="15,000+"
-              description="Developers"
-              color="blue"
-            />
-            <TrustIndicator
-              icon={<MessageSquare className="h-6 w-6" />}
-              title="20,000+"
-              description="Projects created"
-              color="indigo"
-            />
-            <TrustIndicator
-              icon={<Clock className="h-6 w-6" />}
-              title="500,000+"
-              description="Messages sent"
-              color="green"
-            />
-          </div>
-        </div>
-      </section>
-
       {/* Features Comparison */}
       <section className="py-20 sm:py-24 lg:py-32">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -140,7 +105,7 @@ export default async function PricingPage() {
           </div>
 
           <div className="max-w-5xl mx-auto">
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto custom-scrollbar">
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="border-b-2 border-border">
@@ -151,22 +116,48 @@ export default async function PricingPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
+                  <ComparisonSection title="Usage" />
                   <ComparisonRow feature="Mobile messages / month" free="20" pro="Unlimited" enterprise="Unlimited" />
                   <ComparisonRow feature="Desktop app (Mac, Windows, Linux)" free="Unlimited" pro="Unlimited" enterprise="Unlimited" />
-                  <ComparisonRow feature="Claude Code, Codex, Gemini, OpenCode, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Web & mobile apps" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Talk to code" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Real-time notifications & cross-device sync" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Tasks Management" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Scheduling & automations" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="In-app file editing & git tools" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Web & mobile apps (iOS, Android)" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Agent sessions" free="Unlimited on desktop" pro="Unlimited everywhere" enterprise="Unlimited everywhere" />
+
+                  <ComparisonSection title="Agents & models" />
+                  <ComparisonRow feature="Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="300+ models via OpenRouter" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Bring your own subscriptions & API keys (no usage markup)" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Parallel sessions, each on its own git worktree" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Permission modes, thinking toggle & mid-session model switch" free={true} pro={true} enterprise={true} />
+
+                  <ComparisonSection title="Work from anywhere" />
+                  <ComparisonRow feature="Remote connections to your machines" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Start, resume & interrupt sessions from any device" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Real-time cross-device sync" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Push notifications & one-tap approvals" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Talk to code (voice dictation)" free={true} pro={true} enterprise={true} />
+
+                  <ComparisonSection title="Plan & automate" />
+                  <ComparisonRow feature="Tasks: board & list views, sub-tasks, labels" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Scheduled automations & run history" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Session organization: rename, pin, group & filter" free={true} pro={true} enterprise={true} />
+
+                  <ComparisonSection title="Code & review" />
+                  <ComparisonRow feature="Git diffs, commit history & in-place file editing" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Built-in terminals (local, remote & web)" free={true} pro={true} enterprise={true} />
                   <ComparisonRow feature="Live preview & workspace search" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Slash commands & @ file search" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Image & file attachments" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Context & rate-limit usage insights" free={true} pro={true} enterprise={true} />
+
+                  <ComparisonSection title="Support & teams" />
                   <ComparisonRow feature="Support" free="Community" pro="Priority" enterprise="Dedicated" />
                   <ComparisonRow feature="Early feature access" free={false} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Centralized billing & admin portal" free={false} pro={false} enterprise={true} />
+                  <ComparisonRow feature="SSO & SCIM provisioning" free={false} pro={false} enterprise={true} />
                   <ComparisonRow feature="On-premise deployment" free={false} pro={false} enterprise={true} />
                   <ComparisonRow feature="Usage analytics" free={false} pro={false} enterprise={true} />
                   <ComparisonRow feature="Advanced security" free={false} pro={false} enterprise={true} />
-                  {/* <ComparisonRow feature="SLA guarantee" free={false} pro={false} enterprise={true} /> */}
+                  <ComparisonRow feature="SLA guarantee" free={false} pro={false} enterprise={true} />
                 </tbody>
               </table>
             </div>
@@ -218,32 +209,16 @@ export default async function PricingPage() {
   );
 }
 
-function TrustIndicator({
-  icon,
-  title,
-  description,
-  color,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  color: 'blue' | 'indigo' | 'green' | 'purple';
-}) {
-  const colorClasses = {
-    blue: 'bg-blue-100 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400',
-    indigo: 'bg-indigo-100 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400',
-    green: 'bg-green-100 dark:bg-green-900/20 text-green-600 dark:text-green-400',
-    purple: 'bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400',
-  };
-
+function ComparisonSection({ title }: { title: string }) {
   return (
-    <div className="text-center">
-      <div className={`inline-flex items-center justify-center h-14 w-14 rounded-2xl ${colorClasses[color]} mb-4`}>
-        {icon}
-      </div>
-      <h3 className="text-2xl sm:text-3xl text-foreground mb-2">{title}</h3>
-      <p className="text-sm text-muted-foreground">{description}</p>
-    </div>
+    <tr className="bg-muted/40">
+      <td
+        colSpan={4}
+        className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+      >
+        {title}
+      </td>
+    </tr>
   );
 }
 
