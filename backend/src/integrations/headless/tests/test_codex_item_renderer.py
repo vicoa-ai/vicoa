@@ -12,10 +12,12 @@ from __future__ import annotations
 from integrations.headless.codex.item_renderer import render_item
 
 
-def test_reasoning_item_uses_brain_prefix_with_summary():
+def test_reasoning_item_uses_reasoning_prefix_with_summary():
     # Per Codex 0.131.0 schema, reasoning carries `summary` and `content`
     # as string arrays — NOT a single `text` field (the plan was wrong).
-    # Renderer prefers summary as the short-form rationale.
+    # Renderer prefers summary as the short-form rationale. The row is tagged
+    # message_metadata.thinking upstream and rendered as a collapsed card; the
+    # plain-text "Reasoning:" label (no emoji) is only the pre-card fallback.
     out = render_item(
         {
             "type": "reasoning",
@@ -24,7 +26,8 @@ def test_reasoning_item_uses_brain_prefix_with_summary():
         }
     )
     assert out is not None
-    assert out.startswith("🧠 Reasoning:\n")
+    assert out.startswith("Reasoning:\n")
+    assert "🧠" not in out
     assert "considered options A and B" in out
     # Content not surfaced when summary is present (avoids spammy long
     # reasoning blobs in the chat surface).
@@ -41,7 +44,7 @@ def test_reasoning_item_falls_back_to_content_when_no_summary():
 
 
 def test_reasoning_item_with_no_summary_or_content_is_dropped():
-    # Empty reasoning items would render to bare "🧠 Reasoning:\n" — useless
+    # Empty reasoning items would render to bare "Reasoning:\n" — useless
     # noise in the chat surface. Drop them instead.
     assert render_item({"type": "reasoning"}) is None
     assert render_item({"type": "reasoning", "summary": [], "content": []}) is None

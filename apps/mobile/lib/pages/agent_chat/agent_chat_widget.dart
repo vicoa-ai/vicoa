@@ -148,6 +148,11 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
   // group, unlike a first-message id.
   final Set<String> _expandedSubagentGroups = {};
 
+  // Model-reasoning ("thinking") cards expanded by the user. Keyed by message
+  // id — each reasoning message is its own standalone card (not grouped), so
+  // the message id is a stable, unique key that survives row recycling.
+  final Set<String> _expandedThinkingCards = {};
+
   // Anchor-at-first-occurrence bucketing of sub-agent messages by tool_use_id,
   // recomputed alongside the other message metadata caches (see
   // _rebuildMessageMetadataCache). Unlike collapse-tool-use's consecutive-run
@@ -1273,6 +1278,50 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       );
     }
 
+    // Model reasoning (Claude ThinkingBlock / Codex reasoning) renders as its
+    // own standalone collapsed "Thinking" card — its own bordered box, spaced
+    // like a collapsed tool run. Checked here, ahead of the empty-content
+    // early return, for symmetry with the sub-agent branch (a reasoning
+    // message always has content, so this ordering is belt-and-braces).
+    if (_isThinkingMessage(messageIndex)) {
+      final groupKey = messageId.isNotEmpty ? messageId : 'idx_$messageIndex';
+      final agentType = _model.instanceData?['agent_type_name'] ??
+          widget.instanceData?['agent_type_name'];
+
+      return RepaintBoundary(
+        child: Container(
+          // A thinking card is always its own bordered box; own its gap on both
+          // sides like the collapsed tool-run and sub-agent branches.
+          margin: chatBlockMargin(
+            followsBorderedBlock: followsBorderedBlock,
+            precedesSubagentGroup: precedesSubagentGroup,
+            precedesBorderedBlock: precedesBorderedBlock,
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Flexible(
+                child: custom_widgets.ThinkingGroup(
+                  content: content,
+                  expanded: _expandedThinkingCards.contains(groupKey),
+                  onBeforeToggle: () => _pinListItemPosition(messageIndex),
+                  onToggle: () {
+                    safeSetState(() {
+                      if (!_expandedThinkingCards.remove(groupKey)) {
+                        _expandedThinkingCards.add(groupKey);
+                      }
+                    });
+                  },
+                  agentTypeName: agentType,
+                  filterProjectRoot: _model.filterProjectRootFromContent,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     // Only skip the message entirely when content is empty AND there is
     // neither an AskUserQuestion panel nor an image attachment to render.
     // Both live in message_metadata, so they can be present even when the
@@ -1569,6 +1618,17 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
   /// precomputed [_subagentGrouping] (see _rebuildMessageMetadataCache).
   bool _isSubagentMessage(int index) => _subagentGrouping.isSubagentMessage(index);
 
+  /// Whether message[index] is model reasoning tagged with
+  /// `message_metadata.thinking` — rendered as a standalone collapsed
+  /// "Thinking" card. Sub-agent-tagged reasoning is excluded (owned by the
+  /// sub-agent group, which renders its own children), so this stays a clean
+  /// "top-level thinking card" predicate everywhere it's used.
+  bool _isThinkingMessage(int index) {
+    if (index < 0 || index >= _model.messages.length) return false;
+    if (_isSubagentMessage(index)) return false;
+    return custom_widgets.isThinkingMessage(_model.messages[index]);
+  }
+
   /// Whether the block VISIBLE above [index] is a bordered block — a tool-use
   /// row, a collapsed tool-use run, or a sub-agent group. Those blocks own the
   /// [kChatBlockGap] beneath them, so the block below adds no top margin and
@@ -1584,6 +1644,9 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
   bool _followsBorderedBlock(int index) {
     for (int i = index; i >= 0; i--) {
       if (_isSubagentMessage(i)) return true;
+      // A thinking card is a bordered block too — it draws its box right at its
+      // own index, so the visible neighbour above is that box.
+      if (_isThinkingMessage(i)) return true;
       if (_rendersNothing(i)) continue;
       final m = _model.messages[i];
       final sender = m['sender_type']?.toString().toLowerCase() ?? '';
@@ -1642,6 +1705,8 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     final next = _nextVisibleIndex(index);
     if (next == null) return false;
     if (_isSubagentRunStart(next)) return true;
+    // A thinking card below is bordered too (wide bordered-to-bordered gap).
+    if (_isThinkingMessage(next)) return true;
     final m = _model.messages[next];
     final sender = m['sender_type']?.toString().toLowerCase() ?? '';
     if (sender == 'user' || sender == 'human') return false;

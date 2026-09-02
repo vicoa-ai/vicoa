@@ -42,7 +42,12 @@ def _render_reasoning(item: Dict[str, Any]) -> Optional[str]:
     Prefer ``summary`` for the dashboard surface — it's the model's
     short-form rationale. Fall back to ``content`` if no summary is present.
     Return ``None`` (skip) when both are empty so we don't write empty
-    "🧠 Reasoning:\\n" rows.
+    "Reasoning:\\n" rows.
+
+    The row is tagged ``message_metadata.thinking`` upstream (see
+    ``codex_app_server._handle_item``) so clients render it as a collapsed
+    "Thinking" card with a lightbulb icon. The plain-text ``Reasoning:`` label
+    (no emoji) is only the pre-card fallback for older clients.
     """
     summary_parts = item.get("summary") or []
     content_parts = item.get("content") or []
@@ -52,7 +57,7 @@ def _render_reasoning(item: Dict[str, Any]) -> Optional[str]:
     body = "\n".join(p for p in parts if p)
     if not body:
         return None
-    return "🧠 Reasoning:\n" + body
+    return "Reasoning:\n" + body
 
 
 def _render_command_execution(item: Dict[str, Any]) -> str:

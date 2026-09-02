@@ -33,6 +33,7 @@ from integrations.headless.acp_client import (
     ACPMethodNotFound,
     ACPResponse,
 )
+from integrations.headless.thinking import build_thinking_metadata
 from integrations.headless.session_lifecycle import (
     WRAPPER_STOP_STATUSES,
     instance_update_requests_stop,
@@ -265,6 +266,11 @@ class ACPWrapperBase(ABC):
         # real cause to stderr (e.g. auth errors) then reach the user verbatim.
         self._turn_stderr: deque[str] = deque(maxlen=20)
         self._assistant_chunk_buffer: str = ""
+        # Model reasoning streamed on the ACP ``agent_thought_chunk`` channel.
+        # Accumulated separately from narration and flushed as its own collapsed
+        # "thinking" card (metadata-tagged) ahead of the answer — see
+        # ``_flush_thought_buffer``.
+        self._thought_chunk_buffer: str = ""
         self._assistant_chunk_first_update_at: float = 0.0
         self._assistant_chunk_last_update_at: float = 0.0
         self._assistant_chunk_flush_after_seconds: float = 1.0
@@ -1544,6 +1550,7 @@ class ACPWrapperBase(ABC):
         # status back to ACTIVE.
         self._awaiting_after_next_agent_output = False
         self._assistant_chunk_buffer = ""
+        self._thought_chunk_buffer = ""
         self._drop_stream_output_until_next_prompt = True
 
         try:
@@ -2124,7 +2131,13 @@ class ACPWrapperBase(ABC):
             self._turn_produced_output = True
 
         if update_type == "agent_thought_chunk":
-            # Hide internal model reasoning from user-facing UI.
+            # Model reasoning: accumulate and surface as a collapsed "thinking"
+            # card (flushed ahead of the answer), rather than hiding it or
+            # letting it flood the transcript as flat text.
+            content = update.get("content")
+            for text in self._extract_text_fragments_from_content_payload(content):
+                if text:
+                    self._thought_chunk_buffer += text
             return
 
         if update_type == "current_mode_update":
@@ -2213,7 +2226,7 @@ class ACPWrapperBase(ABC):
                 rendered = "\n\n".join(part for part in rendered_parts if part.strip())
                 signature = rendered.strip()
                 if signature and signature != self._last_tool_change_signature:
-                    self._append_assistant_chunk_block(rendered)
+                    self._emit_acp_tool_card(update, rendered)
                     self._last_tool_change_signature = signature
                 return
 
@@ -2240,9 +2253,8 @@ class ACPWrapperBase(ABC):
             ):
                 extracted_chunks.append(change_preview)
 
-            for chunk in extracted_chunks:
-                if chunk:
-                    self._append_assistant_chunk_block(chunk)
+            body = "\n\n".join(chunk for chunk in extracted_chunks if chunk)
+            self._emit_acp_tool_card(update, body)
 
             return
 
@@ -2377,8 +2389,14 @@ class ACPWrapperBase(ABC):
                 return str(value)
         return str(value)
 
-    def _forward_agent_text(self, text: str) -> None:
-        """Send assistant text output to Vicoa."""
+    def _forward_agent_text(
+        self, text: str, message_metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Send assistant text output to Vicoa.
+
+        ``message_metadata`` rides through unchanged — used to tag a reasoning
+        message with ``thinking`` so clients render it as a collapsed card.
+        """
         if not text or not self.vicoa_client:
             return
         text = self._sanitize_agent_text(text)
@@ -2391,6 +2409,7 @@ class ACPWrapperBase(ABC):
                 agent_type=self.config.agent_type,
                 agent_instance_id=self.config.agent_instance_id,
                 requires_user_input=False,
+                message_metadata=message_metadata,
             )
 
             if response and hasattr(response, "message_id"):
@@ -2407,6 +2426,71 @@ class ACPWrapperBase(ABC):
             raise
         except Exception as e:
             self.log(f"[ERROR] Failed to send message to Vicoa: {e}")
+
+    #: ACP ``kind`` enum → a clean, hyphen-free tool name for the card header.
+    #: The name MUST stay hyphen-free: the clients' tool-name parser splits the
+    #: header on the first " - " (``tool-use-parsing.ts`` / ``_isToolUseMessage``),
+    #: so a hyphenated name (e.g. a path like ``pricing-cards.tsx``) would be
+    #: severed mid-filename. The (possibly hyphenated) title/path rides in the
+    #: arg slot after " - ", which the parser captures whole.
+    _ACP_KIND_TO_TOOL = {
+        "read": "Read",
+        "edit": "Edit",
+        "delete": "Delete",
+        "move": "Move",
+        "search": "Search",
+        "execute": "Execute",
+        "fetch": "Fetch",
+        "think": "Think",
+        "switch_mode": "Mode",
+    }
+
+    def _acp_tool_header(self, update: Dict[str, Any]) -> str:
+        """A "🔧 Using tool: <name>[ - `<detail>`]" header for a tool_call_update.
+
+        The web/mobile clients collapse any message whose content starts with
+        this prefix into a tool card, exactly as Claude/Codex tool calls render.
+        Crucially the NAME (before the first " - ") must not contain a hyphen,
+        or the client splits a filename mid-way — ACP agents put the file path
+        in ``title`` (e.g. ``apps/web/…/pricing-cards.tsx``), which is why the
+        name comes from the clean ``kind`` enum and the title/path goes in the
+        arg slot.
+        """
+        kind = str(update.get("kind") or "").strip().lower()
+        title = str(update.get("title") or "").strip()
+        name = self._ACP_KIND_TO_TOOL.get(kind)
+        detail = ""
+        if name:
+            detail = title or self._extract_tool_target_file(update)
+        elif title and "-" not in title and "*" not in title:
+            # Unknown kind, but a hyphen/asterisk-free title is safe as the name.
+            name = title
+        else:
+            # Unknown kind + a path-like/hyphenated title: keep the name generic
+            # so the client never severs a filename; show the title as the arg.
+            name = "Tool"
+            detail = title or self._extract_tool_target_file(update)
+        if detail:
+            return f"🔧 Using tool: {name} - `{detail}`"
+        return f"🔧 Using tool: {name}"
+
+    def _emit_acp_tool_card(self, update: Dict[str, Any], body: str) -> None:
+        """Send a tool_call_update's output as its own collapsed tool card.
+
+        Previously tool output was appended into the shared assistant-narration
+        buffer (``_append_assistant_chunk_block``), so raw results — file reads,
+        grep hits, "File not found", diffs — landed inline as flat text and
+        flooded the transcript. Instead we flush any pending reasoning + narration
+        (so this card is its own message and its content leads with the tool
+        prefix the clients detect), then forward a "Using tool:" card. The model's
+        own narration still streams as normal text; only tool *output* is carded.
+        """
+        body = (body or "").strip()
+        if not body:
+            return
+        self._flush_assistant_chunk_buffer()
+        header = self._acp_tool_header(update)
+        self._forward_agent_text(f"{header}\n{body}")
 
     def _set_agent_status(self, status: str) -> None:
         """Best-effort status update for current agent instance."""
@@ -2454,8 +2538,28 @@ class ACPWrapperBase(ABC):
             except Exception as e:
                 self.log(f"[ERROR] Failed to request user input: {e}")
 
+    def _flush_thought_buffer(self) -> None:
+        """Flush buffered model reasoning as a collapsed "thinking" card.
+
+        Sent ahead of the narration/answer (it's flushed at the top of
+        ``_flush_assistant_chunk_buffer`` and before every tool card), tagged
+        with ``message_metadata.thinking`` so clients render it collapsed. Runs
+        even when there is no narration this turn, so a reasoning-only turn still
+        surfaces its card.
+        """
+        text = self._thought_chunk_buffer.strip()
+        self._thought_chunk_buffer = ""
+        if not text:
+            return
+        self._forward_agent_text(
+            text, message_metadata=build_thinking_metadata(self.config.agent_type)
+        )
+
     def _flush_assistant_chunk_buffer(self) -> None:
         """Flush buffered assistant chunks as one user-visible message."""
+        # Any pending reasoning goes out first, so the thinking card precedes
+        # the answer it reasoned toward.
+        self._flush_thought_buffer()
         if not self._assistant_chunk_buffer:
             return
 

@@ -118,10 +118,15 @@ def _build_wrapper(
     wrapper._turn_stderr = deque(maxlen=20)
     wrapper._drop_stream_output_until_next_prompt = False
     wrapper._assistant_chunk_buffer = ""
+    wrapper._thought_chunk_buffer = ""
     wrapper._assistant_chunk_first_update_at = 0.0
     wrapper._assistant_chunk_last_update_at = 0.0
     wrapper._show_tool_updates = False
     wrapper._last_tool_change_signature = None
+    wrapper._tool_output_max_lines = 80
+    wrapper._tool_output_max_chars = 4000
+    wrapper._tool_output_preview_lines = 24
+    wrapper._tool_output_preview_chars = 1400
     return wrapper
 
 
@@ -882,6 +887,152 @@ def test_available_commands_update_is_retained() -> None:
     )
 
     assert wrapper.available_commands == [{"name": "plan", "description": "Plan"}]
+
+
+def test_tool_call_update_renders_as_collapsed_tool_card() -> None:
+    """A completed tool_call_update surfaces as its own "Using tool:" card
+    message (which web/mobile collapse), not glued inline into the narration
+    buffer — so raw tool output stops flooding the transcript as flat text."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+    wrapper.session_id = _SESSION_ID
+    wrapper._show_tool_updates = False
+
+    wrapper._handle_session_update(
+        {
+            "sessionId": _SESSION_ID,
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "status": "completed",
+                "kind": "read",
+                "title": "Read",
+                "content": [{"type": "text", "text": "Found 3 matches"}],
+            },
+        }
+    )
+
+    contents = [c for c in _feedback_texts(vc) if c]
+    cards = [c for c in contents if c.startswith("🔧 Using tool:")]
+    assert len(cards) == 1
+    assert "Read" in cards[0].splitlines()[0]
+    assert "Found 3 matches" in cards[0]
+    # Nothing was left glued into the narration buffer.
+    assert wrapper._assistant_chunk_buffer == ""
+
+
+def test_tool_card_flushes_pending_narration_first() -> None:
+    """Narration buffered before a tool result flushes as its own message so
+    the tool card leads with the "Using tool:" prefix the clients detect."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+    wrapper.session_id = _SESSION_ID
+    wrapper._show_tool_updates = False
+
+    wrapper._handle_session_update(
+        {
+            "sessionId": _SESSION_ID,
+            "update": {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": "Let me read the file."},
+            },
+        }
+    )
+    wrapper._handle_session_update(
+        {
+            "sessionId": _SESSION_ID,
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "status": "completed",
+                "kind": "read",
+                "title": "Read",
+                "content": [{"type": "text", "text": "line 1"}],
+            },
+        }
+    )
+
+    contents = [c for c in _feedback_texts(vc) if c]
+    # Narration first (plain), then the tool card — two separate messages.
+    assert contents[0] == "Let me read the file."
+    assert contents[1].startswith("🔧 Using tool:")
+    assert "line 1" in contents[1]
+
+
+def test_tool_card_name_is_hyphen_safe_for_paths() -> None:
+    """ACP agents put the file path in ``title``; the card NAME must come from
+    the clean ``kind`` enum so a hyphenated filename (``pricing-cards.tsx``)
+    isn't severed by the clients' "<name> - <arg>" split."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+    wrapper.session_id = _SESSION_ID
+    wrapper._show_tool_updates = False
+
+    wrapper._handle_session_update(
+        {
+            "sessionId": _SESSION_ID,
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "status": "completed",
+                "kind": "read",
+                "title": "apps/web/components/billing/pricing-cards.tsx",
+                "content": [{"type": "text", "text": "file body"}],
+            },
+        }
+    )
+
+    card = next(c for c in _feedback_texts(vc) if c.startswith("🔧 Using tool:"))
+    first_line = card.splitlines()[0]
+    # The name segment (before the first " - ") is the clean kind — no hyphen,
+    # so the client can't sever the filename.
+    name_seg = first_line.split(" - ", 1)[0]
+    assert name_seg == "🔧 Using tool: Read"
+    # The full hyphenated path survives intact in the arg slot.
+    assert "pricing-cards.tsx" in first_line
+
+
+def _sent_calls(vc: MagicMock) -> list[tuple[str, object]]:
+    return [
+        (call.kwargs.get("content", ""), call.kwargs.get("message_metadata"))
+        for call in vc.send_message.call_args_list
+    ]
+
+
+def test_agent_thought_chunk_becomes_thinking_card() -> None:
+    """Model reasoning on the thought channel is surfaced as a metadata-tagged
+    thinking card, emitted BEFORE the answer it reasoned toward."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+    wrapper.session_id = _SESSION_ID
+
+    wrapper._handle_session_update(
+        {
+            "sessionId": _SESSION_ID,
+            "update": {
+                "sessionUpdate": "agent_thought_chunk",
+                "content": {"type": "text", "text": "weighing the options"},
+            },
+        }
+    )
+    wrapper._handle_session_update(
+        {
+            "sessionId": _SESSION_ID,
+            "update": {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": "Here is the answer."},
+            },
+        }
+    )
+    wrapper._flush_assistant_chunk_buffer()
+
+    calls = _sent_calls(vc)
+    tagged = [
+        content for content, md in calls if isinstance(md, dict) and "thinking" in md
+    ]
+    assert tagged == ["weighing the options"]
+    # The thinking card precedes the plain answer.
+    contents = [content for content, _ in calls]
+    assert contents.index("weighing the options") < contents.index(
+        "Here is the answer."
+    )
 
 
 # ---------------------------------------------------------------------------

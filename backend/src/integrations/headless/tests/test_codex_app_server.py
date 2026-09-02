@@ -1513,3 +1513,55 @@ async def test_interrupt_without_active_turn_settles_awaiting_input():
     assert vicoa_client.status_calls[-1]["status"] == "AWAITING_INPUT"
     # No turn to interrupt, so nothing should have gone out on the wire.
     assert not session_to_codex.requests_by_method["turn/interrupt"]
+
+
+# ---------------------------------------------------------------------------
+# Reasoning items surface as a collapsed "thinking" card: the rendered text
+# still rides in ``content`` (so pre-card clients degrade to inline text) but
+# ``message_metadata.thinking`` marks the row so clients wrap it collapsed.
+# ---------------------------------------------------------------------------
+
+
+def _idle_session() -> tuple[CodexAppServerSession, FakeAsyncVicoaClient]:
+    """A session wired to a fake vicoa client, with no turn started — enough
+    to exercise ``_handle_item`` directly."""
+    session_to_codex = FakeCodexPipe()
+    codex_to_session = FakeCodexPipe()
+    transport = CodexTransport(reader=codex_to_session, writer=session_to_codex)
+    vicoa_client = FakeAsyncVicoaClient()
+    session = CodexAppServerSession(
+        vicoa_client=vicoa_client,
+        instance_id="inst-thinking",
+        cwd="/tmp/codex-thinking-cwd",
+        transport=transport,
+    )
+    return session, vicoa_client
+
+
+async def test_reasoning_item_is_tagged_as_thinking():
+    session, vicoa_client = _idle_session()
+
+    await session._handle_item({"type": "reasoning", "summary": ["considered A and B"]})
+
+    assert len(vicoa_client.sent_messages) == 1
+    sent = vicoa_client.sent_messages[0]
+    assert sent["message_metadata"] == {"thinking": {"source": "codex"}}
+    # Rendered text still rides in content for pre-card clients.
+    assert "considered A and B" in sent["content"]
+
+
+async def test_agent_message_item_is_not_tagged_as_thinking():
+    session, vicoa_client = _idle_session()
+
+    await session._handle_item({"type": "agentMessage", "text": "hello there"})
+
+    assert len(vicoa_client.sent_messages) == 1
+    assert vicoa_client.sent_messages[0]["message_metadata"] is None
+
+
+async def test_empty_reasoning_item_is_dropped():
+    session, vicoa_client = _idle_session()
+
+    await session._handle_item({"type": "reasoning", "summary": [], "content": []})
+
+    assert vicoa_client.sent_messages == []
