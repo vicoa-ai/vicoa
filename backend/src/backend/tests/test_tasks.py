@@ -1036,13 +1036,21 @@ class TestProjectAutoCreate:
         machine_b = _make_machine(test_db, test_user.id, display_name="B")
         remote = "git@github.com:vicoa-ai/alpha.git"
         pid_a = resolve_or_create_project_id_for_session(
-            test_db, test_user.id, machine_a.id, "/a/alpha",
-            git_remote_url=remote, repo_root="/a/alpha",
+            test_db,
+            test_user.id,
+            machine_a.id,
+            "/a/alpha",
+            git_remote_url=remote,
+            repo_root="/a/alpha",
         )
         test_db.commit()
         pid_b = resolve_or_create_project_id_for_session(
-            test_db, test_user.id, machine_b.id, "/b/alpha",
-            git_remote_url=remote, repo_root="/b/alpha",
+            test_db,
+            test_user.id,
+            machine_b.id,
+            "/b/alpha",
+            git_remote_url=remote,
+            repo_root="/b/alpha",
         )
         test_db.commit()
         assert pid_a == pid_b
@@ -1061,7 +1069,10 @@ class TestProjectAutoCreate:
 
         machine = _make_machine(test_db, test_user.id)
         pid = resolve_or_create_project_id_for_session(
-            test_db, test_user.id, machine.id, "/home/nick/scratch",
+            test_db,
+            test_user.id,
+            machine.id,
+            "/home/nick/scratch",
             home_dir="/home/nick",
         )
         test_db.commit()
@@ -1075,7 +1086,11 @@ class TestProjectAutoCreate:
 
         machine = _make_machine(test_db, test_user.id)
         pid = resolve_or_create_project_id_for_session(
-            test_db, test_user.id, machine.id, "/home/nick", home_dir="/home/nick",
+            test_db,
+            test_user.id,
+            machine.id,
+            "/home/nick",
+            home_dir="/home/nick",
         )
         test_db.commit()
         assert pid is None
@@ -1102,7 +1117,10 @@ class TestProjectAutoCreate:
         test_db.commit()
 
         pid = resolve_or_create_project_id_for_session(
-            test_db, test_user.id, machine.id, "/home/nick/alpha/src/lib",
+            test_db,
+            test_user.id,
+            machine.id,
+            "/home/nick/alpha/src/lib",
         )
         test_db.commit()
         assert pid == project.id
