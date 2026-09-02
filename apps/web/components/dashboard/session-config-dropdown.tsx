@@ -162,7 +162,7 @@ export function ChipDropdown({
       >
         {/* Dimmed panel label, pinned while the list scrolls. Left padding
             matches the items' px-3 so it lines up with their content column. */}
-        <div className="sticky top-0 z-10 bg-[#2D2D2D] px-3 pb-1.5 pt-1 text-xs text-muted-foreground/60">
+        <div className="sticky top-0 z-10 bg-menu px-3 pb-1.5 pt-1 text-xs text-muted-foreground/60">
           {title}
         </div>
         {children(() => setOpen(false))}

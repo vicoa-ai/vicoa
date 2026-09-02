@@ -94,7 +94,7 @@ export function buildSessionActions({
     actions.push({
       key: 'copy-id',
       icon: copied ? Check : Copy,
-      iconClassName: copied ? 'text-emerald-500' : undefined,
+      iconClassName: copied ? 'text-success' : undefined,
       label: copied ? 'Copied ID' : 'Copy ID',
       onSelect: onCopyId,
     });

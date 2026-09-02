@@ -6,7 +6,7 @@ import { ContextMenu as ContextMenuPrimitive } from 'radix-ui';
 import { cn } from '@/lib/utils';
 
 /** Minimal shadcn-style wrapper over Radix ContextMenu, styled to match
-    DropdownMenuContent (#2D2D2D surface, same item hover tokens). */
+    DropdownMenuContent (--menu surface, same item hover tokens). */
 
 const ContextMenu = ContextMenuPrimitive.Root;
 const ContextMenuTrigger = ContextMenuPrimitive.Trigger;
@@ -20,7 +20,7 @@ function ContextMenuContent({
       <ContextMenuPrimitive.Content
         data-slot="context-menu-content"
         className={cn(
-          'bg-[#2D2D2D] text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 z-50 min-w-[8rem] overflow-hidden rounded-md border p-1 shadow-md',
+          'bg-menu text-menu-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 z-50 min-w-[8rem] overflow-hidden rounded-md border p-1 shadow-md',
           className,
         )}
         {...props}
@@ -72,7 +72,7 @@ function ContextMenuSubContent({
       <ContextMenuPrimitive.SubContent
         data-slot="context-menu-sub-content"
         className={cn(
-          'bg-[#2D2D2D] text-popover-foreground z-50 min-w-[8rem] overflow-hidden rounded-md border p-1 shadow-md',
+          'bg-menu text-menu-foreground z-50 min-w-[8rem] overflow-hidden rounded-md border p-1 shadow-md',
           className,
         )}
         {...props}

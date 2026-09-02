@@ -172,7 +172,7 @@ export function DesktopSidebar({
     <aside
       ref={asideRef}
       style={{ width }}
-      className="relative z-10 flex h-full shrink-0 flex-col border-r border-border bg-[#272726] font-mono text-sm"
+      className="relative z-10 flex h-full shrink-0 flex-col border-r border-border bg-surface-nav font-mono text-sm"
     >
       {/* Titlebar header (drag region). Reserves space for the macOS traffic
           lights, shows the brand, and collapses the panel. */}

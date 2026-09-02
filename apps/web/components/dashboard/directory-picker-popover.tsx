@@ -62,7 +62,7 @@ export function DirectoryPickerPopover({
         // editor, AND lift it visually (thicker bordered, stronger shadow)
         // so it clearly sits apart from the trigger card rather than blending
         // in. Opens downward, flipping up on collision (Radix avoidCollisions).
-        className="w-[max(var(--radix-popover-trigger-width),18rem)] rounded-xl p-3 space-y-3 border border-foreground/15 bg-[#2D2D2D] shadow-xl"
+        className="w-[max(var(--radix-popover-trigger-width),18rem)] rounded-xl p-3 space-y-3 border border-foreground/15 bg-menu shadow-xl"
         // Radix's default auto-focus triggers the browser's "select-all"
         // behavior on inputs containing existing text. Prevent it and place
         // the cursor at the end instead — the user is almost always editing,
@@ -97,8 +97,8 @@ export function DirectoryPickerPopover({
               }
             }}
             // Borderless: the field reads as editable through its darker
-            // inset surface against the #2D2D2D popover instead of a border.
-            className="font-mono text-xs md:text-xs h-8 rounded-md border-0 bg-black/25 dark:bg-black/25 shadow-none focus-visible:ring-0 focus-visible:border-0"
+            // inset surface against the --menu popover instead of a border.
+            className="font-mono text-xs md:text-xs h-8 rounded-md border-0 bg-foreground/5 shadow-none focus-visible:ring-0 focus-visible:border-0"
           />
         </div>
 

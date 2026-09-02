@@ -981,7 +981,7 @@ export function SidebarSessions({
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="end"
-                className="w-48 border-white/10 bg-[#333331] font-mono text-[11px]"
+                className="w-48 border-menu-border bg-menu-elevated font-mono text-[11px]"
               >
                 {/* Nested filter menu: each row is a dimension with its current
                     value; the options live in a submenu. Single-choice picks
@@ -1318,7 +1318,7 @@ function FilterSubRow({
         <span className="flex-1 text-foreground/90">{label}</span>
         <span className="max-w-24 truncate font-normal text-muted-foreground">{value}</span>
       </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent className="w-40 border-white/10 bg-[#333331] font-mono text-[11px]">
+      <DropdownMenuSubContent className="w-40 border-menu-border bg-menu-elevated font-mono text-[11px]">
         {children}
       </DropdownMenuSubContent>
     </DropdownMenuSub>

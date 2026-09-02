@@ -200,7 +200,7 @@ export function PluginsSettingsSection() {
                           </span>
                         )}
                         {p.valid && !p.trusted && (
-                          <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-500">
+                          <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-warning">
                             untrusted
                           </span>
                         )}

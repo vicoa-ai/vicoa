@@ -30,6 +30,7 @@ import { OnboardingModal, ONBOARDING_KEY } from '@/components/dashboard/onboardi
 import { DesktopSettings } from '@/components/dashboard/desktop-settings';
 import { ProvidersSettingsSection } from '@/components/dashboard/providers-settings-section';
 import { MachinesSettingsSection } from '@/components/dashboard/machines-settings-section';
+import { ThemeSelect } from '@/components/plugins/theme-select';
 
 // Desktop builds swap the whole settings surface: the shell renders the
 // settings nav in the left panel and this page renders only the tab content.
@@ -53,6 +54,7 @@ type SupabaseUser = {
 
 const tabs = [
   { id: 'profile', label: 'Profile' },
+  { id: 'appearance', label: 'Appearance' },
   { id: 'providers', label: 'Providers' },
   { id: 'machines', label: 'Machines' },
   { id: 'billing', label: 'Billing' },
@@ -246,6 +248,25 @@ function SettingsContent() {
                       Profile information is unavailable.
                     </div>
                   )}
+                </CardContent>
+              </Card>
+            )}
+
+            {activeTab === 'appearance' && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Appearance</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                    <div className="space-y-1">
+                      <p className="text-sm text-foreground">Theme</p>
+                      <p className="text-xs text-muted-foreground">
+                        Base mode, or a theme installed from a plugin
+                      </p>
+                    </div>
+                    <ThemeSelect />
+                  </div>
                 </CardContent>
               </Card>
             )}
@@ -546,7 +567,7 @@ function SupabaseProfileForm({ user, onRefresh }: SupabaseProfileFormProps) {
         </div>
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
-      {success && <p className="text-sm text-emerald-500">{success}</p>}
+      {success && <p className="text-sm text-success">{success}</p>}
       <Button type="submit" disabled={isSaving}>
         {isSaving ? (
           <>

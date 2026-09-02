@@ -65,7 +65,7 @@ export function ThemeSelect() {
       >
         <SelectValue>{currentLabel}</SelectValue>
       </SelectTrigger>
-      <SelectContent align="end" className="bg-[#2D2D2D] font-mono">
+      <SelectContent align="end" className="bg-menu font-mono">
         <SelectGroup>
           {Object.entries(BASE_LABELS).map(([value, label]) => (
             <SelectItem key={value} value={value} className="text-xs">

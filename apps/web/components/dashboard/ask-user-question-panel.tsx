@@ -417,7 +417,7 @@ export function AskUserQuestionPanel({ message, onSubmit, onCancel }: AskUserQue
                 });
               }}
               rows={3}
-              className="custom-scrollbar w-full resize-y rounded-md bg-black/25 px-2.5 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
+              className="custom-scrollbar w-full resize-y rounded-md bg-foreground/5 px-2.5 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
               placeholder="Type your answer"
             />
           )}

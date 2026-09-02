@@ -152,7 +152,7 @@ function CalloutIcon({ kind }: { kind: UpdateBannerView['kind'] }) {
     case 'downloaded':
       return <RotateCw className={cn(className, 'text-foreground')} />;
     case 'error':
-      return <TriangleAlert className={cn(className, 'text-amber-500')} />;
+      return <TriangleAlert className={cn(className, 'text-warning')} />;
     default:
       return <Gift className={cn(className, 'text-foreground')} />;
   }

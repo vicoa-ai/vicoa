@@ -54,7 +54,7 @@ export function DesktopConnectionBanner() {
   if (!show) return null;
 
   return (
-    <div className="flex items-center justify-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-mono text-amber-600 dark:text-amber-500">
+    <div className="flex items-center justify-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-mono text-amber-600 dark:text-warning">
       <Loader2 className="h-3 w-3 animate-spin" />
       Local daemon disconnected — reconnecting…
     </div>

@@ -703,7 +703,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
           <span>↑↓ navigate</span>
           <span>↵ open</span>
           {serverUnavailable && trimmedQuery ? (
-            <span className="ml-auto text-amber-600 dark:text-amber-500">
+            <span className="ml-auto text-amber-600 dark:text-warning">
               Server search unavailable — sessions only
             </span>
           ) : null}

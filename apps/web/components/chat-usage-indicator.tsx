@@ -172,7 +172,7 @@ export function ChatUsageIndicator({
       <PopoverContent
         align="start"
         side="top"
-        className="w-72 space-y-3 p-3 font-mono text-xs bg-[#2D2D2D] border-foreground/15 shadow-xl rounded-xl"
+        className="w-72 space-y-3 p-3 font-mono text-xs bg-menu border-foreground/15 shadow-xl rounded-xl"
       >
         <div className="flex items-baseline justify-between gap-2 text-xs text-muted-foreground/60">
           <span>Usage</span>

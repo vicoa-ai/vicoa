@@ -116,7 +116,7 @@ export function TaskPickerPopover({
         align="start"
         side="top"
         sideOffset={8}
-        className="w-[max(var(--radix-popover-trigger-width),20rem)] p-3 space-y-2 border border-foreground/15 bg-[#2D2D2D] shadow-xl"
+        className="w-[max(var(--radix-popover-trigger-width),20rem)] p-3 space-y-2 border border-foreground/15 bg-menu shadow-xl"
       >
         <div className="text-[11px] text-muted-foreground font-mono">Task</div>
 

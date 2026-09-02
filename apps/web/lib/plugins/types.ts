@@ -58,6 +58,15 @@ export const THEME_TOKEN_WHITELIST = [
   'sidebar-border',
   'sidebar-ring',
   'message-text',
+  'menu',
+  'menu-foreground',
+  'menu-border',
+  'menu-elevated',
+  'surface-nav',
+  'surface-canvas',
+  'success',
+  'warning',
+  'info',
   'radius',
 ] as const;
 

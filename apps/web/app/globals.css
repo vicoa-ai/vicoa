@@ -57,6 +57,23 @@
   --color-inline-code: #ABB0F4;
   --color-message-text: hsl(var(--message-text));
 
+  /* Menu / overlay surfaces — grayer than --popover, used by dropdowns,
+     context menus, selects, pickers, and the composer. A distinct semantic
+     role, so its own token (see globals.css :root/.dark for values). */
+  --color-menu: hsl(var(--menu));
+  --color-menu-foreground: hsl(var(--menu-foreground));
+  --color-menu-border: hsl(var(--menu-border));
+  --color-menu-elevated: hsl(var(--menu-elevated));
+
+  /* Desktop app-shell surfaces (the Electron renderer chrome). */
+  --color-surface-nav: hsl(var(--surface-nav));
+  --color-surface-canvas: hsl(var(--surface-canvas));
+
+  /* Semantic status colours (previously ad-hoc emerald/amber utilities). */
+  --color-success: hsl(var(--success));
+  --color-warning: hsl(var(--warning));
+  --color-info: hsl(var(--info));
+
   /* Font sweep: see the `.font-mono` override below. We do NOT repoint the
      Tailwind `--font-mono` @theme token — fumadocs also defines it and wins in
      the production bundle, and a `var()` value isn't valid in @theme anyway. */
@@ -108,7 +125,8 @@
     --secondary: 210 40% 96.1%;
     --secondary-foreground: 222.2 47.4% 11.2%;
     --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 68%;
+    --muted-foreground: 215.4 16.3% 40%; /* Readable secondary text on white
+      (was 68% — near-invisible; used for nearly all muted text app-wide). */
     --accent: 210 40% 96.1%;
     --accent-foreground: 222.2 47.4% 11.2%;
     --destructive: 0 70% 55%;
@@ -131,6 +149,22 @@
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
     --message-text: 0 0% 40%; /* Darker gray for light mode */
+
+    /* Menu / overlay surfaces (light). Menus render as white cards with a
+       hairline border + shadow, distinct from the page card. */
+    --menu: 0 0% 100%;
+    --menu-foreground: 222.2 84% 4.9%;
+    --menu-border: 214.3 31.8% 91.4%;
+    --menu-elevated: 0 0% 97%;
+
+    /* Desktop app-shell surfaces (light). */
+    --surface-nav: 0 0% 98%;
+    --surface-canvas: 0 0% 100%;
+
+    /* Semantic status colours (light — one step darker for contrast on white). */
+    --success: 160 84% 34%;
+    --warning: 32 95% 44%;
+    --info: 221 83% 53%;
 
     /* Git commit-graph lane colors (used raw as var(--…), not HSL-wrapped).
        Rendered only on the always-dark files/git panel, so one definition. */
@@ -177,6 +211,23 @@
     --sidebar-border: 205 20% 20%;
     --sidebar-ring: 217.2 91.2% 59.8%;
     --message-text: 0 0% 98.4%; /* #fbfbfb - Custom color for message text */
+
+    /* Menu / overlay surfaces (dark). Values equal the previously-hardcoded
+       hexes so dark mode is pixel-identical to before tokenization:
+       --menu #2D2D2D, --menu-elevated #333331, --menu-border ≈ white/10. */
+    --menu: 0 0% 18%;
+    --menu-foreground: 210 40% 98%;
+    --menu-border: 0 0% 27%;
+    --menu-elevated: 60 2% 20%;
+
+    /* Desktop app-shell surfaces (dark): --surface-nav #272726, canvas #171717. */
+    --surface-nav: 60 1% 15%;
+    --surface-canvas: 0 0% 9%;
+
+    /* Semantic status colours (dark): emerald-500 / amber-500 / blue-400. */
+    --success: 160 84% 39%;
+    --warning: 38 92% 50%;
+    --info: 213 94% 68%;
   }
 }
 
