@@ -1,0 +1,52 @@
+{
+  "id": "hello-vicoa",
+  "apiVersion": 1,
+  "name": "Hello Vicoa",
+  "description": "A tiny example plugin: a theme, a sidebar link, and two composer actions.",
+  "author": "Vicoa",
+  "homepage": "https://vicoa.ai",
+  "themes": [
+    {
+      "id": "emerald",
+      "label": "Hello Vicoa — Emerald",
+      "base": "dark",
+      "tokens": {
+        "primary": "160 84% 39%",
+        "primary-foreground": "0 0% 100%",
+        "ring": "160 84% 39%",
+        "sidebar-primary": "160 84% 39%",
+        "sidebar-primary-foreground": "0 0% 100%",
+        "accent": "160 40% 18%",
+        "accent-foreground": "160 60% 88%"
+      }
+    }
+  ],
+  "sidebarItems": [
+    {
+      "id": "docs",
+      "label": "Vicoa Docs",
+      "icon": "book-open",
+      "slot": "nav",
+      "action": { "type": "open-url", "url": "https://vicoa.ai/docs", "external": true }
+    }
+  ],
+  "composerActions": [
+    {
+      "id": "pr-template",
+      "label": "Insert PR description template",
+      "icon": "clipboard",
+      "placement": "menu",
+      "behavior": {
+        "type": "insert-text",
+        "text": "## Summary\n\n## Testing\n\n## Screenshots\n"
+      }
+    },
+    {
+      "id": "signoff",
+      "label": "Insert sign-off",
+      "icon": "sparkles",
+      "placement": "toolbar",
+      "behavior": { "type": "insert-text", "text": "\n\n— via Hello Vicoa" }
+    }
+  ]
+}

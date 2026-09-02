@@ -1,13 +1,24 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { Plus, AtSign, Paperclip, FolderPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+
+/** An additional "+" menu row, e.g. contributed by a plugin. */
+export interface AddToChatExtraItem {
+  id: string;
+  label: string;
+  /** Pre-rendered icon node so this component stays plugin-agnostic. */
+  icon?: ReactNode;
+  onSelect: () => void;
+}
 
 /**
  * "+" (Add to chat) affordance shared by the chat input and the new-session
@@ -31,6 +42,7 @@ export function AddToChatMenu({
   onCommands,
   hasSkills,
   disabled,
+  extraItems,
 }: {
   // Opens the system file picker for attachments (images or any other file).
   // Optional — surfaces without an instance to upload against omit it.
@@ -45,6 +57,8 @@ export function AddToChatMenu({
   // trigger ("Skills or Commands"); Codex (and ACP agents) only have commands.
   hasSkills: boolean;
   disabled?: boolean;
+  // Extra rows contributed by plugins (Tier 1 composer actions, placement "menu").
+  extraItems?: AddToChatExtraItem[];
 }) {
   return (
     <DropdownMenu>
@@ -105,6 +119,23 @@ export function AddToChatMenu({
           <SlashGlyph />
           <span className="truncate">{hasSkills ? 'Skills or Commands' : 'Commands'}</span>
         </DropdownMenuItem>
+        {extraItems && extraItems.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            {extraItems.map((item) => (
+              <DropdownMenuItem
+                key={item.id}
+                onClick={item.onSelect}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer"
+              >
+                <span className="flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center text-muted-foreground">
+                  {item.icon}
+                </span>
+                <span className="truncate">{item.label}</span>
+              </DropdownMenuItem>
+            ))}
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

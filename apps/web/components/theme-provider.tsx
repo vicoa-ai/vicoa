@@ -1,8 +1,15 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
+import { usePluginRegistry } from "@/lib/plugins/hooks";
+import { findPluginTheme } from "@/lib/plugins/registry";
+import { isPluginThemeValue, parsePluginThemeValue } from "@/lib/plugins/types";
 
-type Theme = "dark" | "light" | "system";
+// A theme is one of the three built-in modes, or a plugin theme encoded as
+// `plugin:<pluginId>/<themeId>` (see lib/plugins/types.ts). The plugin theme's
+// token overrides are injected by <PluginThemeStyle/>; here we only resolve and
+// apply its base palette class.
+type Theme = "dark" | "light" | "system" | `plugin:${string}`;
 
 type ThemeProviderProps = {
   children: React.ReactNode;
@@ -30,6 +37,10 @@ export function ThemeProvider({
 }: ThemeProviderProps) {
   const [theme, setTheme] = useState<Theme>(defaultTheme);
   const [mounted, setMounted] = useState(false);
+  // Re-run the class effect when plugins load: a `plugin:` theme restored from
+  // localStorage may arrive before its owning plugin's catalog does, so we need
+  // to re-resolve its base palette once the registry is populated.
+  const plugins = usePluginRegistry();
 
   // Initialize theme from localStorage on client side only
   useEffect(() => {
@@ -42,7 +53,7 @@ export function ThemeProvider({
 
   useEffect(() => {
     if (!mounted) return;
-    
+
     const root = window.document.documentElement;
 
     root.classList.remove("light", "dark");
@@ -57,8 +68,20 @@ export function ThemeProvider({
       return;
     }
 
+    if (isPluginThemeValue(theme)) {
+      // Apply the plugin theme's base palette class (dark/light). If the plugin
+      // hasn't loaded yet, fall back to dark until this effect re-runs with a
+      // populated `plugins` snapshot.
+      const parsed = parsePluginThemeValue(theme);
+      const resolved = parsed
+        ? findPluginTheme(parsed.pluginId, parsed.themeId, plugins)
+        : null;
+      root.classList.add(resolved?.base ?? "dark");
+      return;
+    }
+
     root.classList.add(theme);
-  }, [theme, mounted]);
+  }, [theme, mounted, plugins]);
 
   const value = {
     theme,
