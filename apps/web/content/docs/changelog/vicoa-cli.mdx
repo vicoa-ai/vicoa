@@ -5,6 +5,16 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.7.17
+3 September, 2026
+- Add a declarative plugin system — `vicoa plugin` commands to scan, install (git clone or directory copy; never runs install scripts), enable, and trust Tier 1 plugins under `~/.vicoa/plugins/`
+- Add `claude-opus-5` to the agent catalog (native 1M context, `xhigh`, auto mode) and default to `auto` permission mode for every Claude model that supports it (Sonnet 4.6+, Opus 4.7+, Opus 5, Fable 5)
+- Upgrade `claude-agent-sdk` 0.1.80 → 0.2.151
+- Surface model reasoning as a collapsible Thinking card across Claude, Codex, and ACP agents instead of dropping it (Claude) or dumping it inline (Codex/OpenCode)
+- Render ACP tool calls as tool cards instead of flat narration text, and fix hyphenated filenames being severed in ACP tool output
+- Auto-create and self-heal a project the first time a session runs in a new directory or repo, auto-archive stale projects (30 days, no open tasks), and seed project icons from the git remote's owner avatar
+- Fix `asyncpg` failing to build from source on Python 3.13 by bumping 0.29.0 → 0.30.0 (prebuilt cp313 wheels)
+
 ### v1.7.16
 2 September, 2026
 - Add `vicoa session start` to spawn a new agent session from the terminal

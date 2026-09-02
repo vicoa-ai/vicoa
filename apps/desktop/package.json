@@ -1,12 +1,12 @@
 {
   "name": "vicoa-desktop",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "description": "Electron shell for the Vicoa desktop app",
   "main": "dist/main.js",
   "//vicoaDaemonVersion": "Pinned vicoa-ai/vicoa release whose daemon is bundled (scripts/stage-daemon.mjs). Bump this ONE line to ship a newer daemon. Overridable per build via VICOA_DAEMON_VERSION / VICOA_DAEMON_DIST.",
-  "vicoaDaemonVersion": "v1.7.16",
+  "vicoaDaemonVersion": "v1.7.17",
   "scripts": {
     "build": "tsc",
     "dev": "tsc && electron .",
