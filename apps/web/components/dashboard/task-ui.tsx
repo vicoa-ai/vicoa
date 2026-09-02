@@ -415,7 +415,9 @@ export function ProjectIcon({
         src={src}
         alt=""
         aria-hidden="true"
-        className={cn('rounded-md object-cover', box)}
+        // Small default radius for sidebar/nav sizes; the Display pane overrides
+        // it (via className) to a larger, shared radius on its big icon.
+        className={cn('rounded-[3px] object-cover', box)}
       />
     );
   }
@@ -433,8 +435,8 @@ export function ProjectIcon({
 
   // A real (non-Inbox) project with a name and no icon gets a generated square:
   // a muted paseo-palette fill with a white initial (the palette is tuned for a
-  // white letter on top). Same rounded-md as the image variant so every icon
-  // shape shares one corner radius.
+  // white letter on top). Small default radius, matching the image variant;
+  // the Display pane overrides it to a larger shared radius on its big icon.
   if (project && !project.is_inbox && project.name) {
     const color = projectAvatarColor(project.id ?? project.name);
     return (
@@ -442,7 +444,7 @@ export function ProjectIcon({
         aria-hidden="true"
         style={{ backgroundColor: color }}
         className={cn(
-          'inline-flex items-center justify-center rounded-md text-[10px] font-semibold leading-none text-white',
+          'inline-flex items-center justify-center rounded-[3px] text-[10px] font-semibold leading-none text-white',
           box,
         )}
       >
