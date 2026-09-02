@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { projectSettingsTargets } from '@/components/dashboard/session-grouping';
 import { WorktreeSetupSection } from '@/components/dashboard/worktree-setup-section';
+import { ProjectDisplaySection } from '@/components/dashboard/project-display-section';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
@@ -349,9 +350,12 @@ function SettingsContent() {
                     <p className="truncate font-mono text-xs text-muted-foreground">{projectDir}</p>
                   )}
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-8">
                   {projectMachineId && projectDir ? (
-                    <WorktreeSetupSection machineId={projectMachineId} dir={projectDir} />
+                    <>
+                      <ProjectDisplaySection machineId={projectMachineId} dir={projectDir} />
+                      <WorktreeSetupSection machineId={projectMachineId} dir={projectDir} />
+                    </>
                   ) : (
                     <div className="text-sm text-muted-foreground">
                       Pick a project from the list to edit its settings.

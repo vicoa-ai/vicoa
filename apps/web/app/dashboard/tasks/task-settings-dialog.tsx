@@ -6,16 +6,14 @@
 // shell, so putting workspace vocabulary there would mean maintaining two nav
 // surfaces for something you only ever reach from the board.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ChevronRight,
   Circle,
   FolderOpen,
-  ImagePlus,
   Loader2,
   MoreHorizontal,
   Plus,
-  RotateCcw,
   Settings,
   Trash2,
   X,
@@ -37,9 +35,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { EmojiPicker } from '@/components/ui/emoji-picker';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { DirectoryPickerPopover } from '@/components/dashboard/directory-picker-popover';
+import { ProjectIconEditor } from '@/components/dashboard/project-icon-editor';
 import { INLINE_LABEL_COLORS, LabelChip, ProjectIcon } from '@/components/dashboard/task-ui';
 import {
   MachineSummary,
@@ -309,38 +307,13 @@ function ProjectRow({
   onRequestDelete: () => void;
 }) {
   const [name, setName] = useState(project.name);
-  const [iconPickerOpen, setIconPickerOpen] = useState(false);
-  const [uploadingIcon, setUploadingIcon] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Re-seed when the project is replaced by a server response.
   useEffect(() => setName(project.name), [project.name]);
 
-  const onIconFilePicked = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = ''; // allow re-picking the same file
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      alert('Please choose an image file.');
-      return;
-    }
-    if (file.size > 8 * 1024 * 1024) {
-      alert('Image must be under 8MB.');
-      return;
-    }
-    setIconPickerOpen(false);
-    setUploadingIcon(true);
-    try {
-      await handlers.uploadProjectIcon(project.id, file);
-    } finally {
-      setUploadingIcon(false);
-    }
-  };
-
   // "Reset to default" drops any custom image AND emoji so the project falls
   // back to the git-avatar seed (if the remote has one) or the generated square.
   const resetIconToDefault = async () => {
-    setIconPickerOpen(false);
     if (project.icon_image_uri) await handlers.clearProjectIcon(project.id);
     if (project.icon) await handlers.updateProject(project.id, { icon: null });
   };
@@ -360,63 +333,14 @@ function ProjectRow({
   return (
     <div className={cn('rounded-lg border', project.is_archived && 'opacity-60')}>
       <div className="flex items-center gap-2 px-2 py-1.5">
-        <Popover open={iconPickerOpen} onOpenChange={setIconPickerOpen}>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              aria-label={`Icon for ${project.name}`}
-              className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-sm transition-colors hover:bg-accent"
-            >
-              {uploadingIcon ? (
-                <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
-              ) : (
-                <ProjectIcon project={project} className="size-5" />
-              )}
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-auto p-0">
-            <div className="flex items-center gap-1 border-b p-1.5">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <ImagePlus className="size-3.5" />
-                Upload image
-              </button>
-              {(project.icon_image_uri || project.icon) && (
-                <button
-                  type="button"
-                  onClick={() => void resetIconToDefault()}
-                  className="flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                >
-                  <RotateCcw className="size-3.5" />
-                  Reset to default
-                </button>
-              )}
-            </div>
-            <EmojiPicker
-              onSelect={(emoji) => {
-                setIconPickerOpen(false);
-                void handlers.updateProject(project.id, { icon: emoji });
-              }}
-              onClear={
-                project.icon
-                  ? () => {
-                      setIconPickerOpen(false);
-                      void handlers.updateProject(project.id, { icon: null });
-                    }
-                  : undefined
-              }
-            />
-          </PopoverContent>
-        </Popover>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          hidden
-          onChange={(e) => void onIconFilePicked(e)}
+        <ProjectIconEditor
+          project={project}
+          triggerClassName="size-7"
+          iconClassName="size-5"
+          onUploadImage={(file) => handlers.uploadProjectIcon(project.id, file)}
+          onSetEmoji={(emoji) => handlers.updateProject(project.id, { icon: emoji })}
+          onClearEmoji={() => handlers.updateProject(project.id, { icon: null })}
+          onResetToDefault={resetIconToDefault}
         />
 
         <input
