@@ -908,7 +908,7 @@ export function SidebarSessions({
                 e.preventDefault();
                 void handleArchive(instance);
               }}
-              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
             >
               <Archive className="h-3 w-3" />
             </button>
@@ -962,7 +962,7 @@ export function SidebarSessions({
               aria-label="Kanban"
               onClick={() => router.push('/dashboard/kanban')}
               className={cn(
-                'flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground',
+                'flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground',
                 pathname === '/dashboard/kanban' && ITEM_SELECTED,
               )}
             >
@@ -974,7 +974,7 @@ export function SidebarSessions({
                   type="button"
                   title="View options"
                   aria-label="View options"
-                  className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
+                  className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground"
                 >
                   <ListFilter className="h-3.5 w-3.5" />
                 </button>

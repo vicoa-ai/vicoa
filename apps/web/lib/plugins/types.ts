@@ -67,6 +67,8 @@ export const THEME_TOKEN_WHITELIST = [
   'success',
   'warning',
   'info',
+  'user-bubble',
+  'composer',
   'radius',
 ] as const;
 

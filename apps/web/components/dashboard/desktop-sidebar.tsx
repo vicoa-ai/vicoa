@@ -188,7 +188,7 @@ export function DesktopSidebar({
           style={NO_DRAG}
           title="Collapse sidebar"
           aria-label="Collapse sidebar"
-          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
         >
           <PanelLeft className="h-4 w-4" />
         </button>
@@ -352,7 +352,7 @@ function LocalAccountArea() {
           title="Settings"
           aria-label="Settings"
           onClick={() => router.push('/dashboard/settings')}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
         >
           <Cog className="h-4 w-4" />
         </button>
@@ -418,7 +418,7 @@ function CloudAccountArea() {
           type="button"
           title="Account"
           aria-label="Account menu"
-          className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition-colors hover:bg-muted/60"
+          className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition-colors hover:bg-foreground/10"
         >
           <User className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground" title={email ?? undefined}>

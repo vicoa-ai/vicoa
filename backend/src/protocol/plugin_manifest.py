@@ -72,6 +72,8 @@ THEME_TOKEN_WHITELIST: frozenset[str] = frozenset(
         "success",
         "warning",
         "info",
+        "user-bubble",
+        "composer",
         "radius",
     }
 )

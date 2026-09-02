@@ -87,7 +87,6 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
                  message.sender_type === 'USER' ||
                  message.sender_type === 'HUMAN';
 
-  const requiresAction = message.requires_user_input;
   const agentType = resolveAgentType(agentTypeName);
   const askUserQuestion = parseAskUserQuestionPayload(message);
   const attachments = extractChatAttachments(message.message_metadata);
@@ -124,13 +123,11 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
 
   // Shared bubble chrome, now applied to the image bubble and the text bubble
   // independently (they used to be one element).
-  const bubbleShell = `rounded-xl ${
-    compact && !isUser ? '' : 'px-4 py-2 shadow-sm'
-  } ${
+  // Agent messages are flat (no bg / border / shadow) so they read as plain
+  // prose; only the user bubble carries a (reduced) fill + hairline border.
+  const bubbleShell = `rounded-xl ${compact && !isUser ? '' : 'px-4 py-2'} ${
     isUser
-      ? 'bg-muted border border-border text-foreground rounded-tr-sm'
-      : requiresAction
-      ? 'text-foreground rounded-tl-sm'
+      ? 'bg-user-bubble border border-border text-foreground rounded-tr-sm shadow-sm'
       : 'text-foreground rounded-tl-sm'
   }`;
   // An image-only user message has no text body — skip the empty text bubble.

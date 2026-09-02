@@ -694,7 +694,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
       )}
       <div
         ref={containerRef}
-        className="w-full bg-menu rounded-3xl px-4 py-3 relative font-mono"
+        className="w-full bg-composer border border-border rounded-3xl px-4 py-3 relative font-mono shadow-sm"
       >
       {/* Slash command suggestions */}
       {showSlashCommands && (

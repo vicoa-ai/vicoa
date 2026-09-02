@@ -74,6 +74,12 @@
   --color-warning: hsl(var(--warning));
   --color-info: hsl(var(--info));
 
+  /* Chat surfaces: the user message bubble and the composer container. Own
+     tokens so light can be tuned (reduced bubble, distinguishable composer)
+     without disturbing dark. */
+  --color-user-bubble: hsl(var(--user-bubble));
+  --color-composer: hsl(var(--composer));
+
   /* Font sweep: see the `.font-mono` override below. We do NOT repoint the
      Tailwind `--font-mono` @theme token — fumadocs also defines it and wins in
      the production bundle, and a `var()` value isn't valid in @theme anyway. */
@@ -157,14 +163,21 @@
     --menu-border: 214.3 31.8% 91.4%;
     --menu-elevated: 0 0% 97%;
 
-    /* Desktop app-shell surfaces (light). */
-    --surface-nav: 0 0% 98%;
+    /* Desktop app-shell surfaces (light). Nav is a subtle cool gray so it reads
+       as clearly distinct from the white content canvas (not just a hair off). */
+    --surface-nav: 220 20% 96.5%;
     --surface-canvas: 0 0% 100%;
 
     /* Semantic status colours (light — one step darker for contrast on white). */
     --success: 160 84% 34%;
     --warning: 32 95% 44%;
     --info: 221 83% 53%;
+
+    /* Chat surfaces (light). User bubble is a gentle, reduced tint (not the
+       heavier --muted); composer is a soft off-white so it separates from the
+       white page even before its border/shadow. */
+    --user-bubble: 214 32% 97%;
+    --composer: 210 40% 97.5%;
 
     /* Git commit-graph lane colors (used raw as var(--…), not HSL-wrapped).
        Rendered only on the always-dark files/git panel, so one definition. */
@@ -228,6 +241,11 @@
     --success: 160 84% 39%;
     --warning: 38 92% 50%;
     --info: 213 94% 68%;
+
+    /* Chat surfaces (dark) — unchanged from before: user bubble = --muted
+       (#212B36), composer = --menu (#2D2D2D). Pinned here so dark is identical. */
+    --user-bubble: 205 23% 12.9%;
+    --composer: 0 0% 18%;
   }
 }
 
