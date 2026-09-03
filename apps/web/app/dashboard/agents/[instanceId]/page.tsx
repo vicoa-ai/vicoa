@@ -478,6 +478,42 @@ function AgentInstanceContent() {
     updateInstanceStatus(instanceId, status);
   }, [instanceId, updateInstanceStatus]);
 
+  // Auto-mark REVIEWED when the user switches away from a session they were
+  // viewing. The sidebar only marks a session reviewed on *open*, so a session
+  // that flips to AWAITING_INPUT *while it's already on screen* (agent finished
+  // its turn as you watched) keeps its blue dot until you re-open it. Since you
+  // were looking at it, leaving = you've seen the last message — so clear it.
+  // Skipped when the last message is a real question (ask-user-question /
+  // options block): those genuinely still need your input, so the dot stays.
+  const markReviewedOnLeave = useCallback((leavingId: string) => {
+    const snapshot = getMessageStore().getSnapshot(leavingId);
+    if (snapshot?.instance?.status !== 'AWAITING_INPUT') return;
+    const messages = snapshot?.messages ?? [];
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage) {
+      const hasAskUserQuestion = Boolean(parseAskUserQuestionPayload(lastMessage));
+      const hasOptions = extractMessageOptions(lastMessage.content || '').options.length > 0;
+      if (hasAskUserQuestion || hasOptions) return;
+    }
+    // Optimistic local flip (sidebar row + cached message-store snapshot), then
+    // persist. Fire-and-forget: the page is unmounting, nothing awaits it.
+    updateInstanceStatus(leavingId, 'REVIEWED');
+    getMessageStore().patchInstance(leavingId, { status: 'REVIEWED' });
+    if (dashboardContext.api) {
+      void dashboardContext.api
+        .updateAgentStatus(leavingId, { status: 'REVIEWED' })
+        .catch((err) => console.error('Failed to auto-mark session reviewed on leave:', err));
+    }
+  }, [dashboardContext, updateInstanceStatus]);
+  // Read the latest callback through a ref so the leave effect can depend on
+  // instanceId alone — otherwise a new `api`/callback identity would re-run the
+  // effect and fire its cleanup while the session is still on screen.
+  const markReviewedOnLeaveRef = useRef(markReviewedOnLeave);
+  markReviewedOnLeaveRef.current = markReviewedOnLeave;
+  useEffect(() => () => {
+    markReviewedOnLeaveRef.current(instanceId);
+  }, [instanceId]);
+
   // Live usage (context window + rate limits) rides instance_metadata on every
   // instance-update; merge it into the store so the composer meter repaints.
   const handleInstanceMetadata = useCallback((metadata: Record<string, unknown> | null) => {
