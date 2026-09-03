@@ -1274,6 +1274,36 @@ abstract class AppLocalizations {
   /// **'Give us a Happy 5 Stars!'**
   String get confirmRatingTitle;
 
+  /// No description provided for @confirmStarGithubBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Thank you for supporting us! \n\nIf you\'ve starred Vicoa on GitHub, tap the button below to claim your free messages.'**
+  String get confirmStarGithubBody;
+
+  /// No description provided for @confirmStarGithubDoneButton.
+  ///
+  /// In en, this message translates to:
+  /// **'I Have Starred It'**
+  String get confirmStarGithubDoneButton;
+
+  /// No description provided for @confirmStarGithubGiftButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue to Use'**
+  String get confirmStarGithubGiftButton;
+
+  /// No description provided for @confirmStarGithubGiftText.
+  ///
+  /// In en, this message translates to:
+  /// **'Yay! You got {count} free messages!'**
+  String confirmStarGithubGiftText(Object count);
+
+  /// No description provided for @confirmStarGithubTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Star Vicoa on GitHub!'**
+  String get confirmStarGithubTitle;
+
   /// No description provided for @connectComputerLinkCopied.
   ///
   /// In en, this message translates to:
@@ -2780,6 +2810,30 @@ abstract class AppLocalizations {
   /// **'Get a ping when AI coding agents needs input, continue coding with a tap.'**
   String get onboardSlide3Body;
 
+  /// No description provided for @openSourceCardBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Desktop app, mobile app, website, backend, and CLI is open source on Github. Star to follow along.'**
+  String get openSourceCardBody;
+
+  /// No description provided for @openSourceCardCopyTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy repo link'**
+  String get openSourceCardCopyTooltip;
+
+  /// No description provided for @openSourceCardDismissTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get openSourceCardDismissTooltip;
+
+  /// No description provided for @openSourceCardTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Vicoa is open source, view the code'**
+  String get openSourceCardTitle;
+
   /// No description provided for @personalizingConfiguringBest.
   ///
   /// In en, this message translates to:
@@ -2935,6 +2989,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Report an Issue'**
   String get profileReportIssue;
+
+  /// No description provided for @profileStarGithub.
+  ///
+  /// In en, this message translates to:
+  /// **'Star us on GitHub'**
+  String get profileStarGithub;
 
   /// No description provided for @profileSubscription.
   ///
@@ -3205,6 +3265,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Describe the issue...'**
   String get reportIssueDialogHint;
+
+  /// No description provided for @reportIssueDialogOpenGithub.
+  ///
+  /// In en, this message translates to:
+  /// **'Prefer GitHub? Open an issue'**
+  String get reportIssueDialogOpenGithub;
 
   /// No description provided for @reportIssueDialogSending.
   ///
@@ -4069,6 +4135,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Rate Us 5 Stars'**
   String get usageCreditsRateUs5Stars;
+
+  /// No description provided for @usageCreditsStarGithub.
+  ///
+  /// In en, this message translates to:
+  /// **'Star Us on GitHub'**
+  String get usageCreditsStarGithub;
 
   /// No description provided for @usageCreditsStartFreeTrialNow.
   ///

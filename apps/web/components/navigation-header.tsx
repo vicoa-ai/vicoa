@@ -12,6 +12,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
+import { GithubIcon } from '@/components/github-icon';
+import { GITHUB_REPO_URL } from '@/lib/constants/links';
 
 export function NavigationHeader() {
   return (
@@ -135,6 +137,16 @@ export function NavigationHeader() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <a
+              href={GITHUB_REPO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Vicoa on GitHub"
+              title="Vicoa is open source — star us on GitHub"
+              className="flex h-10 w-10 items-center justify-center rounded-full text-foreground/80 hover:text-foreground hover:bg-muted transition-all"
+            >
+              <GithubIcon className="h-5 w-5" />
+            </a>
             <div className="hidden md:flex">
               <UnifiedUserMenu variant="button" />
             </div>

@@ -266,6 +266,18 @@
   "confirmRatingGiftButton": "Continue to Use",
   "confirmRatingGiftText": "Yay! You got 50 free messages!",
   "confirmRatingTitle": "Give us a Happy 5 Stars!",
+  "confirmStarGithubBody": "Thank you for supporting us! \n\nIf you've starred Vicoa on GitHub, tap the button below to claim your free messages.",
+  "confirmStarGithubDoneButton": "I Have Starred It",
+  "confirmStarGithubGiftButton": "Continue to Use",
+  "confirmStarGithubGiftText": "Yay! You got {count} free messages!",
+  "@confirmStarGithubGiftText": {
+    "placeholders": {
+      "count": {
+        "type": "Object"
+      }
+    }
+  },
+  "confirmStarGithubTitle": "Star Vicoa on GitHub!",
   "connectComputerLinkCopied": "Link copied",
   "connectComputerLoginSameAccount": "Download the desktop app and sign in with the same account. Your computer connects automatically.",
   "connectComputerTitle": "Connect Your Computer",
@@ -644,6 +656,10 @@
   "onboardSlide1Body": "Start a task, let Claude Code, Codex, or OpenCode keep working while you focus elsewhere.",
   "onboardSlide2Body": "Take AI coding agents anywhere, continue your coding on your phone.",
   "onboardSlide3Body": "Get a ping when AI coding agents needs input, continue coding with a tap.",
+  "openSourceCardBody": "Desktop app, mobile app, website, backend, and CLI is open source on Github. Star to follow along.",
+  "openSourceCardCopyTooltip": "Copy repo link",
+  "openSourceCardDismissTooltip": "Dismiss",
+  "openSourceCardTitle": "Vicoa is open source, view the code",
   "personalizingConfiguringBest": "Configuring the best set up for you",
   "personalizingHeadline": "Your AI Agents\nare almost ready",
   "personalizingSettingUp": "Setting Up",
@@ -670,6 +686,7 @@
   "profileProMember": "Vicoa Pro Member",
   "profileProSubtitle": "Unlimited Agents and Messages",
   "profileReportIssue": "Report an Issue",
+  "profileStarGithub": "Star us on GitHub",
   "profileSubscription": "Subscription",
   "profileTitle": "Profile",
   "profileTutorials": "Tutorials",
@@ -767,6 +784,7 @@
   "renameDialogRenameSession": "Rename Session",
   "reportIssueDialogFailure": "Failed to send. Please try again.",
   "reportIssueDialogHint": "Describe the issue...",
+  "reportIssueDialogOpenGithub": "Prefer GitHub? Open an issue",
   "reportIssueDialogSending": "Sending...",
   "reportIssueDialogSubmit": "Submit",
   "reportIssueDialogSuccess": "Report sent. Thanks!",
@@ -952,6 +970,7 @@
   "usageCreditsInviteFriends": "Invite Friends",
   "usageCreditsLearnMore": "Learn More",
   "usageCreditsRateUs5Stars": "Rate Us 5 Stars",
+  "usageCreditsStarGithub": "Star Us on GitHub",
   "usageCreditsStartFreeTrialNow": "Start Free Trial Now 👋",
   "usageCreditsUnlimitedMessagesAgents": "Unlimited Messages & Agents",
   "usageCreditsYourMessages": "Your Messages",

@@ -1,5 +1,8 @@
 import Image from 'next/image';
-import { Shield, Github, Linkedin, Bell, Mail } from 'lucide-react';
+import { Shield, Linkedin, Bell, Mail, Star } from 'lucide-react';
+
+import { GithubIcon } from '@/components/github-icon';
+import { GITHUB_ISSUES_URL, GITHUB_REPO_URL } from '@/lib/constants/links';
 
 // Discord Icon Component
 const DiscordIcon = ({ className }: { className?: string }) => (
@@ -32,9 +35,19 @@ export function Footer() {
               />
               {/* <span className="text-2xl font-semibold text-white font-mono">vicoa</span> */}
             </div>
-            <p className="text-gray-400 mb-6 text-sm leading-relaxed">
-              Code with AI. Anywhere. Any device.
+            <p className="text-gray-400 mb-4 text-sm leading-relaxed">
+              Code with AI. Anywhere.
             </p>
+            <a
+              href={GITHUB_REPO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 mb-6 rounded-md border border-gray-700 px-3 py-2 text-sm text-gray-300 hover:border-gray-500 hover:text-white transition-colors"
+            >
+              <GithubIcon className="h-4 w-4" />
+              <span>Star on Github</span>
+              <Star className="h-3.5 w-3.5" />
+            </a>
             {/* <div className="mb-6">
               <a href="https://www.producthunt.com/products/vibe-code-anywhere-vicoa?embed=true&utm_source=badge-featured&utm_medium=badge&utm_source=badge-vibe&#0045;code&#0045;anywhere&#0045;vicoa" target="_blank">
                 <img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1014571&theme=dark&t=1757494713017" alt="Vibe&#0032;Code&#0032;Anywhere&#0032;&#0040;Vicoa&#0041; - Ship&#0032;faster&#0032;with&#0032;Claude&#0032;Code&#0032;anytime&#0044;&#0032;anywhere | Product Hunt" style={{width: '200px', height: '43px'}} width={200} height={43} />
@@ -63,6 +76,7 @@ export function Footer() {
               <li><a href="/updates" className="hover:text-blue-400 transition-colors">Updates</a></li>
               <li><a href="/coding-agents" className="hover:text-blue-400 transition-colors">Coding agents</a></li>
               <li><a href="/pricing" className="hover:text-blue-400 transition-colors">Pricing</a></li>
+              <li><a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" className="hover:text-blue-400 transition-colors">Source code</a></li>
             </ul>
           </div>
 
@@ -87,7 +101,8 @@ export function Footer() {
             <h3 className="text-white mb-4">Support</h3>
             <ul className="space-y-3 text-sm">
               <li><a href="/contact" className="hover:text-blue-400 transition-colors">Contact us</a></li>
-              <li><a href="https://github.com/vicoa-ai/vicoa" className="hover:text-blue-400 transition-colors">Feature request</a></li>
+              <li><a href={GITHUB_ISSUES_URL} target="_blank" rel="noopener noreferrer" className="hover:text-blue-400 transition-colors">Feature request</a></li>
+              <li><a href={GITHUB_ISSUES_URL} target="_blank" rel="noopener noreferrer" className="hover:text-blue-400 transition-colors">Report a bug</a></li>
             </ul>
           </div>
 
@@ -128,13 +143,13 @@ export function Footer() {
                 <Mail className="h-5 w-5" />
               </a>
               <a
-                href="https://github.com/vicoa-ai/vicoa"
+                href={GITHUB_REPO_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hover:text-blue-400 transition-colors"
                 aria-label="View on GitHub"
               >
-                <Github className="h-5 w-5" />
+                <GithubIcon className="h-5 w-5" />
               </a>
               <a
                 href="https://www.linkedin.com/company/vicoa"

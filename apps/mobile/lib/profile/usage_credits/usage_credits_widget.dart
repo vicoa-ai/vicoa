@@ -6,6 +6,8 @@ import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/flutter_flow/flutter_flow_widgets.dart';
 import '/profile/confirm_rating/confirm_rating_widget.dart';
+import '/profile/confirm_star_github/confirm_star_github_widget.dart';
+import '/constants/open_source.dart';
 import '/profile/refer_friends/refer_friends_widget.dart';
 import 'dart:math';
 import 'dart:ui';
@@ -51,6 +53,154 @@ class _UsageCreditsWidgetState extends State<UsageCreditsWidget>
         _hasActiveSubscription = hasSubscription;
       });
     }
+  }
+
+  /// "Star us on GitHub" reward row — same shape as the Rate-us and
+  /// Invite-friends rows above/below it, but pays out
+  /// [kGithubStarCreditReward] messages for starring the open-source repo.
+  Widget _buildStarGithubCard() {
+    final theme = FlutterFlowTheme.of(context);
+    return InkWell(
+      splashColor: Colors.transparent,
+      focusColor: Colors.transparent,
+      hoverColor: Colors.transparent,
+      highlightColor: Colors.transparent,
+      onTap: () async {
+        logFirebaseEvent('USAGE_CREDITS_STAR_GITHUB_ON_TAP');
+        await startGithubStarFlow(context, source: 'usage_credits');
+        if (mounted) {
+          safeSetState(() {});
+        }
+      },
+      child: Container(
+        width: double.infinity,
+        height: 80.0,
+        decoration: BoxDecoration(
+          color: theme.primaryBackground,
+          borderRadius: BorderRadius.circular(14.0),
+          border: Border.all(color: theme.primaryBackground),
+        ),
+        child: Padding(
+          padding: const EdgeInsetsDirectional.fromSTEB(16.0, 0.0, 16.0, 0.0),
+          child: Row(
+            mainAxisSize: MainAxisSize.max,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.max,
+                children: [
+                  Padding(
+                    padding:
+                        const EdgeInsetsDirectional.fromSTEB(0.0, 0.0, 16.0, 0.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.max,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          kGithubStarCreditReward.toString(),
+                          textAlign: TextAlign.center,
+                          style: theme.displaySmall.override(
+                            font: GoogleFonts.sourceSans3(
+                              fontWeight: FontWeight.normal,
+                              fontStyle: theme.displaySmall.fontStyle,
+                            ),
+                            color: theme.primaryText,
+                            fontSize: 27.0,
+                            letterSpacing: 0.0,
+                            fontWeight: FontWeight.normal,
+                            fontStyle: theme.displaySmall.fontStyle,
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4.0),
+                          child: Text(
+                            AppLocalizations.of(context)
+                                .usageCreditsFreeMessages,
+                            textAlign: TextAlign.center,
+                            style: theme.displaySmall.override(
+                              font: GoogleFonts.sourceSans3(
+                                fontWeight: FontWeight.normal,
+                                fontStyle: theme.displaySmall.fontStyle,
+                              ),
+                              color: theme.secondaryText,
+                              fontSize: 13.0,
+                              letterSpacing: 0.0,
+                              fontWeight: FontWeight.normal,
+                              fontStyle: theme.displaySmall.fontStyle,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(
+                    height: 50.0,
+                    child: StyledVerticalDivider(
+                      thickness: 2.0,
+                      color: theme.alternate,
+                      lineStyle: DividerLineStyle.dashed,
+                    ),
+                  ),
+                ],
+              ),
+              Expanded(
+                child: Padding(
+                  padding:
+                      const EdgeInsetsDirectional.fromSTEB(12.0, 0.0, 0.0, 0.0),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.max,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsetsDirectional.fromSTEB(
+                            0.0, 0.0, 16.0, 0.0),
+                        child: FaIcon(
+                          FontAwesomeIcons.github,
+                          color: theme.secondaryText,
+                          size: 21.0,
+                        ),
+                      ),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsetsDirectional.fromSTEB(
+                              0.0, 12.0, 0.0, 12.0),
+                          child: AutoSizeText(
+                            AppLocalizations.of(context).usageCreditsStarGithub,
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            minFontSize: 13.0,
+                            style: theme.displaySmall.override(
+                              font: GoogleFonts.sourceSans3(
+                                fontWeight: FontWeight.normal,
+                                fontStyle: theme.displaySmall.fontStyle,
+                              ),
+                              color: theme.secondaryText,
+                              fontSize: 17.0,
+                              letterSpacing: 0.0,
+                              fontWeight: FontWeight.normal,
+                              fontStyle: theme.displaySmall.fontStyle,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsetsDirectional.fromSTEB(
+                            20.0, 0.0, 0.0, 0.0),
+                        child: Icon(
+                          Icons.keyboard_arrow_right_rounded,
+                          color: theme.secondaryText,
+                          size: 24.0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ).animateOnPageLoad(animationsMap['containerOnPageLoadAnimation3']!);
   }
 
   @override
@@ -938,6 +1088,12 @@ class _UsageCreditsWidgetState extends State<UsageCreditsWidget>
                                 ),
                               ).animateOnPageLoad(animationsMap[
                                   'containerOnPageLoadAnimation3']!),
+                            ),
+                          if (!FFAppState().githubStarClaimed)
+                            Padding(
+                              padding: EdgeInsetsDirectional.fromSTEB(
+                                  0.0, 16.0, 0.0, 0.0),
+                              child: _buildStarGithubCard(),
                             ),
                           Padding(
                             padding: EdgeInsetsDirectional.fromSTEB(

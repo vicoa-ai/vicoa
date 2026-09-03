@@ -5,6 +5,7 @@ import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/l10n/app_localizations.dart';
 import '/components/review_dialog/review_dialog_widget.dart';
+import '/constants/open_source.dart';
 import '/flutter_flow/custom_functions.dart' as functions;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -368,7 +369,7 @@ class _HelpFeedbackWidgetState extends State<HelpFeedbackWidget>
                         onTap: () async {
                           logFirebaseEvent('help_feedback_github_tap');
                           HapticFeedback.lightImpact();
-                          await launchURL('https://github.com/vicoa-ai/vicoa');
+                          await openGithubUrl(kGithubIssuesUrl);
                         },
                         child: Container(
                           width: double.infinity,

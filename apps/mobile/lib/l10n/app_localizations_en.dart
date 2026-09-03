@@ -649,6 +649,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String get confirmRatingTitle => 'Give us a Happy 5 Stars!';
 
   @override
+  String get confirmStarGithubBody =>
+      'Thank you for supporting us! \n\nIf you\'ve starred Vicoa on GitHub, tap the button below to claim your free messages.';
+
+  @override
+  String get confirmStarGithubDoneButton => 'I Have Starred It';
+
+  @override
+  String get confirmStarGithubGiftButton => 'Continue to Use';
+
+  @override
+  String confirmStarGithubGiftText(Object count) {
+    return 'Yay! You got $count free messages!';
+  }
+
+  @override
+  String get confirmStarGithubTitle => 'Star Vicoa on GitHub!';
+
+  @override
   String get connectComputerLinkCopied => 'Link copied';
 
   @override
@@ -1479,6 +1497,19 @@ class AppLocalizationsEn extends AppLocalizations {
       'Get a ping when AI coding agents needs input, continue coding with a tap.';
 
   @override
+  String get openSourceCardBody =>
+      'Desktop app, mobile app, website, backend, and CLI is open source on Github. Star to follow along.';
+
+  @override
+  String get openSourceCardCopyTooltip => 'Copy repo link';
+
+  @override
+  String get openSourceCardDismissTooltip => 'Dismiss';
+
+  @override
+  String get openSourceCardTitle => 'Vicoa is open source, view the code';
+
+  @override
   String get personalizingConfiguringBest =>
       'Configuring the best set up for you';
 
@@ -1562,6 +1593,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get profileReportIssue => 'Report an Issue';
+
+  @override
+  String get profileStarGithub => 'Star us on GitHub';
 
   @override
   String get profileSubscription => 'Subscription';
@@ -1721,6 +1755,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get reportIssueDialogHint => 'Describe the issue...';
+
+  @override
+  String get reportIssueDialogOpenGithub => 'Prefer GitHub? Open an issue';
 
   @override
   String get reportIssueDialogSending => 'Sending...';
@@ -2186,6 +2223,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get usageCreditsRateUs5Stars => 'Rate Us 5 Stars';
+
+  @override
+  String get usageCreditsStarGithub => 'Star Us on GitHub';
 
   @override
   String get usageCreditsStartFreeTrialNow => 'Start Free Trial Now 👋';

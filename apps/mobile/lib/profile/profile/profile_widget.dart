@@ -5,6 +5,7 @@ import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/l10n/app_localizations.dart';
 import '/profile/refer_friends/refer_friends_widget.dart';
+import '/constants/open_source.dart';
 import '/profile/pro_benefits/pro_benefits_widget.dart';
 import '/profile/report_issue_dialog/report_issue_dialog_widget.dart';
 import 'dart:math';
@@ -369,6 +370,25 @@ class _ProfileWidgetState extends State<ProfileWidget>
           ),
         ],
       ),
+      'containerOnPageLoadAnimationGithub': AnimationInfo(
+        trigger: AnimationTrigger.onPageLoad,
+        effectsBuilder: () => [
+          FadeEffect(
+            curve: Curves.easeInOut,
+            delay: 0.0.ms,
+            duration: 600.0.ms,
+            begin: 0.0,
+            end: 1.0,
+          ),
+          MoveEffect(
+            curve: Curves.easeInOut,
+            delay: 0.0.ms,
+            duration: 600.0.ms,
+            begin: Offset(0.0, 100.0),
+            end: Offset(0.0, 0.0),
+          ),
+        ],
+      ),
       'containerOnPageLoadAnimation12': AnimationInfo(
         trigger: AnimationTrigger.onPageLoad,
         effectsBuilder: () => [
@@ -521,6 +541,14 @@ class _ProfileWidgetState extends State<ProfileWidget>
 
   /// One Profile settings row (icon + label + chevron). [isFirst]/[isLast]
   /// round a group's outer corners so stacked rows read as a single card.
+  /// Vicoa is open source — this row just opens the repo in the user's
+  /// browser. Claiming the free messages for a star is deliberately confined
+  /// to Usage & Credits, so the reward is asked for in exactly one place.
+  Future<void> _openGithub() async {
+    logFirebaseEvent('PROFILE_PAGE_GITHUB_ON_TAP');
+    await openGithubUrl(kGithubRepoUrl);
+  }
+
   Widget _settingsRow({
     required IconData icon,
     required double iconSize,
@@ -1628,6 +1656,15 @@ class _ProfileWidgetState extends State<ProfileWidget>
                           ),
                         ).animateOnPageLoad(
                             animationsMap['containerOnPageLoadAnimation11']!),
+                        _settingsRow(
+                          icon: FontAwesomeIcons.github,
+                          iconSize: 18.0,
+                          label: AppLocalizations.of(context).profileStarGithub,
+                          animationKey: 'containerOnPageLoadAnimationGithub',
+                          isFirst: false,
+                          isLast: false,
+                          onTap: _openGithub,
+                        ),
                         InkWell(
                           splashColor: Colors.transparent,
                           focusColor: Colors.transparent,
