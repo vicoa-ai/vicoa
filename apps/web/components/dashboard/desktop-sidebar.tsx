@@ -412,13 +412,14 @@ function CloudAccountArea() {
 
   return (
     <>
+    <div className="flex items-center gap-0.5">
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
           title="Account"
           aria-label="Account menu"
-          className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10"
         >
           <User className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground" title={email ?? undefined}>
@@ -467,6 +468,17 @@ function CloudAccountArea() {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+    {/* Quick settings shortcut beside the account row (parity with the web
+        sidebar's gear); the account dropdown keeps its own Settings item. */}
+    <Link
+      href="/dashboard/settings"
+      title="Settings"
+      aria-label="Settings"
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground"
+    >
+      <Cog className="h-4 w-4" />
+    </Link>
+    </div>
     {/* Sibling of the menu, not a child: the dialog must outlive the dropdown
         unmounting on select. */}
     <ReportIssueDialog

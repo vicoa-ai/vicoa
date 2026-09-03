@@ -1,13 +1,15 @@
 'use client';
 
-import { Suspense, useCallback, useMemo } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, Bot, Folder, Keyboard, Monitor, Palette, Puzzle, Settings, User } from 'lucide-react';
+import { ArrowLeft, Bot, Keyboard, Monitor, Palette, Puzzle, Settings, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { DesktopTitlebarLead } from '@/components/desktop/window-chrome';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { projectSettingsTargets } from '@/components/dashboard/session-grouping';
+import { ProjectIcon } from '@/components/dashboard/task-ui';
+import { getBackendAPI, type ProjectResponse } from '@/lib/backend-api';
 
 /**
  * Left panel while the desktop app is on /dashboard/settings: replaces the
@@ -63,6 +65,30 @@ function DesktopSettingsSidebarInner() {
   const activeDir = searchParams.get('dir') ?? '';
   const { recentInstances } = useAgentDashboard();
   const projectTargets = useMemo(() => projectSettingsTargets(recentInstances), [recentInstances]);
+
+  // The DB projects, by id — the source of truth for each row's icon/image/emoji
+  // (identity-unification §5d), mirroring the app sidebar. A target's `key` is
+  // the linked `project_id` (see projectGroupKey), so this map resolves it; an
+  // unlinked/loading target falls back to a generated initial-square. Refetched
+  // when navigating between panes and on window focus, so an icon edited in the
+  // middle pane shows here (the <img> is cache-busted by updated_at).
+  const [projectsById, setProjectsById] = useState<Map<string, ProjectResponse>>(
+    () => new Map(),
+  );
+  const searchKey = searchParams.toString();
+  useEffect(() => {
+    const load = () => {
+      getBackendAPI(true)
+        .listProjects(true)
+        .then((list) => setProjectsById(new Map(list.map((p) => [p.id, p]))))
+        .catch(() => {
+          /* best-effort: rows fall back to a generated icon until it loads */
+        });
+    };
+    load();
+    window.addEventListener('focus', load);
+    return () => window.removeEventListener('focus', load);
+  }, [searchKey]);
 
   const backToApp = useCallback(() => {
     let target: string | null = null;
@@ -148,7 +174,15 @@ function DesktopSettingsSidebarInner() {
                       : 'text-muted-foreground hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground',
                   )}
                 >
-                  <Folder className="h-3.5 w-3.5 shrink-0" />
+                  <ProjectIcon
+                    project={
+                      projectsById.get(target.key) ?? {
+                        id: target.key,
+                        name: target.label,
+                        is_inbox: false,
+                      }
+                    }
+                  />
                   <span className="truncate">{target.label}</span>
                 </button>
               );
