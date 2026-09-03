@@ -56,8 +56,12 @@ def get_or_create_inbox(db: Session, user_id: UUID) -> Project:
         db.flush()
         nested.commit()
     except IntegrityError:
+        # Rolling back the SAVEPOINT already restores the session snapshot,
+        # which expunges anything added inside it — so guard the expunge or it
+        # raises InvalidRequestError and masks the race we are handling.
         nested.rollback()
-        db.expunge(inbox)
+        if inbox in db:
+            db.expunge(inbox)
         winner = _existing()
         if winner is None:  # pragma: no cover - only under pathological races
             raise
