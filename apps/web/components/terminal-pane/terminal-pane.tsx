@@ -15,11 +15,14 @@
 import '@xterm/xterm/css/xterm.css';
 // Bundled "Symbols Nerd Font Mono" @font-face (powerline + Nerd Font glyphs).
 import './terminal-fonts.css';
+// Modifier-aware pointer cursor over links (see terminal-links.ts).
+import './terminal-links.css';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Terminal } from '@xterm/xterm';
 import type { PtyTransport } from './pty-transport';
 import { buildTerminalOptions, VICOA_TERMINAL_BACKGROUND } from './terminal-options';
+import { openTerminalLink, trackLinkModifier } from './terminal-links';
 import { RpcError } from '@/lib/ws-client';
 
 const RESIZE_DEBOUNCE_MS = 50;
@@ -111,6 +114,10 @@ export function TerminalPane({
       boundTransport.write(data);
     };
 
+    // Armed synchronously (not inside the async import below) so the pane is
+    // never briefly in a state where holding ⌘/Ctrl doesn't register.
+    unsubs.push(trackLinkModifier(container));
+
     setStatus({ kind: 'loading' });
 
     void (async () => {
@@ -130,7 +137,9 @@ export function TerminalPane({
       term.loadAddon(fitAddon);
       term.loadAddon(new SearchAddon());
       term.loadAddon(new Unicode11Addon());
-      term.loadAddon(new WebLinksAddon());
+      // ⌘/Ctrl+click opens the URL outside the app; a plain click is left to
+      // the shell/TUI underneath (see terminal-links.ts).
+      term.loadAddon(new WebLinksAddon(openTerminalLink));
       // Activate wide-char tables before any write, or CJK/emoji cells bake in
       // at single width (Orca's pane-lifecycle ordering).
       term.unicode.activeVersion = '11';
