@@ -1,0 +1,8 @@
+/* Terminal links open on ⌘/Ctrl+click only (see terminal-links.ts). xterm
+   shows the pointer cursor whenever a link is hovered, which would promise
+   that a plain click does something — so suppress it unless the modifier is
+   actually held. `inherit` rather than a literal keeps xterm's own cursor for
+   the state (text normally, default while an app has mouse events enabled). */
+[data-link-modifier='false'] .xterm .xterm-cursor-pointer {
+  cursor: inherit;
+}

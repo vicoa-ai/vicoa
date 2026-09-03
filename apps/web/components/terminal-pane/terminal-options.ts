@@ -6,6 +6,7 @@
 // ANSI colors are the Tailwind 400-series the dashboard already leans on.
 
 import type { ITerminalOptions, ITheme } from '@xterm/xterm';
+import { openTerminalLink } from './terminal-links';
 
 export const VICOA_TERMINAL_BACKGROUND = '#161C24';
 
@@ -67,6 +68,11 @@ export function buildTerminalOptions(): ITerminalOptions {
     macOptionIsMeta: false,
     macOptionClickForcesSelection: true,
     drawBoldTextInBrightColors: true,
+    // OSC 8 hyperlinks (agent CLIs emit them for docs/PR URLs). Plain `http://`
+    // text is handled by the WebLinksAddon; both activate the same way —
+    // ⌘/Ctrl+click, opened outside the app. xterm only forwards http(s) here
+    // unless `allowNonHttpProtocols` is set, which it isn't.
+    linkHandler: { activate: openTerminalLink },
     theme: VICOA_TERMINAL_THEME,
   };
 }
