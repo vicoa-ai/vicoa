@@ -191,14 +191,14 @@ export function GitTab(props: GitTabProps) {
     <div className="flex h-full min-h-0 flex-col">
       {statusError && <GitOfflineBanner code={statusError} />}
       {writeError && (
-        <div className="flex items-start gap-2 border-b border-red-500/40 bg-red-950/40 px-3 py-1.5 text-[11px] font-mono text-red-200 flex-shrink-0">
+        <div className="flex items-start gap-2 border-b border-red-300 bg-red-100 px-3 py-1.5 text-[11px] font-mono text-red-900 flex-shrink-0 dark:border-red-500/40 dark:bg-red-950/40 dark:text-red-200">
           <AlertTriangle className="mt-px h-3.5 w-3.5 flex-shrink-0" />
           <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{writeError}</span>
           <button
             type="button"
             aria-label="Dismiss"
             onClick={onDismissWriteError}
-            className="flex-shrink-0 text-red-200/70 hover:text-red-100"
+            className="flex-shrink-0 text-red-900/70 hover:text-red-900 dark:text-red-200/70 dark:hover:text-red-100"
           >
             <X className="h-3 w-3" />
           </button>
@@ -264,13 +264,13 @@ function CommitBox({
         }}
         placeholder="Commit message"
         rows={message.includes('\n') || message.length > 60 ? 3 : 1}
-        className="w-full resize-none rounded bg-white/[0.06] px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/60 focus:bg-white/[0.09] focus:outline-none"
+        className="w-full resize-none rounded bg-foreground/[0.06] px-2 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/60 focus:bg-foreground/[0.09] focus:outline-none"
       />
       <button
         type="button"
         disabled={!canCommit}
         onClick={onCommit}
-        className="flex items-center justify-center gap-1.5 rounded border border-border bg-white/[0.06] px-2 py-1 text-xs font-mono text-foreground hover:bg-white/[0.1] disabled:cursor-not-allowed disabled:opacity-40"
+        className="flex items-center justify-center gap-1.5 rounded border border-border bg-foreground/[0.06] px-2 py-1 text-xs font-mono text-foreground hover:bg-foreground/[0.1] disabled:cursor-not-allowed disabled:opacity-40"
       >
         {committing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
         Commit
@@ -494,7 +494,7 @@ function DiffFileSection({
     // hunks don't bleed into the next file.
     <div className={isOpen ? 'border-b border-border/50' : undefined}>
       <div
-        className="group/row w-full sticky top-7 z-[5] flex items-center gap-2 pr-3 py-2 bg-[#171717] hover:bg-muted/40"
+        className="group/row w-full sticky top-7 z-[5] flex items-center gap-2 pr-3 py-2 bg-panel hover:bg-muted/40"
         style={{ paddingLeft: indent ?? 12 }}
       >
         <button

@@ -9,7 +9,8 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { markdownLivePreview } from './cm-markdown-live';
 import { SCROLL_PERSIST_MS, scrollToAnchor, topAnchor } from './cm-scroll';
-import { CM_SCROLLBAR_FIREFOX, CM_SCROLLBAR_WEBKIT } from './styles';
+import { CM_SCROLLBAR_FIREFOX, CM_SCROLLBAR_WEBKIT, PANEL_BG } from './styles';
+import { resolvedThemeNow, useIsDarkTheme } from '@/lib/hooks/use-resolved-theme';
 
 /**
  * The live-preview markdown editor — the same swappable prop contract as
@@ -38,12 +39,14 @@ export interface MarkdownLiveEditorProps {
   onScrollAnchor?: (path: string, line: number, offset: number) => void;
 }
 
-/** Matches the panel's fixed dark surface (independent of the theme token). */
-const PANEL_BG = '#171717';
-
 /** Marks a programmatic doc replacement (external reload) so the change
  * listener doesn't echo it back to the parent as if the user typed it. */
 const External = Annotation.define<boolean>();
+
+// Dark gets oneDark; light falls through to `basicSetup`'s bundled
+// `defaultHighlightStyle`. Compartmentalized so a theme flip reconfigures the
+// live editor rather than rebuilding it (see FileEditor for the same idiom).
+const syntaxTheme = (dark: boolean) => (dark ? oneDark : []);
 
 const baseTheme = EditorView.theme({
   '&': { height: '100%', fontSize: '13px', backgroundColor: PANEL_BG },
@@ -84,7 +87,13 @@ export function MarkdownLiveEditor({
   onScrollAnchorRef.current = onScrollAnchor;
   initialAnchorRef.current = { line: initialScrollLine, offset: initialScrollOffset };
 
+  // The editor is built once per file and re-themed in place (effect at the
+  // bottom), so the create-effect reads the palette straight off <html> rather
+  // than through this state — no first-frame flash of the wrong syntax colors.
+  const isDark = useIsDarkTheme();
+
   const wrapComp = useRef(new Compartment());
+  const themeComp = useRef(new Compartment());
 
   // Create the editor once per file identity. `value`/`wrap` updates are applied
   // by the effects below so cursor and undo history survive them.
@@ -114,7 +123,7 @@ export function MarkdownLiveEditor({
           saveKeymap, // highest precedence so Cmd/Ctrl+S is ours, not the browser's
           keymap.of([indentWithTab]),
           basicSetup,
-          oneDark,
+          themeComp.current.of(syntaxTheme(resolvedThemeNow() === 'dark')),
           baseTheme,
           // GFM base (not commonmark) so tables + strikethrough are parsed —
           // the live layer renders/styles them.
@@ -174,6 +183,12 @@ export function MarkdownLiveEditor({
       effects: wrapComp.current.reconfigure(wrap ? EditorView.lineWrapping : []),
     });
   }, [wrap]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({
+      effects: themeComp.current.reconfigure(syntaxTheme(isDark)),
+    });
+  }, [isDark]);
 
   return <div ref={containerRef} className="h-full w-full overflow-hidden" />;
 }

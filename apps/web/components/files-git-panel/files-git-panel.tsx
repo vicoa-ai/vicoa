@@ -73,7 +73,7 @@ import { useInFileFind, type FindOptions } from './use-in-file-find';
 import { useCmFind } from './use-cm-find';
 import { ancestorPaths } from './tree';
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
-import { SCROLL_STYLE, TAB_SCROLL_STYLE } from './styles';
+import { DROPDOWN_BG, PANEL_BG, SCROLL_STYLE, TAB_SCROLL_STYLE } from './styles';
 import { useFileMentions } from '@/lib/hooks/use-file-mentions';
 import { toAbsolutePath } from '@/lib/utils';
 
@@ -87,11 +87,6 @@ export type { PanelTab } from './panel-storage';
  * panel spawn the tab itself (clearing any reopened file so the terminal shows).
  */
 export type PanelPendingAction = 'new-terminal';
-
-/** The panel background — a fixed dark surface, independent of the theme token. */
-const PANEL_BG = '#171717';
-/** Dropdown/menu surface — slightly lighter than the panel for contrast. */
-const DROPDOWN_BG = '#2D2D2D';
 
 interface FilesGitPanelProps {
   machineId: string | null;
@@ -1538,7 +1533,7 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
       ) : inViewer && activeFile ? (
         <div className="relative h-full flex flex-col">
           {activeFile.editing && activeFile.externalChange && (
-            <div className="flex items-center gap-2 border-b border-amber-500/40 bg-amber-950/40 px-3 py-1.5 text-xs text-amber-200 flex-shrink-0">
+            <div className="flex items-center gap-2 border-b border-amber-300 bg-amber-100 px-3 py-1.5 text-xs text-amber-900 flex-shrink-0 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200">
               <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
               <span className="min-w-0 flex-1">This file changed on disk since you opened it.</span>
               <button
@@ -1556,7 +1551,7 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
             </div>
           )}
           {activeFile.saveError && (
-            <div className="flex items-center gap-2 border-b border-red-500/40 bg-red-950/40 px-3 py-1.5 text-xs text-red-200 flex-shrink-0">
+            <div className="flex items-center gap-2 border-b border-red-300 bg-red-100 px-3 py-1.5 text-xs text-red-900 flex-shrink-0 dark:border-red-500/40 dark:bg-red-950/40 dark:text-red-200">
               <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
               <span className="min-w-0 flex-1">Couldn’t save: {saveErrorMessage(activeFile.saveError)}</span>
             </div>
@@ -1826,17 +1821,24 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
       style={{ width: centerOverlay ? undefined : panel.effectiveWidth, backgroundColor: PANEL_BG }}
     >
       {/* Resize handle: a wide, invisible hit area with a thin visible separator
-          line that widens + highlights on hover (and while dragging). z-50 so
-          it stays grabbable above the keep-alive terminal overlay (z-45).
+          line that widens + highlights on hover (and while dragging).
           Double-click maximizes into the center overlay. Not shown in the
           overlay itself — it fills the width, and the header's restore button
-          exits. */}
+          exits.
+
+          z-46: above the keep-alive terminal overlay (z-45) so it stays
+          grabbable over a terminal, but BELOW the z-50 modal layer. The panel
+          root is `relative` with no z-index, so it opens no stacking context
+          and this handle competes directly with the dialogs' `fixed z-50`; at
+          z-50 it tied with them and won on DOM order over any dialog rendered
+          earlier in the tree (e.g. the sidebar's delete-session dialog), so the
+          separator drew on top of the scrim. */}
       {!centerOverlay && (
         <div
           onPointerDown={onPointerDown}
           onDoubleClick={panel.toggleMaximized}
           title="Double-click to maximize"
-          className="group absolute left-0 top-0 bottom-0 z-50 w-2 cursor-col-resize"
+          className="group absolute left-0 top-0 bottom-0 z-[46] w-2 cursor-col-resize"
         >
           <div
             className={`absolute inset-y-0 left-0 w-px transition-colors duration-150 group-hover:bg-muted-foreground/60 ${
@@ -1933,7 +1935,7 @@ function FixedTab({
       style={NO_DRAG}
       className={`px-3 py-1 whitespace-nowrap flex-shrink-0 ${
         active
-          ? 'text-foreground font-medium bg-white/[0.06]'
+          ? 'text-foreground font-medium bg-foreground/[0.06]'
           : 'text-muted-foreground hover:text-foreground'
       }`}
     >
@@ -1958,7 +1960,7 @@ function TerminalTab({
     <div
       style={NO_DRAG}
       className={`group/tab flex items-center pl-3 pr-1 py-1 whitespace-nowrap flex-shrink-0 ${
-        active ? 'text-foreground font-medium bg-white/[0.06]' : 'text-muted-foreground'
+        active ? 'text-foreground font-medium bg-foreground/[0.06]' : 'text-muted-foreground'
       }`}
     >
       <button onClick={onSelect} className="mr-1 hover:text-foreground">
@@ -2005,7 +2007,7 @@ function FileTab({
     <div
       style={NO_DRAG}
       className={`group/tab flex items-center pl-2.5 pr-1 py-1 whitespace-nowrap flex-shrink-0 ${
-        active ? 'text-foreground font-medium bg-white/[0.06]' : 'text-muted-foreground'
+        active ? 'text-foreground font-medium bg-foreground/[0.06]' : 'text-muted-foreground'
       }`}
     >
       <button
@@ -2139,7 +2141,7 @@ function TipButton({
       </TooltipTrigger>
       <TooltipContent
         side={side}
-        className="bg-[#1E1E1E] text-foreground border border-foreground/15 shadow-md"
+        className="bg-menu text-menu-foreground border border-menu-border shadow-md"
       >
         {label}
       </TooltipContent>

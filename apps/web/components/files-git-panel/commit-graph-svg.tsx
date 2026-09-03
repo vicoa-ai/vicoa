@@ -2,10 +2,10 @@
 
 import { useMemo } from 'react';
 import { buildGraphRow, ROW_H, type CommitViewModel, type GraphColorId } from './commit-graph';
+import { PANEL_BG } from './styles';
 
-/** The panel is a fixed dark surface; ring "holes" fill with its background. */
-const PANEL_BG = '#171717';
-
+/** Ring "holes" fill with the panel's own surface, so they stay invisible in
+ *  either theme; lane ids resolve to the themed `--git-graph-*` vars. */
 function color(id: GraphColorId | 'bg'): string {
   return id === 'bg' ? PANEL_BG : `var(--${id})`;
 }

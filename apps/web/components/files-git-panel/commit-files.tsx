@@ -35,7 +35,7 @@ export function CommitFiles({
   onToggleFile: (commitId: string, path: string) => void;
 }) {
   return (
-    <div className="border-t border-border/50 bg-black/20">
+    <div className="border-t border-border/50 bg-foreground/[0.04] dark:bg-black/20">
       {!files || files.loading ? (
         <div className="px-3 py-2 text-xs text-muted-foreground font-mono">Loading…</div>
       ) : files.error ? (
@@ -68,8 +68,8 @@ export function CommitFiles({
                   </span>
                 )}
                 <span className="text-[10px] font-mono">
-                  <span className="text-emerald-400">+{f.additions}</span>
-                  <span className="ml-1 text-red-400">-{f.deletions}</span>
+                  <span className="text-emerald-600 dark:text-emerald-400">+{f.additions}</span>
+                  <span className="ml-1 text-red-600 dark:text-red-400">-{f.deletions}</span>
                 </span>
               </button>
               {open && (

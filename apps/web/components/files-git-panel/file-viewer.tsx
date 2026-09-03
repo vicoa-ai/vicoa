@@ -7,21 +7,21 @@ import type { FileViewState } from './use-files-tab';
 import type { DiffNav } from './diff-editor';
 import { isMarkdownPath, languageForFile } from './file-icon';
 import { MarkdownPreview } from './markdown-preview';
-import { SCROLL_STYLE } from './styles';
+import { PANEL_BG, SCROLL_STYLE } from './styles';
 import { SCROLL_PERSIST_MS } from './cm-scroll';
 
 // CodeMirror is loaded only when a file is actually edited, keeping it out of
 // the panel's initial bundle.
 const FileEditor = dynamic(() => import('./file-editor').then((m) => m.FileEditor), {
   ssr: false,
-  loading: () => <div className="h-full w-full" style={{ backgroundColor: '#171717' }} />,
+  loading: () => <div className="h-full w-full" style={{ backgroundColor: PANEL_BG }} />,
 });
 
 // The @codemirror/merge diff surface is likewise loaded only when a tab enters
 // diff mode.
 const DiffEditor = dynamic(() => import('./diff-editor').then((m) => m.DiffEditor), {
   ssr: false,
-  loading: () => <div className="h-full w-full" style={{ backgroundColor: '#171717' }} />,
+  loading: () => <div className="h-full w-full" style={{ backgroundColor: PANEL_BG }} />,
 });
 
 // The live-preview markdown editor (CodeMirror + syntax-hiding decorations) is
@@ -30,7 +30,7 @@ const MarkdownLiveEditor = dynamic(
   () => import('./markdown-live-editor').then((m) => m.MarkdownLiveEditor),
   {
     ssr: false,
-    loading: () => <div className="h-full w-full" style={{ backgroundColor: '#171717' }} />,
+    loading: () => <div className="h-full w-full" style={{ backgroundColor: PANEL_BG }} />,
   },
 );
 
@@ -341,7 +341,7 @@ function TextFileBody({
         <tbody>
           {lines.map((line, idx) => (
             <tr key={idx} data-line={idx + 1}>
-              <td className="w-[3.5rem] min-w-[3.5rem] text-right pr-3 select-none text-muted-foreground/70 sticky left-0 bg-[#171717] tabular-nums align-top">
+              <td className="w-[3.5rem] min-w-[3.5rem] text-right pr-3 select-none text-muted-foreground/70 sticky left-0 bg-panel tabular-nums align-top">
                 {idx + 1}
               </td>
               <td className={wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}>
