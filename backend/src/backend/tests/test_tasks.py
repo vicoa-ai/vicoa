@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker
 
 from shared.database import (
     Machine,
@@ -52,6 +54,50 @@ class TestInboxHelper:
 
         again = get_or_create_inbox(test_db, test_user.id)
         assert again.id == inbox.id
+
+    def test_losing_the_create_race_reuses_the_winner(
+        self, test_db, test_user, postgres_container
+    ):
+        """A concurrent insert wins uq_projects_user_inbox; we reuse its row.
+
+        Regression: rolling back the SAVEPOINT already expunges the pending
+        Project, so the follow-up expunge raised InvalidRequestError and turned
+        a handled race into a 500 on GET /api/v1/projects.
+        """
+        other_engine = create_engine(postgres_container.get_connection_url())
+        OtherSession = sessionmaker(bind=other_engine)
+        raced = []
+
+        def insert_winner(session, flush_context, instances):
+            """Commit the rival Inbox from another connection mid-flush."""
+            if raced or not any(
+                isinstance(obj, Project) and obj.is_inbox for obj in session.new
+            ):
+                return
+            raced.append(True)
+            other = OtherSession()
+            try:
+                other.add(Project(user_id=test_user.id, name="Inbox", is_inbox=True))
+                other.commit()
+            finally:
+                other.close()
+
+        event.listen(test_db, "before_flush", insert_winner)
+        try:
+            inbox = get_or_create_inbox(test_db, test_user.id)
+        finally:
+            event.remove(test_db, "before_flush", insert_winner)
+            other_engine.dispose()
+
+        assert raced, "the rival insert never fired"
+        assert inbox.is_inbox is True
+        assert inbox.user_id == test_user.id
+        assert (
+            test_db.query(Project)
+            .filter(Project.user_id == test_user.id, Project.is_inbox.is_(True))
+            .count()
+            == 1
+        )
 
 
 class TestProjectsAPI:
