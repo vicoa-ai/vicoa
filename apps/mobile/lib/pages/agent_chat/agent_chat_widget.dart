@@ -295,7 +295,14 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     }
   }
 
-  Future<void> _maybeAutoReviewSessionOnOpen() async {
+  /// Clear the "awaiting input" blue dot once the user has seen the last
+  /// message — either by opening the session, or by leaving it (see
+  /// [didPop]/[didPushNext]). A session can flip to AWAITING_INPUT *while it's
+  /// on screen* (the agent finishes its turn as you watch), so relying on open
+  /// alone left the dot stuck until you re-entered the session; marking it on
+  /// leave means switching away is enough. Skipped when the last message is a
+  /// real question (ask-user-question / options block) — those still need input.
+  Future<void> _maybeAutoReviewSession() async {
     final currentStatus =
         (_model.instanceData?['status'] ?? widget.instanceData?['status'])
             ?.toString()
@@ -401,7 +408,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
         _model.restoreLastSeenMessage();
 
         await _model.loadMessages(hasCachedData: hasCachedData);
-        await _maybeAutoReviewSessionOnOpen();
+        await _maybeAutoReviewSession();
         _lastKnownMessageCount = _model.messages.length;
 
         // Build initial message metadata cache
@@ -511,6 +518,9 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     // Save draft message and last seen message when navigating back
     _model.saveDraftMessage();
     _model.saveLastSeenMessage();
+    // Leaving the session counts as having seen the last message — clear the
+    // awaiting-input blue dot instead of forcing a re-open. Fire-and-forget.
+    _maybeAutoReviewSession();
   }
 
   @override
@@ -519,6 +529,8 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     // Save draft message and last seen message when pushing new route
     _model.saveDraftMessage();
     _model.saveLastSeenMessage();
+    // Switching away from the session counts as seen — clear the blue dot.
+    _maybeAutoReviewSession();
   }
 
   @override
