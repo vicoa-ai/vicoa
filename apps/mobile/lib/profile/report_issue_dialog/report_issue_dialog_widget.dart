@@ -3,6 +3,7 @@ import '/flutter_flow/flutter_flow_util.dart';
 import '/flutter_flow/flutter_flow_widgets.dart';
 import '/l10n/app_localizations.dart';
 import '/custom_code/actions/index.dart' as actions;
+import '/constants/open_source.dart';
 import 'package:auto_size_text/auto_size_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -260,6 +261,44 @@ class _ReportIssueDialogWidgetState extends State<ReportIssueDialogWidget>
                       ),
                       validator: _model.textControllerValidator
                           .asValidator(context),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4.0),
+                      child: InkWell(
+                        onTap: () async {
+                          HapticFeedback.lightImpact();
+                          await openGithubUrl(kGithubIssuesUrl);
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6.0),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.open_in_new_rounded,
+                                size: 15.0,
+                                color: FlutterFlowTheme.of(context).primary,
+                              ),
+                              const SizedBox(width: 6.0),
+                              Flexible(
+                                child: Text(
+                                  AppLocalizations.of(context)
+                                      .reportIssueDialogOpenGithub,
+                                  style: FlutterFlowTheme.of(context)
+                                      .bodySmall
+                                      .override(
+                                        font: GoogleFonts.sourceSans3(),
+                                        color: FlutterFlowTheme.of(context)
+                                            .primary,
+                                        fontSize: 13.0,
+                                        letterSpacing: 0.0,
+                                      ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ),

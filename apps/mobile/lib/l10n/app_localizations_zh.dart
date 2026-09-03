@@ -630,6 +630,24 @@ class AppLocalizationsZh extends AppLocalizations {
   String get confirmRatingTitle => '给我们打个五星好评吧！';
 
   @override
+  String get confirmStarGithubBody =>
+      '感谢你的支持！\n\n如果你已经在 GitHub 上给 Vicoa 点了 Star，点击下方按钮领取免费消息额度。';
+
+  @override
+  String get confirmStarGithubDoneButton => '我已 Star';
+
+  @override
+  String get confirmStarGithubGiftButton => '继续使用';
+
+  @override
+  String confirmStarGithubGiftText(Object count) {
+    return '太棒了！你获得了 $count 条免费消息！';
+  }
+
+  @override
+  String get confirmStarGithubTitle => '在 GitHub 上给我们 Star！';
+
+  @override
   String get connectComputerLinkCopied => '链接已复制';
 
   @override
@@ -1422,6 +1440,19 @@ class AppLocalizationsZh extends AppLocalizations {
   String get onboardSlide3Body => '当任务完成或需要你的决策时，AI 会第一时间通知你。';
 
   @override
+  String get openSourceCardBody =>
+      '桌面端、手机端、网站、后端和 CLI 全部在 Github 开源，点个 Star 关注进展。';
+
+  @override
+  String get openSourceCardCopyTooltip => '复制仓库链接';
+
+  @override
+  String get openSourceCardDismissTooltip => '关闭';
+
+  @override
+  String get openSourceCardTitle => 'Vicoa 已开源，查看源码';
+
+  @override
   String get personalizingConfiguringBest => '正在为你准备最佳体验';
 
   @override
@@ -1498,6 +1529,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get profileReportIssue => '反馈问题';
+
+  @override
+  String get profileStarGithub => 'Github 加星标';
 
   @override
   String get profileSubscription => '订阅';
@@ -1650,6 +1684,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get reportIssueDialogHint => '描述你遇到的问题……';
+
+  @override
+  String get reportIssueDialogOpenGithub => '更习惯用 GitHub？去提一个 issue';
 
   @override
   String get reportIssueDialogSending => '发送中……';
@@ -2104,6 +2141,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get usageCreditsRateUs5Stars => '给我们五星好评';
+
+  @override
+  String get usageCreditsStarGithub => 'Github 加星标';
 
   @override
   String get usageCreditsStartFreeTrialNow => '立即开始免费试用 👋';

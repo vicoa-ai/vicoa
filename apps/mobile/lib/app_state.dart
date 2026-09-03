@@ -280,6 +280,13 @@ class FFAppState extends ChangeNotifier {
     _safeInit(() {
       _gettingStartedActivated = prefs.getBool('ff_gettingStartedActivated') ?? false;
     });
+    _safeInit(() {
+      _githubStarClaimed = prefs.getBool('ff_githubStarClaimed') ?? false;
+    });
+    _safeInit(() {
+      _openSourceCardDismissed =
+          prefs.getBool('ff_openSourceCardDismissed') ?? false;
+    });
   }
 
   void update(VoidCallback callback) {
@@ -659,6 +666,25 @@ class FFAppState extends ChangeNotifier {
     prefs.setBool('ff_gettingStartedActivated', value);
   }
 
+  // "Starred us on GitHub" reward, the open-source twin of the App Store
+  // review reward (`setting.rateForCredit`). Device-local like that one, and
+  // reset on logout so a different account on this device can claim it too.
+  bool _githubStarClaimed = false;
+  bool get githubStarClaimed => _githubStarClaimed;
+  set githubStarClaimed(bool value) {
+    _githubStarClaimed = value;
+    prefs.setBool('ff_githubStarClaimed', value);
+  }
+
+  // Home's "Vicoa is open source" card was dismissed with the X — the only
+  // thing that hides it, since the card asks for nothing.
+  bool _openSourceCardDismissed = false;
+  bool get openSourceCardDismissed => _openSourceCardDismissed;
+  set openSourceCardDismissed(bool value) {
+    _openSourceCardDismissed = value;
+    prefs.setBool('ff_openSourceCardDismissed', value);
+  }
+
   // Cached agent instances (sessions)
   List<dynamic> _cachedAgentInstances = [];
   List<dynamic> get cachedAgentInstances => _cachedAgentInstances;
@@ -738,6 +764,12 @@ class FFAppState extends ChangeNotifier {
     gettingStartedActivated = false;
     gettingStartedDismissed = false;
     gettingStartedCollapsed = false;
+
+    // The GitHub-star reward is granted per account, so a new account on this
+    // device starts able to claim it (same as `setting.rateForCredit`, which
+    // resets with the SettingStruct above).
+    githubStarClaimed = false;
+    openSourceCardDismissed = false;
   }
 
   Map<String, DebugDataField> toDebugSerializableMap() => {
