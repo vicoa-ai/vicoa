@@ -69,6 +69,9 @@
   --color-surface-nav: hsl(var(--surface-nav));
   --color-surface-canvas: hsl(var(--surface-canvas));
 
+  /* The files/git panel surface (the right rail's editor-like pane). */
+  --color-panel: hsl(var(--panel));
+
   /* Semantic status colours (previously ad-hoc emerald/amber utilities). */
   --color-success: hsl(var(--success));
   --color-warning: hsl(var(--warning));
@@ -169,6 +172,11 @@
     --surface-nav: 300 8% 97.5%; /* #F9F8F9 */
     --surface-canvas: 0 20% 99%; /* #FDFCFC */
 
+    /* Files/git panel surface (light): pure white, so the code pane reads like
+       an editor and separates from the #FDFCFC chat canvas beside it. Its own
+       token (not --surface-canvas) so the two can be tuned independently. */
+    --panel: 0 0% 100%;
+
     /* Semantic status colours (light — one step darker for contrast on white). */
     --success: 160 84% 34%;
     --warning: 32 95% 44%;
@@ -183,14 +191,15 @@
       #ABB0F4, which is far too light against a light surface) */
 
     /* Git commit-graph lane colors (used raw as var(--…), not HSL-wrapped).
-       Rendered only on the always-dark files/git panel, so one definition. */
-    --git-graph-ref: #3794ff;
-    --git-graph-remote-ref: #b66dff;
-    --git-graph-lane-1: #ffb000;
-    --git-graph-lane-2: #dc267f;
-    --git-graph-lane-3: #ce9178;
-    --git-graph-lane-4: #40b0a6;
-    --git-graph-lane-5: #b66dff;
+       Light: darkened so 1px lanes and ref pills stay legible on the white
+       panel; the dark block below keeps the original values. */
+    --git-graph-ref: #0b5cd5;
+    --git-graph-remote-ref: #7c3aed;
+    --git-graph-lane-1: #b45309;
+    --git-graph-lane-2: #be185d;
+    --git-graph-lane-3: #9a5b3d;
+    --git-graph-lane-4: #0f766e;
+    --git-graph-lane-5: #7c3aed;
   }
 
   .dark {
@@ -240,6 +249,10 @@
     --surface-nav: 60 1% 15%;
     --surface-canvas: 0 0% 9%;
 
+    /* Files/git panel surface (dark) — #171717, the value the panel used to
+       hard-code, so dark is pixel-identical to before it was tokenized. */
+    --panel: 0 0% 9%;
+
     /* Semantic status colours (dark): emerald-500 / amber-500 / blue-400. */
     --success: 160 84% 39%;
     --warning: 38 92% 50%;
@@ -250,6 +263,15 @@
     --user-bubble: 205 23% 12.9%;
     --composer: 0 0% 18%;
     --inline-code: 236 77% 81.5%; /* #ABB0F4 — unchanged from before */
+
+    /* Git commit-graph lane colors (dark) — the original panel palette. */
+    --git-graph-ref: #3794ff;
+    --git-graph-remote-ref: #b66dff;
+    --git-graph-lane-1: #ffb000;
+    --git-graph-lane-2: #dc267f;
+    --git-graph-lane-3: #ce9178;
+    --git-graph-lane-4: #40b0a6;
+    --git-graph-lane-5: #b66dff;
   }
 }
 
@@ -333,13 +355,76 @@
      competes. Amber wash for every hit, orange for the focused one — matching
      the chat find. See components/files-git-panel/use-cm-find.ts. */
   .cm-editor .cm-vicoa-find {
-    background-color: rgb(250 204 21 / 0.35);
+    background-color: #fde68a; /* amber-200, as in the chat find */
     border-radius: 2px;
+  }
+  .dark .cm-editor .cm-vicoa-find {
+    background-color: rgb(250 204 21 / 0.35);
   }
   .cm-editor .cm-vicoa-find-active {
     background-color: #f97316;
     color: #1a1205;
     border-radius: 2px;
+  }
+
+  /* highlight.js palette for the files/git panel in LIGHT mode. The app imports
+     atom-one-dark globally (chat + panel share it), which is unreadable once
+     the panel surface turns white, so re-tint just the panel's code with
+     atom-one-light. Scoped to [data-files-panel] so the chat renderer keeps the
+     dark palette it was designed against; `.dark` keeps atom-one-dark. */
+  html:not(.dark) [data-files-panel] .hljs {
+    color: #383a42;
+    background: transparent;
+  }
+  html:not(.dark) [data-files-panel] .hljs-comment,
+  html:not(.dark) [data-files-panel] .hljs-quote {
+    color: #a0a1a7;
+    font-style: italic;
+  }
+  html:not(.dark) [data-files-panel] .hljs-doctag,
+  html:not(.dark) [data-files-panel] .hljs-keyword,
+  html:not(.dark) [data-files-panel] .hljs-formula {
+    color: #a626a4;
+  }
+  html:not(.dark) [data-files-panel] .hljs-section,
+  html:not(.dark) [data-files-panel] .hljs-name,
+  html:not(.dark) [data-files-panel] .hljs-selector-tag,
+  html:not(.dark) [data-files-panel] .hljs-deletion,
+  html:not(.dark) [data-files-panel] .hljs-subst {
+    color: #e45649;
+  }
+  html:not(.dark) [data-files-panel] .hljs-literal {
+    color: #0184bb;
+  }
+  html:not(.dark) [data-files-panel] .hljs-string,
+  html:not(.dark) [data-files-panel] .hljs-regexp,
+  html:not(.dark) [data-files-panel] .hljs-addition,
+  html:not(.dark) [data-files-panel] .hljs-attribute,
+  html:not(.dark) [data-files-panel] .hljs-meta .hljs-string {
+    color: #50a14f;
+  }
+  html:not(.dark) [data-files-panel] .hljs-attr,
+  html:not(.dark) [data-files-panel] .hljs-variable,
+  html:not(.dark) [data-files-panel] .hljs-template-variable,
+  html:not(.dark) [data-files-panel] .hljs-type,
+  html:not(.dark) [data-files-panel] .hljs-selector-class,
+  html:not(.dark) [data-files-panel] .hljs-selector-attr,
+  html:not(.dark) [data-files-panel] .hljs-selector-pseudo,
+  html:not(.dark) [data-files-panel] .hljs-number {
+    color: #986801;
+  }
+  html:not(.dark) [data-files-panel] .hljs-symbol,
+  html:not(.dark) [data-files-panel] .hljs-bullet,
+  html:not(.dark) [data-files-panel] .hljs-link,
+  html:not(.dark) [data-files-panel] .hljs-meta,
+  html:not(.dark) [data-files-panel] .hljs-selector-id,
+  html:not(.dark) [data-files-panel] .hljs-title {
+    color: #4078f2;
+  }
+  html:not(.dark) [data-files-panel] .hljs-built_in,
+  html:not(.dark) [data-files-panel] .hljs-title.class_,
+  html:not(.dark) [data-files-panel] .hljs-class .hljs-title {
+    color: #c18401;
   }
 
   /* Blog prose code blocks: style the block, not each line */

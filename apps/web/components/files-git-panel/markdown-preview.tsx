@@ -10,8 +10,10 @@ import 'highlight.js/styles/atom-one-dark.css';
 const CODE_FONT = 'var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace';
 
 /** Read-only, document-scale markdown render for the file viewer. Self-contained
- *  (imports its own hljs theme). No rehype-raw: embedded HTML shows as literal
- *  text, never executed. Renders the body only — the viewer owns the scroll. */
+ *  (imports its own hljs theme — atom-one-dark, which app/globals.css re-tints
+ *  to atom-one-light under `html:not(.dark) [data-files-panel]`). No rehype-raw:
+ *  embedded HTML shows as literal text, never executed. Renders the body only —
+ *  the viewer owns the scroll. */
 export function MarkdownPreview({ content }: { content: string }) {
   return (
     <div className="px-4 py-3 text-sm leading-relaxed text-foreground/90">
@@ -25,7 +27,7 @@ export function MarkdownPreview({ content }: { content: string }) {
           h4: ({ children }) => <h4 className="mt-3 mb-1 text-sm font-semibold text-foreground first:mt-0">{children}</h4>,
           p: ({ children }) => <p className="my-2">{children}</p>,
           a: ({ href, children }) => (
-            <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline underline-offset-2 hover:text-blue-300">{children}</a>
+            <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300">{children}</a>
           ),
           ul: ({ children }) => <ul className="my-2 list-disc pl-5 space-y-1">{children}</ul>,
           ol: ({ children }) => <ol className="my-2 list-decimal pl-5 space-y-1">{children}</ol>,
@@ -40,7 +42,7 @@ export function MarkdownPreview({ content }: { content: string }) {
             return <code className="rounded bg-muted px-1 py-0.5 text-[0.85em]" style={{ fontFamily: CODE_FONT }}>{children}</code>;
           },
           pre: ({ children }) => (
-            <pre className="custom-scrollbar my-3 overflow-x-auto rounded-md bg-[#282c34] p-3 text-xs" style={{ fontFamily: CODE_FONT }}>{children}</pre>
+            <pre className="custom-scrollbar my-3 overflow-x-auto rounded-md bg-muted p-3 text-xs dark:bg-[#282c34]" style={{ fontFamily: CODE_FONT }}>{children}</pre>
           ),
           table: ({ children }) => (
             <div className="custom-scrollbar my-3 overflow-x-auto">

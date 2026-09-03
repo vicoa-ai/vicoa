@@ -6,13 +6,23 @@ export const SCROLL_STYLE =
   '[&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full ' +
   'dark:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/20';
 
+/** The panel's surface, as a CSS value. Follows the site theme: `--panel` is
+ *  #171717 in dark (what the panel used to hard-code) and white in light. Used
+ *  by the CodeMirror editors and the commit graph, which need a real color
+ *  string rather than a Tailwind class; JSX should prefer `bg-panel`. */
+export const PANEL_BG = 'hsl(var(--panel))';
+
+/** The panel's dropdown/menu surface — the shared `--menu` token (#2D2D2D in
+ *  dark, white in light), so the panel's hand-positioned menus match the rest
+ *  of the app's overlays. */
+export const DROPDOWN_BG = 'hsl(var(--menu))';
+
 // Scrollbar styling for the panel's CodeMirror surfaces (plain editor, markdown
 // live editor, and both diff panels), matching the site-wide `.custom-scrollbar`
 // (app/globals.css): thin 6px, transparent track, rounded, brighten on hover.
-// These editors sit on the panel's *fixed dark* surface (#171717) regardless of
-// the site theme, so the thumb is keyed off `--muted-foreground` (a light token
-// in both themes) at low opacity rather than `--border` — the latter is
-// near-white in the light theme and would flare on the dark panel. Spread
+// The thumb is keyed off `--muted-foreground` at low opacity rather than
+// `--border`: `--border` is near-white in light and would flare against the
+// dark panel, whereas `--muted-foreground` reads on both surfaces. Spread
 // `CM_SCROLLBAR_WEBKIT` into an `EditorView.theme` object and merge
 // `CM_SCROLLBAR_FIREFOX` into that theme's `.cm-scroller` block. Kept here so the
 // three editors can't drift apart.

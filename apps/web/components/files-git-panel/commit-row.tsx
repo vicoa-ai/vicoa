@@ -56,7 +56,7 @@ export function CommitRow({
           <TooltipContent
             side="bottom"
             sideOffset={6}
-            className="max-w-96 border-0 bg-[#2D2D2D] text-foreground shadow-md"
+            className="max-w-96 border-0 bg-menu text-menu-foreground shadow-md"
           >
             <div className="flex flex-col gap-1.5 py-0.5 font-mono">
               <div className="whitespace-pre-wrap text-xs font-medium leading-snug text-foreground">
@@ -67,7 +67,7 @@ export function CommitRow({
                   {item.body}
                 </div>
               )}
-              <div className="mt-0.5 flex flex-col gap-0.5 border-t border-white/10 pt-1 text-[11px] text-muted-foreground">
+              <div className="mt-0.5 flex flex-col gap-0.5 border-t border-foreground/10 pt-1 text-[11px] text-muted-foreground">
                 <div className="truncate">{`${item.author_name} <${item.author_email}>`}</div>
                 <div>
                   {formatDate(item.timestamp)} ·{' '}

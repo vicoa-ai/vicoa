@@ -49,8 +49,10 @@ function highlightApi(): { registry: HighlightRegistryLike; Ctor: HighlightCtor 
 // The `::highlight()` pseudo-element is injected at runtime rather than living
 // in globals.css: the build-time CSS parser (Lightning CSS) rejects it as an
 // unknown pseudo-element, whereas the browser parses it fine. Injected once,
-// lazily, and only where the Custom Highlight API exists. The panel is always
-// dark (#171717), so the dark find palette is used unconditionally.
+// lazily, and only where the Custom Highlight API exists. Both palettes are
+// injected together (the `.dark` rule overrides the light one) so the panel's
+// find highlights follow the theme without re-injecting on every toggle —
+// matching the chat's `mark.find-hit` colors in app/globals.css.
 let stylesInjected = false;
 function ensureHighlightStyles(): void {
   if (stylesInjected || typeof document === 'undefined') return;
@@ -58,7 +60,8 @@ function ensureHighlightStyles(): void {
   const style = document.createElement('style');
   style.dataset.vicoaFileFind = '';
   style.textContent =
-    '::highlight(vicoa-file-find){background-color:rgb(250 204 21 / 0.35);color:inherit;}' +
+    '::highlight(vicoa-file-find){background-color:#fde68a;color:inherit;}' +
+    '.dark ::highlight(vicoa-file-find){background-color:rgb(250 204 21 / 0.35);}' +
     '::highlight(vicoa-file-find-active){background-color:#f97316;color:#1a1205;}';
   document.head.appendChild(style);
 }

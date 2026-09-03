@@ -10,8 +10,8 @@
  *
  * Deliberately NOT matched: inline-style hex in JS objects (e.g. label-swatch
  * data) — this only flags the `-[#…]` Tailwind class form. Exempt paths below
- * are either intentionally-fixed-dark panels (VS-Code-style editor + terminal),
- * marketing pages with their own styling, or platform conventions.
+ * are either the intentionally-fixed-dark terminal, marketing pages with their
+ * own styling, or platform conventions.
  *
  * Run: `node scripts/check-theme-colors.mjs` (wired into `pnpm lint`).
  */
@@ -27,9 +27,8 @@ const SCAN_DIRS = ['components', 'app'];
 
 // Prefixes (relative to apps/web/) that are exempt from the rule.
 const EXEMPT_PREFIXES = [
-  // Plane B — intentionally fixed-dark surfaces (editor + terminal), always
-  // dark in every theme by design.
-  'components/files-git-panel/',
+  // Intentionally fixed-dark surface: the terminal emulator, whose ANSI palette
+  // is tuned against a dark background in every theme.
   'components/terminal-pane/',
   // Marketing / public pages: own always-on styling, not app chrome.
   'components/landing/',
@@ -41,6 +40,9 @@ const EXEMPT_PREFIXES = [
 const EXEMPT_FILES = new Set([
   'components/desktop/window-chrome.tsx', // Windows close-button system red (#c42b1c)
   'components/onboarding/intro-slides.tsx', // decorative onboarding gradient
+  // atom-one-dark's own code-block background (#282c34), applied under `dark:`
+  // only — it belongs to the highlight.js theme, not to the app's token set.
+  'components/files-git-panel/markdown-preview.tsx',
 ]);
 
 // Tailwind color utilities that take an arbitrary hex value.

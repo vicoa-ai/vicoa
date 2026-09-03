@@ -1,7 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useRef } from 'react';
-import { EditorState, Annotation, type Extension, type StateCommand } from '@codemirror/state';
+import {
+  EditorState,
+  Annotation,
+  Compartment,
+  type Extension,
+  type StateCommand,
+} from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
 import { basicSetup } from 'codemirror';
@@ -15,7 +21,8 @@ import {
 } from '@codemirror/merge';
 import { languageExtensionForPath } from './cm-languages';
 import { SCROLL_PERSIST_MS, scrollToAnchor, topAnchor } from './cm-scroll';
-import { CM_SCROLLBAR_FIREFOX, CM_SCROLLBAR_WEBKIT } from './styles';
+import { CM_SCROLLBAR_FIREFOX, CM_SCROLLBAR_WEBKIT, PANEL_BG } from './styles';
+import { resolvedThemeNow, useIsDarkTheme } from '@/lib/hooks/use-resolved-theme';
 
 /**
  * The editable diff surface, isolated behind the same swappable contract as
@@ -66,9 +73,6 @@ export interface DiffEditorProps {
   onDiffNav?: (nav: DiffNav | null) => void;
 }
 
-/** Matches the panel's fixed dark surface (independent of the theme token). */
-const PANEL_BG = '#171717';
-
 /** Marks a programmatic doc replacement (external reload) so the change
  * listener doesn't echo it back to the parent as if the user typed it. */
 const External = Annotation.define<boolean>();
@@ -86,12 +90,11 @@ const baseTheme = EditorView.theme({
   ...CM_SCROLLBAR_WEBKIT,
 });
 
-// Overrides @codemirror/merge's built-in diff decorations, which are tuned for a
-// light theme: faint muddy `rgba(...,.08)` line tints and — worst — a 2px
-// underline gradient on changed words that reads as ugly noise on the #171717
-// surface. We retint to a GitHub-dark-style palette (green #3fb950 for adds, red
-// #f85149 for deletes) and swap the word underline for a soft solid box. The
-// 3px change-gutter bar is removed separately (gutter:false in the view config).
+// Overrides @codemirror/merge's built-in diff decorations, whose faint muddy
+// `rgba(...,.08)` line tints and 2px underline gradient on changed words read as
+// noise on either surface. We retint to a GitHub-style palette (green for adds,
+// red for deletes) and swap the word underline for a soft solid box. The 3px
+// change-gutter bar is removed separately (gutter:false in the view config).
 // `!important` beats @codemirror/merge's base theme, whose `&dark.cm-merge-*`
 // selectors would otherwise win on specificity.
 //
@@ -100,29 +103,56 @@ const baseTheme = EditorView.theme({
 // span → the inline `<del class=cm-deletedText>`); pure add/delete lines carry
 // just the line background. So the two word rules below intentionally style only
 // that case — the redundant full-line box on pure inserts/deletes is gone.
-const mergeTheme = EditorView.theme(
-  {
-    // Whole changed lines: additions (the editable/b side + the unified inline
-    // changed line) green; the original/a side + deleted chunks red.
-    '&.cm-merge-b .cm-changedLine, & .cm-inlineChangedLine': {
-      backgroundColor: 'rgba(63,185,80,0.13) !important',
+function makeMergeTheme(add: string, addWord: string, del: string, delWord: string, dark: boolean) {
+  return EditorView.theme(
+    {
+      // Whole changed lines: additions (the editable/b side + the unified inline
+      // changed line) green; the original/a side + deleted chunks red.
+      '&.cm-merge-b .cm-changedLine, & .cm-inlineChangedLine': {
+        backgroundColor: `${add} !important`,
+      },
+      '&.cm-merge-a .cm-changedLine, & .cm-deletedChunk': {
+        backgroundColor: `${del} !important`,
+      },
+      // Word-level emphasis on same-line edits only: a soft solid box, not the
+      // default underline. Added span green; inline removed span red.
+      '&.cm-merge-b .cm-changedText': {
+        background: `${addWord} !important`,
+        borderRadius: '2px',
+      },
+      '&.cm-merge-b .cm-deletedText': {
+        background: `${delWord} !important`,
+        borderRadius: '2px',
+      },
     },
-    '&.cm-merge-a .cm-changedLine, & .cm-deletedChunk': {
-      backgroundColor: 'rgba(248,81,73,0.13) !important',
-    },
-    // Word-level emphasis on same-line edits only: a soft solid box, not the
-    // default underline. Added span green; inline removed span red.
-    '&.cm-merge-b .cm-changedText': {
-      background: 'rgba(63,185,80,0.30) !important',
-      borderRadius: '2px',
-    },
-    '&.cm-merge-b .cm-deletedText': {
-      background: 'rgba(248,81,73,0.30) !important',
-      borderRadius: '2px',
-    },
-  },
-  { dark: true },
+    { dark },
+  );
+}
+
+// GitHub-dark tints (green #3fb950 / red #f85149) on the dark panel; slightly
+// stronger GitHub-light tints (#2ea043 / #f85149) so they read on white.
+const mergeThemeDark = makeMergeTheme(
+  'rgba(63,185,80,0.13)',
+  'rgba(63,185,80,0.30)',
+  'rgba(248,81,73,0.13)',
+  'rgba(248,81,73,0.30)',
+  true,
 );
+const mergeThemeLight = makeMergeTheme(
+  'rgba(46,160,67,0.15)',
+  'rgba(46,160,67,0.35)',
+  'rgba(248,81,73,0.15)',
+  'rgba(248,81,73,0.35)',
+  false,
+);
+
+// The full theme swap: syntax colors + diff tints. In light, oneDark is dropped
+// so `basicSetup`'s bundled `defaultHighlightStyle` (a light palette) shows
+// through. The `{dark}` flag on the merge theme matters beyond the tints — it
+// is what tells CodeMirror which base palette to use for selection etc., so it
+// must never claim `dark: true` while the site is light.
+const themeExtensions = (dark: boolean): Extension =>
+  dark ? [oneDark, mergeThemeDark] : [mergeThemeLight];
 
 export function DiffEditor({
   path,
@@ -160,6 +190,14 @@ export function DiffEditor({
   // the number of chunks doesn't re-render the panel. Reset to -1 per surface
   // (in the effect) so the first publish always fires.
   const lastNavCountRef = useRef(-1);
+  // The surface is built once per (path, layout, baseline) and re-themed in
+  // place (effect below), so the create-effect reads the palette straight off
+  // <html> rather than through this state — no first-frame flash of the wrong
+  // syntax colors. The MergeView's two panes are separate EditorStates, so each
+  // needs its own compartment.
+  const isDark = useIsDarkTheme();
+  const themeCompA = useRef(new Compartment());
+  const themeCompB = useRef(new Compartment());
   // Run a chunk-navigation command against the editable pane and refocus it so
   // the moved selection is visible. Stable — reads the view through its ref.
   const runChunkCommand = useCallback((cmd: StateCommand) => {
@@ -223,9 +261,8 @@ export function DiffEditor({
       saveKeymap, // highest precedence so Cmd/Ctrl+S is ours, not the browser's
       keymap.of([indentWithTab]),
       basicSetup,
-      oneDark,
+      themeCompB.current.of(themeExtensions(resolvedThemeNow() === 'dark')),
       baseTheme,
-      mergeTheme,
       lang ?? [],
       wrapExt,
       updateListener,
@@ -248,9 +285,8 @@ export function DiffEditor({
             EditorState.readOnly.of(true),
             EditorView.editable.of(false),
             basicSetup,
-            oneDark,
+            themeCompA.current.of(themeExtensions(resolvedThemeNow() === 'dark')),
             baseTheme,
-            mergeTheme,
             lang ?? [],
             wrapExt,
           ],
@@ -330,6 +366,19 @@ export function DiffEditor({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, sideBySide, original]);
+
+  // Re-theme both panes in place when the site theme flips.
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const ext = themeExtensions(isDark);
+    if (surface instanceof MergeView) {
+      surface.a.dispatch({ effects: themeCompA.current.reconfigure(ext) });
+      surface.b.dispatch({ effects: themeCompB.current.reconfigure(ext) });
+    } else {
+      surface.dispatch({ effects: themeCompB.current.reconfigure(ext) });
+    }
+  }, [isDark]);
 
   // Apply external `value` changes (e.g. reload-from-disk) to the live doc
   // without resetting cursor/undo and without echoing back through onChange.

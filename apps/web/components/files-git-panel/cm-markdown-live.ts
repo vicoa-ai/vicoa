@@ -319,8 +319,11 @@ const tableField = StateField.define<DecorationSet>({
 // ── Theme ────────────────────────────────────────────────────────────────────
 
 const markdownLiveTheme = EditorView.theme({
-  // Headings: distinguished by size + weight only. The `span` rules override
-  // oneDark's coral heading color so heading text reads as normal body color.
+  // Headings: distinguished by size + weight only. The `span` rules override the
+  // syntax theme's heading color so heading text reads as normal body color.
+  //
+  // Every surface below is keyed off `--foreground` rather than a literal white
+  // so the rendered document follows the site theme along with the panel.
   '.cm-md-h1': { fontSize: '1.3em', fontWeight: '700', lineHeight: '1.35' },
   '.cm-md-h2': { fontSize: '1.18em', fontWeight: '700', lineHeight: '1.35' },
   '.cm-md-h3': { fontSize: '1.08em', fontWeight: '600', lineHeight: '1.35' },
@@ -334,31 +337,31 @@ const markdownLiveTheme = EditorView.theme({
   '.cm-md-strike': { textDecoration: 'line-through', opacity: '0.7' },
   '.cm-md-code': {
     fontFamily: 'var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace',
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'hsl(var(--foreground) / 0.08)',
     borderRadius: '3px',
     padding: '0.05em 0.3em',
     fontSize: '0.9em',
   },
-  '.cm-md-link': { color: '#60a5fa', textDecoration: 'underline', textUnderlineOffset: '2px' },
+  '.cm-md-link': { color: 'hsl(var(--info))', textDecoration: 'underline', textUnderlineOffset: '2px' },
   '.cm-md-quote': {
-    borderLeft: '3px solid rgba(255,255,255,0.2)',
+    borderLeft: '3px solid hsl(var(--foreground) / 0.2)',
     paddingLeft: '0.75em',
-    color: 'rgba(255,255,255,0.7)',
+    color: 'hsl(var(--foreground) / 0.7)',
   },
   '.cm-md-hr': {
     display: 'inline-block',
     width: '100%',
-    borderTop: '1px solid rgba(255,255,255,0.25)',
+    borderTop: '1px solid hsl(var(--foreground) / 0.25)',
     verticalAlign: 'middle',
   },
   '.cm-md-table-wrap': { padding: '6px 0', overflowX: 'auto' },
   '.cm-md-table': { borderCollapse: 'collapse', fontSize: '0.9em', lineHeight: '1.4' },
   '.cm-md-table th, .cm-md-table td': {
-    border: '1px solid rgba(255,255,255,0.15)',
+    border: '1px solid hsl(var(--foreground) / 0.15)',
     padding: '4px 10px',
     textAlign: 'left',
   },
-  '.cm-md-table th': { fontWeight: '600', backgroundColor: 'rgba(255,255,255,0.06)' },
+  '.cm-md-table th': { fontWeight: '600', backgroundColor: 'hsl(var(--foreground) / 0.06)' },
 });
 
 /** The live-preview layer: pair with the GFM `markdownLanguage` base in an
