@@ -23,6 +23,7 @@ import type { Terminal } from '@xterm/xterm';
 import type { PtyTransport } from './pty-transport';
 import { buildTerminalOptions, VICOA_TERMINAL_BACKGROUND } from './terminal-options';
 import { openTerminalLink, trackLinkModifier } from './terminal-links';
+import { chunkPtyInput, isLineEditorReady } from './initial-input';
 import { RpcError } from '@/lib/ws-client';
 
 const RESIZE_DEBOUNCE_MS = 50;
@@ -55,10 +56,16 @@ export interface TerminalPaneProps {
   initialInput?: string;
 }
 
-// How long to wait for the shell's first output before writing `initialInput`
-// anyway. A login shell always prints a prompt, so the first-output path
-// normally wins; this only covers a silent shell so setup can't hang unsent.
-const INITIAL_INPUT_FALLBACK_MS = 750;
+// `initialInput` may only be typed once the shell's line editor is reading —
+// input written while it's still sourcing rc files overflows the tty's small
+// input queue (1024 bytes on macOS) and the tail, CR included, is dropped. The
+// bracketed-paste-on sequence says so exactly (see ./initial-input); these
+// timers cover shells that never emit it: write once output has been quiet for
+// a beat, and no later than the ceiling even if the shell never stops printing.
+const INITIAL_INPUT_QUIET_MS = 300;
+const INITIAL_INPUT_MAX_WAIT_MS = 5000;
+// Gap between chunks, so the shell drains each one before the next lands.
+const INITIAL_INPUT_CHUNK_DELAY_MS = 20;
 
 type PaneStatus =
   | { kind: 'loading' }
@@ -103,15 +110,48 @@ export function TerminalPane({
     // cleared so a manual restart (which reuses spawn/onData) never resends it.
     let pendingInitialInput = initialInputRef.current || null;
     let initialInputTimer: number | null = null;
-    const flushInitialInput = (): void => {
+    let initialInputDeadline: number | null = null;
+    let chunkTimer: number | null = null;
+    const clearInitialInputTimers = (): void => {
       if (initialInputTimer !== null) {
         window.clearTimeout(initialInputTimer);
         initialInputTimer = null;
       }
+      if (initialInputDeadline !== null) {
+        window.clearTimeout(initialInputDeadline);
+        initialInputDeadline = null;
+      }
+    };
+    // Fed in queue-sized bites rather than one write: a setup chain runs well
+    // past the tty's 1024-byte input queue, and anything that doesn't fit while
+    // the shell isn't reading is dropped outright.
+    const writeChunked = (data: string): void => {
+      const chunks = chunkPtyInput(data);
+      let next = 0;
+      const step = (): void => {
+        chunkTimer = null;
+        if (disposed || next >= chunks.length) return;
+        boundTransport.write(chunks[next]);
+        next += 1;
+        if (next < chunks.length) {
+          chunkTimer = window.setTimeout(step, INITIAL_INPUT_CHUNK_DELAY_MS);
+        }
+      };
+      step();
+    };
+    const flushInitialInput = (): void => {
+      clearInitialInputTimers();
       if (pendingInitialInput === null || disposed) return;
       const data = pendingInitialInput;
       pendingInitialInput = null;
-      boundTransport.write(data);
+      writeChunked(data);
+    };
+    /** Re-arm the quiet timer on each burst of shell output; the deadline set
+     *  at spawn keeps a never-quiet shell from deferring setup forever. */
+    const deferInitialInput = (): void => {
+      if (pendingInitialInput === null || disposed) return;
+      if (initialInputTimer !== null) window.clearTimeout(initialInputTimer);
+      initialInputTimer = window.setTimeout(flushInitialInput, INITIAL_INPUT_QUIET_MS);
     };
 
     // Armed synchronously (not inside the async import below) so the pane is
@@ -173,11 +213,14 @@ export function TerminalPane({
           if (!disposed) {
             setStatus({ kind: 'running' });
             term.focus();
-            // Fallback: send setup even if the shell prints nothing. The
-            // first-output path (onData below) normally fires first and clears
-            // this timer.
-            if (pendingInitialInput !== null && initialInputTimer === null) {
-              initialInputTimer = window.setTimeout(flushInitialInput, INITIAL_INPUT_FALLBACK_MS);
+            // Arm both fallbacks now: the quiet timer covers a shell that
+            // prints nothing at all, the deadline one that never stops.
+            if (pendingInitialInput !== null && initialInputDeadline === null) {
+              initialInputDeadline = window.setTimeout(
+                flushInitialInput,
+                INITIAL_INPUT_MAX_WAIT_MS,
+              );
+              deferInitialInput();
             }
           }
         } catch (err) {
@@ -191,9 +234,12 @@ export function TerminalPane({
       unsubs.push(
         boundTransport.onData((bytes) => {
           term.write(bytes);
-          // First output ⇒ the shell is up and has (almost always) printed its
-          // prompt: safe to type the setup commands now.
-          flushInitialInput();
+          // Bracketed-paste-on ⇒ the line editor owns the tty and is draining
+          // input: type setup right away. Otherwise wait out the quiet period —
+          // first output alone only means the shell started, and it drops
+          // anything past its input queue while it's still sourcing rc files.
+          if (isLineEditorReady(bytes)) flushInitialInput();
+          else deferInitialInput();
         }),
       );
       unsubs.push(
@@ -262,7 +308,8 @@ export function TerminalPane({
       // Disposal order (Orca): pending timers/rAF -> observer -> listeners ->
       // transport -> terminal.
       if (fitTimer !== null) window.clearTimeout(fitTimer);
-      if (initialInputTimer !== null) window.clearTimeout(initialInputTimer);
+      clearInitialInputTimers();
+      if (chunkTimer !== null) window.clearTimeout(chunkTimer);
       if (initialFitRafId !== null) cancelAnimationFrame(initialFitRafId);
       observer?.disconnect();
       observer = null;
