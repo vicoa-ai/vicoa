@@ -491,11 +491,11 @@ class ACPWrapperBase(ABC):
 
         # POST initial prompt as a user message and let the WS echo deliver it
         # back into ``message_queue`` — the single path also used for every
-        # subsequent turn. There is NO direct ``message_queue.append`` and NO
-        # self-echo dedup; the codex_native pattern relies on the live
-        # broadcast (after ``wait_until_ready`` confirms catch-up completed,
-        # so the subscription is registered AND we won't double-deliver via
-        # catch-up rows we just bypassed by mark_as_read=True on POST).
+        # subsequent turn. There is NO direct ``message_queue.append``; the
+        # codex_native pattern relies on the live broadcast (after
+        # ``wait_until_ready`` confirms catch-up completed, so the
+        # subscription is registered), with the WS client's ``CatchUpBuffer``
+        # deduping by message id so a later catch-up can't double-deliver.
         initial_prompt: Optional[str] = getattr(self.config, "initial_prompt", None)
         if initial_prompt and initial_prompt.strip() and self.config.agent_instance_id:
             if self._ws_client is not None:
@@ -507,9 +507,17 @@ class ACPWrapperBase(ABC):
                     )
             if self.vicoa_client:
                 try:
+                    # ``mark_as_read=False`` is load-bearing — see the long
+                    # comment on the same POST in ``claude_code.initialize``.
+                    # The default (True) points the server's
+                    # ``last_read_message_id`` at this row, and the catch-up
+                    # cursor fallback then excludes the prompt from its own
+                    # recovery, hanging the session forever when the
+                    # ``ready`` wait above timed out.
                     self.vicoa_client.send_user_message(
                         agent_instance_id=self.config.agent_instance_id,
                         content=initial_prompt,
+                        mark_as_read=False,
                     )
                 except Exception as e:
                     self.log(

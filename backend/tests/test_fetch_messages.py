@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from servers.api.ws_handler import handle_fetch_messages_request
-from servers.shared.db.queries import fetch_session_messages
+from servers.shared.db.queries import create_user_message, fetch_session_messages
 from shared.database.enums import SenderType
 from shared.database.models import AgentInstance, Message, User, UserAgent
 from shared.database.session import SessionLocal
@@ -282,6 +282,77 @@ def test_session_scoped_no_watermark_returns_nothing_when_caught_up(
         result = fetch_session_messages(db, instance_id, after=None)
 
     assert result.rows == []
+
+
+@pytest.mark.parametrize("mark_as_read,recovered", [(True, False), (False, True)])
+def test_initial_prompt_is_recoverable_only_when_it_does_not_mark_itself_read(
+    session_instance: tuple[UUID, UUID],
+    mark_as_read: bool,
+    recovered: bool,
+) -> None:
+    # A wrapper POSTs its initial prompt and then waits for the row to come
+    # back over the WS. When the subscription is not attached yet the live
+    # broadcast is missed, leaving the cold-start catch-up (`after=None`) as
+    # the only delivery leg — including the 10s reconcile backstop, which
+    # replays the same query.
+    #
+    # `mark_as_read=True` points `last_read_message_id` at the row just
+    # created, and this fallback selects strictly `created_at > cursor`, so
+    # the prompt excludes *itself*: both legs miss it and the session hangs
+    # (c0d25529-…, 6h+ idle). Leaving the cursor alone makes catch-up recover
+    # it. Pins the reason `mark_as_read=False` is load-bearing at the three
+    # wrapper POST sites (see test_initial_prompt_catch_up.py).
+    user_id, instance_id = session_instance
+
+    with SessionLocal() as db:
+        create_user_message(
+            db,
+            agent_instance_id=str(instance_id),
+            content="the initial prompt",
+            user_id=str(user_id),
+            mark_as_read=mark_as_read,
+        )
+        db.commit()
+
+        result = fetch_session_messages(db, instance_id, after=None)
+
+    assert [row["content"] for row in result.rows] == (
+        ["the initial prompt"] if recovered else []
+    )
+
+
+def test_unread_prompt_recovery_does_not_replay_processed_history(
+    session_instance: tuple[UUID, UUID],
+    add_messages: Callable[[UUID, list[tuple]], list[UUID]],
+) -> None:
+    # The flip side of the test above: not marking the prompt read must not
+    # widen the catch-up back over turns the wrapper already ran. On a
+    # `--resume` the cursor still sits on the last processed message, so the
+    # fallback returns the prompt and nothing older.
+    user_id, instance_id = session_instance
+    ids = add_messages(
+        instance_id,
+        [
+            ("u1", BASE + timedelta(minutes=1), SenderType.USER),
+            ("agent-reply", BASE + timedelta(minutes=2), SenderType.AGENT),
+        ],
+    )
+
+    with SessionLocal() as db:
+        instance = db.query(AgentInstance).filter(AgentInstance.id == instance_id).one()
+        instance.last_read_message_id = ids[1]  # wrapper replied to u1
+        create_user_message(
+            db,
+            agent_instance_id=str(instance_id),
+            content="resume prompt",
+            user_id=str(user_id),
+            mark_as_read=False,
+        )
+        db.commit()
+
+        result = fetch_session_messages(db, instance_id, after=None)
+
+    assert [row["content"] for row in result.rows] == ["resume prompt"]
 
 
 def test_pagination_through_a_single_timestamp_neither_skips_nor_loops(
