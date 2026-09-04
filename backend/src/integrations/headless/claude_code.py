@@ -1157,11 +1157,10 @@ class HeadlessClaudeRunner:
             # (session 40e02f0a-…). Mirrors ``codex_native.run()`` 2026-06.
             #
             # Wait for the WS subscriber to finish its catch-up handshake
-            # before POSTing. Otherwise the broadcast from this POST can
-            # land in the gap between subscription-registration and the
-            # catch-up SELECT, and the prompt is silently dropped on first
-            # session (subsequent messages work because by then the
-            # subscriber is fully attached).
+            # before POSTing, so the broadcast lands on an attached
+            # subscription and the prompt is delivered in order. The wait is
+            # an optimisation, not the correctness guarantee — see
+            # ``mark_as_read`` below for what covers the timeout path.
             if self._ws_client is not None:
                 ready = await asyncio.to_thread(self._ws_client.wait_until_ready, 10.0)
                 if not ready:
@@ -1169,9 +1168,23 @@ class HeadlessClaudeRunner:
                         "WS catch-up not ready after 10s; POSTing initial prompt anyway"
                     )
             try:
+                # ``mark_as_read=False`` is load-bearing. The default (True)
+                # makes the server point ``last_read_message_id`` at this very
+                # row, and the session-scoped catch-up falls back to that
+                # cursor when the client has no watermark, fetching strictly
+                # ``created_at > cursor``. So a prompt POSTed before the
+                # subscription attached (the ``ready`` timeout above) misses
+                # the live broadcast AND excludes itself from every later
+                # catch-up — including the 10s ``_run_reconcile_backstop``
+                # re-fetch, which replays the same cursor forever. The session
+                # then hangs until a human interrupts it (c0d25529-…, 6h+).
+                # Leaving the cursor alone lets catch-up recover the prompt;
+                # ``CatchUpBuffer`` dedupes it against the live broadcast, and
+                # the first agent message advances the cursor past it anyway.
                 await self.vicoa_client.send_user_message(
                     agent_instance_id=self.session_id,
                     content=self.initial_prompt,
+                    mark_as_read=False,
                 )
             except Exception:
                 self.logger.exception("Failed to POST initial prompt as user message")

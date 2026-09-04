@@ -355,12 +355,11 @@ class CodexNativeRunner:
                 # cause two turn/start calls for the same input.
                 #
                 # Wait for the WS subscriber to finish its catch-up handshake
-                # before POSTing. Otherwise the broadcast from this POST can
-                # land in the gap between subscription-registration and the
-                # catch-up SELECT, and the prompt is silently dropped on the
-                # first session (subsequent messages work because by then the
-                # subscriber is fully attached). See the codex_native catch-up
-                # race investigation 2026-06-06.
+                # before POSTing, so the broadcast lands on an attached
+                # subscription and the prompt is delivered in order. See the
+                # codex_native catch-up race investigation 2026-06-06. The
+                # wait is an optimisation, not the correctness guarantee —
+                # ``mark_as_read=False`` below covers the timeout path.
                 if self._ws_client is not None:
                     ready = await asyncio.to_thread(
                         self._ws_client.wait_until_ready, 10.0
@@ -371,9 +370,17 @@ class CodexNativeRunner:
                             "POSTing initial prompt anyway"
                         )
                 try:
+                    # ``mark_as_read=False`` is load-bearing — see the long
+                    # comment on the same POST in ``claude_code.initialize``.
+                    # The default (True) points the server's
+                    # ``last_read_message_id`` at this row, and the catch-up
+                    # cursor fallback then excludes the prompt from its own
+                    # recovery, hanging the session forever when the
+                    # ``ready`` wait above timed out.
                     await self.vicoa_client.send_user_message(
                         agent_instance_id=self.session_id,
                         content=self.initial_prompt,
+                        mark_as_read=False,
                     )
                 except Exception:
                     logger.exception(
