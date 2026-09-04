@@ -145,7 +145,7 @@ export function NavigationHeader() {
               title="Vicoa is open source — star us on GitHub"
               className="flex h-10 w-10 items-center justify-center rounded-full text-foreground/80 hover:text-foreground hover:bg-muted transition-all"
             >
-              <GithubIcon className="h-5 w-5" />
+              <GithubIcon className="h-6 w-6" />
             </a>
             <div className="hidden md:flex">
               <UnifiedUserMenu variant="button" />
