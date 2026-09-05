@@ -47,8 +47,12 @@ AGENT_CHOICES = ["claude", "amp", "codex", "opencode"]
 # Agents served by the generic ACP module (integrations/headless/generic_acp).
 # Headless/daemon mode only — there is no TUI wrapper for these.
 GENERIC_ACP_AGENT_CHOICES = ["cursor", "gemini", "copilot", "kimi", "hermes"]
+# Native-RPC Pi family (integrations/headless/pi_family/). Not ACP — one
+# wrapper, two agents, selected with `--agent`.
+PI_FAMILY_AGENT_CHOICES = ["omp", "pi"]
 
 AGENT_CHOICES.extend(GENERIC_ACP_AGENT_CHOICES)
+AGENT_CHOICES.extend(PI_FAMILY_AGENT_CHOICES)
 
 
 def sync_project_files_async(api_key: str, base_url: str, project_path: str) -> None:
@@ -673,6 +677,13 @@ def cmd_headless(args, unknown_args):
     elif agent_type in GENERIC_ACP_AGENT_CHOICES:
         module_name = "integrations.headless.generic_acp"
         argv_prog = f"headless_{agent_type}"
+    elif agent_type in PI_FAMILY_AGENT_CHOICES:
+        # Native RPC wrapper shared by pi and omp; `--agent` picks the row in
+        # PI_FAMILY_AGENTS. Same single-route posture as codex: the frozen
+        # daemon bundle can only invoke exposed subcommands, so both it and a
+        # dev `python -m vicoa.cli headless` land here.
+        module_name = "integrations.headless.pi_native"
+        argv_prog = f"headless_{agent_type}"
 
     module = importlib.import_module(module_name)
     headless_main = getattr(module, "main")
@@ -729,6 +740,12 @@ def cmd_headless(args, unknown_args):
             new_argv.extend(["--agent", agent_type])
             if getattr(args, "permission_mode", None):
                 new_argv.extend(["--permission-mode", args.permission_mode])
+        if agent_type in PI_FAMILY_AGENT_CHOICES:
+            new_argv.extend(["--agent", agent_type])
+            if getattr(args, "permission_mode", None):
+                new_argv.extend(["--permission-mode", args.permission_mode])
+            # --model / --thinking-effort are not `headless` subcommand flags,
+            # so they arrive in unknown_args and are appended below.
 
     # Pass through unknown args to the selected headless runner.
     if unknown_args:
@@ -1187,9 +1204,10 @@ def run_agent_default(args, unknown_args):
     if getattr(args, "name", None):
         env["VICOA_AGENT_DISPLAY_NAME"] = args.name
 
-    if agent in GENERIC_ACP_AGENT_CHOICES:
-        # These agents integrate via ACP headless mode only; there is no
-        # vicoa TUI wrapper for them.
+    if agent in GENERIC_ACP_AGENT_CHOICES or agent in PI_FAMILY_AGENT_CHOICES:
+        # These agents integrate via a headless wrapper only (ACP for the
+        # generic set, native RPC for pi/omp); there is no vicoa TUI wrapper
+        # for them.
         print(
             f"Terminal (TUI) mode isn't available for '{agent}'. "
             f"Start a session from the Vicoa app or web dashboard, or run:\n"
@@ -1789,7 +1807,13 @@ Examples:
 
     # Agents that can be spawned map to catalog ids (excludes 'amp', which the
     # spawn endpoint's catalog doesn't cover). Generic ACP agents are included.
-    spawn_agent_choices = ["claude", "codex", "opencode", *GENERIC_ACP_AGENT_CHOICES]
+    spawn_agent_choices = [
+        "claude",
+        "codex",
+        "opencode",
+        *GENERIC_ACP_AGENT_CHOICES,
+        *PI_FAMILY_AGENT_CHOICES,
+    ]
     session_start = session_sub.add_parser(
         "start",
         parents=[session_common],

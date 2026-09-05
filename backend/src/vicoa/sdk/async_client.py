@@ -193,6 +193,33 @@ class AsyncVicoaClient:
 
         raise APIError(0, "Unexpected retry exhaustion")
 
+    async def request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        json: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        timeout: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Authenticated call to an arbitrary agent-facing endpoint.
+
+        The public escape hatch for callers that need an endpoint this client
+        has no typed method for. It exists so nothing reaches across modules
+        into ``_make_request`` (private, and its retry/error contract is not a
+        cross-module promise) and so nothing falls back to
+        ``vicoa/commands/_api.request`` — which calls ``sys.exit(1)`` on error
+        and would take down a whole wrapper process over one failed call.
+
+        Added for the Pi-family host tools
+        (``integrations/agent_tools/``), whose endpoint knowledge deliberately
+        lives in the tool handlers rather than in ten thin typed wrappers here.
+        Add a typed method instead once a second consumer appears.
+        """
+        return await self._make_request(
+            method, endpoint, json=json, params=params, timeout=timeout
+        )
+
     async def download_attachment(self, attachment_id: str) -> tuple[bytes, str]:
         """Download an image attachment's bytes.
 

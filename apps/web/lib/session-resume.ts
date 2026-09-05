@@ -28,6 +28,12 @@ export interface AgentSessionHandles {
   codex_thread_id?: string | null;
   /** ACP `session/load` */
   acp_session_id?: string | null;
+  /**
+   * pi / omp `--session <id>`. The agent issues this id itself and the flag
+   * only ever *resolves* it, so it is read back from `get_state` at first
+   * launch rather than minted by Vicoa.
+   */
+  pi_session_id?: string | null;
 }
 
 export interface ResumableInstance {
@@ -208,6 +214,10 @@ export function resumeAgentSlug(instance: ResumableInstance): string {
   if (name.includes('copilot')) return 'copilot';
   if (name.includes('kimi')) return 'kimi';
   if (name.includes('hermes')) return 'hermes';
+  // 'pi' is a substring of 'copilot', so both Pi checks must come after every
+  // other agent and 'pi' must be the last of them.
+  if (name.includes('oh my pi') || name.includes('omp')) return 'omp';
+  if (name.includes('pi')) return 'pi';
   return 'claude';
 }
 
@@ -223,7 +233,7 @@ export function agentSessionHandle(
 ): string | undefined {
   const meta = instance.instance_metadata;
   if (!meta) return undefined;
-  return meta.codex_thread_id ?? meta.acp_session_id ?? undefined;
+  return meta.codex_thread_id ?? meta.acp_session_id ?? meta.pi_session_id ?? undefined;
 }
 
 /**

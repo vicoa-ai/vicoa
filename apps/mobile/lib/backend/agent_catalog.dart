@@ -166,6 +166,15 @@ class SessionConfig {
       if (model != null) m['model'] = model;
       if (reasoningEffort != null) m['reasoning_effort'] = reasoningEffort;
       if (permissionMode != null) m['permission_mode'] = permissionMode;
+    } else if (agent == 'omp' || agent == 'pi') {
+      // Pi family (native RPC, not ACP): model + thinking effort + (omp only)
+      // permission mode. No legacy `enable_thinking` to dual-write.
+      // `default`/`auto` means "keep the agent's own configured model".
+      if (model != null && model != 'default' && model != 'auto') {
+        m['model'] = model;
+      }
+      if (thinkingEffort != null) m['thinking_effort'] = thinkingEffort;
+      if (permissionMode != null) m['permission_mode'] = permissionMode;
     } else if (agent == 'opencode') {
       if (opencodeMode != null) m['agent_mode'] = opencodeMode;
       // `default`/`auto` = keep OpenCode's own configured model (don't force
@@ -416,7 +425,7 @@ String sessionConfigSummary(AgentCatalog catalog, SessionConfig config) {
 /// the flag today; this comment is the rule.
 const String _agentCatalogFallbackJson = r'''
 {
-  "version": "2026-09-02-1",
+  "version": "2026-09-05-1",
   "min_cli_version": "1.20.0",
   "min_client_version": "0.42.0",
   "agents": [
@@ -483,6 +492,41 @@ const String _agentCatalogFallbackJson = r'''
       "modes": [
         {"id": "build", "label": "Build", "is_default": true},
         {"id": "plan", "label": "Plan"}
+      ]
+    },
+    {
+      "id": "omp",
+      "label": "Oh My Pi",
+      "models": [
+        {"id": "default", "label": "Default", "is_default": true}
+      ],
+      "thinking_efforts": [
+        {"id": "max", "label": "Max"},
+        {"id": "xhigh", "label": "Extra High"},
+        {"id": "high", "label": "High"},
+        {"id": "medium", "label": "Medium", "is_default": true},
+        {"id": "low", "label": "Low"},
+        {"id": "off", "label": "Off"}
+      ],
+      "permission_modes": [
+        {"id": "default", "label": "Always Ask", "is_default": true},
+        {"id": "acceptEdits", "label": "Write Approval"},
+        {"id": "bypassPermissions", "label": "Skip permissions (Yolo)"}
+      ]
+    },
+    {
+      "id": "pi",
+      "label": "Pi",
+      "models": [
+        {"id": "default", "label": "Default", "is_default": true}
+      ],
+      "thinking_efforts": [
+        {"id": "max", "label": "Max"},
+        {"id": "xhigh", "label": "Extra High"},
+        {"id": "high", "label": "High"},
+        {"id": "medium", "label": "Medium", "is_default": true},
+        {"id": "low", "label": "Low"},
+        {"id": "off", "label": "Off"}
       ]
     },
     {

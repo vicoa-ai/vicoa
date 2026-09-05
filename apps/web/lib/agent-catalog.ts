@@ -235,6 +235,15 @@ export function toSpawnMetadata(config: SessionConfig, prompt?: string): Record<
     if (config.model) m.model = config.model;
     if (config.reasoning_effort) m.reasoning_effort = config.reasoning_effort;
     if (config.permission_mode) m.permission_mode = config.permission_mode;
+  } else if (config.agent === "omp" || config.agent === "pi") {
+    // Pi family: model + thinking effort + (omp only) permission mode. Unlike
+    // Claude there is no legacy `enable_thinking` to dual-write.
+    // `default`/`auto` means "keep the agent's own configured model".
+    if (config.model && config.model !== "default" && config.model !== "auto") {
+      m.model = config.model;
+    }
+    if (config.thinking_effort) m.thinking_effort = config.thinking_effort;
+    if (config.permission_mode) m.permission_mode = config.permission_mode;
   } else if (config.agent === "opencode") {
     if (config.opencode_mode) m.agent_mode = config.opencode_mode;
     // `default`/`auto` = keep OpenCode's own configured model (don't force
@@ -381,7 +390,7 @@ export function savePersistedSelection(payload: Partial<PersistedSelection>): vo
 // ---------------------------------------------------------------------------
 
 export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
-  version: "2026-09-02-1",
+  version: "2026-09-05-1",
   min_cli_version: "1.20.0",
   min_client_version: "0.42.0",
   agents: [
@@ -479,6 +488,47 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
     // choice. Modes ARE applied at spawn via set_mode. Verified June 2026:
     // cursor = agent/plan/ask; gemini = default/autoEdit(camelCase)/plan/yolo;
     // kimi = `default` only; copilot ACP mode ids undocumented.
+    // Pi family (integrations/headless/pi_family/) — native RPC, not ACP.
+    // Both proxy many providers whose real model list is per-machine config,
+    // so like OpenCode `default` is the only static entry and the true list
+    // arrives live in the mid-session gear. The CLIs also accept `minimal`
+    // (both) and `auto` (omp) thinking levels; they are deliberately omitted
+    // so the shared effort enum isn't widened for every agent.
+    {
+      id: "omp",
+      label: "Oh My Pi",
+      models: [{ id: "default", label: "Default", is_default: true }],
+      thinking_efforts: [
+        { id: "max", label: "Max" },
+        { id: "xhigh", label: "Extra High" },
+        { id: "high", label: "High" },
+        { id: "medium", label: "Medium", is_default: true },
+        { id: "low", label: "Low" },
+        { id: "off", label: "Off" },
+      ],
+      // -> omp's `--approval-mode`. Reusing Vicoa's existing slugs keeps the
+      // shared mode picker unchanged; the backend spec table owns the
+      // translation. `default` means always-ask here.
+      permission_modes: [
+        { id: "default", label: "Always Ask", is_default: true },
+        { id: "acceptEdits", label: "Write Approval" },
+        { id: "bypassPermissions", label: "Skip permissions (Yolo)" },
+      ],
+    },
+    {
+      id: "pi",
+      label: "Pi",
+      models: [{ id: "default", label: "Default", is_default: true }],
+      thinking_efforts: [
+        { id: "max", label: "Max" },
+        { id: "xhigh", label: "Extra High" },
+        { id: "high", label: "High" },
+        { id: "medium", label: "Medium", is_default: true },
+        { id: "low", label: "Low" },
+        { id: "off", label: "Off" },
+      ],
+      // Pi has no approval-mode flag at all, so no mode picker.
+    },
     {
       id: "cursor",
       label: "Cursor",
