@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { getBackendAPI, type BillingSubscription } from '@/lib/backend-api';
 import posthog from 'posthog-js';
-import { getBillingPlanLabel } from '@/lib/billing';
+import { describePrepaidPass, getBillingPlanLabel, isPrepaidProvider } from '@/lib/billing';
 
 const freePlanFeatures = [
   'Web & mobile access',
@@ -76,6 +76,8 @@ export function BillingSettingsSection({
   const isStripePro = billingSubscription?.plan_type === 'pro' && billingSubscription.provider === 'stripe';
   const isMobileStorePro = billingSubscription?.plan_type === 'pro'
     && (billingSubscription.provider === 'apple' || billingSubscription.provider === 'google');
+  const isPrepaidPro = billingSubscription?.plan_type === 'pro'
+    && isPrepaidProvider(billingSubscription.provider);
 
   return (
     <Card>
@@ -163,6 +165,35 @@ export function BillingSettingsSection({
                 ? 'Your subscription is managed in the App Store.'
                 : 'Your subscription is managed in the Google Play Store.'}
             </p>
+          </div>
+        ) : isPrepaidPro && billingSubscription ? (
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-base font-medium text-foreground">
+                Pro Plan
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {describePrepaidPass(billingSubscription)}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              className="cursor-pointer"
+              onClick={handleOpenPortal}
+              disabled={billingAction !== null}
+            >
+              {billingAction === 'portal' ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Opening
+                </>
+              ) : (
+                <>
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Extend pass
+                </>
+              )}
+            </Button>
           </div>
         ) : (
           <div>

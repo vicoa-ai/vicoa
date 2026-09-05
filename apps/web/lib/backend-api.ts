@@ -311,7 +311,12 @@ export interface BillingSubscription {
   agent_limit: number;
   current_period_end: string | null;
   cancel_at_period_end: boolean;
-  provider: 'stripe' | 'apple' | 'google' | null;
+  /**
+   * Who took the money. `stripe` and the app stores renew on their own;
+   * `coinpay` is a prepaid pass (a self-hosted billing overlay) that simply
+   * ends at `current_period_end` unless the user buys more time.
+   */
+  provider: 'stripe' | 'apple' | 'google' | 'coinpay' | null;
 }
 
 export interface BillingUsage {
