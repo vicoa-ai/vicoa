@@ -95,6 +95,10 @@ class TestGenericAgentDetection:
             "copilot",
             "kimi",
             "hermes",
+            # Native-RPC Pi family — detected the same way, so the app's
+            # per-machine agent scan picks them up with no client change.
+            "omp",
+            "pi",
         }
         assert all(agents.values())
 

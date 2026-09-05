@@ -37,6 +37,8 @@ def test_detect_available_agents_maps_installed_to_true(
         "copilot": False,
         "kimi": False,
         "hermes": False,
+        "omp": False,
+        "pi": False,
     }
 
 

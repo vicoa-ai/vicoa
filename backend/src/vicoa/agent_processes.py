@@ -73,6 +73,9 @@ def _classify(command: str) -> tuple[Optional[str], Optional[str]]:
         # One module serves cursor/gemini/copilot/kimi/hermes; the agent id
         # rides in the --agent flag.
         return (_extract_flag(command, "--agent") or "acp", "headless")
+    if "integrations.headless.pi_native" in command:
+        # One module serves pi + omp; the agent id rides in the --agent flag.
+        return (_extract_flag(command, "--agent") or "pi", "headless")
     if "integrations.headless.claude_code" in command:
         return ("claude", "headless")
 

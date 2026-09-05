@@ -2,6 +2,7 @@ import '/flutter_flow/app_locale.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/actions/ws_protocol.dart' as ws_protocol;
+import '/backend/agent_catalog.dart' show normalizeModelLabel;
 import '/backend/posthog/posthog_analytics.dart';
 import '/custom_code/utils/text_sanitizer.dart';
 import '/custom_code/utils/file_mention_utils.dart';
@@ -489,17 +490,28 @@ String? latestWebPreviewUrl;
     return typeName.contains('codex');
   }
 
-  /// Generic ACP agents whose modes/models are sourced from the live session.
+  /// Agents whose gear is driven by the live `session_config` the wrapper
+  /// reports rather than by the static catalog. 'pi' is LAST on purpose: the
+  /// lookup below is a substring match and 'copilot' contains 'pi'.
   static const List<String> _acpAgentIds = [
     'cursor',
     'gemini',
     'copilot',
     'kimi',
     'hermes',
+    'omp',
+    'pi',
   ];
 
-  /// Catalog id for an ACP agent ('cursor'/'gemini'/…), or null otherwise.
+  /// Catalog id for a live-config agent ('cursor'/'gemini'/'omp'/…), else null.
   String? acpAgentId() {
+    // `session_config.agent` is the catalog id the daemon was spawned with, so
+    // it is authoritative. `agent_type_name` is the user-editable UserAgent row
+    // name and only a fallback for rows that predate session_config — matching
+    // on it alone missed every agent whose display name isn't its id
+    // ("Oh My Pi" -> omp), leaving those sessions with no config sheet at all.
+    final configured = _sessionConfigMap?['agent']?.toString().toLowerCase().trim();
+    if (configured != null && _acpAgentIds.contains(configured)) return configured;
     final typeName = (instanceData?['agent_type_name']?.toString() ??
             instanceData?['agent_type']?.toString() ??
             '')
@@ -525,7 +537,11 @@ String? latestWebPreviewUrl;
     final out = <Map<String, String>>[];
     for (final e in raw) {
       if (e is Map && e['id'] != null) {
-        out.add({'id': e['id'].toString(), 'label': (e['label'] ?? e['id']).toString()});
+        final id = e['id'].toString();
+        // A running session pins whatever its daemon reported at bring-up, so
+        // an older daemon's `(provider)` suffix persists for that session's
+        // whole life. Strip it here rather than waiting for a restart.
+        out.add({'id': id, 'label': normalizeModelLabel(id, (e['label'] ?? id).toString())});
       }
     }
     return out;

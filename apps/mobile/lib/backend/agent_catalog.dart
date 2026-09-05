@@ -166,6 +166,15 @@ class SessionConfig {
       if (model != null) m['model'] = model;
       if (reasoningEffort != null) m['reasoning_effort'] = reasoningEffort;
       if (permissionMode != null) m['permission_mode'] = permissionMode;
+    } else if (agent == 'omp' || agent == 'pi') {
+      // Pi family (native RPC, not ACP): model + thinking effort + (omp only)
+      // permission mode. No legacy `enable_thinking` to dual-write.
+      // `default`/`auto` means "keep the agent's own configured model".
+      if (model != null && model != 'default' && model != 'auto') {
+        m['model'] = model;
+      }
+      if (thinkingEffort != null) m['thinking_effort'] = thinkingEffort;
+      if (permissionMode != null) m['permission_mode'] = permissionMode;
     } else if (agent == 'opencode') {
       if (opencodeMode != null) m['agent_mode'] = opencodeMode;
       // `default`/`auto` = keep OpenCode's own configured model (don't force
@@ -416,7 +425,7 @@ String sessionConfigSummary(AgentCatalog catalog, SessionConfig config) {
 /// the flag today; this comment is the rule.
 const String _agentCatalogFallbackJson = r'''
 {
-  "version": "2026-09-02-1",
+  "version": "2026-09-05-1",
   "min_cli_version": "1.20.0",
   "min_client_version": "0.42.0",
   "agents": [
@@ -486,6 +495,41 @@ const String _agentCatalogFallbackJson = r'''
       ]
     },
     {
+      "id": "omp",
+      "label": "Oh My Pi",
+      "models": [
+        {"id": "default", "label": "Default", "is_default": true}
+      ],
+      "thinking_efforts": [
+        {"id": "max", "label": "Max"},
+        {"id": "xhigh", "label": "Extra High"},
+        {"id": "high", "label": "High"},
+        {"id": "medium", "label": "Medium", "is_default": true},
+        {"id": "low", "label": "Low"},
+        {"id": "off", "label": "Off"}
+      ],
+      "permission_modes": [
+        {"id": "default", "label": "Always Ask", "is_default": true},
+        {"id": "acceptEdits", "label": "Write Approval"},
+        {"id": "bypassPermissions", "label": "Skip permissions (Yolo)"}
+      ]
+    },
+    {
+      "id": "pi",
+      "label": "Pi",
+      "models": [
+        {"id": "default", "label": "Default", "is_default": true}
+      ],
+      "thinking_efforts": [
+        {"id": "max", "label": "Max"},
+        {"id": "xhigh", "label": "Extra High"},
+        {"id": "high", "label": "High"},
+        {"id": "medium", "label": "Medium", "is_default": true},
+        {"id": "low", "label": "Low"},
+        {"id": "off", "label": "Off"}
+      ]
+    },
+    {
       "id": "cursor",
       "label": "Cursor",
       "models": [
@@ -544,6 +588,45 @@ const String _agentCatalogFallbackJson = r'''
 }
 ''';
 
+/// Drop a trailing `(provider)` that an older daemon baked into a model label.
+///
+/// Daemons up to and including the 1.7.x line labelled Pi/Oh My Pi models
+/// `"Claude Haiku 4.5 (anthropic)"`. The provider now rides in the muted id
+/// shown beside the name, so that suffix reads as a stutter — and it outlives
+/// the daemon that produced it, because labels are cached per machine and
+/// pinned on running sessions' `session_config`.
+///
+/// Deliberately narrow: only a trailing parenthetical whose content is exactly
+/// the id's own provider segment. Pi genuinely ships
+/// `"Claude Haiku 4.5 (latest)"` — a real distinction between the moving alias
+/// and the dated build — and that must survive untouched.
+///
+/// Mirrors `normalizeModelLabel` in the web's agent-catalog.ts.
+String normalizeModelLabel(String id, String label) {
+  final slash = id.indexOf('/');
+  if (slash <= 0) return label;
+  final suffix = ' (${id.substring(0, slash)})';
+  return label.endsWith(suffix) ? label.substring(0, label.length - suffix.length) : label;
+}
+
+/// The raw model id, when the label alone doesn't identify the model.
+///
+/// Multi-provider agents (Pi, Oh My Pi, OpenCode, Kimi) advertise ids like
+/// `anthropic/claude-haiku-4-5-20251001` under a friendly name like "Claude
+/// Haiku 4.5", and one machine routinely offers several builds under one name —
+/// so the label on its own cannot be picked from. Cursor does the same with
+/// bracketed variants (`gpt-5.4[context=272k]`). Single-provider agents have
+/// ids you can guess from the label, so showing them would be noise.
+///
+/// Rendered inline after the label (web) or after it on the same row
+/// (mobile's _OptionRow). Mirrors `modelSublabel` in
+/// the web's session-config-dropdown.tsx.
+String? modelSublabel(String id, String label) {
+  if (id.isEmpty || id == label) return null;
+  if (!id.contains('/') && !id.contains('[')) return null;
+  return id;
+}
+
 AgentCatalog agentCatalogFallback() => AgentCatalog.fromJson(json.decode(_agentCatalogFallbackJson) as Map<String, dynamic>);
 
 /// Return [base] with each agent's model list replaced by the machine's cached
@@ -571,7 +654,7 @@ AgentCatalog catalogWithCachedModels(
     final catalogById = {for (final m in a.models ?? const <CatalogModel>[]) m.id: m};
     final models = cached.map((e) {
       final id = e['id']!;
-      final label = e['label'] ?? id;
+      final label = normalizeModelLabel(id, e['label'] ?? id);
       final known = catalogById[id];
       if (known == null) return CatalogModel(id: id, label: label);
       return CatalogModel(

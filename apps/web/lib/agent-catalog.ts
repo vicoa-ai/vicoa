@@ -62,6 +62,27 @@ export function agentPickerLabel(_agentId: string, label: string): string {
 }
 
 /**
+ * Drop a trailing `(provider)` that an older daemon baked into a model label.
+ *
+ * Daemons up to and including the 1.7.x line labelled Pi/Oh My Pi models
+ * `"Claude Haiku 4.5 (anthropic)"`. The provider now rides in the muted id
+ * shown beside the name, so that suffix reads as a stutter — and it outlives
+ * the daemon that produced it, because labels are cached per machine
+ * (`machine_agent_models`) and pinned on running sessions' `session_config`.
+ *
+ * Deliberately narrow: only a trailing parenthetical whose content is exactly
+ * the id's own provider segment. Pi genuinely ships
+ * `"Claude Haiku 4.5 (latest)"` — a real distinction between the moving alias
+ * and the dated build — and that must survive untouched.
+ */
+export function normalizeModelLabel(id: string, label: string): string {
+  const provider = id.includes('/') ? id.slice(0, id.indexOf('/')) : '';
+  if (!provider) return label;
+  const suffix = ` (${provider})`;
+  return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
+}
+
+/**
  * Return `base` with each agent's model list replaced by the machine's cached
  * real models when present (keyed by agent id). Agents without a cached entry
  * keep their static catalog defaults. Lets the new-session picker show a
@@ -88,9 +109,8 @@ export function catalogWithCachedModels(
       const catalogById = new Map((a.models ?? []).map((m) => [m.id, m] as const));
       const cachedModels: CatalogModel[] = cached.map((m) => {
         const known = catalogById.get(m.id);
-        return known
-          ? { ...known, label: m.label || known.label }
-          : { id: m.id, label: m.label || m.id };
+        const label = normalizeModelLabel(m.id, m.label || m.id);
+        return known ? { ...known, label: m.label ? label : known.label } : { id: m.id, label };
       });
       // Keep the agent's "defer to its own model" sentinel (the is_default
       // catalog entry, e.g. `auto`/`default`) at the top of the list. The
@@ -234,6 +254,15 @@ export function toSpawnMetadata(config: SessionConfig, prompt?: string): Record<
   } else if (config.agent === "codex") {
     if (config.model) m.model = config.model;
     if (config.reasoning_effort) m.reasoning_effort = config.reasoning_effort;
+    if (config.permission_mode) m.permission_mode = config.permission_mode;
+  } else if (config.agent === "omp" || config.agent === "pi") {
+    // Pi family: model + thinking effort + (omp only) permission mode. Unlike
+    // Claude there is no legacy `enable_thinking` to dual-write.
+    // `default`/`auto` means "keep the agent's own configured model".
+    if (config.model && config.model !== "default" && config.model !== "auto") {
+      m.model = config.model;
+    }
+    if (config.thinking_effort) m.thinking_effort = config.thinking_effort;
     if (config.permission_mode) m.permission_mode = config.permission_mode;
   } else if (config.agent === "opencode") {
     if (config.opencode_mode) m.agent_mode = config.opencode_mode;
@@ -381,7 +410,7 @@ export function savePersistedSelection(payload: Partial<PersistedSelection>): vo
 // ---------------------------------------------------------------------------
 
 export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
-  version: "2026-09-02-1",
+  version: "2026-09-05-1",
   min_cli_version: "1.20.0",
   min_client_version: "0.42.0",
   agents: [
@@ -479,6 +508,47 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
     // choice. Modes ARE applied at spawn via set_mode. Verified June 2026:
     // cursor = agent/plan/ask; gemini = default/autoEdit(camelCase)/plan/yolo;
     // kimi = `default` only; copilot ACP mode ids undocumented.
+    // Pi family (integrations/headless/pi_family/) — native RPC, not ACP.
+    // Both proxy many providers whose real model list is per-machine config,
+    // so like OpenCode `default` is the only static entry and the true list
+    // arrives live in the mid-session gear. The CLIs also accept `minimal`
+    // (both) and `auto` (omp) thinking levels; they are deliberately omitted
+    // so the shared effort enum isn't widened for every agent.
+    {
+      id: "omp",
+      label: "Oh My Pi",
+      models: [{ id: "default", label: "Default", is_default: true }],
+      thinking_efforts: [
+        { id: "max", label: "Max" },
+        { id: "xhigh", label: "Extra High" },
+        { id: "high", label: "High" },
+        { id: "medium", label: "Medium", is_default: true },
+        { id: "low", label: "Low" },
+        { id: "off", label: "Off" },
+      ],
+      // -> omp's `--approval-mode`. Reusing Vicoa's existing slugs keeps the
+      // shared mode picker unchanged; the backend spec table owns the
+      // translation. `default` means always-ask here.
+      permission_modes: [
+        { id: "default", label: "Always Ask", is_default: true },
+        { id: "acceptEdits", label: "Write Approval" },
+        { id: "bypassPermissions", label: "Skip permissions (Yolo)" },
+      ],
+    },
+    {
+      id: "pi",
+      label: "Pi",
+      models: [{ id: "default", label: "Default", is_default: true }],
+      thinking_efforts: [
+        { id: "max", label: "Max" },
+        { id: "xhigh", label: "Extra High" },
+        { id: "high", label: "High" },
+        { id: "medium", label: "Medium", is_default: true },
+        { id: "low", label: "Low" },
+        { id: "off", label: "Off" },
+      ],
+      // Pi has no approval-mode flag at all, so no mode picker.
+    },
     {
       id: "cursor",
       label: "Cursor",

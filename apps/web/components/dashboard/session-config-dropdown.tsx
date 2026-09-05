@@ -78,6 +78,7 @@ const CHIP_CLASS =
 
 export function TickItem({
   label,
+  sublabel,
   isSelected,
   isPending,
   disabled,
@@ -86,6 +87,8 @@ export function TickItem({
   yoloInfo,
 }: {
   label: string;
+  /** Muted trailing text — the raw model id when the label alone doesn't name it. */
+  sublabel?: string | null;
   isSelected: boolean;
   isPending: boolean;
   disabled?: boolean;
@@ -96,13 +99,23 @@ export function TickItem({
   return (
     <button
       type="button"
-      title={label}
+      title={sublabel ? `${label} — ${sublabel}` : label}
       disabled={disabled}
       onClick={onClick}
       className="group/item relative flex w-full cursor-pointer select-none items-center gap-2 rounded-sm border-0 px-3 py-1.5 text-xs outline-none transition-colors duration-100 hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
     >
       {leading}
-      <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+      <span className="flex min-w-0 flex-1 items-baseline gap-1.5 overflow-hidden text-left">
+        {/* The name never shrinks — it's short and it's what you scan for.
+            The id takes whatever is left and ellipsizes; the full text is on
+            the button's title either way. */}
+        <span className="flex-shrink-0">{label}</span>
+        {sublabel && (
+          <span className="min-w-0 truncate text-[10px] text-muted-foreground/60">
+            {sublabel}
+          </span>
+        )}
+      </span>
       <span className="flex w-4 flex-shrink-0 items-center justify-center">
         {isPending ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -122,6 +135,45 @@ export function TickItem({
       )}
     </button>
   );
+}
+
+/**
+ * The raw model id, when the label alone doesn't identify the model.
+ *
+ * Multi-provider agents (Pi, Oh My Pi, OpenCode, Kimi) advertise ids like
+ * `anthropic/claude-haiku-4-5-20251001` under a friendly name like "Claude
+ * Haiku 4.5" — and one machine routinely offers several builds behind the same
+ * name, so the label on its own can't be picked from. Cursor does the same
+ * with bracketed variants (`gpt-5.4[context=272k]`).
+ *
+ * Single-provider agents (Claude, Codex, Gemini) have ids you can already
+ * guess from the label, so showing them would be noise. The `/` and `[` test
+ * is exactly the "this agent fronts several providers or variants" signal.
+ */
+export function modelSublabel(model: { id: string; label: string }): string | null {
+  if (!model.id || model.id === model.label) return null;
+  if (!model.id.includes('/') && !model.id.includes('[')) return null;
+  return model.id;
+}
+
+/**
+ * Width for a model list, sized to its content when entries trail a raw id.
+ *
+ * A fixed width can't win here: `anthropic/claude-haiku-4-5-20251001` needs
+ * ~26rem, and the part that overflows first is the tail — which is exactly
+ * what distinguishes two builds sharing a display name, so truncating it
+ * defeats the point of showing the id at all. Sizing to content keeps a short
+ * list compact and gives a long one the room it needs, with a max so one
+ * pathological id can't stretch the menu across the window.
+ *
+ * Lists without ids keep the fixed `w-56` they have always had.
+ */
+export function modelListWidthClass(
+  models: readonly { id: string; label: string }[] | null | undefined,
+): string {
+  return models?.some((model) => modelSublabel(model))
+    ? 'w-auto min-w-56 max-w-[32rem]'
+    : 'w-56';
 }
 
 /** One chip + its dropdown list. */
@@ -222,7 +274,7 @@ export function SessionConfigChips({
         <ChipDropdown
           title="Model"
           disabled={disabled}
-          contentClassName="w-56"
+          contentClassName={modelListWidthClass(models)}
           chip={
             <>
               {pendingModel ? (
@@ -239,6 +291,7 @@ export function SessionConfigChips({
               <TickItem
                 key={m.id}
                 label={m.label}
+                sublabel={modelSublabel(m)}
                 isSelected={m.id === currentModel}
                 isPending={m.id === pendingModel}
                 disabled={!!pendingModel}

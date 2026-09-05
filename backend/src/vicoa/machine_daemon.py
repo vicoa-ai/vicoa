@@ -34,6 +34,7 @@ from protocol.agent_catalog import (
     THINKING_EFFORTS,
 )
 from integrations.headless.generic_acp import GENERIC_ACP_AGENTS
+from integrations.headless.pi_family.spec import PI_FAMILY_AGENTS
 from vicoa.utils import derive_ws_url, get_project_path
 from vicoa.machine_identity import (
     IdentityAction,
@@ -706,7 +707,13 @@ class MachineDaemon:
         """
         return {
             agent: self._check_agent_installation(agent) is None
-            for agent in ("claude", "codex", "opencode", *GENERIC_ACP_AGENTS)
+            for agent in (
+                "claude",
+                "codex",
+                "opencode",
+                *GENERIC_ACP_AGENTS,
+                *PI_FAMILY_AGENTS,
+            )
         }
 
     def _capabilities(self) -> list[str]:
@@ -991,6 +998,10 @@ class MachineDaemon:
     _AGENT_SESSION_FLAG: dict[str, str] = {
         "codex": "--codex-thread-id",
         "opencode": "--acp-session-id",
+        # pi/omp only ever *resolve* a session id they issued themselves, so
+        # this is read back from the agent at first launch and stored on the
+        # instance — never minted by Vicoa.
+        **{agent_id: "--pi-session-id" for agent_id in PI_FAMILY_AGENTS},
     }
 
     def _session_process_is_running(self, instance_id: str) -> bool:
@@ -1123,6 +1134,21 @@ class MachineDaemon:
                 prompt = self._extract_prompt(metadata)
                 if prompt:
                     cmd.extend(["--prompt", prompt])
+            elif normalized_agent in PI_FAMILY_AGENTS:
+                model = self._extract_generic_model(metadata)
+                if model:
+                    cmd.extend(["--model", model])
+                thinking_effort = self._extract_thinking_effort(metadata)
+                if thinking_effort is not None:
+                    cmd.extend(["--thinking-effort", thinking_effort])
+                permission_mode = self._extract_permission_mode(
+                    metadata, agent=normalized_agent
+                )
+                if permission_mode:
+                    cmd.extend(["--permission-mode", permission_mode])
+                prompt = self._extract_prompt(metadata)
+                if prompt:
+                    cmd.extend(["--prompt", prompt])
             elif normalized_agent in GENERIC_ACP_AGENTS:
                 model = self._extract_generic_model(metadata)
                 if model:
@@ -1228,6 +1254,41 @@ class MachineDaemon:
                 cmd.extend(["--prompt", prompt])
             return cmd
 
+        if normalized_agent in PI_FAMILY_AGENTS:
+            pi_spec = PI_FAMILY_AGENTS[normalized_agent]
+            cmd = [
+                sys.executable,
+                "-m",
+                "integrations.headless.pi_native",
+                "--agent",
+                normalized_agent,
+                "--api-key",
+                self.api_key,
+                "--base-url",
+                self.base_url,
+                "--project-path",
+                directory,
+                "--name",
+                pi_spec.display_name,
+            ]
+            if session_id:
+                cmd.extend(["--session-id", session_id])
+            model = self._extract_generic_model(metadata)
+            if model:
+                cmd.extend(["--model", model])
+            thinking_effort = self._extract_thinking_effort(metadata)
+            if thinking_effort is not None:
+                cmd.extend(["--thinking-effort", thinking_effort])
+            permission_mode = self._extract_permission_mode(
+                metadata, agent=normalized_agent
+            )
+            if permission_mode:
+                cmd.extend(["--permission-mode", permission_mode])
+            prompt = self._extract_prompt(metadata)
+            if prompt:
+                cmd.extend(["--prompt", prompt])
+            return cmd
+
         if normalized_agent in GENERIC_ACP_AGENTS:
             spec = GENERIC_ACP_AGENTS[normalized_agent]
             cmd = [
@@ -1313,11 +1374,23 @@ class MachineDaemon:
             "codex": "codex",
             "opencode": "opencode",
             **{agent_id: agent_id for agent_id in GENERIC_ACP_AGENTS},
+            **{agent_id: agent_id for agent_id in PI_FAMILY_AGENTS},
+            # Display-name spellings clients may send instead of the id.
+            "oh my pi": "omp",
+            "oh-my-pi": "omp",
         }
 
         resolved = alias_map.get(normalized)
         if resolved is None:
-            known = ", ".join(["claude", "codex", "opencode", *GENERIC_ACP_AGENTS])
+            known = ", ".join(
+                [
+                    "claude",
+                    "codex",
+                    "opencode",
+                    *GENERIC_ACP_AGENTS,
+                    *PI_FAMILY_AGENTS,
+                ]
+            )
             raise ValueError(f"agent must be one of: {known}")
         return resolved
 
@@ -1350,6 +1423,20 @@ class MachineDaemon:
                 "Install from https://developers.openai.com/codex/cli."
             )
 
+        pi_spec = PI_FAMILY_AGENTS.get(agent)
+        if pi_spec is not None:
+            from integrations.headless.pi_family.spec import (
+                check_runtime_requirements,
+            )
+
+            # More than a PATH lookup: omp runs on Bun and hard-fails at
+            # startup below 1.3.14, which without this check surfaces to the
+            # user as an unexplained "exited with code 1" after a session row
+            # already exists.
+            return check_runtime_requirements(
+                pi_spec, which=_find_cli_in_common_locations
+            )
+
         spec = GENERIC_ACP_AGENTS.get(agent)
         if spec is not None:
             from integrations.headless.generic_acp import resolve_agent_binary
@@ -1374,6 +1461,9 @@ class MachineDaemon:
         spec = GENERIC_ACP_AGENTS.get(agent)
         if spec is not None:
             return spec.display_name
+        pi_spec = PI_FAMILY_AGENTS.get(agent)
+        if pi_spec is not None:
+            return pi_spec.display_name
         return "Claude Code"
 
     def _extract_tool_list(

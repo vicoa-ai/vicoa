@@ -17,6 +17,14 @@ https://github.com/vicoa-ai/codex) and used only for the backend's
 PyInstaller binary build. It is licensed under the Apache License,
 Version 2.0; see that component's own LICENSE (and NOTICE, if present)
 for the full text.
+
+The Pi / Oh My Pi integration at backend/src/integrations/headless/pi_family
+follows the design and code shape of the `pi` and `omp` agent providers in
+paseo (https://github.com/badlogic/paseo), Copyright (c) 2025-present
+Mohamed Boudra, licensed under the Apache License, Version 2.0. No paseo
+source is bundled; the Python implementation is Vicoa's own, written against
+the agents' published RPC protocol and the wire traces archived under
+backend/src/integrations/headless/tests/fixtures/omp/.
 -----------------------------------------------------------------------
 
 This NOTICE file is provided for attribution purposes only and does not
