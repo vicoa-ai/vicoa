@@ -40,14 +40,16 @@ describe('modelSublabel', () => {
 });
 
 describe('modelListWidthClass', () => {
-  test('widens only when some entry needs a second line', () => {
+  test('sizes to content only when some entry trails a raw id', () => {
+    // A fixed width would truncate the id's tail — the very part that tells
+    // two builds sharing a display name apart.
     expect(modelListWidthClass([{ id: 'claude-sonnet-5', label: 'Sonnet 5' }])).toBe('w-56');
     expect(
       modelListWidthClass([
         { id: 'default', label: 'Default' },
         { id: 'anthropic/claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
       ]),
-    ).toBe('w-80');
+    ).toBe('w-auto min-w-56 max-w-[32rem]');
   });
 
   test('falls back to the narrow default for an absent list', () => {

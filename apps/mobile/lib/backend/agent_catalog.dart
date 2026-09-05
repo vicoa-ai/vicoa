@@ -597,7 +597,9 @@ const String _agentCatalogFallbackJson = r'''
 /// bracketed variants (`gpt-5.4[context=272k]`). Single-provider agents have
 /// ids you can guess from the label, so showing them would be noise.
 ///
-/// Mirrors `modelSublabel` in the web's session-config-dropdown.tsx.
+/// Rendered inline after the label (web) or after it on the same row
+/// (mobile's _OptionRow). Mirrors `modelSublabel` in
+/// the web's session-config-dropdown.tsx.
 String? modelSublabel(String id, String label) {
   if (id.isEmpty || id == label) return null;
   if (!id.contains('/') && !id.contains('[')) return null;

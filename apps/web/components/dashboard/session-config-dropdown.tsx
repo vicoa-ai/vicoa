@@ -87,7 +87,7 @@ export function TickItem({
   yoloInfo,
 }: {
   label: string;
-  /** Muted second line — the raw model id when the label alone doesn't name it. */
+  /** Muted trailing text — the raw model id when the label alone doesn't name it. */
   sublabel?: string | null;
   isSelected: boolean;
   isPending: boolean;
@@ -105,10 +105,13 @@ export function TickItem({
       className="group/item relative flex w-full cursor-pointer select-none items-center gap-2 rounded-sm border-0 px-3 py-1.5 text-xs outline-none transition-colors duration-100 hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
     >
       {leading}
-      <span className="flex min-w-0 flex-1 flex-col items-start text-left">
-        <span className="w-full truncate">{label}</span>
+      <span className="flex min-w-0 flex-1 items-baseline gap-1.5 overflow-hidden text-left">
+        {/* The name never shrinks — it's short and it's what you scan for.
+            The id takes whatever is left and ellipsizes; the full text is on
+            the button's title either way. */}
+        <span className="flex-shrink-0">{label}</span>
         {sublabel && (
-          <span className="w-full truncate text-[10px] leading-tight text-muted-foreground/60">
+          <span className="min-w-0 truncate text-[10px] text-muted-foreground/60">
             {sublabel}
           </span>
         )}
@@ -154,16 +157,23 @@ export function modelSublabel(model: { id: string; label: string }): string | nu
 }
 
 /**
- * Width for a model list, widened when its entries carry a raw-id second line.
+ * Width for a model list, sized to its content when entries trail a raw id.
  *
- * The default `w-56` fits a bare display name; a provider-qualified id needs
- * roughly half again as much before it starts truncating mid-slug, which is
- * the least useful place to cut it.
+ * A fixed width can't win here: `anthropic/claude-haiku-4-5-20251001` needs
+ * ~26rem, and the part that overflows first is the tail — which is exactly
+ * what distinguishes two builds sharing a display name, so truncating it
+ * defeats the point of showing the id at all. Sizing to content keeps a short
+ * list compact and gives a long one the room it needs, with a max so one
+ * pathological id can't stretch the menu across the window.
+ *
+ * Lists without ids keep the fixed `w-56` they have always had.
  */
 export function modelListWidthClass(
   models: readonly { id: string; label: string }[] | null | undefined,
 ): string {
-  return models?.some((model) => modelSublabel(model)) ? 'w-80' : 'w-56';
+  return models?.some((model) => modelSublabel(model))
+    ? 'w-auto min-w-56 max-w-[32rem]'
+    : 'w-56';
 }
 
 /** One chip + its dropdown list. */

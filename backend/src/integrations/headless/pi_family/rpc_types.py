@@ -197,11 +197,11 @@ def model_entries(models: Any) -> List[Dict[str, str]]:
     as it is for OpenCode.
 
     ``label`` is the model's display name alone. The provider is deliberately
-    NOT appended: the clients render the qualified id underneath the label in a
-    muted tone, so ``"Claude Haiku 4.5 (anthropic)"`` next to
-    ``anthropic/claude-haiku-4-5-20251001`` would say "anthropic" twice and
-    still not disambiguate the two Haiku builds — which is the thing a user
-    picking between them actually needs to see.
+    NOT appended: the clients render the qualified id right after the label in
+    a muted tone, so a ``"Claude Haiku 4.5 (anthropic)"`` label would read
+    ``Claude Haiku 4.5 (anthropic) anthropic/claude-haiku-4-5-20251001`` — the
+    provider twice, and still nothing to tell two Haiku builds apart, which is
+    the one thing a user picking between them needs.
     """
     entries: List[Dict[str, str]] = []
     seen: set[str] = set()
