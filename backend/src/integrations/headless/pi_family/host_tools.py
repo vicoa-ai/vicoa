@@ -183,7 +183,11 @@ class HostToolRouter:
                 ),
                 is_error=True,
             )
-        except Exception as exc:  # pragma: no cover - dispatch already catches
+        except BaseException as exc:  # noqa: BLE001 - the reply is mandatory
+            # Backstop for anything `dispatch` cannot itself convert. The
+            # invariant of this channel is that every `host_tool_call` gets
+            # exactly one reply; a call that returns nothing blocks the agent
+            # indefinitely, so no failure mode may skip the send.
             logger.exception("pi_family: host tool %s crashed", tool_name)
             result = ToolResult(text=f"`{tool_name}` failed: {exc}", is_error=True)
         self._send_result(call_id, result)

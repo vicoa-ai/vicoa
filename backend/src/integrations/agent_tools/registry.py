@@ -8,6 +8,7 @@ Schema because that is what every consumer of this module wants — omp's
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -118,7 +119,22 @@ async def dispatch(
         return await tool.handler(context, args)
     except AgentToolError as exc:
         return ToolResult(text=str(exc), is_error=True)
-    except Exception as exc:  # noqa: BLE001 - deliberate catch-all, see docstring
+    except asyncio.CancelledError:
+        # The only failure that must NOT become a result: the caller cancelled,
+        # and a late result for a cancelled call corrupts the agent's state.
+        raise
+    except BaseException as exc:  # noqa: BLE001 - deliberate catch-all
+        # BaseException, not Exception, on purpose. `SystemExit` and
+        # `KeyboardInterrupt` do not inherit from Exception, so a handler that
+        # raises one would slip past a plain `except Exception`, return no
+        # result at all, and leave the agent blocked on a tool call that can
+        # never complete — a hung turn with nothing in the log to explain it.
+        #
+        # That is not hypothetical: it is exactly what reusing the CLI's
+        # `vicoa/commands/_api.request()` would do, since it calls
+        # `sys.exit(1)` on any transport error, 401 or non-2xx. A handler is a
+        # library call, so nothing it raises may be allowed to end the process
+        # or strand the turn.
         logger.exception("agent tool %s failed", name)
         return ToolResult(text=f"`{name}` failed: {exc}", is_error=True)
 

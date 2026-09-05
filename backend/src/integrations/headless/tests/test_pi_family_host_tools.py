@@ -103,6 +103,24 @@ async def test_a_failing_tool_replies_with_is_error_rather_than_going_silent():
     assert "nope" in result["result"]["content"][0]["text"]
 
 
+async def test_every_call_is_answered_even_when_the_handler_exits_the_process():
+    """The channel's invariant is one reply per call. A handler raising
+    `SystemExit` (what the CLI's request layer does on any error) would slip
+    past `except Exception` and block the agent forever."""
+
+    async def cli_style(_context, _arguments):
+        import sys
+
+        sys.exit(1)
+
+    router, recorder = make_router([echo_tool(handler=cli_style)])
+    router.handle_call({"id": "corr-x", "toolName": "echo", "arguments": {}})
+    await asyncio.sleep(0.05)
+    results = recorder.of("host_tool_result")
+    assert len(results) == 1
+    assert results[0]["isError"] is True
+
+
 async def test_an_unknown_tool_name_still_gets_an_answer():
     router, recorder = make_router([echo_tool()])
     router.handle_call({"id": "corr-3", "toolName": "not_a_tool", "arguments": {}})

@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from integrations.agent_tools import AgentToolContext, AgentToolError, SpendGuard
 from integrations.agent_tools.context import DEPTH_ENV_VAR, MAX_SPAWN_DEPTH, child_env
 from integrations.agent_tools.registry import (
+    AgentTool,
     build_registry,
     dispatch,
+    object_schema,
     to_host_tool_definitions,
 )
 
@@ -93,6 +97,51 @@ async def test_a_handler_exception_becomes_an_error_result_not_a_crash(registry)
     context = make_context(FakeClient(error=RuntimeError("boom")))
     result = await dispatch(registry, context, "vicoa_list_tasks", {})
     assert result.is_error and "boom" in result.text
+
+
+async def test_a_sys_exit_in_a_handler_becomes_an_error_not_a_hung_turn(registry):
+    """`SystemExit` does not inherit from `Exception`, so a plain
+    `except Exception` would miss it, return nothing, and leave the agent
+    blocked on a call that can never complete.
+
+    This is the concrete reason the handlers talk to REST directly instead of
+    reusing the CLI's `vicoa/commands/_api.request()`, which calls
+    `sys.exit(1)` on any transport error, 401 or non-2xx.
+    """
+
+    async def cli_style(_context, _arguments):
+        import sys
+
+        sys.exit(1)
+
+    tool = AgentTool(
+        name="exiting",
+        label="exiting",
+        description="exits",
+        parameters=object_schema({}),
+        handler=cli_style,
+    )
+    result = await dispatch({"exiting": tool}, make_context(), "exiting", {})
+    assert result.is_error
+    assert "exiting" in result.text
+
+
+async def test_cancellation_is_the_one_failure_that_yields_no_result(registry):
+    """A late result for a cancelled call corrupts the agent's state, so
+    cancellation must propagate rather than become an error result."""
+
+    async def cancelled(_context, _arguments):
+        raise asyncio.CancelledError
+
+    tool = AgentTool(
+        name="cancelled",
+        label="cancelled",
+        description="cancels",
+        parameters=object_schema({}),
+        handler=cancelled,
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await dispatch({"cancelled": tool}, make_context(), "cancelled", {})
 
 
 async def test_list_sessions_summarises_rows(registry):
