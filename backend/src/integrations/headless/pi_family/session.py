@@ -37,6 +37,7 @@ from integrations.headless.pi_family.rpc_types import (
     as_str,
     context_from_session_stats,
     model_entries,
+    qualified_model_id,
     split_model_id,
 )
 from integrations.headless.pi_family.spec import PiFamilySpec
@@ -157,6 +158,13 @@ class PiRuntimeSession:
         self._dialog_tasks: set["asyncio.Task[None]"] = set()
 
         self.available_models: List[Dict[str, str]] = []
+        #: The model the agent reports it is actually running, as the same
+        #: ``provider/id`` key the picker uses. Read from ``get_state`` rather
+        #: than assumed from ``self.model``: the spawn-time value is only a
+        #: *preference*, and it is empty for the common case where the user
+        #: left the picker on "Default" — which is exactly when the gear used
+        #: to fall back to naming the first model in the list, or nothing.
+        self.current_model: Optional[str] = None
         self.host_tools: Optional[HostToolRouter] = None
         #: Command index last synced, so an unchanged push is a no-op.
         self._last_commands: Optional[Dict[str, Dict[str, str]]] = None
@@ -192,7 +200,7 @@ class PiRuntimeSession:
         await self._set_status(_STATUS_AWAITING_INPUT)
 
     async def _refresh_state(self) -> None:
-        """Read ``get_state`` and persist the agent's own session id.
+        """Read ``get_state`` for the session id and the live current model.
 
         Best-effort: losing the id costs a future resume, never the session
         starting now.
@@ -204,6 +212,9 @@ class PiRuntimeSession:
         if session_id and session_id != self.agent_session_id:
             self.agent_session_id = session_id
             await self._persist_session_id()
+        current = qualified_model_id(state.get("model"))
+        if current:
+            self.current_model = current
 
     async def _report_models(self) -> None:
         """PATCH the machine's real model list onto ``session_config``.
@@ -220,9 +231,32 @@ class PiRuntimeSession:
             return
         self.available_models = models
         delta: Dict[str, Any] = {"available_models": models}
-        if self.model:
-            delta["current_model"] = self.model
+        # Prefer what the agent says it is running over what we asked for at
+        # spawn: the two differ whenever the user left the picker on "Default"
+        # (no --model passed at all) or the agent resolved a fuzzy pattern.
+        current = self.current_model or self.model
+        if current:
+            delta["current_model"] = current
         await self._patch_session_config(delta)
+
+    async def _report_current_model(self) -> None:
+        """Re-read and publish the live model after the agent changed it.
+
+        omp emits ``model_changed`` when a slash command or an extension
+        switches models behind our back; without this the gear keeps naming
+        the previous one.
+        """
+        previous = self.current_model
+        await self._refresh_state()
+        if self.current_model and self.current_model != previous:
+            self.model = self.current_model
+            await self._patch_session_config(
+                {
+                    "agent": self.spec.catalog_id,
+                    "model": self.current_model,
+                    "current_model": self.current_model,
+                }
+            )
 
     async def _pull_commands(self) -> None:
         data = await self._try_request(self.spec.commands_rpc)
@@ -405,6 +439,9 @@ class PiRuntimeSession:
             return
         if frame_type == "available_commands_update":
             await self._sync_commands(frame.get("commands"))
+            return
+        if frame_type == "model_changed":
+            await self._report_current_model()
             return
         if frame_type in {"subagent_lifecycle", "subagent_progress"}:
             await self._handle_subagent(frame_type, frame.get("payload"))
@@ -692,6 +729,7 @@ class PiRuntimeSession:
             logger.warning("pi_family: set_model %s failed: %s", model_id, exc)
             return False
         self.model = model_id
+        self.current_model = model_id
         await self._patch_session_config(
             {
                 "agent": self.spec.catalog_id,

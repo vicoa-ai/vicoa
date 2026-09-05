@@ -297,10 +297,35 @@ class EventMapper:
     # ------------------------------------------------------------------
 
     def _on_notice(self, frame: Dict[str, Any]) -> List[Emission]:
+        """Surface a notice — but only when it is addressed to the user.
+
+        ``info`` is dropped. Upstream's own contract for this event
+        (``AgentSession.emitNotice``) is that it renders as
+        ``showWarning`` / ``showError`` / **``showStatus``** — so the info tier
+        is the TUI's transient status line, not conversation. Vicoa has no
+        status line, and turning that chrome into permanent chat rows produced
+        exactly the noise it looks like: every session opened with
+        ``xd://: mounted vicoa_get_session, vicoa_read_session_transcript, …``
+        from the ``xdev`` extension announcing that our own host tools had been
+        mounted. Nothing there is actionable, and it pushed the user's first
+        real message off screen.
+
+        Warnings and errors still come through: those are the tiers upstream
+        reserves for conditions the user should actually see.
+        """
+        level = as_str(frame.get("level"))
+        if level not in {"warning", "error"}:
+            logger.debug(
+                "pi_family mapper: dropping %s notice from %s: %s",
+                level or "info",
+                as_str(frame.get("source")) or "session",
+                as_str(frame.get("message"))[:120],
+            )
+            return []
         message = as_str(frame.get("message")).strip()
         if not message:
             return []
-        icon = {"warning": "⚠️", "error": "❌"}.get(as_str(frame.get("level")), "ℹ️")
+        icon = "⚠️" if level == "warning" else "❌"
         source = as_str(frame.get("source"))
         suffix = f" _({source})_" if source else ""
         return [Emission(content=f"{icon} {message}{suffix}")]

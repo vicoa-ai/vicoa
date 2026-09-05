@@ -216,12 +216,41 @@ def test_a_malformed_frame_cannot_take_down_the_stream():
     assert mapper.handle({"type": "tool_execution_start", "args": "not-a-dict"}) != []
 
 
-def test_notice_levels_map_to_distinct_icons():
+def test_warning_and_error_notices_surface_with_distinct_icons():
     mapper = EventMapper()
     warning = mapper.handle({"type": "notice", "level": "warning", "message": "slow"})
-    info = mapper.handle({"type": "notice", "level": "info", "message": "ok"})
+    error = mapper.handle({"type": "notice", "level": "error", "message": "broke"})
     assert warning[0].content.startswith("⚠️")
-    assert info[0].content.startswith("ℹ️")
+    assert error[0].content.startswith("❌")
+
+
+def test_info_notices_are_dropped_because_they_are_the_agents_status_line():
+    """Upstream renders this tier as `showStatus`, not as conversation.
+
+    Every omp session opened with the `xdev` extension announcing that our own
+    host tools had been mounted — a wall of tool names, before the user's first
+    real message.
+    """
+    mapper = EventMapper()
+    assert (
+        mapper.handle(
+            {
+                "type": "notice",
+                "level": "info",
+                "source": "xdev",
+                "message": (
+                    "xd://: mounted vicoa_get_session, "
+                    "vicoa_read_session_transcript, vicoa_list_machines"
+                ),
+            }
+        )
+        == []
+    )
+
+
+def test_a_notice_with_no_level_is_dropped_rather_than_guessed_as_important():
+    mapper = EventMapper()
+    assert mapper.handle({"type": "notice", "message": "something"}) == []
 
 
 def test_a_successful_retry_is_not_announced_twice():

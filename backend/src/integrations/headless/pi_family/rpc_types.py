@@ -172,29 +172,47 @@ def context_from_state(state: Any) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 
 
+def qualified_model_id(model: Any) -> str:
+    """The ``provider/id`` selection key for one ``Model``.
+
+    ``set_model`` takes provider and id separately, and two providers can serve
+    the same model id, so the qualified form is what the picker must key on.
+    Built in exactly one place so the live model list and the "which model am I
+    on" reading can never disagree — a mismatch there renders the gear as if
+    nothing were selected.
+    """
+    model_dict = as_dict(model)
+    model_id = as_str(model_dict.get("id"))
+    if not model_id:
+        return ""
+    provider = as_str(model_dict.get("provider"))
+    return f"{provider}/{model_id}" if provider else model_id
+
+
 def model_entries(models: Any) -> List[Dict[str, str]]:
     """``[{id, label}]`` for the mid-session gear, from a ``Model[]``.
 
     Both agents proxy many providers whose real list is per-machine config, so
     this live list — not the static catalog — is the authoritative one, exactly
     as it is for OpenCode.
+
+    ``label`` is the model's display name alone. The provider is deliberately
+    NOT appended: the clients render the qualified id underneath the label in a
+    muted tone, so ``"Claude Haiku 4.5 (anthropic)"`` next to
+    ``anthropic/claude-haiku-4-5-20251001`` would say "anthropic" twice and
+    still not disambiguate the two Haiku builds — which is the thing a user
+    picking between them actually needs to see.
     """
     entries: List[Dict[str, str]] = []
     seen: set[str] = set()
     for model in as_list(models):
         model_dict = as_dict(model)
-        model_id = as_str(model_dict.get("id"))
-        if not model_id or model_id in seen:
+        entry_id = qualified_model_id(model_dict)
+        if not entry_id or entry_id in seen:
             continue
-        seen.add(model_id)
-        provider = as_str(model_dict.get("provider"))
-        name = as_str(model_dict.get("name")) or model_id
-        entries.append(
-            {
-                "id": f"{provider}/{model_id}" if provider else model_id,
-                "label": f"{name} ({provider})" if provider else name,
-            }
-        )
+        seen.add(entry_id)
+        name = as_str(model_dict.get("name")) or as_str(model_dict.get("id"))
+        entries.append({"id": entry_id, "label": name})
     return entries
 
 
@@ -226,5 +244,6 @@ __all__ = [
     "message_text",
     "message_thinking",
     "model_entries",
+    "qualified_model_id",
     "split_model_id",
 ]

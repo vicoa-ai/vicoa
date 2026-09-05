@@ -77,4 +77,20 @@ void main() {
       expect(agentTypeHasLogo('Pi'), isTrue);
     });
   });
+
+  group('modelSublabel', () {
+    test('shows the raw id for provider-qualified models', () {
+      // One machine routinely offers several builds under one friendly name,
+      // so the label alone cannot be picked from.
+      expect(modelSublabel('anthropic/claude-haiku-4-5-20251001', 'Claude Haiku 4.5'),
+          'anthropic/claude-haiku-4-5-20251001');
+      expect(modelSublabel('gpt-5.4[context=272k]', 'gpt-5.4'), 'gpt-5.4[context=272k]');
+    });
+
+    test('stays quiet when the id follows the label', () {
+      expect(modelSublabel('claude-sonnet-5', 'Sonnet 5'), isNull);
+      expect(modelSublabel('default', 'Default'), isNull);
+      expect(modelSublabel('anthropic/x', 'anthropic/x'), isNull);
+    });
+  });
 }

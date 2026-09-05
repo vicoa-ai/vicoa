@@ -588,6 +588,22 @@ const String _agentCatalogFallbackJson = r'''
 }
 ''';
 
+/// The raw model id, when the label alone doesn't identify the model.
+///
+/// Multi-provider agents (Pi, Oh My Pi, OpenCode, Kimi) advertise ids like
+/// `anthropic/claude-haiku-4-5-20251001` under a friendly name like "Claude
+/// Haiku 4.5", and one machine routinely offers several builds under one name —
+/// so the label on its own cannot be picked from. Cursor does the same with
+/// bracketed variants (`gpt-5.4[context=272k]`). Single-provider agents have
+/// ids you can guess from the label, so showing them would be noise.
+///
+/// Mirrors `modelSublabel` in the web's session-config-dropdown.tsx.
+String? modelSublabel(String id, String label) {
+  if (id.isEmpty || id == label) return null;
+  if (!id.contains('/') && !id.contains('[')) return null;
+  return id;
+}
+
 AgentCatalog agentCatalogFallback() => AgentCatalog.fromJson(json.decode(_agentCatalogFallbackJson) as Map<String, dynamic>);
 
 /// Return [base] with each agent's model list replaced by the machine's cached

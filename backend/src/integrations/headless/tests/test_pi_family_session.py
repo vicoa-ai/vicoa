@@ -308,14 +308,92 @@ async def test_bring_up_captures_the_session_id_and_reports_live_models():
     )
     await session.start()
     assert session.agent_session_id == "01a0-xyz"
+    # The label is the display name alone — the clients render the qualified id
+    # underneath it, so "(anthropic)" in the label would just say it twice.
     assert session.available_models == [
-        {"id": "anthropic/claude-haiku-4-5", "label": "Haiku (anthropic)"}
+        {"id": "anthropic/claude-haiku-4-5", "label": "Haiku"}
     ]
     assert {"pi_session_id": "01a0-xyz"} in [
         p.get("instance_metadata") for p in client.patches
     ]
     assert client.commands[0]["agent_type"] == "omp"
     assert client.statuses[-1] == "AWAITING_INPUT"
+
+
+async def test_the_reported_current_model_is_what_the_agent_is_running():
+    """Not the spawn-time preference, which is empty on the common "Default"
+    path — leaving the gear to name whichever model sorted first."""
+    session, _transport, client = make_session(
+        "omp",
+        responses={
+            "get_state": {
+                "sessionId": "s",
+                "model": {"id": "claude-haiku-4-5", "provider": "anthropic"},
+            },
+            "get_available_models": {
+                "models": [
+                    {
+                        "id": "claude-3-5-sonnet",
+                        "provider": "anthropic",
+                        "name": "Sonnet",
+                    },
+                    {
+                        "id": "claude-haiku-4-5",
+                        "provider": "anthropic",
+                        "name": "Haiku",
+                    },
+                ]
+            },
+        },
+    )
+    await session.start()
+    assert session.current_model == "anthropic/claude-haiku-4-5"
+    config = next(
+        p["session_config"]
+        for p in client.patches
+        if "available_models" in p.get("session_config", {})
+    )
+    assert config["current_model"] == "anthropic/claude-haiku-4-5"
+
+
+async def test_the_current_model_key_matches_an_entry_in_the_advertised_list():
+    """A mismatch renders the gear as if nothing were selected."""
+    session, _transport, _client = make_session(
+        "omp",
+        responses={
+            "get_state": {
+                "sessionId": "s",
+                "model": {"id": "claude-haiku-4-5", "provider": "anthropic"},
+            },
+            "get_available_models": {
+                "models": [
+                    {"id": "claude-haiku-4-5", "provider": "anthropic", "name": "Haiku"}
+                ]
+            },
+        },
+    )
+    await session.start()
+    assert session.current_model in {m["id"] for m in session.available_models}
+
+
+async def test_a_model_changed_event_republishes_the_new_model():
+    session, transport, client = make_session(
+        "omp",
+        responses={
+            "get_state": {
+                "sessionId": "s",
+                "model": {"id": "claude-haiku-4-5", "provider": "anthropic"},
+            }
+        },
+    )
+    await session.start()
+    transport.responses["get_state"] = {
+        "sessionId": "s",
+        "model": {"id": "gpt-5.2", "provider": "openai"},
+    }
+    await transport.emit({"type": "model_changed"})
+    assert session.current_model == "openai/gpt-5.2"
+    assert client.patches[-1]["session_config"]["current_model"] == "openai/gpt-5.2"
 
 
 async def test_pi_bring_up_skips_the_subagent_subscription_it_cannot_serve():

@@ -489,17 +489,28 @@ String? latestWebPreviewUrl;
     return typeName.contains('codex');
   }
 
-  /// Generic ACP agents whose modes/models are sourced from the live session.
+  /// Agents whose gear is driven by the live `session_config` the wrapper
+  /// reports rather than by the static catalog. 'pi' is LAST on purpose: the
+  /// lookup below is a substring match and 'copilot' contains 'pi'.
   static const List<String> _acpAgentIds = [
     'cursor',
     'gemini',
     'copilot',
     'kimi',
     'hermes',
+    'omp',
+    'pi',
   ];
 
-  /// Catalog id for an ACP agent ('cursor'/'gemini'/…), or null otherwise.
+  /// Catalog id for a live-config agent ('cursor'/'gemini'/'omp'/…), else null.
   String? acpAgentId() {
+    // `session_config.agent` is the catalog id the daemon was spawned with, so
+    // it is authoritative. `agent_type_name` is the user-editable UserAgent row
+    // name and only a fallback for rows that predate session_config — matching
+    // on it alone missed every agent whose display name isn't its id
+    // ("Oh My Pi" -> omp), leaving those sessions with no config sheet at all.
+    final configured = _sessionConfigMap?['agent']?.toString().toLowerCase().trim();
+    if (configured != null && _acpAgentIds.contains(configured)) return configured;
     final typeName = (instanceData?['agent_type_name']?.toString() ??
             instanceData?['agent_type']?.toString() ??
             '')

@@ -25,7 +25,7 @@ import type { MachineSummary, ProjectResponse, TaskResponse } from '@/lib/backen
 import { TaskPickerPopover } from '@/components/dashboard/task-picker-popover';
 import { MentionTextarea } from '@/components/mention-textarea';
 import { AgentTypeIcon, getAgentLogoSrc } from '@/components/dashboard/agent-type-icon';
-import { ChipDropdown, ModeIcon, TickItem } from '@/components/dashboard/session-config-dropdown';
+import { ChipDropdown, ModeIcon, TickItem, modelListWidthClass, modelSublabel } from '@/components/dashboard/session-config-dropdown';
 import { rpcGitStatus } from '@/components/files-git-panel/rpc';
 import { FilesGitPanel, FilesGitPanelToggle, usePanelState } from '@/components/files-git-panel';
 import {
@@ -1891,7 +1891,7 @@ function NewSessionContent() {
                     {modelEntries && modelEntries.length > 0 && (
                       <ChipDropdown
                         title="Model"
-                        contentClassName="w-56"
+                        contentClassName={modelListWidthClass(modelEntries)}
                         chip={
                           <span className="min-w-0 truncate">
                             {modelEntries.find((m) => m.id === sessionConfig.model)?.label ?? sessionConfig.model ?? 'Model'}
@@ -1903,6 +1903,7 @@ function NewSessionContent() {
                             <TickItem
                               key={m.id}
                               label={m.label}
+                              sublabel={modelSublabel(m)}
                               isSelected={m.id === sessionConfig.model}
                               isPending={false}
                               onClick={() => { updateField({ model: m.id }); close(); }}

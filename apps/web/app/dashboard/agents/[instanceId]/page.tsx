@@ -1913,7 +1913,17 @@ function AgentInstanceContent() {
   // there yet, so the gear shows immediately (these agents are all in the
   // catalog) instead of only after the wrapper's first session_config PATCH.
   const isAcpAgent = !isClaudeCodeAgent && !isCodexAgent && !isOpencodeAgent;
-  const rawAgentId = (instance.agent_type_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  // `session_config.agent` is the catalog id the daemon was spawned with, so it
+  // is authoritative; `agent_type_name` is the user-editable UserAgent row name
+  // and only a fallback for rows that predate session_config. Deriving the id
+  // from the name alone silently missed every agent whose display name isn't
+  // its id — "Oh My Pi" normalized to `ohmypi`, "Gemini CLI" to `geminicli` —
+  // which left those sessions with no catalog entry, so the gear showed no
+  // permission modes and defaulted the model chip to whichever model happened
+  // to sort first.
+  const configuredAgentId =
+    typeof instance.session_config?.agent === 'string' ? instance.session_config.agent.trim().toLowerCase() : '';
+  const rawAgentId = configuredAgentId || (instance.agent_type_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const acpLive = isAcpAgent ? extractAcpControlsFromInstance(instance) : null;
   const acpCatalogAgent = isAcpAgent ? agentById(AGENT_CATALOG_FALLBACK, rawAgentId) : undefined;
   const acpStaticModes = acpCatalogAgent?.permission_modes ?? acpCatalogAgent?.modes ?? [];
