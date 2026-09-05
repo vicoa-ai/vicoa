@@ -588,6 +588,27 @@ const String _agentCatalogFallbackJson = r'''
 }
 ''';
 
+/// Drop a trailing `(provider)` that an older daemon baked into a model label.
+///
+/// Daemons up to and including the 1.7.x line labelled Pi/Oh My Pi models
+/// `"Claude Haiku 4.5 (anthropic)"`. The provider now rides in the muted id
+/// shown beside the name, so that suffix reads as a stutter — and it outlives
+/// the daemon that produced it, because labels are cached per machine and
+/// pinned on running sessions' `session_config`.
+///
+/// Deliberately narrow: only a trailing parenthetical whose content is exactly
+/// the id's own provider segment. Pi genuinely ships
+/// `"Claude Haiku 4.5 (latest)"` — a real distinction between the moving alias
+/// and the dated build — and that must survive untouched.
+///
+/// Mirrors `normalizeModelLabel` in the web's agent-catalog.ts.
+String normalizeModelLabel(String id, String label) {
+  final slash = id.indexOf('/');
+  if (slash <= 0) return label;
+  final suffix = ' (${id.substring(0, slash)})';
+  return label.endsWith(suffix) ? label.substring(0, label.length - suffix.length) : label;
+}
+
 /// The raw model id, when the label alone doesn't identify the model.
 ///
 /// Multi-provider agents (Pi, Oh My Pi, OpenCode, Kimi) advertise ids like
@@ -633,7 +654,7 @@ AgentCatalog catalogWithCachedModels(
     final catalogById = {for (final m in a.models ?? const <CatalogModel>[]) m.id: m};
     final models = cached.map((e) {
       final id = e['id']!;
-      final label = e['label'] ?? id;
+      final label = normalizeModelLabel(id, e['label'] ?? id);
       final known = catalogById[id];
       if (known == null) return CatalogModel(id: id, label: label);
       return CatalogModel(

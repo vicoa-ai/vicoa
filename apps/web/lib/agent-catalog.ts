@@ -62,6 +62,27 @@ export function agentPickerLabel(_agentId: string, label: string): string {
 }
 
 /**
+ * Drop a trailing `(provider)` that an older daemon baked into a model label.
+ *
+ * Daemons up to and including the 1.7.x line labelled Pi/Oh My Pi models
+ * `"Claude Haiku 4.5 (anthropic)"`. The provider now rides in the muted id
+ * shown beside the name, so that suffix reads as a stutter — and it outlives
+ * the daemon that produced it, because labels are cached per machine
+ * (`machine_agent_models`) and pinned on running sessions' `session_config`.
+ *
+ * Deliberately narrow: only a trailing parenthetical whose content is exactly
+ * the id's own provider segment. Pi genuinely ships
+ * `"Claude Haiku 4.5 (latest)"` — a real distinction between the moving alias
+ * and the dated build — and that must survive untouched.
+ */
+export function normalizeModelLabel(id: string, label: string): string {
+  const provider = id.includes('/') ? id.slice(0, id.indexOf('/')) : '';
+  if (!provider) return label;
+  const suffix = ` (${provider})`;
+  return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
+}
+
+/**
  * Return `base` with each agent's model list replaced by the machine's cached
  * real models when present (keyed by agent id). Agents without a cached entry
  * keep their static catalog defaults. Lets the new-session picker show a
@@ -88,9 +109,8 @@ export function catalogWithCachedModels(
       const catalogById = new Map((a.models ?? []).map((m) => [m.id, m] as const));
       const cachedModels: CatalogModel[] = cached.map((m) => {
         const known = catalogById.get(m.id);
-        return known
-          ? { ...known, label: m.label || known.label }
-          : { id: m.id, label: m.label || m.id };
+        const label = normalizeModelLabel(m.id, m.label || m.id);
+        return known ? { ...known, label: m.label ? label : known.label } : { id: m.id, label };
       });
       // Keep the agent's "defer to its own model" sentinel (the is_default
       // catalog entry, e.g. `auto`/`default`) at the top of the list. The

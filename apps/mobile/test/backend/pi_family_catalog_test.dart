@@ -93,4 +93,23 @@ void main() {
       expect(modelSublabel('anthropic/x', 'anthropic/x'), isNull);
     });
   });
+
+  group('normalizeModelLabel', () {
+    test('drops a provider suffix an older daemon baked into the label', () {
+      expect(normalizeModelLabel('anthropic/claude-haiku-4-5', 'Claude Haiku 4.5 (anthropic)'),
+          'Claude Haiku 4.5');
+      expect(normalizeModelLabel('openai/gpt-5.2', 'GPT-5.2 (openai)'), 'GPT-5.2');
+    });
+
+    test('keeps a parenthetical that is not the provider', () {
+      // Pi genuinely ships this: the moving alias vs the dated build.
+      expect(normalizeModelLabel('anthropic/claude-haiku-4-5', 'Claude Haiku 4.5 (latest)'),
+          'Claude Haiku 4.5 (latest)');
+    });
+
+    test('leaves unqualified ids and clean labels alone', () {
+      expect(normalizeModelLabel('claude-sonnet-5', 'Sonnet 5 (anthropic)'), 'Sonnet 5 (anthropic)');
+      expect(normalizeModelLabel('anthropic/x', 'X'), 'X');
+    });
+  });
 }

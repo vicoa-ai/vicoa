@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { modelListWidthClass, modelSublabel } from './session-config-dropdown';
+import { normalizeModelLabel } from '@/lib/agent-catalog';
 
 describe('modelSublabel', () => {
   test('shows the raw id for provider-qualified models', () => {
@@ -55,5 +56,39 @@ describe('modelListWidthClass', () => {
   test('falls back to the narrow default for an absent list', () => {
     expect(modelListWidthClass(null)).toBe('w-56');
     expect(modelListWidthClass([])).toBe('w-56');
+  });
+});
+
+describe('normalizeModelLabel', () => {
+  test('drops a provider suffix an older daemon baked into the label', () => {
+    // Daemons up to 1.7.x labelled these "<name> (<provider>)"; the provider
+    // now rides in the muted id beside the name, so the suffix stutters. It
+    // outlives its daemon because labels are cached per machine and pinned on
+    // running sessions.
+    expect(
+      normalizeModelLabel('anthropic/claude-haiku-4-5', 'Claude Haiku 4.5 (anthropic)'),
+    ).toBe('Claude Haiku 4.5');
+    expect(normalizeModelLabel('openai/gpt-5.2', 'GPT-5.2 (openai)')).toBe('GPT-5.2');
+  });
+
+  test('keeps a parenthetical that is not the provider', () => {
+    // Pi genuinely ships this: the moving alias vs the dated build.
+    expect(
+      normalizeModelLabel('anthropic/claude-haiku-4-5', 'Claude Haiku 4.5 (latest)'),
+    ).toBe('Claude Haiku 4.5 (latest)');
+    expect(normalizeModelLabel('anthropic/x', 'X (preview)')).toBe('X (preview)');
+  });
+
+  test('leaves unqualified ids and clean labels alone', () => {
+    expect(normalizeModelLabel('claude-sonnet-5', 'Sonnet 5 (anthropic)')).toBe(
+      'Sonnet 5 (anthropic)',
+    );
+    expect(normalizeModelLabel('anthropic/claude-haiku-4-5', 'Claude Haiku 4.5')).toBe(
+      'Claude Haiku 4.5',
+    );
+  });
+
+  test('only strips a trailing suffix, never a mid-label match', () => {
+    expect(normalizeModelLabel('anthropic/x', '(anthropic) X')).toBe('(anthropic) X');
   });
 });

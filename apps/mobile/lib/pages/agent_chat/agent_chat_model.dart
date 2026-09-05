@@ -2,6 +2,7 @@ import '/flutter_flow/app_locale.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/actions/ws_protocol.dart' as ws_protocol;
+import '/backend/agent_catalog.dart' show normalizeModelLabel;
 import '/backend/posthog/posthog_analytics.dart';
 import '/custom_code/utils/text_sanitizer.dart';
 import '/custom_code/utils/file_mention_utils.dart';
@@ -536,7 +537,11 @@ String? latestWebPreviewUrl;
     final out = <Map<String, String>>[];
     for (final e in raw) {
       if (e is Map && e['id'] != null) {
-        out.add({'id': e['id'].toString(), 'label': (e['label'] ?? e['id']).toString()});
+        final id = e['id'].toString();
+        // A running session pins whatever its daemon reported at bring-up, so
+        // an older daemon's `(provider)` suffix persists for that session's
+        // whole life. Strip it here rather than waiting for a restart.
+        out.add({'id': id, 'label': normalizeModelLabel(id, (e['label'] ?? id).toString())});
       }
     }
     return out;
