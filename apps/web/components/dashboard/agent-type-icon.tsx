@@ -30,6 +30,13 @@ const AGENT_LOGOS: {
   { match: 'copilot',   src: '/images/integrations/githubcopilot.svg', alt: 'Copilot', isOpenAI: true },
   { match: 'kimi',      src: '/images/integrations/kimi-color.svg',    alt: 'Kimi', darkPlate: true },
   { match: 'hermes',    src: '/images/integrations/hermes.svg',        alt: 'Hermes', boxedWhite: true },
+  // ORDER MATTERS BELOW. Matching is `name.includes(match)` over this array
+  // in order, and 'pi' is a substring of 'copilot' — so a bare 'pi' entry
+  // placed any earlier would swallow Copilot (and anything else containing
+  // those two letters). Keep 'omp' / 'oh my pi' ahead of it, 'pi' LAST.
+  { match: 'oh my pi',  src: '/images/integrations/omp.svg',          alt: 'Oh My Pi', isOpenAI: true },
+  { match: 'omp',       src: '/images/integrations/omp.svg',          alt: 'Oh My Pi', isOpenAI: true },
+  { match: 'pi',        src: '/images/integrations/pi.svg',           alt: 'Pi', isOpenAI: true },
 ];
 
 export function getAgentLogoSrc(agentTypeName: string | null | undefined): { src: string; alt: string; isOpenAI?: boolean; invertForLight?: boolean; darkPlate?: boolean; boxedWhite?: boolean } | null {

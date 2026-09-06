@@ -1,3 +1,5 @@
+import { normalizeModelLabel } from '@/lib/agent-catalog';
+
 export interface SessionConfigSnapshot {
   agent: string | null;
   model: string | null;
@@ -55,7 +57,10 @@ function parseEntryList(raw: unknown): { id: string; label: string }[] {
     if (e && typeof e === 'object' && (e as { id?: unknown }).id != null) {
       const id = String((e as { id: unknown }).id);
       const label = String((e as { label?: unknown }).label ?? id);
-      out.push({ id, label });
+      // A running session pins whatever its daemon reported at bring-up, so an
+      // older daemon's `(provider)` suffix persists for that session's whole
+      // life. Strip it here rather than waiting for a restart.
+      out.push({ id, label: normalizeModelLabel(id, label) });
     }
   }
   return out;

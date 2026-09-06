@@ -1,7 +1,7 @@
 /**
  * Install instructions for each coding agent Vicoa can drive.
  *
- * Keyed by agent-catalog id — the same 8 ids the daemon's
+ * Keyed by agent-catalog id — the same ids the daemon's
  * `_detect_available_agents()` reports and `AgentTypeIcon` has marks for.
  * `lib/desktop-agent-install.test.ts` pins that alignment, so a new agent in
  * the catalog fails the suite until it is given install info here.
@@ -12,9 +12,10 @@
  * disk to diagnose the failures, which is a trade worth making only once
  * desktop logging exists.
  *
- * The backend carries prose `install_hint` strings for the 5 generic ACP
- * agents (`integrations/headless/generic_acp.py`), used in CLI error messages.
- * These are the structured equivalent for a copy button, and cover all 8.
+ * The backend carries prose `install_hint` strings for the generic ACP agents
+ * (`integrations/headless/generic_acp.py`) and the Pi family
+ * (`integrations/headless/pi_family/spec.py`), used in CLI error messages.
+ * These are the structured equivalent for a copy button, and cover every agent.
  * Deliberate duplication — noted in plans/todos/desktop-onboarding-flow.md.
  */
 
@@ -57,6 +58,19 @@ export const AGENT_INSTALL_INFO: Record<string, AgentInstallInfo> = {
   hermes: {
     command: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash',
     docsUrl: 'https://github.com/NousResearch/hermes-agent',
+  },
+  // Deliberately NOT the npm package. `@oh-my-pi/pi-coding-agent` declares
+  // `engines: {"bun": ">=1.3.14"}` and ships a `#!/usr/bin/env bun` shebang
+  // without bundling Bun, so the npm path leaves every user to solve the Bun
+  // gate themselves — and the daemon's install check then refuses the spawn.
+  omp: {
+    command: 'brew install can1357/tap/omp',
+    docsUrl: 'https://github.com/can1357/oh-my-pi',
+  },
+  // Pi is plain node, so npm is fine here.
+  pi: {
+    command: 'npm install -g @earendil-works/pi-coding-agent',
+    docsUrl: 'https://github.com/earendil-works/pi',
   },
 };
 

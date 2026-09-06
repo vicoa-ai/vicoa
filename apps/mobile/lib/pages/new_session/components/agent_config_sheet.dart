@@ -353,7 +353,12 @@ class _AgentConfigSheetState extends State<_AgentConfigSheet> {
       // silently swapping to a catalog default the session isn't using.
       final items = <DropdownMenuItem<String>>[
         for (final m in agent.models!)
-          DropdownMenuItem<String>(value: m.id, child: _OptionRow(label: m.label, description: m.description)),
+          DropdownMenuItem<String>(
+            value: m.id,
+            // Fall back to the raw id as the second line for multi-provider
+            // agents, where the display name alone can't be picked from.
+            child: _OptionRow(label: m.label, description: m.description ?? modelSublabel(m.id, m.label)),
+          ),
       ];
       if (_config.model != null && !agent.models!.any((m) => m.id == _config.model)) {
         items.insert(0, DropdownMenuItem<String>(

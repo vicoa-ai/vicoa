@@ -24,6 +24,13 @@ const _agentLogos = [
   // background) in light mode, and on a white rounded-square chip in dark mode
   // — instead of inverting it to a bare white glyph that loses its detail.
   _AgentLogo(match: 'hermes', asset: 'assets/images/integrations/hermes.svg', invertInDark: false, boxedWhiteInDark: true),
+  // ORDER MATTERS BELOW. Matching is `name.contains(logo.match)` over this list
+  // in order, and 'pi' is a substring of 'copilot' — a bare 'pi' entry placed
+  // any earlier would swallow Copilot. Keep 'omp'/'oh my pi' ahead of it, and
+  // keep 'pi' LAST. Mirrors the same ordering rule in the web's AGENT_LOGOS.
+  _AgentLogo(match: 'oh my pi', asset: 'assets/images/integrations/omp.svg', invertInDark: true),
+  _AgentLogo(match: 'omp', asset: 'assets/images/integrations/omp.svg', invertInDark: true),
+  _AgentLogo(match: 'pi', asset: 'assets/images/integrations/pi.svg', invertInDark: true),
 ];
 
 class _AgentLogo {

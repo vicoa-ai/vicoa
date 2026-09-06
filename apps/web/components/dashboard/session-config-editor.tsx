@@ -17,6 +17,8 @@ import {
   ChipDropdown,
   ModeIcon,
   TickItem,
+  modelListWidthClass,
+  modelSublabel,
 } from '@/components/dashboard/session-config-dropdown';
 
 /**
@@ -117,7 +119,7 @@ export function SessionConfigEditor({
           title="Model"
           disabled={disabled}
           side={side}
-          contentClassName="w-56"
+          contentClassName={modelListWidthClass(modelEntries)}
           chip={
             <span className="min-w-0 truncate">
               {modelEntries.find((m) => m.id === value.model)?.label ?? value.model ?? 'Model'}
@@ -129,6 +131,7 @@ export function SessionConfigEditor({
               <TickItem
                 key={m.id}
                 label={m.label}
+                sublabel={modelSublabel(m)}
                 isSelected={m.id === value.model}
                 isPending={false}
                 onClick={() => {

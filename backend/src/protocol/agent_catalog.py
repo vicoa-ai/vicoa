@@ -24,7 +24,7 @@ from typing import Any
 
 
 AGENT_CATALOG: dict[str, Any] = {
-    "version": "2026-09-02-1",
+    "version": "2026-09-05-1",
     "min_cli_version": "1.20.0",
     "min_client_version": "0.42.0",
     "agents": [
@@ -200,6 +200,61 @@ AGENT_CATALOG: dict[str, Any] = {
                 {"id": "build", "label": "Build", "is_default": True},
                 {"id": "plan", "label": "Plan"},
             ],
+        },
+        # ---------------------------------------------------------------
+        # Pi family (integrations/headless/pi_family/) — native RPC, not ACP.
+        # `omp` is a fork of `pi`; one wrapper drives both from a spec table.
+        #
+        # Both proxy many providers whose real model list is per-machine
+        # configuration, so — like OpenCode — `default` is the only static
+        # entry and the true list is reported live from `get_available_models`
+        # into the mid-session gear.
+        #
+        # Thinking levels: the CLIs also accept `minimal` (both) and `auto`
+        # (omp only). They are deliberately NOT listed here — adding them would
+        # widen the shared THINKING_EFFORTS enum for every agent. The spec
+        # table accepts them if something passes one, and anything outside a
+        # CLI's own set is dropped at the launch boundary.
+        # ---------------------------------------------------------------
+        {
+            "id": "omp",
+            "label": "Oh My Pi",
+            "models": [{"id": "default", "label": "Default", "is_default": True}],
+            "thinking_efforts": [
+                {"id": "max", "label": "Max"},
+                {"id": "xhigh", "label": "Extra High"},
+                {"id": "high", "label": "High"},
+                {"id": "medium", "label": "Medium", "is_default": True},
+                {"id": "low", "label": "Low"},
+                {"id": "off", "label": "Off"},
+            ],
+            # -> `--approval-mode`, verified against `omp --help` (18.1.10).
+            # Reusing Vicoa's existing slugs rather than minting ask/write/full
+            # keeps the clients' shared mode picker and the daemon's
+            # PERMISSION_MODES validation unchanged; the spec table owns the
+            # translation, as codex/permission_translate.py does for Codex.
+            # Note `default` means always-ask here (the safe default for a new
+            # integration), not "inherit the user's omp config".
+            "permission_modes": [
+                {"id": "default", "label": "Always Ask", "is_default": True},
+                {"id": "acceptEdits", "label": "Write Approval"},
+                {"id": "bypassPermissions", "label": "Skip permissions (Yolo)"},
+            ],
+        },
+        {
+            "id": "pi",
+            "label": "Pi",
+            "models": [{"id": "default", "label": "Default", "is_default": True}],
+            "thinking_efforts": [
+                {"id": "max", "label": "Max"},
+                {"id": "xhigh", "label": "Extra High"},
+                {"id": "high", "label": "High"},
+                {"id": "medium", "label": "Medium", "is_default": True},
+                {"id": "low", "label": "Low"},
+                {"id": "off", "label": "Off"},
+            ],
+            # Pi has no approval-mode flag at all, so no permission_modes and
+            # no mode picker.
         },
         # ---------------------------------------------------------------
         # Generic ACP agents (integrations/headless/generic_acp.py).

@@ -27,6 +27,8 @@ class TestAgentCatalogShape:
             "copilot",
             "kimi",
             "hermes",
+            "omp",
+            "pi",
         }
 
     def test_claude_default_model_is_sonnet(self):
