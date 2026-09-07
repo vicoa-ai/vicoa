@@ -164,9 +164,7 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
             <Bot className="w-5 h-5 text-muted-foreground" />
           )}
         </div> */}
-        {/* `relative` anchors the hover footer, which floats below the bubble
-            rather than taking a row of its own (see MessageActions). */}
-        <div className={`relative flex min-w-0 flex-1 flex-col gap-1.5 ${isUser ? 'items-end' : 'items-stretch'}`}>
+        <div className={`flex min-w-0 flex-1 flex-col gap-1.5 ${isUser ? 'items-end' : 'items-stretch'}`}>
           {/* Images get their OWN bubble stacked above the text bubble, so an
               image + caption reads as two user messages rather than one. */}
           {attachments.length > 0 && (

@@ -21,14 +21,9 @@ const ACTION_BUTTON_CLASS =
 
 /**
  * Hover-revealed footer under a chat bubble: copy, fork (agent turns only) and
- * the message's time.
- *
- * Absolutely positioned, so it costs the transcript no vertical space at all —
- * reserving a row for it pushed every message 24px apart, and letting it into
- * the flow only on hover would make Virtuoso re-measure and shift rows under
- * the cursor. The trade-off is that it floats over the top of the next row
- * while visible, hence the toolbar chrome (surface + hairline + shadow) and the
- * z-index. Requires a `relative` parent carrying `group/message`.
+ * the message's time. The row is always in the layout and only fades in, so
+ * hovering never changes a row's height — Virtuoso would otherwise re-measure
+ * and shift the transcript under the cursor.
  */
 export const MessageActions = memo(function MessageActions({
   timestamp,
@@ -95,8 +90,8 @@ export const MessageActions = memo(function MessageActions({
 
   return (
     <div
-      className={`absolute top-full z-10 mt-0.5 flex items-center gap-0.5 rounded-md border border-border/60 bg-background px-0.5 shadow-sm pointer-events-none opacity-0 transition-opacity duration-150 group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 ${
-        align === 'right' ? 'right-2' : 'left-2'
+      className={`-mt-1 flex items-center gap-0.5 pointer-events-none opacity-0 transition-opacity duration-150 group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 ${
+        align === 'right' ? 'justify-end pr-3' : 'justify-start pl-3'
       }`}
     >
       {/* Mirrored around the bubble's edge: the icons sit outermost either way,
