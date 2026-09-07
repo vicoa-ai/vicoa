@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, Code, ExternalLink, FolderOpen, Terminal } from 'lucide-react';
+import { ChevronDown, ExternalLink } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,8 +15,9 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { rpcOpenPath, type OpenApp, type OpenAppKind } from './rpc';
+import { rpcOpenPath, type OpenApp } from './rpc';
 import { groupOpenApps, loadOpenApps, openErrorMessage } from './open-in-apps';
+import { OpenAppIcon } from './open-in-app-icons';
 
 /**
  * "Open in Finder / VS Code / Ghostty…" for a project path.
@@ -30,12 +31,6 @@ import { groupOpenApps, loadOpenApps, openErrorMessage } from './open-in-apps';
  * Renders nothing at all when the machine can't be reached or its daemon
  * predates the `open-in` RPCs, so an old daemon shows no dead affordance.
  */
-
-const KIND_ICON: Record<OpenAppKind, typeof FolderOpen> = {
-  'file-manager': FolderOpen,
-  editor: Code,
-  terminal: Terminal,
-};
 
 export interface OpenInMenuProps {
   machineId: string | null;
@@ -143,13 +138,12 @@ export function OpenInMenu({
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
-      <DropdownMenuContent align="end" className="min-w-[11rem] font-mono">
+      <DropdownMenuContent align="end" className="min-w-[8.5rem] font-mono">
         {groups.flatMap((group, index) => {
-          const Icon = KIND_ICON[group.kind];
           const rows = group.apps.map((app) => (
             <DropdownMenuItem
               key={app.id}
-              className="cursor-pointer text-xs"
+              className="cursor-pointer gap-1.5 px-2 py-1 text-xs"
               // Held open deliberately: the launch is async, so closing on
               // select would swallow a failure with nowhere to report it.
               // `handleOpen` closes the menu itself once the daemon confirms.
@@ -158,7 +152,10 @@ export function OpenInMenu({
                 handleOpen(app.id);
               }}
             >
-              <Icon className="h-3.5 w-3.5" />
+              {/* `size-`/`text-` in the class opt out of the menu item's own
+                  svg sizing + muting rules, so the marks render at logo size
+                  in the foreground colour rather than shrunk and greyed. */}
+              <OpenAppIcon app={app} className="size-3.5 shrink-0 text-foreground" />
               {app.label}
             </DropdownMenuItem>
           ));
