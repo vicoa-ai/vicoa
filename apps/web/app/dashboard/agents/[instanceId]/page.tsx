@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { AgentTypeIcon } from '@/components/dashboard/agent-type-icon';
 import { Button } from '@/components/ui/button';
@@ -20,12 +20,14 @@ import { getMessageStore } from '@/lib/message-store';
 import { useMessageStream } from '@/lib/hooks/use-ws-stream';
 import { extractMessageOptions, formatTaskNotifications } from '@/components/ui/message-markdown-utils';
 import { GitBranchBadge } from '@/components/dashboard/git-branch-badge';
-import { ToolUseGroup, parseToolUse } from '@/components/dashboard/tool-use-display';
+import { ToolUseGroup, isToolUseContent, parseToolUse } from '@/components/dashboard/tool-use-display';
 import { SubagentGroup } from '@/components/dashboard/subagent-group';
 import { MessageItem, resolveAgentType, DateSeparator, ThinkingIndicator, vibingMessages, getMessageVisibleText } from '@/components/dashboard/chat-message-item';
 import { ChatFindBar } from '@/components/dashboard/chat-find-bar';
 import { FindHighlightProvider } from '@/components/dashboard/chat-find-context';
 import { groupSubagents } from '@/components/dashboard/subagent-grouping';
+import { buildForkTranscript, saveForkContext } from '@/lib/fork-session';
+import { computeTurnEnds, type TurnMessageEntry } from '@/lib/agent-turns';
 import { parseThinkingPayload } from '@/components/dashboard/thinking-card';
 import { FilesGitPanel, FilesGitPanelToggle, usePanelState, type PanelPendingAction } from '@/components/files-git-panel';
 import { ChatInput, PermissionModeValue, OpencodeAgentModeValue, type ChatUploadedAttachment, type ChatInputHandle } from '@/components/chat-input';
@@ -177,6 +179,7 @@ const STICK_TOLERANCE_PX = 72;
 
 function AgentInstanceContent() {
   const params = useParams();
+  const router = useRouter();
   const instanceId = params.instanceId as string;
   const dashboardContext = useAgentDashboard();
   const { refreshData, updateInstanceStatus } = dashboardContext;
@@ -1278,6 +1281,42 @@ function AgentInstanceContent() {
   // Memoize grouped messages to avoid re-grouping on every render
   const groupedMessages = useMemo(() => groupMessagesByDate(orderedVisibleMessages), [orderedVisibleMessages]);
 
+  // Fork: open the new-session page carrying the transcript up to this agent
+  // message as a chat-history attachment, on the same machine/folder/agent so
+  // the new run picks up where the old one left off (see lib/fork-session.ts).
+  const handleForkMessage = useCallback(
+    (message: MessageResponse) => {
+      const detail = instance;
+      if (!detail) return;
+      const { text, messageCount } = buildForkTranscript({
+        messages: orderedVisibleMessages,
+        boundaryMessageId: message.id,
+        agentType: resolveAgentType(detail.agent_type_name || undefined),
+        sourceTitle: detail.name,
+        sourceDirectory: toAbsolutePath(detail.project, detail.home_dir),
+      });
+      saveForkContext({
+        text,
+        messageCount,
+        sourceInstanceId: instanceId,
+        sourceTitle: detail.name || 'Untitled session',
+      });
+      const query = new URLSearchParams({ fork: '1' });
+      if (detail.project) query.set('directory', detail.project);
+      if (detail.machine_id) query.set('machineId', detail.machine_id);
+      // `session_config.agent` is the catalog id the daemon was spawned with;
+      // `agent_type_name` is the editable row name and only a fallback (same
+      // precedence the session gear uses below).
+      const configuredAgent =
+        typeof detail.session_config?.agent === 'string' ? detail.session_config.agent.trim().toLowerCase() : '';
+      const forkAgent =
+        configuredAgent || (detail.agent_type_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (forkAgent) query.set('agent', forkAgent);
+      router.push(`/dashboard/agents/new-session?${query.toString()}`);
+    },
+    [instance, instanceId, orderedVisibleMessages, router],
+  );
+
   // Focus mode: the files/git panel covers the transcript as a full-width layer
   // between the header and composer (see the render below). Derived from the
   // shared panel state, so it's stable regardless of which session is on screen.
@@ -1354,6 +1393,26 @@ function AgentInstanceContent() {
     }
     return items;
   }, [groupedMessages, showThinking, thinkingSettingEnabled, instance?.agent_type_name]);
+
+  // Turn-end lookup for the hover footer: only the last agent message of each
+  // run since the previous user message carries copy/fork, and copying it
+  // yields that whole turn. Derived from `chatItems` rather than the raw
+  // messages so it sees exactly what renders — anything folded into a
+  // tool-group or a thinking card is inside the turn but never anchors it.
+  const turnCopyText = useMemo(() => {
+    const entries: TurnMessageEntry[] = [];
+    for (const item of chatItems) {
+      if (item.type !== 'message') continue;
+      const text = getMessageVisibleText(item.message);
+      const kind: TurnMessageEntry['kind'] = USER_SENDER_TYPES.has(item.message.sender_type)
+        ? 'user'
+        : parseThinkingPayload(item.message) || isToolUseContent(text)
+          ? 'other'
+          : 'agent';
+      entries.push({ id: item.message.id, kind, text });
+    }
+    return computeTurnEnds(entries);
+  }, [chatItems]);
 
   // Whether the list has any real message rows. A lone "thinking" item doesn't
   // count — we render the SessionEmptyState (not the virtual list) until a real
@@ -2387,6 +2446,8 @@ function AgentInstanceContent() {
                     onOptionClick={handleOptionClick}
                     onAskUserQuestionSubmit={handleAskUserQuestionSubmit}
                     onAskUserQuestionCancel={handleAskUserQuestionCancel}
+                    onFork={handleForkMessage}
+                    turnCopyText={turnCopyText.get(item.message.id)}
                     agentTypeName={instance.agent_type_name}
                     projectPath={projectRootPath}
                   />

@@ -70,6 +70,7 @@ import {
   type WorktreeMode,
 } from '@/lib/worktree-selection';
 import { loadPromptDraft, savePromptDraft, clearPromptDraft } from '@/lib/new-session-draft';
+import { clearForkContext, loadForkContext, type ForkContext } from '@/lib/fork-session';
 import { currentPathname, openCreatedSession } from '@/lib/new-session-navigation';
 import { getDesktopConfig } from '@/lib/runtime-config';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
@@ -78,6 +79,7 @@ import { comboInline, getShortcutCombo, matchesShortcut } from '@/lib/desktop-sh
 import { getDesktopShellBridge } from '@/lib/desktop-shell';
 import { collectComposerDrop, folderPathToMention } from '@/lib/chat-drop';
 import { FolderRefChip } from '@/components/folder-ref-chip';
+import { ForkContextChip } from '@/components/dashboard/fork-context-chip';
 import { postInstanceMessage } from '@/lib/agent-instance-api';
 import { MAX_ATTACHMENTS_PER_MESSAGE, MAX_ATTACHMENT_BYTES, type ChatUploadedAttachment } from '@/components/chat-input';
 import { formatFileSize } from '@/components/chat-attachments';
@@ -253,9 +255,20 @@ function NewSessionContent() {
       return dir && branch ? { path: dir, branch } : null;
     })(),
   );
+  // `?machineId=` / `?agent=` come from a fork (the chat page's per-message
+  // fork button): a forked session must land on the SAME machine and agent as
+  // the session it continues, otherwise the carried-over paths are meaningless.
+  // Machine is snapshotted into a ref and consumed once by loadMachines, like
+  // `?directory=`; agent is applied in the config-hydration effect below.
+  const pendingMachineRef = useRef<string | null>(searchParams.get('machineId'));
+  const agentParam = searchParams.get('agent');
+  // `?fork=1` marks the chat-history payload in sessionStorage as ours to pick
+  // up (kept out of the URL — a transcript is far too big for a query string).
+  const forkParam = searchParams.get('fork');
+
   // `?taskId=` (the Tasks page's "Start session" action) preselects the Task
   // chip. Read reactively rather than snapshotted into a ref at first render
-  // like the two above: this page renders inside a Suspense boundary under PPR
+  // like the link params above: this page renders inside a Suspense boundary under PPR
   // (`experimental.ppr`, next.config.ts), so `useSearchParams()` can resolve a
   // render late and a first-render snapshot latches `null` and drops the link.
   // `consumedTaskIdRef` keeps it single-shot — once loaded, clearing the chip
@@ -311,6 +324,9 @@ function NewSessionContent() {
   // basename is just the repo name, so it can't stand in for the branch).
   const [selectedWorktreeBranch, setSelectedWorktreeBranch] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
+  // Chat history carried over by a fork, shown as a removable composer chip and
+  // prepended to the first message on submit.
+  const [forkContext, setForkContext] = useState<ForkContext | null>(null);
   // Task seeding this session (plan §6): its title/description + chosen sub-tasks
   // top the first prompt, and the spawned instance is linked back via task_id.
   const [selectedTask, setSelectedTask] = useState<TaskResponse | null>(null);
@@ -506,9 +522,15 @@ function NewSessionContent() {
         : defaultsFor(AGENT_CATALOG_FALLBACK, agent.id);
     }
     setPerAgentConfigs(next);
-    if (persisted.lastAgent && next[persisted.lastAgent]) {
+    // A forked session keeps the source session's agent; otherwise resume the
+    // last one used.
+    if (agentParam && next[agentParam]) {
+      setActiveAgent(agentParam);
+    } else if (persisted.lastAgent && next[persisted.lastAgent]) {
       setActiveAgent(persisted.lastAgent);
     }
+    // Run once on mount; `agentParam` is a link parameter, not live state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Background catalog fetch — reconcile per-agent configs against the live
@@ -632,12 +654,21 @@ function NewSessionContent() {
         const persisted = loadPersistedSelection();
         const persistedMatch = sorted.find((m) => m.machine_id === persisted.lastMachineId);
         const firstOnline = sorted.find(isMachineOnline);
-        // Prefer persisted if it's still online; otherwise the first online;
-        // otherwise the first machine in the list (which is offline).
+        // A `?machineId=` link (fork) pins the machine, even offline — landing
+        // on a different machine would silently point the carried directory at
+        // a path that doesn't exist there.
+        const pendingMachineId = pendingMachineRef.current;
+        pendingMachineRef.current = null;
+        const pendingMachineMatch = pendingMachineId
+          ? sorted.find((m) => m.machine_id === pendingMachineId)
+          : undefined;
+        // Otherwise prefer persisted if it's still online; then the first
+        // online; otherwise the first machine in the list (which is offline).
         const preferredMachine =
-          persistedMatch && isMachineOnline(persistedMatch)
+          pendingMachineMatch ??
+          (persistedMatch && isMachineOnline(persistedMatch)
             ? persistedMatch
-            : firstOnline ?? sorted[0];
+            : firstOnline ?? sorted[0]);
         setSelectedMachineId(preferredMachine.machine_id);
         const pendingDirectory = pendingDirectoryRef.current;
         pendingDirectoryRef.current = null;
@@ -916,6 +947,23 @@ function NewSessionContent() {
     // this before its declaration below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, router]);
+
+  // Pick up the transcript a fork left in sessionStorage. Kept there (rather
+  // than cleared on read) so a reload of this `?fork=1` URL restores the chip;
+  // it is dropped when the session actually spawns, or when the user removes
+  // the chip.
+  const consumedForkRef = useRef(false);
+  useEffect(() => {
+    if (consumedForkRef.current || forkParam !== '1') return;
+    consumedForkRef.current = true;
+    const stored = loadForkContext();
+    if (stored) setForkContext(stored);
+  }, [forkParam]);
+
+  const removeForkContext = useCallback(() => {
+    setForkContext(null);
+    clearForkContext();
+  }, []);
 
   // A worktree selection is tied to a specific machine + directory; clear it
   // whenever either changes so a stale path can't carry into a different repo.
@@ -1202,7 +1250,12 @@ function NewSessionContent() {
       const folderText = pendingFolderRefs
         .map((p) => `@${folderPathToMention(p, projectPath)}`)
         .join(' ');
-      const finalPrompt = [composedPrompt, folderText].filter(Boolean).join(' ');
+      const typedPrompt = [composedPrompt, folderText].filter(Boolean).join(' ');
+      // A fork opens with the source transcript above whatever the user typed,
+      // so the new agent reads the history first and the instruction last.
+      const finalPrompt = forkContext
+        ? [forkContext.text, typedPrompt].filter(Boolean).join('\n\n')
+        : typedPrompt;
       const images = pendingImages;
 
       // With images attached the prompt can NOT ride along in the spawn
@@ -1241,6 +1294,9 @@ function NewSessionContent() {
       }
       persistSelection();
       clearPromptDraft();
+      // The forked history is consumed by this spawn.
+      clearForkContext();
+      setForkContext(null);
       // The task is consumed by this spawn — forget it so the next visit starts
       // task-free (machine/directory/worktree intentionally persist as context).
       restoredTaskIdRef.current = '';
@@ -1363,7 +1419,7 @@ function NewSessionContent() {
       setErrorMessage(message);
       setIsSubmitting(false);
     }
-  }, [api, selectedMachineId, directory, sessionConfig, prompt, selectedTask, subtasks, pendingImages, pendingFolderRefs, machines, isSubmitting, worktreeMode, selectedWorktreePath, persistSelection, refreshData, router]);
+  }, [api, selectedMachineId, directory, sessionConfig, prompt, selectedTask, subtasks, pendingImages, pendingFolderRefs, forkContext, machines, isSubmitting, worktreeMode, selectedWorktreePath, persistSelection, refreshData, router]);
 
   // Insert the highlighted command into the prompt (vs. the chat input, which
   // sends immediately — starting a session is heavier, so we let the user
@@ -1758,8 +1814,15 @@ function NewSessionContent() {
               {/* Pending attachments — previews only; these upload after the
                   session exists (see handleSubmit). Folder chips reference a
                   path and fold into the prompt on submit. */}
-              {(pendingImages.length > 0 || pendingFolderRefs.length > 0) && (
+              {(pendingImages.length > 0 || pendingFolderRefs.length > 0 || !!forkContext) && (
                 <div className="flex items-center gap-2 mb-2 flex-wrap">
+                  {forkContext && (
+                    <ForkContextChip
+                      title={forkContext.sourceTitle}
+                      messageCount={forkContext.messageCount}
+                      onRemove={removeForkContext}
+                    />
+                  )}
                   {pendingFolderRefs.map((path) => (
                     <FolderRefChip key={path} path={path} onRemove={() => removeFolderRef(path)} />
                   ))}

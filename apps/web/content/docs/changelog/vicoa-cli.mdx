@@ -5,6 +5,12 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.7.18
+6 September, 2026
+- Add native Pi and Oh My Pi (`omp`) support
+- Fix a session hanging idle forever after start: its `initial_prompt` was POSTed with `mark_as_read=True`, pointing the catch-up cursor at the prompt itself so every later replay excluded it — when the WebSocket handshake also outran the 10s live-broadcast wait, nothing could deliver it
+- Fix the Inbox auto-create race 500ing `/api/v1/projects`
+
 ### v1.7.17
 3 September, 2026
 - Add a declarative plugin system — `vicoa plugin` commands to scan, install (git clone or directory copy; never runs install scripts), enable, and trust Tier 1 plugins under `~/.vicoa/plugins/`
