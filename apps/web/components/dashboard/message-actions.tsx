@@ -20,10 +20,14 @@ const ACTION_BUTTON_CLASS =
   'cursor-pointer rounded p-1 text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
 
 /**
- * Hover-revealed footer under a chat bubble: copy, fork (agent turns only) and
- * the message's time. The row is always in the layout and only fades in, so
- * hovering never changes a row's height — Virtuoso would otherwise re-measure
- * and shift the transcript under the cursor.
+ * Hover-revealed footer under a chat bubble: copy, fork and the message's time.
+ * Every user message gets one; on the agent side only the message that ends a
+ * turn does (see lib/agent-turns.ts), so a run of agent messages doesn't stack
+ * up a reserved row each.
+ *
+ * The row is always in the layout and only fades in, so hovering never changes
+ * a row's height — Virtuoso would otherwise re-measure and shift the transcript
+ * under the cursor.
  */
 export const MessageActions = memo(function MessageActions({
   timestamp,
@@ -32,7 +36,10 @@ export const MessageActions = memo(function MessageActions({
   align,
 }: {
   timestamp: string;
-  /** Text put on the clipboard — the message as rendered, not the raw payload. */
+  /**
+   * Text put on the clipboard — the message as rendered, not the raw payload.
+   * On an agent footer that is the whole turn, not just the final message.
+   */
   text: string;
   /** Omitted for user messages: a fork always resumes from an agent turn. */
   onFork?: () => void;

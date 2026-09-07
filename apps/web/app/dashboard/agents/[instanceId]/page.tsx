@@ -20,13 +20,14 @@ import { getMessageStore } from '@/lib/message-store';
 import { useMessageStream } from '@/lib/hooks/use-ws-stream';
 import { extractMessageOptions, formatTaskNotifications } from '@/components/ui/message-markdown-utils';
 import { GitBranchBadge } from '@/components/dashboard/git-branch-badge';
-import { ToolUseGroup, parseToolUse } from '@/components/dashboard/tool-use-display';
+import { ToolUseGroup, isToolUseContent, parseToolUse } from '@/components/dashboard/tool-use-display';
 import { SubagentGroup } from '@/components/dashboard/subagent-group';
 import { MessageItem, resolveAgentType, DateSeparator, ThinkingIndicator, vibingMessages, getMessageVisibleText } from '@/components/dashboard/chat-message-item';
 import { ChatFindBar } from '@/components/dashboard/chat-find-bar';
 import { FindHighlightProvider } from '@/components/dashboard/chat-find-context';
 import { groupSubagents } from '@/components/dashboard/subagent-grouping';
 import { buildForkTranscript, saveForkContext } from '@/lib/fork-session';
+import { computeTurnEnds, type TurnMessageEntry } from '@/lib/agent-turns';
 import { parseThinkingPayload } from '@/components/dashboard/thinking-card';
 import { FilesGitPanel, FilesGitPanelToggle, usePanelState, type PanelPendingAction } from '@/components/files-git-panel';
 import { ChatInput, PermissionModeValue, OpencodeAgentModeValue, type ChatUploadedAttachment, type ChatInputHandle } from '@/components/chat-input';
@@ -1393,6 +1394,26 @@ function AgentInstanceContent() {
     return items;
   }, [groupedMessages, showThinking, thinkingSettingEnabled, instance?.agent_type_name]);
 
+  // Turn-end lookup for the hover footer: only the last agent message of each
+  // run since the previous user message carries copy/fork, and copying it
+  // yields that whole turn. Derived from `chatItems` rather than the raw
+  // messages so it sees exactly what renders — anything folded into a
+  // tool-group or a thinking card is inside the turn but never anchors it.
+  const turnCopyText = useMemo(() => {
+    const entries: TurnMessageEntry[] = [];
+    for (const item of chatItems) {
+      if (item.type !== 'message') continue;
+      const text = getMessageVisibleText(item.message);
+      const kind: TurnMessageEntry['kind'] = USER_SENDER_TYPES.has(item.message.sender_type)
+        ? 'user'
+        : parseThinkingPayload(item.message) || isToolUseContent(text)
+          ? 'other'
+          : 'agent';
+      entries.push({ id: item.message.id, kind, text });
+    }
+    return computeTurnEnds(entries);
+  }, [chatItems]);
+
   // Whether the list has any real message rows. A lone "thinking" item doesn't
   // count — we render the SessionEmptyState (not the virtual list) until a real
   // message arrives, so the Virtuoso-tied overlays/buttons gate on this too.
@@ -2426,6 +2447,7 @@ function AgentInstanceContent() {
                     onAskUserQuestionSubmit={handleAskUserQuestionSubmit}
                     onAskUserQuestionCancel={handleAskUserQuestionCancel}
                     onFork={handleForkMessage}
+                    turnCopyText={turnCopyText.get(item.message.id)}
                     agentTypeName={instance.agent_type_name}
                     projectPath={projectRootPath}
                   />
