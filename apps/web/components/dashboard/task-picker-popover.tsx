@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Check, CircleSlash, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Check, CircleSlash, Loader2, Search } from "lucide-react";
 
+import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   ProjectResponse,
@@ -23,7 +24,9 @@ import {
  * spawned instance back to the task (status auto-linkage §4).
  *
  * Fetches open tasks (not done/cancelled) grouped by project each time the
- * popover opens. Selection closes the popover; "No task" clears it.
+ * popover opens. A search box filters the groups by task title/description or
+ * project name, since browsing every open task gets unwieldy fast. Selection
+ * closes the popover; "No task" clears it.
  */
 export interface TaskPickerPopoverProps {
   selectedTask: TaskResponse | null;
@@ -61,6 +64,7 @@ export function TaskPickerPopover({
   const [error, setError] = useState(false);
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   const [tasks, setTasks] = useState<TaskResponse[]>([]);
+  const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,9 +87,12 @@ export function TaskPickerPopover({
   }, []);
 
   // (Re)fetch each time the popover opens so the list reflects tasks created
-  // in another tab since.
+  // in another tab since. The search box starts empty on every open.
   useEffect(() => {
-    if (open) void load();
+    if (open) {
+      setQuery("");
+      void load();
+    }
   }, [open, load]);
 
   const select = (task: TaskResponse | null) => {
@@ -93,19 +100,33 @@ export function TaskPickerPopover({
     setOpen(false);
   };
 
-  const groups = projects
-    .map((project) => ({
-      project,
-      tasks: tasks
-        .filter((task) => task.project_id === project.id)
-        .sort(
-          (a, b) =>
-            statusRank(a.status) - statusRank(b.status) ||
-            a.position - b.position ||
-            a.created_at.localeCompare(b.created_at),
-        ),
-    }))
-    .filter((group) => group.tasks.length > 0);
+  const needle = query.trim().toLowerCase();
+
+  const groups = useMemo(() => {
+    const matches = (task: TaskResponse, project: ProjectResponse) =>
+      !needle ||
+      task.title.toLowerCase().includes(needle) ||
+      (task.description ?? "").toLowerCase().includes(needle) ||
+      projectLabel(project).toLowerCase().includes(needle);
+
+    return projects
+      .map((project) => ({
+        project,
+        tasks: tasks
+          .filter((task) => task.project_id === project.id && matches(task, project))
+          .sort(
+            (a, b) =>
+              statusRank(a.status) - statusRank(b.status) ||
+              a.position - b.position ||
+              a.created_at.localeCompare(b.created_at),
+          ),
+      }))
+      .filter((group) => group.tasks.length > 0);
+  }, [projects, tasks, needle]);
+
+  // Enter in the search box picks the top match — the common case once the
+  // query has narrowed the list to one obvious task.
+  const firstMatch = groups[0]?.tasks[0] ?? null;
 
   return (
     <Popover open={open} onOpenChange={(o) => !disabled && setOpen(o)}>
@@ -120,15 +141,46 @@ export function TaskPickerPopover({
       >
         <div className="text-[11px] text-muted-foreground font-mono">Task</div>
 
-        <button
-          type="button"
-          onClick={() => select(null)}
-          className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-[11px] text-popover-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 cursor-pointer"
-        >
-          <CircleSlash className="h-3 w-3 flex-shrink-0" />
-          <span className="flex-1 text-left">No task</span>
-          {selectedTask === null && <Check className="h-3 w-3 flex-shrink-0" />}
-        </button>
+        {!loading && !error && tasks.length > 0 && (
+          // Borderless field on an inset surface, matching DirectoryPickerPopover.
+          <div className="flex items-center gap-2 rounded-md bg-foreground/5 px-2">
+            <Search className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+            <Input
+              // The field mounts only once the fetch lands, so grab focus then
+              // — the user can start typing straight after opening.
+              autoFocus
+              value={query}
+              placeholder="Search tasks…"
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (firstMatch) select(firstMatch);
+                }
+                // Escape clears the query first, so a mistyped search doesn't
+                // cost the whole popover; a second Escape closes it.
+                if (e.key === "Escape" && query) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setQuery("");
+                }
+              }}
+              className="h-8 border-0 bg-transparent px-0 text-xs md:text-xs shadow-none focus-visible:ring-0 focus-visible:border-0"
+            />
+          </div>
+        )}
+
+        {!needle && (
+          <button
+            type="button"
+            onClick={() => select(null)}
+            className="flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-[11px] text-popover-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 cursor-pointer"
+          >
+            <CircleSlash className="h-3 w-3 flex-shrink-0" />
+            <span className="flex-1 text-left">No task</span>
+            {selectedTask === null && <Check className="h-3 w-3 flex-shrink-0" />}
+          </button>
+        )}
 
         {loading && (
           <div className="flex items-center justify-center py-3 text-muted-foreground">
@@ -147,7 +199,9 @@ export function TaskPickerPopover({
 
         {!loading && !error && groups.length === 0 && (
           <div className="px-2.5 py-2 text-[11px] text-muted-foreground font-mono">
-            No open tasks — create one on the Tasks page.
+            {needle
+              ? "No tasks match that search."
+              : "No open tasks — create one on the Tasks page."}
           </div>
         )}
 
