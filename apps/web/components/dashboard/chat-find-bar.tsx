@@ -6,6 +6,8 @@ import { NO_DRAG } from '@/lib/app-region';
 
 interface ChatFindBarProps {
   query: string;
+  /** Changes on every ⌘F — each change refocuses and selects the input. */
+  focusToken: number;
   onQueryChange: (query: string) => void;
   matchCount: number;
   /** 1-based position of the active match; 0 when there are none. */
@@ -22,6 +24,7 @@ interface ChatFindBarProps {
  */
 export function ChatFindBar({
   query,
+  focusToken,
   onQueryChange,
   matchCount,
   activeOrdinal,
@@ -32,12 +35,14 @@ export function ChatFindBar({
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // Autofocus + select on open so a prefilled selection is replaceable.
+    // Autofocus + select on open, and again on every later ⌘F (the token
+    // changes), so a prefilled selection — or the term already in the box — is
+    // replaceable by just typing.
     const el = inputRef.current;
     if (!el) return;
     el.focus();
     el.select();
-  }, []);
+  }, [focusToken]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {

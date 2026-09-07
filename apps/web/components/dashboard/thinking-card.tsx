@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Brain, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MessageMarkdown } from '@/components/ui/message-markdown';
+import { HighlightedText, useFindHighlight } from '@/components/dashboard/chat-find-context';
 import type { MessageResponse } from '@/lib/backend-api';
 
 /**
@@ -57,8 +58,13 @@ export function ThinkingCard({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const { query: findQuery } = useFindHighlight();
   const body = displayBody(content);
   const preview = body.split('\n').find((line) => line.trim())?.trim() ?? '';
+  // Undefined unless the body really matches, so a non-matching card keeps
+  // MessageMarkdown's memo instead of re-parsing on every keystroke.
+  const highlightQuery =
+    findQuery !== '' && body.toLowerCase().includes(findQuery.toLowerCase()) ? findQuery : undefined;
 
   return (
     <div>
@@ -72,7 +78,7 @@ export function ThinkingCard({
         <span className="min-w-0 shrink-0 text-muted-foreground">Thinking</span>
         {!expanded && preview && (
           <span className="min-w-0 truncate italic text-muted-foreground/70" title={preview}>
-            {preview}
+            <HighlightedText text={preview} query={findQuery} />
           </span>
         )}
         <ChevronRight
@@ -85,7 +91,9 @@ export function ThinkingCard({
       {expanded && (
         <div className="ml-1.5 mt-1.5 border-l border-border/40 pl-2.5 italic text-muted-foreground">
           <div className="markdown-content">
-            <MessageMarkdown agentType={agentType}>{body}</MessageMarkdown>
+            <MessageMarkdown agentType={agentType} highlightQuery={highlightQuery}>
+              {body}
+            </MessageMarkdown>
           </div>
         </div>
       )}
@@ -105,11 +113,15 @@ export function StandaloneThinkingCard({
   agentType: UiAgentType;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // Find searches the reasoning body (it is the row's `content`), so a match
+  // has to open the card — otherwise the hit is counted but never shown.
+  const { query: findQuery } = useFindHighlight();
+  const findHit = findQuery !== '' && displayBody(content).toLowerCase().includes(findQuery.toLowerCase());
   return (
     <ThinkingCard
       content={content}
       agentType={agentType}
-      expanded={expanded}
+      expanded={expanded || findHit}
       onToggle={() => setExpanded((current) => !current)}
     />
   );
