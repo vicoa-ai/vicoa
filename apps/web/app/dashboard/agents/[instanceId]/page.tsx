@@ -26,6 +26,7 @@ import { MessageItem, resolveAgentType, DateSeparator, ThinkingIndicator, vibing
 import { ChatFindBar } from '@/components/dashboard/chat-find-bar';
 import { FindHighlightProvider } from '@/components/dashboard/chat-find-context';
 import { groupSubagents } from '@/components/dashboard/subagent-grouping';
+import { getChatItemSearchText } from '@/lib/chat-search';
 import { buildForkTranscript, saveForkContext } from '@/lib/fork-session';
 import { computeTurnEnds, type TurnMessageEntry } from '@/lib/agent-turns';
 import { parseThinkingPayload } from '@/components/dashboard/thinking-card';
@@ -1438,29 +1439,54 @@ function AgentInstanceContent() {
   // --- Find in conversation -------------------------------------------------
   // Client-side find over the LOADED transcript. Native ⌘F / findInPage only
   // sees Virtuoso's rendered rows; this searches the in-memory message array
-  // and uses scrollToIndex to reach off-screen hits. Matches are message-level
-  // (one per matching text message) so they map 1:1 onto chatItems indices.
+  // and uses scrollToIndex to reach off-screen hits. Matches are row-level
+  // (one per matching chat item) so they map 1:1 onto chatItems indices, and
+  // they cover text a row only reveals once expanded — a collapsed tool use's
+  // command/output, a sub-agent group's children (see lib/chat-search.ts).
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
   const [findActive, setFindActive] = useState(0);
+  // Trimmed: the highlighters must use the exact term the match set was built
+  // from, or a trailing space would count hits it then fails to highlight.
+  const findNeedle = findQuery.trim();
 
   const findMatches = useMemo(() => {
-    const needle = findQuery.trim().toLowerCase();
+    const needle = findNeedle.toLowerCase();
     if (!findOpen || !needle) return [] as number[];
+    const itemsAgentType = resolveAgentType(instance?.agent_type_name || undefined);
     const hits: number[] = [];
     chatItems.forEach((item, index) => {
-      if (item.type === 'message' && getMessageVisibleText(item.message).toLowerCase().includes(needle)) {
+      if (getChatItemSearchText(item, itemsAgentType).toLowerCase().includes(needle)) {
         hits.push(index);
       }
     });
     return hits;
-  }, [chatItems, findQuery, findOpen]);
+  }, [chatItems, findNeedle, findOpen, instance?.agent_type_name]);
 
   // Chat-item key (== message id) of the focused match, for the active-row glow.
   const findActiveKey =
     findMatches.length > 0
       ? chatItems[findMatches[Math.min(findActive, findMatches.length - 1)]]?.key ?? null
       : null;
+
+  // Stepping onto a match that lives inside a collapsed group expands it, so
+  // the hit the counter promised is actually on screen (Chrome does the same
+  // for <details>). Left expanded afterwards — re-collapsing as you step past
+  // would resize rows under the scroll anchor.
+  useEffect(() => {
+    if (!findOpen || !findActiveKey) return;
+    const target = findMatches[Math.min(findActive, findMatches.length - 1)];
+    const activeItem = target === undefined ? undefined : chatItems[target];
+    if (!activeItem || (activeItem.type !== 'tool-group' && activeItem.type !== 'subagent-group')) return;
+    if (expandedToolItems.has(findActiveKey)) return;
+    setExpandedToolItems((prev) => new Set(prev).add(findActiveKey));
+    // Expanding grows the row by its whole detail, so recenter once it has
+    // painted — otherwise the hit can land below the fold.
+    const frame = requestAnimationFrame(() =>
+      virtuosoRef.current?.scrollToIndex({ index: target, align: 'center' }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [findOpen, findActiveKey, findActive, findMatches, chatItems, expandedToolItems]);
 
   const scrollToMatch = useCallback(
     (matchIndex: number) => {
@@ -2292,7 +2318,7 @@ function AgentInstanceContent() {
       </div> */}
 
       {/* Messages Area - virtualized via react-virtuoso */}
-      <FindHighlightProvider query={findOpen ? findQuery : ''} activeKey={findActiveKey}>
+      <FindHighlightProvider query={findOpen ? findNeedle : ''} activeKey={findActiveKey}>
       <div className="relative flex-1 min-h-0">
         {!hasMessageItems ? (
           // No real messages yet (a lone "thinking" item doesn't count — it
@@ -2398,7 +2424,13 @@ function AgentInstanceContent() {
                 return (
                   <div className="max-w-4xl mx-auto px-6">
                     <div className="flex justify-start mb-1">
-                      <div className="rounded-xl px-4 py-0.5 flex-1 min-w-0 text-sm leading-relaxed font-mono">
+                      <div
+                        className={`rounded-xl px-4 py-0.5 flex-1 min-w-0 text-sm leading-relaxed font-mono ${
+                          findActiveKey === item.key
+                            ? 'find-active-message ring-2 ring-amber-400 dark:ring-amber-500'
+                            : ''
+                        }`}
+                      >
                         <ToolUseGroup
                           messages={item.messages}
                           agentType={agentType}
@@ -2415,7 +2447,13 @@ function AgentInstanceContent() {
                 return (
                   <div className="max-w-4xl mx-auto px-6">
                     <div className="flex justify-start mb-1">
-                      <div className="rounded-xl px-4 py-0.5 flex-1 min-w-0 text-sm leading-relaxed font-mono">
+                      <div
+                        className={`rounded-xl px-4 py-0.5 flex-1 min-w-0 text-sm leading-relaxed font-mono ${
+                          findActiveKey === item.key
+                            ? 'find-active-message ring-2 ring-amber-400 dark:ring-amber-500'
+                            : ''
+                        }`}
+                      >
                         <SubagentGroup
                           messages={item.messages}
                           subagentType={item.subagentType}

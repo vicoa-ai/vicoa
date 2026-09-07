@@ -123,7 +123,11 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
   if (thinking) {
     return (
       <div className={compact ? 'flex justify-start' : 'flex justify-start mb-1'}>
-        <div className="rounded-xl px-4 py-0.5 flex-1 min-w-0 text-sm leading-relaxed font-mono">
+        <div
+          className={`rounded-xl px-4 py-0.5 flex-1 min-w-0 text-sm leading-relaxed font-mono ${
+            isFindActive ? 'find-active-message ring-2 ring-amber-400 dark:ring-amber-500' : ''
+          }`}
+        >
           <StandaloneThinkingCard content={userVisibleContent} agentType={agentType} />
         </div>
       </div>

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MessageMarkdown } from '@/components/ui/message-markdown';
+import { HighlightedText, useFindHighlight } from '@/components/dashboard/chat-find-context';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { MessageResponse } from '@/lib/backend-api';
 import {
@@ -44,6 +45,11 @@ export type { ParsedToolUse, ToolUseAgentType, ToolUseSummary } from './tool-use
  * - File-based tools (Edit/Read/Write…) show `Tool basename` (+N -M when the
  *   agent reports it); the full path appears in the tooltip and above the
  *   code block when expanded.
+ *
+ * Find-in-conversation aware: a row whose hidden detail matches the active
+ * find query reveals that detail on its own (the transcript-level search
+ * counts it as a hit, so it has to be visible), and every label / body it
+ * renders highlights the term.
  */
 
 function DiffStat({ stat }: { stat: string }) {
@@ -82,8 +88,10 @@ function FileChip({
   /** Render as a bordered pill with a start-ellipsized name (group row). */
   inline?: boolean;
 }) {
+  const { query: findQuery } = useFindHighlight();
   const hasPreview = diffContent.trim().length > 0;
   const label = relativizeFilePath(fullPath, fileName, projectPath);
+  const labelNode = <HighlightedText text={label} query={findQuery} />;
   const inner = inline ? (
     // Bordered pill; the border separates files so no "·" is needed. The name
     // uses a CSS start-ellipsis (rtl base direction + native text-overflow):
@@ -96,7 +104,7 @@ function FileChip({
         style={{ direction: 'rtl' }}
         title={label}
       >
-        <span dir="ltr">{label}</span>
+        <span dir="ltr">{labelNode}</span>
       </span>
       {diffStat && <DiffStat stat={diffStat} />}
     </span>
@@ -106,7 +114,7 @@ function FileChip({
         className="min-w-0 truncate text-muted-foreground"
         title={hasPreview ? undefined : (fullPath ?? undefined)}
       >
-        {label}
+        {labelNode}
       </span>
       {diffStat && <DiffStat stat={diffStat} />}
     </span>
@@ -231,17 +239,32 @@ export function ToolUseLine({
   projectPath?: string | null;
 }) {
   const parsed = useMemo(() => parseToolUse(content, agentType), [content, agentType]);
+  const { query: findQuery } = useFindHighlight();
+  // Only hand the query to bodies that actually contain it — a non-matching
+  // MessageMarkdown keeps `highlightQuery` undefined and so keeps its memo.
+  const highlightIn = (text: string) =>
+    findQuery !== '' && text.toLowerCase().includes(findQuery.toLowerCase()) ? findQuery : undefined;
   if (!parsed) {
     // Unparseable tool-ish content — fall back to plain markdown.
     return (
       <div className="markdown-content">
-        <MessageMarkdown agentType={agentType}>{content}</MessageMarkdown>
+        <MessageMarkdown agentType={agentType} highlightQuery={highlightIn(content)}>
+          {content}
+        </MessageMarkdown>
       </div>
     );
   }
 
   const summary = summarizeToolUse(parsed);
   const expandable = summary.hasDetail || summary.description.length > LONG_DESCRIPTION_CHARS;
+  // Find counts this row's hidden detail as a hit (lib/chat-search.ts), so a
+  // matching term forces the detail open — otherwise stepping onto the match
+  // would land on a collapsed row with nothing highlighted. Reverts when the
+  // query is cleared; the user's own toggle is untouched.
+  const findDetailText = [parsed.toolDescription, parsed.remainingContent, summary.fullPath ?? ''].join('\n');
+  const findRevealsDetail =
+    findQuery !== '' && findDetailText.toLowerCase().includes(findQuery.toLowerCase());
+  const showDetail = expandable && (expanded || findRevealsDetail);
   // Edit/Write/MultiEdit that carry a diff (or a new-file body) render as a
   // bordered file pill — same as the group row — and preview on hover while
   // collapsed. Read/etc. and content-less writes keep the plain filename.
@@ -274,15 +297,17 @@ export function ToolUseLine({
             diffStat={summary.diffStat}
             // Hover preview only while collapsed — the diff is shown inline
             // below once expanded (the border stays either way).
-            diffContent={expanded ? '' : editDiffContent}
+            diffContent={showDetail ? '' : editDiffContent}
             agentType={agentType}
             projectPath={projectPath}
           />
         ) : (
-          !(expandable && expanded) && (
+          !showDetail && (
             <>
               {summary.description && (
-                <span className="min-w-0 truncate text-muted-foreground">{summary.description}</span>
+                <span className="min-w-0 truncate text-muted-foreground">
+                  <HighlightedText text={summary.description} query={findQuery} />
+                </span>
               )}
               {summary.diffStat && <DiffStat stat={summary.diffStat} />}
             </>
@@ -292,38 +317,43 @@ export function ToolUseLine({
           <ChevronRight
             className={cn(
               'h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform',
-              expanded && 'rotate-90',
+              showDetail && 'rotate-90',
             )}
           />
         )}
       </button>
 
-      {expandable && expanded && (
+      {showDetail && (
         <div className="mt-1.5 space-y-1.5">
           {summary.fullPath && (
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               {/* Project-relative path here too; hover for the absolute path. */}
               <span className="break-all" title={summary.fullPath}>
-                {relativizeFilePath(summary.fullPath, summary.fileName ?? '', projectPath)}
+                <HighlightedText
+                  text={relativizeFilePath(summary.fullPath, summary.fileName ?? '', projectPath)}
+                  query={findQuery}
+                />
               </span>
               {summary.diffStat && <DiffStat stat={summary.diffStat} />}
             </div>
           )}
           {!summary.fullPath && !parsed.isMultilineDescription && summary.description && (
             <code className="block w-fit max-w-full break-all rounded bg-muted px-1.5 py-1 text-xs text-muted-foreground">
-              {summary.description}
+              <HighlightedText text={summary.description} query={findQuery} />
             </code>
           )}
           {parsed.isMultilineDescription && parsed.toolDescription && (
             <div className="markdown-content">
-              <MessageMarkdown agentType={agentType}>
+              <MessageMarkdown agentType={agentType} highlightQuery={highlightIn(parsed.toolDescription)}>
                 {'```\n' + parsed.toolDescription.replace(/^`|`$/g, '').trim() + '\n```'}
               </MessageMarkdown>
             </div>
           )}
           {parsed.remainingContent && (
             <div className="markdown-content">
-              <MessageMarkdown agentType={agentType}>{parsed.remainingContent}</MessageMarkdown>
+              <MessageMarkdown agentType={agentType} highlightQuery={highlightIn(parsed.remainingContent)}>
+                {parsed.remainingContent}
+              </MessageMarkdown>
             </div>
           )}
         </div>
@@ -351,6 +381,7 @@ export function ToolUseGroup({
   // Per-tool expansion inside an expanded group. Local state: it resets if
   // the row is recycled offscreen by the virtual list, which is acceptable.
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
+  const { query: findQuery } = useFindHighlight();
 
   // "Run 2 commands, edit 2 files, read a file" — distinct tools, first-use order.
   const runLabel = useMemo(
@@ -446,7 +477,7 @@ export function ToolUseGroup({
           </>
         ) : (
           <span className="min-w-0 truncate text-muted-foreground" title={runLabel}>
-            {runLabel}
+            <HighlightedText text={runLabel} query={findQuery} />
           </span>
         )}
         <ChevronRight
