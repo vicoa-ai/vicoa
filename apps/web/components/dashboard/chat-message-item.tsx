@@ -10,6 +10,7 @@ import { AskUserQuestionPanel, type AskUserQuestionSubmitPayload, parseAskUserQu
 import { ChatAttachments, extractChatAttachments } from '@/components/chat-attachments';
 import { StandaloneThinkingCard, parseThinkingPayload } from '@/components/dashboard/thinking-card';
 import { CollapsibleUserMessage } from '@/components/dashboard/collapsible-user-message';
+import { MessageActions } from '@/components/dashboard/message-actions';
 import { stripPermissionModeCommandTokens } from '@/lib/session-control-messages';
 import { CONTROL_COMMAND_JSON_REGEX, isControlEnvelope } from '@/lib/control-messages';
 import { HighlightedText, useFindHighlight } from '@/components/dashboard/chat-find-context';
@@ -67,11 +68,14 @@ export function resolveAgentType(agentTypeName?: string): UiAgentType {
   return 'claude';
 }
 
-export const MessageItem = memo(function MessageItem({ message, onOptionClick, onAskUserQuestionSubmit, onAskUserQuestionCancel, agentTypeName, projectPath, compact = false }: {
+export const MessageItem = memo(function MessageItem({ message, onOptionClick, onAskUserQuestionSubmit, onAskUserQuestionCancel, onFork, agentTypeName, projectPath, compact = false }: {
   message: MessageResponse;
   onOptionClick?: (option: string) => void;
   onAskUserQuestionSubmit?: (payload: AskUserQuestionSubmitPayload) => void;
   onAskUserQuestionCancel?: (messageId: string) => void;
+  // Start a new session seeded with the transcript up to this agent message.
+  // Absent on user rows and on sub-agent children (they aren't fork points).
+  onFork?: (message: MessageResponse) => void;
   agentTypeName?: string;
   /** Project root, so tool-use file paths render relative to it. */
   projectPath?: string | null;
@@ -135,9 +139,14 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
     !isUser || attachments.length === 0 ||
     !!userVisibleContent.trim() || !!askUserQuestion || options.length > 0;
 
+  // Tool-use fallback rows are their own affordance (expand/collapse) and
+  // carry no prose worth copying or forking from.
+  const isToolRow = !isUser && isToolUseContent(userVisibleContent);
+  const showActions = !compact && !isToolRow;
+
   return (
     <div
-      className={`flex gap-3 ${
+      className={`group/message flex gap-3 ${
         isUser
           ? compact ? 'justify-end' : 'justify-end mt-6 mb-6'
           : compact ? 'justify-start' : 'justify-start mb-1'
@@ -219,6 +228,14 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
                 </div>
               )}
             </div>
+          )}
+          {showActions && (
+            <MessageActions
+              timestamp={message.created_at}
+              text={userVisibleContent}
+              onFork={!isUser && onFork ? () => onFork(message) : undefined}
+              align={isUser ? 'right' : 'left'}
+            />
           )}
         </div>
       </div>

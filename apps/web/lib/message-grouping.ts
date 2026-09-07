@@ -8,14 +8,16 @@ import { MessageResponse } from '@/lib/backend-api';
  * (no Z, no offset) are treated as local time by V8, so we append Z when no
  * timezone designator is present.
  */
-function parseUTCTimestamp(ts: string): Date {
+export function parseUTCTimestamp(ts: string): Date {
   if (!ts) return new Date(0);
   const hasTimezone = ts.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(ts);
   return new Date(hasTimezone ? ts : ts + 'Z');
 }
 
-// Helper function to format date for grouping
-function formatDateGroup(date: Date): string {
+// Helper function to format date for grouping. Also the per-message hover
+// timestamp (components/dashboard/message-actions.tsx), so a message's own
+// label reads the same as the separator above it.
+export function formatDateGroup(date: Date): string {
   const today = new Date();
   const messageDate = new Date(date);
 

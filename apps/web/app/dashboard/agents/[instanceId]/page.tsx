@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { AgentTypeIcon } from '@/components/dashboard/agent-type-icon';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,7 @@ import { MessageItem, resolveAgentType, DateSeparator, ThinkingIndicator, vibing
 import { ChatFindBar } from '@/components/dashboard/chat-find-bar';
 import { FindHighlightProvider } from '@/components/dashboard/chat-find-context';
 import { groupSubagents } from '@/components/dashboard/subagent-grouping';
+import { buildForkTranscript, saveForkContext } from '@/lib/fork-session';
 import { parseThinkingPayload } from '@/components/dashboard/thinking-card';
 import { FilesGitPanel, FilesGitPanelToggle, usePanelState, type PanelPendingAction } from '@/components/files-git-panel';
 import { ChatInput, PermissionModeValue, OpencodeAgentModeValue, type ChatUploadedAttachment, type ChatInputHandle } from '@/components/chat-input';
@@ -177,6 +178,7 @@ const STICK_TOLERANCE_PX = 72;
 
 function AgentInstanceContent() {
   const params = useParams();
+  const router = useRouter();
   const instanceId = params.instanceId as string;
   const dashboardContext = useAgentDashboard();
   const { refreshData, updateInstanceStatus } = dashboardContext;
@@ -1277,6 +1279,42 @@ function AgentInstanceContent() {
 
   // Memoize grouped messages to avoid re-grouping on every render
   const groupedMessages = useMemo(() => groupMessagesByDate(orderedVisibleMessages), [orderedVisibleMessages]);
+
+  // Fork: open the new-session page carrying the transcript up to this agent
+  // message as a chat-history attachment, on the same machine/folder/agent so
+  // the new run picks up where the old one left off (see lib/fork-session.ts).
+  const handleForkMessage = useCallback(
+    (message: MessageResponse) => {
+      const detail = instance;
+      if (!detail) return;
+      const { text, messageCount } = buildForkTranscript({
+        messages: orderedVisibleMessages,
+        boundaryMessageId: message.id,
+        agentType: resolveAgentType(detail.agent_type_name || undefined),
+        sourceTitle: detail.name,
+        sourceDirectory: toAbsolutePath(detail.project, detail.home_dir),
+      });
+      saveForkContext({
+        text,
+        messageCount,
+        sourceInstanceId: instanceId,
+        sourceTitle: detail.name || 'Untitled session',
+      });
+      const query = new URLSearchParams({ fork: '1' });
+      if (detail.project) query.set('directory', detail.project);
+      if (detail.machine_id) query.set('machineId', detail.machine_id);
+      // `session_config.agent` is the catalog id the daemon was spawned with;
+      // `agent_type_name` is the editable row name and only a fallback (same
+      // precedence the session gear uses below).
+      const configuredAgent =
+        typeof detail.session_config?.agent === 'string' ? detail.session_config.agent.trim().toLowerCase() : '';
+      const forkAgent =
+        configuredAgent || (detail.agent_type_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (forkAgent) query.set('agent', forkAgent);
+      router.push(`/dashboard/agents/new-session?${query.toString()}`);
+    },
+    [instance, instanceId, orderedVisibleMessages, router],
+  );
 
   // Focus mode: the files/git panel covers the transcript as a full-width layer
   // between the header and composer (see the render below). Derived from the
@@ -2387,6 +2425,7 @@ function AgentInstanceContent() {
                     onOptionClick={handleOptionClick}
                     onAskUserQuestionSubmit={handleAskUserQuestionSubmit}
                     onAskUserQuestionCancel={handleAskUserQuestionCancel}
+                    onFork={handleForkMessage}
                     agentTypeName={instance.agent_type_name}
                     projectPath={projectRootPath}
                   />
