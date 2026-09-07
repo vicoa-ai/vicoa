@@ -1446,6 +1446,8 @@ function AgentInstanceContent() {
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
   const [findActive, setFindActive] = useState(0);
+  // Incremented by every ⌘F; the find bar focuses + selects its input on change.
+  const [findFocusToken, setFindFocusToken] = useState(0);
   // Trimmed: the highlighters must use the exact term the match set was built
   // from, or a trailing space would count hits it then fails to highlight.
   const findNeedle = findQuery.trim();
@@ -1515,6 +1517,10 @@ function AgentInstanceContent() {
     const selection = typeof window !== 'undefined' ? window.getSelection?.()?.toString().trim() ?? '' : '';
     if (selection) setFindQuery(selection.slice(0, 200));
     setFindOpen(true);
+    // Bump on every ⌘F, not just the first: with the bar already up its mount
+    // autofocus can't re-run, so a second ⌘F (from the composer, say) would
+    // leave the caret where it was. The bar refocuses + selects on each bump.
+    setFindFocusToken((token) => token + 1);
   }, []);
 
   const closeFind = useCallback(() => setFindOpen(false), []);
@@ -2531,6 +2537,7 @@ function AgentInstanceContent() {
         {findOpen && !fileOverlay && (
           <ChatFindBar
             query={findQuery}
+            focusToken={findFocusToken}
             onQueryChange={setFindQuery}
             matchCount={findMatches.length}
             activeOrdinal={findMatches.length > 0 ? findActive + 1 : 0}
