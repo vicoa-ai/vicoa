@@ -14,7 +14,10 @@ export type RpcCode =
   | 'target_disconnected'
   | 'timeout'
   | 'not_connected'
-  | 'rpc_failed';
+  | 'rpc_failed'
+  | 'unknown_app'
+  | 'app_not_found'
+  | 'launch_failed';
 
 export interface FileEntry {
   name: string;
@@ -570,4 +573,59 @@ export async function rpcGitCommitDiff(
     throw new RpcError(result.error);
   }
   return result as unknown as GitDiffResult;
+}
+
+// ── Open in… (list-open-apps / open-path) ────────────────────────────────────
+// Opening a path in Finder/VS Code/Ghostty has to happen on the machine that
+// holds the files, so both sides are daemon RPCs. Needs a daemon advertising
+// the `open-in` capability — older ones fail `no_handler`, which is why
+// `open-in-menu.tsx` hides the whole menu instead of showing an empty one.
+
+/** What an app does with the path it is handed. */
+export type OpenAppKind = 'file-manager' | 'editor' | 'terminal';
+
+/** One app the daemon's machine can actually open a path with. */
+export interface OpenApp {
+  id: string;
+  label: string;
+  kind: OpenAppKind;
+  /** `dir` apps (terminals) always get a directory — a file resolves to its parent. */
+  target: 'path' | 'dir';
+}
+
+export interface ListOpenAppsResult {
+  /** The daemon's `sys.platform` — `darwin` | `win32` | `linux` | … */
+  platform: string;
+  apps: OpenApp[];
+}
+
+/** Apps installed on `machineId` that can open a project path. */
+export async function rpcListOpenApps(machineId: string): Promise<ListOpenAppsResult> {
+  const result = await getRpcClient(machineId).callRpc(machineId, 'list-open-apps', {});
+  if (typeof result.error === 'string') {
+    throw new RpcError(result.error);
+  }
+  return result as unknown as ListOpenAppsResult;
+}
+
+/**
+ * Open `path` (project-relative; `''` is the project root) in `app` on
+ * `machineId`. `app` is an id from {@link rpcListOpenApps} — the daemon maps it
+ * to a fixed argv and refuses anything else, so no command ever travels over
+ * the wire.
+ */
+export async function rpcOpenPath(
+  machineId: string,
+  cwd: string,
+  path: string,
+  app: string,
+): Promise<void> {
+  const result = await getRpcClient(machineId).callRpc(machineId, 'open-path', {
+    cwd,
+    path,
+    app,
+  });
+  if (typeof result.error === 'string') {
+    throw new RpcError(result.error);
+  }
 }

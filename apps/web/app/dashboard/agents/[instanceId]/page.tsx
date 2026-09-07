@@ -30,7 +30,7 @@ import { getChatItemSearchText } from '@/lib/chat-search';
 import { buildForkTranscript, saveForkContext } from '@/lib/fork-session';
 import { computeTurnEnds, type TurnMessageEntry } from '@/lib/agent-turns';
 import { parseThinkingPayload } from '@/components/dashboard/thinking-card';
-import { FilesGitPanel, FilesGitPanelToggle, usePanelState, type PanelPendingAction } from '@/components/files-git-panel';
+import { FilesGitPanel, FilesGitPanelToggle, OpenInMenu, usePanelState, type PanelPendingAction } from '@/components/files-git-panel';
 import { ChatInput, PermissionModeValue, OpencodeAgentModeValue, type ChatUploadedAttachment, type ChatInputHandle } from '@/components/chat-input';
 import { collectComposerDrop } from '@/lib/chat-drop';
 import { matchesShortcut, getShortcutCombo } from '@/lib/desktop-shortcuts';
@@ -2231,6 +2231,13 @@ function AgentInstanceContent() {
           </div>
         </TooltipProvider>
         <div style={NO_DRAG} className="flex items-center gap-0.5">
+          {/* Opens the session's project directory on its machine — Finder,
+              an editor, a terminal. Hidden when there's no machine to ask. */}
+          <OpenInMenu
+            machineId={instance.machine_id ?? null}
+            cwd={instance.project ?? null}
+            tooltip="Open project in…"
+          />
           <FilesGitPanelToggle open={panel.open} onToggle={panel.toggleOpen} />
           <SessionActionsMenu
             onResume={() => void handleResumeSession()}

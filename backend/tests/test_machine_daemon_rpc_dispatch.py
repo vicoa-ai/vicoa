@@ -424,3 +424,29 @@ def test_pty_spawn_dispatched_to_terminal_service(
         assert kill == {}
     finally:
         daemon._shutdown_terminals()
+
+
+# --------------------------------------------------------------------------
+# Open in… (list-open-apps / open-path)
+# --------------------------------------------------------------------------
+def test_list_open_apps_dispatched_to_handler(daemon: MachineDaemon):
+    result = daemon._handle_rpc_request({"method": "list-open-apps"})
+    assert result["platform"] == sys.platform
+    assert isinstance(result["apps"], list)
+
+
+def test_open_path_dispatched_to_handler(daemon: MachineDaemon, git_repo: Path):
+    # An unknown app id must be refused by the handler, not shelled out.
+    frame = {
+        "method": "open-path",
+        "params": {"cwd": str(git_repo), "app": "not-a-real-app"},
+    }
+    assert daemon._handle_rpc_request(frame) == {"error": "unknown_app"}
+
+
+def test_open_in_methods_and_capability_are_advertised(daemon: MachineDaemon):
+    advertised = daemon._supported_rpc_methods()
+    assert "list-open-apps" in advertised
+    assert "open-path" in advertised
+    # The client hides the "Open in…" menu unless the daemon says it's routable.
+    assert "open-in" in daemon._capabilities()

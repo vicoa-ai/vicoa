@@ -69,6 +69,7 @@ import { CommitsSection } from './commits-section';
 import { isMarkdownPath } from './file-icon';
 import { isEditable } from './file-tabs';
 import { FileFindBar } from './file-find-bar';
+import { OpenInMenu } from './open-in-menu';
 import { useInFileFind, type FindOptions } from './use-in-file-find';
 import { useCmFind } from './use-cm-find';
 import { ancestorPaths } from './tree';
@@ -1205,8 +1206,19 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
     </div>
   );
 
+  // "Open in…" targets whatever the panel is showing: the file you have open,
+  // or the project root when you're on the tree. The apps themselves come from
+  // the machine, so this renders nothing when there's no machine to ask.
+  const openInPath = inViewer && activeFile ? activeFile.path : '';
   const headerRight = (
     <div style={NO_DRAG} className="flex items-center gap-0.5 flex-shrink-0">
+      <OpenInMenu
+        machineId={machineId}
+        cwd={cwd}
+        path={openInPath}
+        variant="labeled"
+        tooltip={openInPath ? `Open ${basename(openInPath)} in…` : 'Open project in…'}
+      />
       {!inViewer && !showTerminal && panel.activeTab === 'files' && (
         <TipButton label="Refresh" onClick={files.refreshAll}>
           <RefreshCw className="h-4 w-4" />
