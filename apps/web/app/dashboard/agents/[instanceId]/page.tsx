@@ -30,7 +30,7 @@ import { getChatItemSearchText } from '@/lib/chat-search';
 import { buildForkTranscript, saveForkContext } from '@/lib/fork-session';
 import { computeTurnEnds, type TurnMessageEntry } from '@/lib/agent-turns';
 import { parseThinkingPayload } from '@/components/dashboard/thinking-card';
-import { FilesGitPanel, FilesGitPanelToggle, OpenInMenu, usePanelState, type PanelPendingAction } from '@/components/files-git-panel';
+import { FilesGitPanel, FilesGitPanelToggle, OpenInSubMenu, usePanelState, type PanelPendingAction } from '@/components/files-git-panel';
 import { ChatInput, PermissionModeValue, OpencodeAgentModeValue, type ChatUploadedAttachment, type ChatInputHandle } from '@/components/chat-input';
 import { collectComposerDrop } from '@/lib/chat-drop';
 import { matchesShortcut, getShortcutCombo } from '@/lib/desktop-shortcuts';
@@ -2232,7 +2232,18 @@ function AgentInstanceContent() {
                 view controls on the right edge. NO_DRAG because the left half of
                 this header is the desktop title bar's drag region. */}
             <div style={NO_DRAG} className="flex-shrink-0">
+              {/* The three-dot menu also hosts "Open in ▸": the project
+                  directory is a session-level target, so it belongs with the
+                  session's other actions rather than in its own control. The
+                  files panel keeps a top-level "Open in" because there the
+                  target is the file on screen. */}
               <SessionActionsMenu
+                leadingItems={
+                  <OpenInSubMenu
+                    machineId={instance.machine_id ?? null}
+                    cwd={instance.project ?? null}
+                  />
+                }
                 onResume={() => void handleResumeSession()}
                 showResume={canResume}
                 resumeDisabledReason={
@@ -2285,14 +2296,6 @@ function AgentInstanceContent() {
           </div>
         </TooltipProvider>
         <div style={NO_DRAG} className="flex items-center gap-0.5">
-          {/* Opens the session's project directory on its machine — Finder,
-              an editor, a terminal. Hidden when there's no machine to ask. */}
-          <OpenInMenu
-            machineId={instance.machine_id ?? null}
-            cwd={instance.project ?? null}
-            variant="labeled"
-            tooltip="Open project in…"
-          />
           <FilesGitPanelToggle open={panel.open} onToggle={panel.toggleOpen} />
           {/* The files/git panel takes the window's right edge only as the right
               rail; reserve here when it's closed OR maximized into the center

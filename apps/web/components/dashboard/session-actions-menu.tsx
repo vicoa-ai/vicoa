@@ -1,8 +1,15 @@
 'use client';
 
+import type React from 'react';
 import { Archive, Check, CirclePlay, Copy, Mail, MoreVertical, Pencil, Pin, PinOff, Trash2, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
 /** The set of session actions, independent of how they're rendered. Both the
@@ -137,16 +144,22 @@ type SessionActionsMenuProps = SessionActionsConfig & {
   className?: string;
   iconClassName?: string;
   contentClassName?: string;
+  /** Extra items rendered above the standard actions, separated from them.
+      Dropdown-only: the sidebar's context-menu variant builds from
+      `buildSessionActions` and can't host DropdownMenu children. Used by the
+      session header for the "Open in ▸" submenu. */
+  leadingItems?: React.ReactNode;
 };
 
 export function SessionActionsMenu({
   className,
   iconClassName,
   contentClassName,
+  leadingItems,
   ...config
 }: SessionActionsMenuProps) {
   const actions = buildSessionActions(config);
-  if (actions.length === 0) {
+  if (actions.length === 0 && !leadingItems) {
     return null;
   }
 
@@ -162,6 +175,8 @@ export function SessionActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className={contentClassName ?? 'font-mono'}>
+        {leadingItems}
+        {leadingItems && actions.length > 0 && <DropdownMenuSeparator />}
         {actions.map((action) => (
           <DropdownMenuItem
             key={action.key}
