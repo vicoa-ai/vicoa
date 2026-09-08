@@ -5,6 +5,13 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.7.19
+8 September, 2026
+- Fix a Codex session dying for good after a large tool result — oversized frames from the codex app-server are no longer dropped, at any size (#33)
+- Open a project path on the session's own machine — Finder or Explorer, an editor, a terminal — with the daemon reporting only the apps actually installed there
+- Add user avatars: upload your own picture, or have one seeded from your sign-in provider
+- Set up the backend virtualenv during worktree setup, instead of leaving each worktree on whatever Python is on `PATH`
+
 ### v1.7.18
 6 September, 2026
 - Add native Pi and Oh My Pi (`omp`) support
