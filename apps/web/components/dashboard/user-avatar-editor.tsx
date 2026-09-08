@@ -12,7 +12,7 @@
 import { useRef, useState } from 'react';
 import { Camera, Loader2, X } from 'lucide-react';
 
-import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { PrincipalAvatar, type PrincipalAvatarSize } from '@/components/ui/principal-avatar';
 import type { Principal } from '@/lib/principals';
 import { cn } from '@/lib/utils';
 
@@ -20,15 +20,25 @@ import { cn } from '@/lib/utils';
 // courtesy check so an oversized file fails instantly instead of after upload.
 const MAX_AVATAR_BYTES = 8 * 1024 * 1024;
 
+// The badges have to grow with the avatar or they swamp a 56px one and vanish
+// on an 80px one. Only the two sizes a profile surface actually uses.
+const BADGES: Record<'lg' | 'xl', { camera: string; icon: string; remove: string }> = {
+  lg: { camera: 'size-6', icon: 'size-3', remove: 'size-5' },
+  xl: { camera: 'size-7', icon: 'size-3.5', remove: 'size-6' },
+};
+
 export function UserAvatarEditor({
   principal,
+  size = 'lg',
   onUploadImage,
   onRemoveImage,
 }: {
   principal: Principal;
+  size?: Extract<PrincipalAvatarSize, 'lg' | 'xl'>;
   onUploadImage: (file: File) => Promise<void> | void;
   onRemoveImage: () => Promise<void> | void;
 }) {
+  const badge = BADGES[size];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -70,7 +80,7 @@ export function UserAvatarEditor({
           aria-label={principal.avatarImageUri ? 'Change profile photo' : 'Upload a profile photo'}
           className="group/trigger relative block cursor-pointer rounded-full disabled:cursor-default"
         >
-          <PrincipalAvatar principal={principal} size="lg" />
+          <PrincipalAvatar principal={principal} size={size} />
           <span
             aria-hidden="true"
             className={cn(
@@ -87,12 +97,13 @@ export function UserAvatarEditor({
           <span
             aria-hidden="true"
             className={cn(
-              'absolute -bottom-0.5 -right-0.5 inline-flex size-6 items-center justify-center',
+              'absolute -bottom-0.5 -right-0.5 inline-flex items-center justify-center',
+              badge.camera,
               'rounded-full border-2 border-background bg-muted text-muted-foreground',
               'transition-colors group-hover/avatar:bg-foreground group-hover/avatar:text-background',
             )}
           >
-            <Camera className="size-3" />
+            <Camera className={badge.icon} />
           </span>
         </button>
         {/* Remove only exists once there is something to remove. */}
@@ -103,13 +114,14 @@ export function UserAvatarEditor({
             aria-label="Remove profile photo"
             title="Remove photo"
             className={cn(
-              'absolute -right-1 -top-1 inline-flex size-5 cursor-pointer items-center justify-center',
+              'absolute -right-1 -top-1 inline-flex cursor-pointer items-center justify-center',
+              badge.remove,
               'rounded-full border-2 border-background bg-muted text-muted-foreground opacity-0',
               'transition-opacity hover:text-foreground',
               'group-hover/avatar:opacity-100 focus-visible:opacity-100',
             )}
           >
-            <X className="size-3" />
+            <X className={badge.icon} />
           </button>
         )}
       </div>

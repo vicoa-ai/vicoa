@@ -29,7 +29,7 @@ import {
   principalInitials,
 } from '@/lib/principals';
 
-export type PrincipalAvatarSize = 'xs' | 'sm' | 'md' | 'lg';
+export type PrincipalAvatarSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
 // Box size, plus the type size the initials need to sit right inside it.
 const SIZES: Record<PrincipalAvatarSize, { box: string; text: string; glyph: string }> = {
@@ -37,6 +37,8 @@ const SIZES: Record<PrincipalAvatarSize, { box: string; text: string; glyph: str
   sm: { box: 'size-6', text: 'text-[10px]', glyph: 'size-3.5' },
   md: { box: 'size-8', text: 'text-xs', glyph: 'size-4' },
   lg: { box: 'size-14', text: 'text-lg', glyph: 'size-7' },
+  // Profile pages, where the avatar is the page's subject rather than a label.
+  xl: { box: 'size-20', text: 'text-2xl', glyph: 'size-9' },
 };
 
 // A team is a bag of people; an agent is not a person at all. Only the user

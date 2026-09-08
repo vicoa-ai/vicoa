@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useReducer, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { LogIn, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -44,6 +44,9 @@ import {
   type CliLinkStatus,
 } from '@/lib/desktop-cli';
 import { DRAG_REGION } from '@/lib/app-region';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { UserAvatarEditor } from '@/components/dashboard/user-avatar-editor';
+import type { UserProfile } from '@/lib/backend-api';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { computeStreaks, formatCompact, formatDays } from '@/lib/profile-stats';
 import {
@@ -167,6 +170,10 @@ function ProfileSection() {
   const [email, setEmail] = useState<string | null>(null);
   const [name, setName] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  // The avatar is ours, not Supabase's, so it comes from the backend profile
+  // rather than the session above. Kept in state so upload/remove can refresh
+  // it without a full page reload.
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [activity, setActivity] = useState<ProfileActivity | null>(null);
   const [activityLoading, setActivityLoading] = useState(true);
 
@@ -201,6 +208,20 @@ function ProfileSection() {
   }, [config?.mode]);
 
   const isCloud = config?.mode === 'cloud';
+
+  const refreshProfile = useCallback(async () => {
+    if (!api) return;
+    setProfile(await api.getCurrentUserProfile());
+  }, [api]);
+
+  // Local mode has no cloud account, so there is no backend profile to read and
+  // nothing to upload to — that branch renders a plain avatar below.
+  useEffect(() => {
+    if (!isCloud || !api) return;
+    void refreshProfile().catch(() => {
+      /* no profile just means initials */
+    });
+  }, [isCloud, api, refreshProfile]);
 
   // Activity (stat tiles + heatmap): the server aggregate, cached + synced
   // incrementally, with a comprehensive session-level fallback. Paint any
@@ -238,6 +259,14 @@ function ProfileSection() {
   if (!mounted) return null;
 
   const displayName = name || email || (isCloud ? 'Your profile' : 'Local session');
+  const avatarPrincipal = {
+    type: 'user' as const,
+    id: userId ?? undefined,
+    // Falls back to the email only to derive an initial; never rendered as text.
+    name: profile?.display_name || name || email,
+    avatarImageUri: profile?.avatar_image_uri,
+    updatedAt: profile?.updated_at,
+  };
   // Show the email under the name, unless the name slot already shows it.
   const subEmail = email && email !== displayName ? email : null;
   const loading = activityLoading && !activity;
@@ -248,10 +277,25 @@ function ProfileSection() {
 
   return (
     <section className="flex flex-col items-center">
-      {/* Identity */}
-      <div className="flex h-20 w-20 items-center justify-center rounded-full bg-foreground/10 text-2xl font-light text-foreground/80">
-        {initialsFrom(displayName, email)}
-      </div>
+      {/* Identity. Cloud mode can edit the photo; local mode has no account to
+          attach one to (and no API client yet, briefly, on first paint), so it
+          just renders. */}
+      {isCloud && api ? (
+        <UserAvatarEditor
+          principal={avatarPrincipal}
+          size="xl"
+          onUploadImage={async (file) => {
+            await api.uploadMyAvatar(file);
+            await refreshProfile();
+          }}
+          onRemoveImage={async () => {
+            await api.deleteMyAvatar();
+            await refreshProfile();
+          }}
+        />
+      ) : (
+        <PrincipalAvatar principal={avatarPrincipal} size="xl" />
+      )}
       <h1 className="mt-4 text-2xl font-light tracking-tight text-foreground">{displayName}</h1>
       {subEmail && <p className="mt-1 text-sm text-muted-foreground">{subEmail}</p>}
 
@@ -294,12 +338,6 @@ function ProfileSection() {
 // --- Profile helpers -------------------------------------------------------
 
 /** Up to two uppercase initials from a name, falling back to the email. */
-function initialsFrom(name: string, email: string | null): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
-  const base = words[0] || email?.split('@')[0] || '';
-  return base.slice(0, 2).toUpperCase() || '?';
-}
 
 function StatCell({ label, value }: { label: string; value: string }) {
   return (
