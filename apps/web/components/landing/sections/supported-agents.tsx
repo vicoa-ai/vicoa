@@ -81,6 +81,25 @@ const agents: { name: string; icon: ReactNode; chip?: boolean }[] = [
     ),
   },
   {
+    name: 'Pi',
+    icon: (
+      <svg height="1em" viewBox="100 100 600 600" width="1em" xmlns="http://www.w3.org/2000/svg" aria-label="Pi" fill="currentColor" fillRule="evenodd">
+        <title>Pi</title>
+        <path d="M165.29 165.29 H517.36 V400 H400 V517.36 H282.65 V634.72 H165.29 Z M282.65 282.65 V400 H400 V282.65 Z" />
+        <path d="M517.36 400 H634.72 V634.72 H517.36 Z" />
+      </svg>
+    ),
+  },
+  {
+    name: 'Oh My Pi',
+    icon: (
+      <svg height="1em" viewBox="4 4 56 56" width="1em" xmlns="http://www.w3.org/2000/svg" aria-label="Oh My Pi" fill="currentColor" fillRule="evenodd">
+        <title>Oh My Pi</title>
+        <path d="M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z" />
+      </svg>
+    ),
+  },
+  {
     name: 'OpenRouter',
     icon: (
       <svg height="1em" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg" aria-label="OpenRouter">

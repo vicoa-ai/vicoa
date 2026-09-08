@@ -4355,7 +4355,7 @@ abstract class AppLocalizations {
   /// No description provided for @welcomeDemoMsg9.
   ///
   /// In en, this message translates to:
-  /// **'Whichever you already use:\n| Agent | Models |\n| --- | --- |\n| Claude Code | e.g., Opus 4.8, Opus 4.7, Sonnet 4.6 |\n| Codex | e.g., GPT-5.5, GPT-5.4 |\n| OpenCode | e.g., Z.AI, Minimax, DeepSeek |\n| Gemini | e.g., Gemini 3 Pro, Gemini 2.5 Flash |\n| Cursor | e.g., Composer, Claude, GPT |\n| Copilot | e.g., Claude, GPT, Gemini |\n| Kimi | e.g., Kimi K2.5, K2.6, K2.7 Code |\n| Hermes | 50+ models |\n\n> You bring your own agent, Vicoa just connects it.\n\nCoding agents make changes, Vicoa show you in real-time: \n\n'**
+  /// **'Whichever you already use:\n| Agent | Models |\n| --- | --- |\n| Claude Code | e.g., Opus 4.8, Opus 4.7, Sonnet 4.6 |\n| Codex | e.g., GPT-5.5, GPT-5.4 |\n| OpenCode | e.g., Z.AI, Minimax, DeepSeek |\n| Gemini | e.g., Gemini 3 Pro, Gemini 2.5 Flash |\n| Cursor | e.g., Composer, Claude, GPT |\n| Copilot | e.g., Claude, GPT, Gemini |\n| Kimi | e.g., Kimi K2.5, K2.6, K2.7 Code |\n| Hermes | 50+ models |\n| Pi | many providers |\n| Oh My Pi | many providers |\n\n> You bring your own agent, Vicoa just connects it.\n\nCoding agents make changes, Vicoa show you in real-time: \n\n'**
   String get welcomeDemoMsg9;
 
   /// No description provided for @welcomeDemoNoComputerSubtitle.

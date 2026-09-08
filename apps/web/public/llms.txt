@@ -21,7 +21,7 @@ Vicoa connects coding agents (Claude Code, Codex, OpenCode) running on your mach
 - [Claude Code](https://vicoa.ai/docs/agents/claude-code): Use Claude Code with Vicoa.
 - [Codex](https://vicoa.ai/docs/agents/codex): Use Codex with Vicoa.
 - [OpenCode](https://vicoa.ai/docs/agents/opencode): Use OpenCode with Vicoa.
-- [Gemini, Cursor, Copilot, Kimi, Hermes](https://vicoa.ai/docs/agents/more-coding-agents): Additional agents available from the app and dashboard.
+- [Gemini, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi](https://vicoa.ai/docs/agents/more-coding-agents): Additional agents available from the app and dashboard.
 - [Claude Code vs. Codex](https://vicoa.ai/docs/claude-code-and-codex): Choosing a default agent and switching per session.
 - [Start a remote session](https://vicoa.ai/docs/start-remote-session): Launch a session from mobile or web.
 - [CLI commands](https://vicoa.ai/docs/cli-commands): List sessions with `vicoa ls` and stop them with `vicoa stop`.

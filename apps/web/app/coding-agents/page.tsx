@@ -11,18 +11,18 @@ import { pageMetadata } from '@/lib/seo';
 export const metadata = pageMetadata('/coding-agents', {
   title: 'Supported AI Coding Agents - Vicoa',
   description:
-    'Explore the supported AI coding agents in Vicoa, including Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, Kimi, Hermes, and more.',
+    'Explore the supported AI coding agents in Vicoa, including Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi, and more.',
   openGraph: {
     title: 'Supported AI Coding Agents - Vicoa',
     description:
-      'Explore the supported AI coding agents in Vicoa, including Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, Kimi, Hermes, and more.',
+      'Explore the supported AI coding agents in Vicoa, including Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi, and more.',
     type: 'website'
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Supported AI Coding Agents - Vicoa',
     description:
-      'Explore the supported AI coding agents in Vicoa, including Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, Kimi, Hermes, and more.'
+      'Explore the supported AI coding agents in Vicoa, including Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi, and more.'
   }
 });
 
@@ -206,6 +206,36 @@ const integrations: Integration[] = [
     ]
   },
   {
+    company: 'Earendil',
+    product: 'Pi',
+    description: 'Start Pi directly from a new session — a native integration, like Claude Code and Codex.',
+    status: 'newSession',
+    logoSrc: '/images/integrations/pi.svg',
+    logoAlt: 'Pi logo',
+    logoClassName: 'h-8 w-8 dark:invert',
+    links: [
+      {
+        label: 'How to use more agents',
+        href: '/docs/agents/more-coding-agents'
+      }
+    ]
+  },
+  {
+    company: 'Oh My Pi',
+    product: 'Oh My Pi',
+    description: 'Start Oh My Pi (`omp`), the Pi fork, from a new session — natively integrated, with Vicoa host tools.',
+    status: 'newSession',
+    logoSrc: '/images/integrations/omp.svg',
+    logoAlt: 'Oh My Pi logo',
+    logoClassName: 'h-8 w-8 dark:invert',
+    links: [
+      {
+        label: 'How to use more agents',
+        href: '/docs/agents/more-coding-agents'
+      }
+    ]
+  },
+  {
     company: 'OpenRouter',
     product: '300+ models',
     description: 'Route Claude Code to 300+ models for cost control and model choice.',
@@ -226,7 +256,7 @@ const codingAgentsFaqs: FAQItem[] = [
   {
     question: 'Which coding agents are supported in Vicoa?',
     answer:
-      'Vicoa supports Claude Code, Codex, and OpenCode as built-in agents. You can also start Gemini, Cursor, Copilot, Kimi, and Hermes directly from a new session in the web dashboard or mobile app.'
+      'Vicoa supports 10+ coding agents. Claude Code, Codex, OpenCode, Pi, and Oh My Pi are built-in, and you can also start Gemini, Cursor, Copilot, Kimi, and Hermes directly from a new session in the web dashboard or mobile app.'
   },
   {
     question: 'How do I start a session with Codex or OpenCode?',
@@ -247,11 +277,11 @@ const codingAgentsFaqs: FAQItem[] = [
       'Yes. Vicoa connects to your own provider credentials so you stay in control of usage and billing for each agent.'
   },
   {
-    question: 'How do I use Gemini, Cursor, Copilot, Kimi, or Hermes?',
+    question: 'How do I use Gemini, Cursor, Copilot, Kimi, Hermes, Pi, or Oh My Pi?',
     answer: (
       <span>
-        Update Vicoa CLI to v1.6.1+ and the app to v1.6.8+, install the agent&apos;s CLI on your machine, then start a new
-        session from the web or app and pick the agent. See the{' '}
+        Update Vicoa to the latest version, install the agent&apos;s
+        CLI on your machine, then start a new session from the web or app and pick the agent. See the{' '}
         <Link href="/docs/agents/more-coding-agents" className="text-blue-600 hover:text-blue-700 underline">
           More Coding Agents
         </Link>{' '}
@@ -259,7 +289,7 @@ const codingAgentsFaqs: FAQItem[] = [
       </span>
     ),
     answerText:
-      'Update Vicoa CLI to v1.6.1+ and the app to v1.6.8+, install the agent CLI on your machine, then start a new session and pick the agent. See the More Coding Agents guide at /docs/agents/more-coding-agents.'
+      'Update Vicoa to the latest version, install the agent CLI on your machine, then start a new session and pick the agent. See the More Coding Agents guide at /docs/agents/more-coding-agents.'
   },
   {
     question: 'Where can I find setup guides for each agent?',

@@ -32,9 +32,9 @@ Vicoa 是一个开源的 **AI 编排器**，让你在任意设备上运行一支
 
 ## 运行一支编程智能体团队
 
-*Claude Code、Codex、Cursor、Kimi 等等*
+*Claude Code、Codex、Cursor、Pi、Kimi 等等*
 
-- **[支持的智能体](#支持的智能体)：** Claude Code、Codex、OpenCode、Gemini、Cursor、GitHub Copilot、Kimi、Hermes —— 在同一个工作区里并排运行。
+- **[支持的智能体](#支持的智能体)：** Claude Code、Codex、OpenCode、Gemini、Cursor、GitHub Copilot、Kimi、Hermes、Pi、Oh My Pi，在同一个工作区里并排运行。
 - **并行 worktree：** 每个智能体都在自己的 git worktree 和分支上，好几个可以同时改同一个仓库、互不干扰。
 - **一个指挥台：** 所有会话的状态集中成一张列表，在一处指挥整支队伍，不用翻终端标签页。
 - **[任意机器](https://vicoa.ai/docs/start-remote-session)：** 你的 Mac、Windows 笔记本、Linux 机器、VPS、远程服务器 —— 全都连上，再决定每个会话跑在哪台。
@@ -113,8 +113,9 @@ Vicoa 启动的是你早就装好并登录过的智能体 CLI，跑在你的机�
 | [Codex](https://vicoa.ai/docs/agents/codex) | `codex` | [GitHub Copilot](https://vicoa.ai/docs/agents/more-coding-agents) | `copilot` |
 | [OpenCode](https://vicoa.ai/docs/agents/opencode) | `opencode` | [Kimi](https://vicoa.ai/docs/agents/more-coding-agents) | `kimi` |
 | [Gemini](https://vicoa.ai/docs/agents/more-coding-agents) | `gemini` | [Hermes](https://vicoa.ai/docs/agents/more-coding-agents) | `hermes` |
+| [Pi](https://vicoa.ai/docs/agents/more-coding-agents) | `pi` | [Oh My Pi](https://vicoa.ai/docs/agents/more-coding-agents) | `omp` |
 
-Claude Code 和 Codex 是原生集成，其余通过 Agent Client Protocol（ACP）接入。
+Claude Code、Codex、Pi 和 Oh My Pi 是原生集成，其余通过 Agent Client Protocol（ACP）接入。
 
 ## 文档
 
@@ -165,6 +166,7 @@ docker compose -f docker-compose.selfhost.yml up -d
                      ┌───────┴─────────────────────────────────┐
                      │ Claude Code · Codex · OpenCode · Gemini │
                      │ Cursor · Copilot · Kimi · Hermes        │
+                     │ Pi · Oh My Pi                           │
                      └─────────────────────────────────────────┘
 ```
 

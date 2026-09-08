@@ -153,7 +153,7 @@ export default async function PricingPage() {
                 <tbody className="divide-y divide-border">
                   <ComparisonRow feature="Mobile messages / month" free="20" pro="Unlimited" enterprise="Unlimited" />
                   <ComparisonRow feature="Desktop app (Mac, Windows, Linux)" free="Unlimited" pro="Unlimited" enterprise="Unlimited" />
-                  <ComparisonRow feature="Claude Code, Codex, Gemini, OpenCode, Cursor, Copilot, Kimi, Hermes" free={true} pro={true} enterprise={true} />
+                  <ComparisonRow feature="Claude Code, Codex, Gemini, OpenCode, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi" free={true} pro={true} enterprise={true} />
                   <ComparisonRow feature="Web & mobile apps" free={true} pro={true} enterprise={true} />
                   <ComparisonRow feature="Talk to code" free={true} pro={true} enterprise={true} />
                   <ComparisonRow feature="Real-time notifications & cross-device sync" free={true} pro={true} enterprise={true} />
