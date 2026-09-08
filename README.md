@@ -32,9 +32,9 @@ Vicoa is an open-source **AI orchestrator** for running a team of coding agents 
 
 ## Run a team of coding agents
 
-*Claude Code, Codex, Cursor, Kimi, and more*
+*Claude Code, Codex, Cursor, Pi, Kimi, and more*
 
-- **[Supported Agents](#supported-agents):** Claude Code, Codex, OpenCode, Gemini, Cursor, GitHub Copilot, Kimi, Hermes. Run them side by side in one workspace
+- **[Supported Agents](#supported-agents):** Claude Code, Codex, OpenCode, Gemini, Cursor, GitHub Copilot, Kimi, Hermes, Pi, Oh My Pi. Run them side by side in one workspace
 - **Parallel worktrees:** each agent on its own git worktree and branch, so several can work the same repo at once without stepping on each other.
 - **One command center:** every session's status in a single list, so you steer the whole fleet from one place instead of hunting terminal tabs.
 - **[Any machine](https://vicoa.ai/docs/start-remote-session):** your Mac, a Windows laptop, a Linux machine, a VPS, a remote server: connect them all and pick where each session runs.
@@ -116,9 +116,10 @@ authenticated, on your machine, with your credentials.
 | [Codex](https://vicoa.ai/docs/agents/codex) | `codex` | [GitHub Copilot](https://vicoa.ai/docs/agents/more-coding-agents) | `copilot` |
 | [OpenCode](https://vicoa.ai/docs/agents/opencode) | `opencode` | [Kimi](https://vicoa.ai/docs/agents/more-coding-agents) | `kimi` |
 | [Gemini](https://vicoa.ai/docs/agents/more-coding-agents) | `gemini` | [Hermes](https://vicoa.ai/docs/agents/more-coding-agents) | `hermes` |
+| [Pi](https://vicoa.ai/docs/agents/more-coding-agents) | `pi` | [Oh My Pi](https://vicoa.ai/docs/agents/more-coding-agents) | `omp` |
 
-Claude Code and Codex have native integrations; the rest connect over the Agent Client
-Protocol (ACP).
+Claude Code, Codex, Pi, and Oh My Pi have native integrations; the rest connect over the
+Agent Client Protocol (ACP).
 
 ## Documentation
 
@@ -170,6 +171,7 @@ The full walkthrough is in **[SELF_HOSTING.md](./SELF_HOSTING.md)**.
                      ┌───────┴─────────────────────────────────┐
                      │ Claude Code · Codex · OpenCode · Gemini │
                      │ Cursor · Copilot · Kimi · Hermes        │
+                     │ Pi · Oh My Pi                           │
                      └─────────────────────────────────────────┘
 ```
 

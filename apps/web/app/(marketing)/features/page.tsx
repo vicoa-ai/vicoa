@@ -76,7 +76,7 @@ const features: Feature[] = [
     title: 'Every Coding Agent, One Workspace',
     description: 'Claude Code, Codex, OpenCode, and more — plus 300+ models from 60+ providers via OpenRouter.',
     details: [
-      'Run Claude Code, Codex, and OpenCode, plus Gemini, Cursor, Copilot, Kimi, and Hermes via ACP',
+      'Run Claude Code, Codex, OpenCode, Pi, and Oh My Pi natively, plus Gemini, Cursor, Copilot, Kimi, and Hermes via ACP',
       'Use 300+ models from 60+ providers through OpenRouter, and bring your own key',
       'Everything runs on your real machine and codebase — no lock-in, no usage markup'
     ],

@@ -2262,7 +2262,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get welcomeDemoMsg9 =>
-      '主流的 AI Agent：\n| Agent | 模型 |\n| --- | --- |\n| Claude Code | 如 Opus 4.8、Opus 4.7、Sonnet 4.6 |\n| Codex | 如 GPT-5.5、GPT-5.4 |\n| OpenCode | 如 Z.AI、Minimax、DeepSeek |\n| Gemini | 如 Gemini 3 Pro、Gemini 2.5 Flash |\n| Cursor | 如 Composer、Claude、GPT |\n| Copilot | 如 Claude、GPT、Gemini |\n| Kimi | 如 Kimi K2.5、K2.6、K2.7 Code |\n| Hermes | 50+ 个模型 |\n\n Vicoa 实时展示 AI Agent 做的改动：\n\n';
+      '主流的 AI Agent：\n| Agent | 模型 |\n| --- | --- |\n| Claude Code | 如 Opus 4.8、Opus 4.7、Sonnet 4.6 |\n| Codex | 如 GPT-5.5、GPT-5.4 |\n| OpenCode | 如 Z.AI、Minimax、DeepSeek |\n| Gemini | 如 Gemini 3 Pro、Gemini 2.5 Flash |\n| Cursor | 如 Composer、Claude、GPT |\n| Copilot | 如 Claude、GPT、Gemini |\n| Kimi | 如 Kimi K2.5、K2.6、K2.7 Code |\n| Hermes | 50+ 个模型 |\n| Pi | 多家模型提供方 |\n| Oh My Pi | 多家模型提供方 |\n\n Vicoa 实时展示 AI Agent 做的改动：\n\n';
 
   @override
   String get welcomeDemoNoComputerSubtitle => '告诉我们你想要什么';

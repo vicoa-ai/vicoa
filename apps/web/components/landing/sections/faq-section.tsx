@@ -25,7 +25,7 @@ export function FAQSection() {
     {
       question: "Which agents and models does Vicoa support?",
       answer:
-        "Claude Code, Codex, OpenCode, Gemini, Cursor, GitHub Copilot, Kimi, and Hermes, plus 300+ models from 60+ providers through OpenRouter. Bring your own key. There's no lock-in and no usage markup."
+        "Claude Code, Codex, OpenCode, Gemini, Cursor, GitHub Copilot, Kimi, Hermes, Pi, and Oh My Pi — 10+ agents, plus 300+ models from 60+ providers through OpenRouter. Bring your own key. There's no lock-in and no usage markup."
     },
     {
       question: "Do I need git or worktrees?",

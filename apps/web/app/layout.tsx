@@ -80,7 +80,7 @@ export const metadata: Metadata = {
     description: 'Vicoa is an agent-native IDE that lets you orchestrate parallel AI agents like Claude Code, Codex, and OpenCode on your phone and desktop. Put your coding agents in your pocket and start building from anywhere.',
     images: [
       {
-        url: '/images/vicoa-banner.png',
+        url: '/images/vicoa-banner-v2.png',
         width: 1200,
         height: 630,
         alt: 'Vicoa - Run & Manage a Team of AI Agents Anywhere',
@@ -93,7 +93,7 @@ export const metadata: Metadata = {
     creator: '@Vicoa',
     title: 'Vicoa - Run & Manage a Team of AI Agents Anywhere',
     description: 'Vicoa is an agent-native IDE that lets you orchestrate parallel AI agents like Claude Code, Codex, and OpenCode on your phone and desktop. Put your coding agents in your pocket and start building from anywhere.',
-    images: ['/images/vicoa-banner.png'],
+    images: ['/images/vicoa-banner-v2.png'],
   },
   alternates: {
     canonical: 'https://vicoa.ai',
@@ -195,7 +195,7 @@ export default function RootLayout({
                 "Vicoa lets you orchestrate dozens of coding agents in parallel, anywhere. Run Claude Code and other AI coding agents on any device — start on your laptop, switch seamlessly to mobile or web, get alerts when an agent needs input, and approve changes with one tap.",
               "applicationCategory": "DeveloperApplication",
               "operatingSystem": "Web, iOS, Android",
-              "image": "https://vicoa.ai/images/vicoa-banner.png",
+              "image": "https://vicoa.ai/images/vicoa-banner-v2.png",
               "screenshot": "https://vicoa.ai/images/hero.png",
               "publisher": {
                 "@type": "Organization",

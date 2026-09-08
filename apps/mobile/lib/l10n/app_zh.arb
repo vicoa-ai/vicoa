@@ -709,7 +709,7 @@
   "welcomeDemoMsg4": "我能做些什么？",
   "welcomeDemoMsg5": "- 💬 与你的 AI agent 对话\n- 🔔 任务完成时收到通知\n- ✅ 批准操作\n- 👀 查看文件和代码变更\n- 还有更多……",
   "welcomeDemoMsg8": "Vicoa 支持哪些 AI Agent？",
-  "welcomeDemoMsg9": "主流的 AI Agent：\n| Agent | 模型 |\n| --- | --- |\n| Claude Code | 如 Opus 4.8、Opus 4.7、Sonnet 4.6 |\n| Codex | 如 GPT-5.5、GPT-5.4 |\n| OpenCode | 如 Z.AI、Minimax、DeepSeek |\n| Gemini | 如 Gemini 3 Pro、Gemini 2.5 Flash |\n| Cursor | 如 Composer、Claude、GPT |\n| Copilot | 如 Claude、GPT、Gemini |\n| Kimi | 如 Kimi K2.5、K2.6、K2.7 Code |\n| Hermes | 50+ 个模型 |\n\n Vicoa 实时展示 AI Agent 做的改动：\n\n",
+  "welcomeDemoMsg9": "主流的 AI Agent：\n| Agent | 模型 |\n| --- | --- |\n| Claude Code | 如 Opus 4.8、Opus 4.7、Sonnet 4.6 |\n| Codex | 如 GPT-5.5、GPT-5.4 |\n| OpenCode | 如 Z.AI、Minimax、DeepSeek |\n| Gemini | 如 Gemini 3 Pro、Gemini 2.5 Flash |\n| Cursor | 如 Composer、Claude、GPT |\n| Copilot | 如 Claude、GPT、Gemini |\n| Kimi | 如 Kimi K2.5、K2.6、K2.7 Code |\n| Hermes | 50+ 个模型 |\n| Pi | 多家模型提供方 |\n| Oh My Pi | 多家模型提供方 |\n\n Vicoa 实时展示 AI Agent 做的改动：\n\n",
   "welcomeDemoNoComputerSubtitle": "告诉我们你想要什么",
   "welcomeDemoNoComputerTitle": "我的电脑没在身边",
   "welcomeDemoSetupCliSubtitle": "给我发一封含上手链接的邮件",

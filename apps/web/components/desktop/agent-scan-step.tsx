@@ -318,7 +318,7 @@ export function AgentScanStep({
         </div>
       )}
 
-      {/* All 8 agents can't fit the 560px minimum window height, so the list
+      {/* All 10 agents can't fit the 560px minimum window height, so the list
           scrolls while the action button stays put. `min-h-0` lets this box
           shrink before anything else does — without it the list holds its
           height and pushes the button off the bottom of the window. The fade
