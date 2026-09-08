@@ -758,6 +758,11 @@ class MachineDaemon:
         RPCs are routable here, so the Changes tab can offer staging controls
         and the commit box. An old daemon omits it and the tab stays read-only
         rather than failing `no_handler` on the first stage click.
+
+        `open-in` tells the client the `list-open-apps`/`open-path` RPCs are
+        routable here, so the Files panel and the session header can show the
+        "Open in…" menu. An old daemon omits it and the menu stays hidden
+        rather than rendering an empty dropdown while `no_handler` resolves.
         """
         return [
             "worktree",
@@ -769,6 +774,7 @@ class MachineDaemon:
             "git-base",
             "git-write",
             "skill-manage",
+            "open-in",
         ]
 
     def register_machine(self) -> MachineRegistration:
@@ -1984,6 +1990,14 @@ class MachineDaemon:
             return {"ok": True}
         if method == "worktree-run-setup":
             return self._run_worktree_setup_background(frame.get("params") or {})
+        if method == "list-open-apps":
+            from vicoa.rpc import open_ops
+
+            return open_ops.list_open_apps()
+        if method == "open-path":
+            from vicoa.rpc import open_ops
+
+            return open_ops.open_path(**(frame.get("params") or {}))
         if method == "scan-agents":
             return self.scan_agents_rpc()
         if method == "fetch-claude-usage":
@@ -2028,6 +2042,8 @@ class MachineDaemon:
             "git-worktree-remove",
             "worktree-trust-grant",
             "worktree-run-setup",
+            "list-open-apps",
+            "open-path",
             "scan-agents",
             "fetch-claude-usage",
             *PTY_RPC_METHODS,
