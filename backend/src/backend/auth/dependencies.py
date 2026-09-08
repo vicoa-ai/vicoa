@@ -114,23 +114,39 @@ def _schedule_user_created_hooks(background_tasks: BackgroundTasks, user: User) 
 
 
 def _schedule_signup_side_effects(
-    background_tasks: BackgroundTasks, user: User, avatar_url: str | None = None
+    background_tasks: BackgroundTasks, user: User
 ) -> None:
     """Everything that happens once, the moment a user's local row appears.
 
-    Most of it runs via the open core's ``on_user_created`` hooks — the overlay
+    All of it runs via the open core's ``on_user_created`` hooks — the overlay
     registers the welcome email and the marketing-list subscribe there. The open
     core carries no such wiring; each hook is isolated
     (``run_user_created_hooks``), so one failing cannot stop the others.
-
-    The avatar seed is core, not a hook: it needs the IdP's ``avatar_url``
-    claim, which only exists on this request. It is best-effort and stamps
-    ``avatar_source`` even when it misses, so it never runs twice for the same
-    user — including for the built-in provider, which has no avatar to offer and
-    passes None.
     """
     _schedule_user_created_hooks(background_tasks, user)
-    background_tasks.add_task(seed_user_avatar, user.id, avatar_url)
+
+
+def _maybe_seed_avatar(
+    background_tasks: BackgroundTasks, user: User, avatar_url: str | None
+) -> None:
+    """Queue the one-shot IdP avatar seed when this user still has none.
+
+    Checked on EVERY authenticated request, not only at signup: the column is
+    newer than almost every account, so a signup-only seed would leave the
+    entire existing userbase blank forever. Supabase republishes
+    ``user_metadata.avatar_url`` on every token, so the backfill costs one
+    fetch per user, the first time they load anything after this ships.
+
+    Cheap enough to sit on the hot path — three in-memory attribute reads, no
+    query. It converges because ``seed_user_avatar`` stamps ``avatar_source`` on
+    hit *and* miss; a user whose IdP publishes no picture (Apple, and the
+    built-in provider) never enqueues at all, so their source stays NULL and
+    they become eligible for free if they later link an account that has one.
+    Concurrent enqueues are safe: the task re-checks eligibility in its own
+    session.
+    """
+    if avatar_url and user.avatar_source is None and not user.avatar_image_uri:
+        background_tasks.add_task(seed_user_avatar, user.id, avatar_url)
 
 
 async def get_current_user(
@@ -143,7 +159,8 @@ async def get_current_user(
     if user is None:
         raise AuthError("User not found")
     if created:
-        _schedule_signup_side_effects(background_tasks, user, claims.avatar_url)
+        _schedule_signup_side_effects(background_tasks, user)
+    _maybe_seed_avatar(background_tasks, user, claims.avatar_url)
     return user
 
 
@@ -165,6 +182,8 @@ async def get_optional_current_user(
     except Exception:
         return None
 
-    if user is not None and created:
-        _schedule_signup_side_effects(background_tasks, user, claims.avatar_url)
+    if user is not None:
+        if created:
+            _schedule_signup_side_effects(background_tasks, user)
+        _maybe_seed_avatar(background_tasks, user, claims.avatar_url)
     return user

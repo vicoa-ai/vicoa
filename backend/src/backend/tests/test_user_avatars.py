@@ -187,6 +187,51 @@ class TestOAuthSeed:
         assert not fake_avatar_storage
 
 
+class TestLazyBackfill:
+    """The seed must reach accounts that predate the column, not only signups."""
+
+    def _principal(self, user, avatar_url):
+        from shared.auth.tokens import TokenClaims
+
+        return TokenClaims(
+            user_id=user.id,
+            email=user.email,
+            display_name=user.display_name,
+            avatar_url=avatar_url,
+        )
+
+    def _queued(self, user, avatar_url):
+        """The (task, args) `get_current_user` would enqueue for these claims."""
+        from fastapi import BackgroundTasks
+
+        from backend.auth.dependencies import _maybe_seed_avatar
+
+        tasks = BackgroundTasks()
+        _maybe_seed_avatar(tasks, user, self._principal(user, avatar_url).avatar_url)
+        return [(t.func, t.args) for t in tasks.tasks]
+
+    def test_existing_user_with_no_avatar_is_backfilled(self, test_user):
+        queued = self._queued(test_user, GOOGLE_AVATAR)
+        assert queued == [(avatars.seed_user_avatar, (test_user.id, GOOGLE_AVATAR))]
+
+    def test_already_attempted_user_never_retries(self, test_user, test_db):
+        test_user.avatar_source = "oauth"  # fetched, or tried and missed
+        test_db.commit()
+        assert self._queued(test_user, GOOGLE_AVATAR) == []
+
+    def test_user_upload_is_not_backfilled_over(self, test_user, test_db):
+        test_user.avatar_source = "user"
+        test_user.avatar_image_uri = f"/api/v1/users/{test_user.id}/avatar"
+        test_db.commit()
+        assert self._queued(test_user, GOOGLE_AVATAR) == []
+
+    def test_provider_without_a_picture_never_enqueues(self, test_user):
+        # Apple and the built-in provider publish none; staying NULL keeps the
+        # account eligible if they later link one that does.
+        assert self._queued(test_user, None) == []
+        assert test_user.avatar_source is None
+
+
 class TestAvatarEndpoints:
     def test_upload_get_delete_roundtrip(
         self, authenticated_client, test_user, fake_avatar_storage
