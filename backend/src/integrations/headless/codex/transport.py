@@ -223,6 +223,20 @@ class CodexTransport:
                     line = await self._reader.readline()
                 except asyncio.CancelledError:
                     raise
+                except ValueError as exc:
+                    # A single line ran past the reader's ceiling — either
+                    # ``JsonlLineReader``'s runaway guard (``OversizedFrameError``,
+                    # which subclasses ``ValueError``) or, for an injected raw
+                    # ``StreamReader``, its ``limit``. Both resync at the next
+                    # newline, so this costs one frame, not the session. It
+                    # should not happen against a healthy codex: see
+                    # ``CODEX_MAX_LINE_BYTES``.
+                    logger.error(
+                        "codex transport: frame exceeded the read ceiling, "
+                        "dropping it: %s",
+                        exc,
+                    )
+                    continue
                 except Exception as exc:
                     logger.exception("codex transport: read failed")
                     reason = f"codex app-server read error: {exc}"

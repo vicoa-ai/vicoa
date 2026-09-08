@@ -358,20 +358,18 @@ class PiTransport:
                 except asyncio.CancelledError:
                     raise
                 except ValueError as exc:
-                    # ``StreamReader.readline`` overran its buffer limit and
-                    # left the data in place, so retrying would spin forever.
-                    # Fatal, but say what it actually is — see
-                    # ``spawn.STREAM_READER_LIMIT``.
+                    # A physical line ran past ``PI_MAX_LINE_BYTES``, which for
+                    # this protocol means a spec violation (frames over 1 MiB
+                    # are supposed to arrive as ``rpc_chunk`` envelopes). The
+                    # reader resyncs at the next newline, so drop the frame —
+                    # and let the reassembler reject the now-broken chunk
+                    # sequence — rather than killing the transport.
                     logger.error(
-                        "%s transport: frame exceeded the read buffer: %s",
+                        "%s transport: frame exceeded the read ceiling, dropping it: %s",
                         self._label,
                         exc,
                     )
-                    reason = (
-                        f"{self._label} sent a frame larger than the read "
-                        f"buffer ({exc})"
-                    )
-                    break
+                    continue
                 except Exception as exc:
                     logger.exception("%s transport: read failed", self._label)
                     reason = f"{self._label} read error: {exc}"

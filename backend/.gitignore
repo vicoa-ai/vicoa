@@ -56,7 +56,7 @@ build/
 # Database
 *.db
 *.sqlite3
-postgres-data/
+postgres-data
 
 # Logs
 logs/
