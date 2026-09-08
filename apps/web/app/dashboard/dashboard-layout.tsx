@@ -33,7 +33,7 @@ import {
   Search,
   Settings,
 } from 'lucide-react';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import { AgentDashboardProvider, useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import useSWR from 'swr';
 import type { AuthUser } from '@/lib/auth/user';
@@ -228,23 +228,19 @@ function DashboardSidebar({
 
   const userEmail = user?.email || '';
 
-  const userInitials = useMemo(() => {
-    if (user?.name) {
-      const parts = user.name.trim().split(/\s+/).filter(Boolean);
-      if (parts.length >= 2) {
-        return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-      }
-      if (parts.length === 1) {
-        return parts[0][0].toUpperCase();
-      }
-    }
-
-    if (user?.email) {
-      return user.email.charAt(0).toUpperCase();
-    }
-
-    return 'U';
-  }, [user]);
+  // The one identity object the sidebar renders. `<PrincipalAvatar>` owns the
+  // whole fallback chain (stored image → initials → glyph), so there is no
+  // separate initials computation here any more.
+  const userPrincipal = useMemo(
+    () => ({
+      type: 'user' as const,
+      id: user?.id,
+      name: user?.name || user?.email,
+      avatarImageUri: user?.avatarImageUri,
+      updatedAt: user?.updatedAt,
+    }),
+    [user],
+  );
 
   const handleTabClick = useCallback((tab: string) => {
     if (tab === 'agent-hub') {
@@ -576,13 +572,11 @@ function DashboardSidebar({
                   title={!showSideBar ? userDisplayName : undefined}
                 >
                   <div className="flex items-center w-full">
-                    <Avatar className={cn("h-8 w-8", showSideBar && "mr-3")}>
-                      <AvatarFallback className={cn(
-                        "bg-primary/10 text-primary uppercase text-xs font-normal"
-                      )}>
-                        {userInitials || <User className="h-4 w-4 text-muted-foreground" />}
-                      </AvatarFallback>
-                    </Avatar>
+                    <PrincipalAvatar
+                      principal={userPrincipal}
+                      size="md"
+                      className={cn(showSideBar && "mr-3")}
+                    />
                     <div className={cn("flex-1 min-w-0 text-left", !showSideBar && "hidden")}>
                         {user.name ? (
                         <>

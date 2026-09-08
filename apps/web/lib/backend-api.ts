@@ -30,6 +30,21 @@ export interface UserProfile {
   id: string;
   email: string;
   display_name: string | null;
+  /** Served by us (/api/v1/users/{id}/avatar); render via `<PrincipalAvatar>`. */
+  avatar_image_uri?: string | null;
+  avatar_source?: string | null;
+  /** Cache-buster for the stable avatar URL (see lib/principals.ts). */
+  updated_at?: string | null;
+}
+
+/** The avatar endpoints' payload. Deliberately carries no email — an avatar is
+ *  the one identity field a shared surface renders. */
+export interface UserAvatar {
+  id: string;
+  display_name: string | null;
+  avatar_image_uri: string | null;
+  avatar_source: string | null;
+  updated_at: string;
 }
 
 export interface APIKeyResponse {
@@ -726,6 +741,36 @@ class BackendAPI {
 
   async deleteUserAccount() {
     return this.request('/api/v1/auth/me', { method: 'DELETE' });
+  }
+
+  /** Set the caller's avatar. 'user' wins over any later OAuth re-seed. */
+  async uploadMyAvatar(file: File | Blob): Promise<UserAvatar> {
+    const headers = await this.getHeaders();
+    // Let the browser set the multipart boundary; a fixed JSON type breaks it.
+    delete headers['Content-Type'];
+    const form = new FormData();
+    form.append('file', file);
+    const response = await fetch(`${this.config.baseUrl}/api/v1/me/avatar`, {
+      method: 'PUT',
+      headers,
+      body: form,
+    });
+    if (!response.ok) {
+      let message = `Backend API error: ${response.status} ${response.statusText}`;
+      try {
+        const body = await response.json();
+        if (typeof body?.detail === 'string' && body.detail.trim()) message = body.detail;
+      } catch {
+        // fall back to the generic HTTP error
+      }
+      throw Object.assign(new Error(message), { status: response.status });
+    }
+    return response.json();
+  }
+
+  /** Drop the caller's avatar image → generated initials. */
+  async deleteMyAvatar(): Promise<UserAvatar> {
+    return this.request<UserAvatar>('/api/v1/me/avatar', { method: 'DELETE' });
   }
 
   // API Key management

@@ -27,6 +27,13 @@ class User(Base):
     )  # Matches Supabase auth.users.id
     email: Mapped[str] = mapped_column(String(255), unique=True)
     display_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    # Identity (collaboration P0). ``avatar_image_uri`` is a *served* URL into our
+    # own storage (``/api/v1/users/{id}/avatar``), never an external hot-link, so
+    # a shared surface never leaks a request to the IdP's CDN. ``avatar_source``
+    # is 'user' | 'oauth' | NULL and governs re-seed safety exactly like
+    # ``projects.icon_source``: a 'user' upload is never clobbered.
+    avatar_image_uri: Mapped[str | None] = mapped_column(Text, default=None)
+    avatar_source: Mapped[str | None] = mapped_column(String(16), default=None)
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc)
     )

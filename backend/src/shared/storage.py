@@ -39,6 +39,14 @@ def project_icon_key(project_id: str) -> str:
     return f"project-icons/{project_id}"
 
 
+def user_avatar_key(user_id: str) -> str:
+    # Same shape as project_icon_key: keyed by id alone, no extension — the
+    # served Content-Type comes from the stored object's own metadata
+    # (download_object), so one deterministic key survives png<->jpeg re-encodes
+    # across uploads and re-seeds.
+    return f"avatars/{user_id}"
+
+
 def _client():
     kwargs: dict[str, Any] = {}
     if settings.aws_access_key_id and settings.aws_secret_access_key:

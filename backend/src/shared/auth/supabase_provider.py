@@ -257,11 +257,13 @@ def _principal_from_claims(claims: dict[str, Any]) -> Principal:
     except (ValueError, TypeError) as exc:
         raise TokenVerificationError("Token missing valid subject") from exc
 
+    metadata = claims.get("user_metadata") or {}
     return Principal(
         user_id=user_id,
         kind="user",
         email=claims.get("email"),
-        display_name=_display_name(claims.get("user_metadata") or {}),
+        display_name=_display_name(metadata),
+        avatar_url=_avatar_url(metadata),
     )
 
 
@@ -271,6 +273,18 @@ def _display_name(metadata: dict[str, Any]) -> str | None:
         or metadata.get("full_name")
         or metadata.get("name")
     )
+
+
+def _avatar_url(metadata: dict[str, Any]) -> str | None:
+    """The OAuth avatar Supabase copies into user_metadata.
+
+    Google/GitHub sign-ins land as ``avatar_url``; ``picture`` is the raw OIDC
+    claim name some flows pass through. Apple publishes neither. The value is
+    still untrusted here — :func:`shared.avatars.allowed_avatar_url` is what
+    decides whether it is fetched.
+    """
+    value = metadata.get("avatar_url") or metadata.get("picture")
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _find_key(jwks: dict[str, Any], kid: str | None) -> dict[str, Any] | None:

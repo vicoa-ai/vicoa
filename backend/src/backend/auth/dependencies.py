@@ -14,6 +14,7 @@ from shared.database.users import ensure_local_user
 from sqlalchemy.orm import Session
 
 from shared.auth import Principal, verify_user_token
+from shared.avatars import seed_user_avatar
 from shared.hooks import run_user_created_hooks
 
 logger = logging.getLogger(__name__)
@@ -125,6 +126,29 @@ def _schedule_signup_side_effects(
     _schedule_user_created_hooks(background_tasks, user)
 
 
+def _maybe_seed_avatar(
+    background_tasks: BackgroundTasks, user: User, avatar_url: str | None
+) -> None:
+    """Queue the one-shot IdP avatar seed when this user still has none.
+
+    Checked on EVERY authenticated request, not only at signup: the column is
+    newer than almost every account, so a signup-only seed would leave the
+    entire existing userbase blank forever. Supabase republishes
+    ``user_metadata.avatar_url`` on every token, so the backfill costs one
+    fetch per user, the first time they load anything after this ships.
+
+    Cheap enough to sit on the hot path — three in-memory attribute reads, no
+    query. It converges because ``seed_user_avatar`` stamps ``avatar_source`` on
+    hit *and* miss; a user whose IdP publishes no picture (Apple, and the
+    built-in provider) never enqueues at all, so their source stays NULL and
+    they become eligible for free if they later link an account that has one.
+    Concurrent enqueues are safe: the task re-checks eligibility in its own
+    session.
+    """
+    if avatar_url and user.avatar_source is None and not user.avatar_image_uri:
+        background_tasks.add_task(seed_user_avatar, user.id, avatar_url)
+
+
 async def get_current_user(
     background_tasks: BackgroundTasks,
     claims: Principal = Depends(get_current_claims),
@@ -136,6 +160,7 @@ async def get_current_user(
         raise AuthError("User not found")
     if created:
         _schedule_signup_side_effects(background_tasks, user)
+    _maybe_seed_avatar(background_tasks, user, claims.avatar_url)
     return user
 
 
@@ -157,6 +182,8 @@ async def get_optional_current_user(
     except Exception:
         return None
 
-    if user is not None and created:
-        _schedule_signup_side_effects(background_tasks, user)
+    if user is not None:
+        if created:
+            _schedule_signup_side_effects(background_tasks, user)
+        _maybe_seed_avatar(background_tasks, user, claims.avatar_url)
     return user

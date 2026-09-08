@@ -9,4 +9,8 @@ export type AuthUser = {
   name?: string | null;
   createdAt?: string;
   role?: string;
+  /** Backend `users.avatar_image_uri` — null when the user has no stored image. */
+  avatarImageUri?: string | null;
+  /** Backend `users.updated_at` — cache-buster for the stable avatar URL. */
+  updatedAt?: string | null;
 };
