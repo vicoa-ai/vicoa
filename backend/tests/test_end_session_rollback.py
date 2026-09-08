@@ -17,7 +17,7 @@ from fastapi import HTTPException
 from servers.api.models import EndSessionRequest
 from servers.api.routers import end_session_endpoint
 from shared.database.enums import AgentStatus
-from shared.database.models import AgentInstance, Message, User, UserAgent
+from shared.database.models import AgentInstance, Message, User, AgentType
 from shared.database.session import SessionLocal
 
 pytestmark = pytest.mark.integration
@@ -29,11 +29,11 @@ def user_instance() -> Iterator[tuple[UUID, UUID]]:
     with SessionLocal() as db:
         db.add(User(id=user_id, email=f"{user_id}@test.vicoa", display_name="t"))
         db.flush()
-        db.add(UserAgent(id=agent_id, user_id=user_id, name=f"agent-{agent_id}"))
+        db.add(AgentType(id=agent_id, user_id=user_id, name=f"agent-{agent_id}"))
         db.add(
             AgentInstance(
                 id=instance_id,
-                user_agent_id=agent_id,
+                agent_type_id=agent_id,
                 user_id=user_id,
                 status=AgentStatus.ACTIVE,
             )
@@ -56,7 +56,7 @@ def user_instance() -> Iterator[tuple[UUID, UUID]]:
             db.query(AgentInstance).filter(AgentInstance.user_id == user_id).delete(
                 synchronize_session=False
             )
-            db.query(UserAgent).filter(UserAgent.user_id == user_id).delete(
+            db.query(AgentType).filter(AgentType.user_id == user_id).delete(
                 synchronize_session=False
             )
             db.query(User).filter(User.id == user_id).delete(synchronize_session=False)

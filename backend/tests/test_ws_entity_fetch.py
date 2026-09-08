@@ -19,7 +19,7 @@ from servers.api.ws_handler import (
     handle_fetch_machines_request,
 )
 from servers.shared.db.queries import fetch_user_instances, fetch_user_machines
-from shared.database.models import AgentInstance, Machine, User, UserAgent
+from shared.database.models import AgentInstance, Machine, User, AgentType
 from shared.database.session import SessionLocal
 from shared.websocket import Connection
 
@@ -35,7 +35,7 @@ def fetch_user() -> Iterator[tuple[UUID, UUID]]:
     with SessionLocal() as db:
         db.add(User(id=user_id, email=f"{user_id}@test.vicoa", display_name="t"))
         db.flush()  # Machine has no relationship() to User — pin insert order.
-        db.add(UserAgent(id=agent_id, user_id=user_id, name=f"agent-{agent_id}"))
+        db.add(AgentType(id=agent_id, user_id=user_id, name=f"agent-{agent_id}"))
         db.commit()
     try:
         yield user_id, agent_id
@@ -43,7 +43,7 @@ def fetch_user() -> Iterator[tuple[UUID, UUID]]:
         with SessionLocal() as db:
             db.query(AgentInstance).filter(AgentInstance.user_id == user_id).delete()
             db.query(Machine).filter(Machine.user_id == user_id).delete()
-            db.query(UserAgent).filter(UserAgent.user_id == user_id).delete()
+            db.query(AgentType).filter(AgentType.user_id == user_id).delete()
             db.query(User).filter(User.id == user_id).delete()
             db.commit()
 
@@ -56,7 +56,7 @@ def _add_instances(
             db.add(
                 AgentInstance(
                     id=uuid4(),
-                    user_agent_id=agent_id,
+                    agent_type_id=agent_id,
                     user_id=user_id,
                     name=name,
                     updated_at=updated_at,

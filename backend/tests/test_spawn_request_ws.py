@@ -15,7 +15,7 @@ from shared.database.models import (
     Machine,
     MachineSpawnRequest,
     User,
-    UserAgent,
+    AgentType,
 )
 from shared.database.session import SessionLocal
 from shared.websocket.connection_manager import Connection, connection_manager
@@ -38,7 +38,7 @@ def user_and_machine() -> Iterator[tuple[UUID, UUID]]:
     try:
         yield user_id, machine_id
     finally:
-        # The spawn endpoint also creates a UserAgent, AgentInstance, and
+        # The spawn endpoint also creates a AgentType, AgentInstance, and
         # MachineSpawnRequest; delete child rows before the User in FK order
         # (these FKs are not all ON DELETE CASCADE).
         with SessionLocal() as db:
@@ -47,7 +47,7 @@ def user_and_machine() -> Iterator[tuple[UUID, UUID]]:
             ).delete()
             db.query(AgentInstance).filter(AgentInstance.user_id == user_id).delete()
             db.query(Machine).filter(Machine.user_id == user_id).delete()
-            db.query(UserAgent).filter(UserAgent.user_id == user_id).delete()
+            db.query(AgentType).filter(AgentType.user_id == user_id).delete()
             db.query(User).filter(User.id == user_id).delete()
             db.commit()
 

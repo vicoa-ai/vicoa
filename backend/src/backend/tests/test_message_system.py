@@ -188,7 +188,7 @@ class TestMessageSystem:
                 assert msg["requires_user_input"] == requires_input
 
     def test_agent_instance_summary_includes_message_stats(
-        self, authenticated_client, test_db, test_user, test_user_agent
+        self, authenticated_client, test_db, test_user, test_agent_type
     ):
         """Test that agent instance summaries include message statistics."""
         # Create multiple instances with different message counts
@@ -196,7 +196,7 @@ class TestMessageSystem:
         for i in range(3):
             instance = AgentInstance(
                 id=uuid4(),
-                user_agent_id=test_user_agent.id,
+                agent_type_id=test_agent_type.id,
                 user_id=test_user.id,
                 status=AgentStatus.ACTIVE,
                 started_at=datetime.now(timezone.utc),
@@ -276,13 +276,13 @@ class TestMessageSystem:
         assert test_agent_instance.status == AgentStatus.ACTIVE
 
     def test_awaiting_input_instances_prioritized(
-        self, authenticated_client, test_db, test_user, test_user_agent
+        self, authenticated_client, test_db, test_user, test_agent_type
     ):
         """Test that instances awaiting input are prioritized in listings."""
         # Create active instance
         active_instance = AgentInstance(
             id=uuid4(),
-            user_agent_id=test_user_agent.id,
+            agent_type_id=test_agent_type.id,
             user_id=test_user.id,
             status=AgentStatus.ACTIVE,
             started_at=datetime.now(timezone.utc),
@@ -292,7 +292,7 @@ class TestMessageSystem:
         # Create awaiting input instance (older)
         awaiting_instance = AgentInstance(
             id=uuid4(),
-            user_agent_id=test_user_agent.id,
+            agent_type_id=test_agent_type.id,
             user_id=test_user.id,
             status=AgentStatus.AWAITING_INPUT,
             started_at=datetime.now(timezone.utc),

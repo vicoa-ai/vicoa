@@ -321,7 +321,7 @@ class TestAutoArchiveAndOrdering:
         assert with_task.is_archived is False  # has an open task
 
     def test_list_orders_by_recent_activity(
-        self, authenticated_client, test_db, test_user, test_user_agent
+        self, authenticated_client, test_db, test_user, test_agent_type
     ):
         from shared.database import AgentInstance
         from shared.database.enums import AgentStatus
@@ -333,7 +333,7 @@ class TestAutoArchiveAndOrdering:
             test_db.add(
                 AgentInstance(
                     id=uuid4(),
-                    user_agent_id=test_user_agent.id,
+                    agent_type_id=test_agent_type.id,
                     user_id=test_user.id,
                     status=AgentStatus.ACTIVE,
                     project_id=project.id,

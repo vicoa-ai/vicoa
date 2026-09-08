@@ -15,7 +15,7 @@ from shared.database import (
     TeamInstanceAccess,
     TeamMembership,
     User,
-    UserAgent,
+    AgentType,
     InstanceAccessLevel,
     TeamRole,
     SenderType,
@@ -290,9 +290,9 @@ def format_agent_instance(
         "instance_metadata": metadata,
         "session_config": session_config,
         "id": str(instance.id),
-        "agent_type_id": str(instance.user_agent_id) if instance.user_agent_id else "",
-        "agent_type_name": instance.user_agent.name
-        if instance.user_agent
+        "agent_type_id": str(instance.agent_type_id) if instance.agent_type_id else "",
+        "agent_type_name": instance.agent_type.name
+        if instance.agent_type
         else "Unknown",
         "name": instance.name,
         "status": instance.status,
@@ -339,19 +339,19 @@ def _live_state_for(instance: AgentInstance) -> LiveState:
 def get_all_agent_types_with_instances(
     db: Session, user_id: UUID
 ) -> list[AgentTypeOverview]:
-    """Get all non-deleted user agents with their instances for a specific user - OPTIMIZED"""
-    # Get all non-deleted user agents for this user with instances in a single query
-    user_agents = (
-        db.query(UserAgent)
-        .filter(UserAgent.user_id == user_id, UserAgent.is_deleted.is_(False))
-        .options(subqueryload(UserAgent.instances))
+    """Get all non-deleted agent types with their instances for a specific user - OPTIMIZED"""
+    # Get all non-deleted agent types for this user with instances in a single query
+    agent_types = (
+        db.query(AgentType)
+        .filter(AgentType.user_id == user_id, AgentType.is_deleted.is_(False))
+        .options(subqueryload(AgentType.instances))
         .all()
     )
 
     # Collect all instance IDs for bulk message stats query (excluding DELETED)
     all_instance_ids = []
-    for user_agent in user_agents:
-        for instance in user_agent.instances:
+    for agent_type in agent_types:
+        for instance in agent_type.instances:
             if instance.status != AgentStatus.DELETED:
                 all_instance_ids.append(instance.id)
 
@@ -401,9 +401,9 @@ def get_all_agent_types_with_instances(
             }
 
     result = []
-    for user_agent in user_agents:
+    for agent_type in agent_types:
         # Filter out DELETED instances
-        instances = [i for i in user_agent.instances if i.status != AgentStatus.DELETED]
+        instances = [i for i in agent_type.instances if i.status != AgentStatus.DELETED]
 
         # Create a list of instances with their stats
         instances_with_stats = []
@@ -455,11 +455,11 @@ def get_all_agent_types_with_instances(
                 "instance_metadata": metadata,
                 "session_config": session_config,
                 "id": str(instance.id),
-                "agent_type_id": str(instance.user_agent_id)
-                if instance.user_agent_id
+                "agent_type_id": str(instance.agent_type_id)
+                if instance.agent_type_id
                 else "",
-                "agent_type_name": instance.user_agent.name
-                if instance.user_agent
+                "agent_type_name": instance.agent_type.name
+                if instance.agent_type
                 else "Unknown",
                 "name": instance.name,
                 "status": instance.status,
@@ -477,9 +477,9 @@ def get_all_agent_types_with_instances(
 
         result.append(
             AgentTypeOverview(
-                id=str(user_agent.id),
-                name=user_agent.name,
-                created_at=user_agent.created_at,
+                id=str(agent_type.id),
+                name=agent_type.name,
+                created_at=agent_type.created_at,
                 recent_instances=formatted_instances,
                 total_instances=len(instances),
                 active_instances=sum(
@@ -570,7 +570,7 @@ def get_all_agent_instances(
         db.query(AgentInstance)
         .filter(AgentInstance.status != AgentStatus.DELETED)
         .options(
-            joinedload(AgentInstance.user_agent),
+            joinedload(AgentInstance.agent_type),
             # Derived live_state compares against the machine heartbeat; without
             # this the list would fire one extra query per row.
             joinedload(AgentInstance.machine),
@@ -756,22 +756,22 @@ def get_agent_summary(db: Session, user_id: UUID) -> dict:
         active_instances = 0
         completed_instances = 0
 
-    # Count by user agent and status (for fleet overview, excluding DELETED)
-    # Get instances with their user agents
+    # Count by agent type and status (for fleet overview, excluding DELETED)
+    # Get instances with their agent types
     agent_type_stats = (
         db.query(
-            UserAgent.id,
-            UserAgent.name,
+            AgentType.id,
+            AgentType.name,
             AgentInstance.status,
             func.count(AgentInstance.id).label("count"),
         )
-        .join(AgentInstance, AgentInstance.user_agent_id == UserAgent.id)
+        .join(AgentInstance, AgentInstance.agent_type_id == AgentType.id)
         .filter(
-            UserAgent.user_id == user_id,
-            UserAgent.is_deleted.is_(False),
+            AgentType.user_id == user_id,
+            AgentType.is_deleted.is_(False),
             AgentInstance.status != AgentStatus.DELETED,
         )
-        .group_by(UserAgent.id, UserAgent.name, AgentInstance.status)
+        .group_by(AgentType.id, AgentType.name, AgentInstance.status)
         .all()
     )
 
@@ -802,28 +802,28 @@ def get_agent_summary(db: Session, user_id: UUID) -> dict:
 def get_agent_type_instances(
     db: Session, agent_type_id: UUID, user_id: UUID
 ) -> list[AgentInstanceResponse] | None:
-    """Get all instances for a specific user agent"""
+    """Get all instances for a specific agent type"""
 
-    user_agent = (
-        db.query(UserAgent)
+    agent_type = (
+        db.query(AgentType)
         .filter(
-            UserAgent.id == agent_type_id,
-            UserAgent.user_id == user_id,
-            UserAgent.is_deleted.is_(False),
+            AgentType.id == agent_type_id,
+            AgentType.user_id == user_id,
+            AgentType.is_deleted.is_(False),
         )
         .first()
     )
-    if not user_agent:
+    if not agent_type:
         return None
 
     instances = (
         db.query(AgentInstance)
         .filter(
-            AgentInstance.user_agent_id == agent_type_id,
+            AgentInstance.agent_type_id == agent_type_id,
             AgentInstance.status != AgentStatus.DELETED,
         )
         .options(
-            joinedload(AgentInstance.user_agent),
+            joinedload(AgentInstance.agent_type),
         )
         .order_by(desc(AgentInstance.started_at))
         .all()
@@ -857,7 +857,7 @@ def get_agent_instance_detail(
     instance = (
         db.query(AgentInstance)
         .filter(AgentInstance.id == instance_id)
-        .options(joinedload(AgentInstance.user_agent))
+        .options(joinedload(AgentInstance.agent_type))
         .first()
     )
 
@@ -908,8 +908,8 @@ def get_agent_instance_detail(
 
     return AgentInstanceDetail(
         id=str(instance.id),
-        agent_type_id=str(instance.user_agent_id) if instance.user_agent_id else "",
-        agent_type_name=instance.user_agent.name if instance.user_agent else "Unknown",
+        agent_type_id=str(instance.agent_type_id) if instance.agent_type_id else "",
+        agent_type_name=instance.agent_type.name if instance.agent_type else "Unknown",
         name=instance.name,
         status=instance.status,
         started_at=instance.started_at,
@@ -997,7 +997,7 @@ def update_instance_status(
         db.query(AgentInstance)
         .filter(AgentInstance.id == instance_id)
         .options(
-            joinedload(AgentInstance.user_agent),
+            joinedload(AgentInstance.agent_type),
         )
         .first()
     )
@@ -1058,13 +1058,13 @@ def delete_user_account(db: Session, user_id: UUID) -> None:
                 Message.agent_instance_id.in_(instance_ids)
             ).delete(synchronize_session=False)
 
-        # 3. Delete AgentInstances (depends on UserAgent and User)
+        # 3. Delete AgentInstances (depends on AgentType and User)
         db.query(AgentInstance).filter(AgentInstance.user_id == user_id).delete(
             synchronize_session=False
         )
 
-        # 4. Delete UserAgents (depends on User)
-        db.query(UserAgent).filter(UserAgent.user_id == user_id).delete(
+        # 4. Delete AgentTypes (depends on User)
+        db.query(AgentType).filter(AgentType.user_id == user_id).delete(
             synchronize_session=False
         )
 
@@ -1149,7 +1149,7 @@ def update_agent_instance_name(
         db.query(AgentInstance)
         .filter(AgentInstance.id == instance_id, AgentInstance.user_id == user_id)
         .options(
-            joinedload(AgentInstance.user_agent),
+            joinedload(AgentInstance.agent_type),
         )
         .first()
     )
@@ -1180,7 +1180,7 @@ def update_agent_instance_pinned(
     instance = (
         db.query(AgentInstance)
         .filter(AgentInstance.id == instance_id, AgentInstance.user_id == user_id)
-        .options(joinedload(AgentInstance.user_agent))
+        .options(joinedload(AgentInstance.agent_type))
         .first()
     )
 
@@ -1214,7 +1214,7 @@ def link_instance_to_task(
     instance = (
         db.query(AgentInstance)
         .filter(AgentInstance.id == instance_id, AgentInstance.user_id == user_id)
-        .options(joinedload(AgentInstance.user_agent))
+        .options(joinedload(AgentInstance.agent_type))
         .first()
     )
     if instance is None:
@@ -1248,7 +1248,7 @@ def list_task_instances(
             AgentInstance.status != AgentStatus.DELETED,
         )
         .options(
-            joinedload(AgentInstance.user_agent),
+            joinedload(AgentInstance.agent_type),
             # live_state compares against the machine heartbeat; joinedload it
             # here so each row doesn't fire an extra query.
             joinedload(AgentInstance.machine),

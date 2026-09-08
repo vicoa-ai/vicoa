@@ -22,7 +22,7 @@ from servers.api.models import UpdateAgentInstanceRequest
 from servers.api.routers import update_agent_instance_endpoint
 from shared.database.automation_models import Automation, AutomationRun
 from shared.database.enums import AgentStatus
-from shared.database.models import AgentInstance, Machine, Message, User, UserAgent
+from shared.database.models import AgentInstance, Machine, Message, User, AgentType
 from shared.database.session import SessionLocal
 
 pytestmark = pytest.mark.integration
@@ -68,11 +68,11 @@ def user_and_instance() -> Iterator[tuple[UUID, UUID]]:
     with SessionLocal() as db:
         db.add(User(id=user_id, email=f"{user_id}@test.vicoa", display_name="t"))
         db.flush()
-        db.add(UserAgent(id=agent_id, user_id=user_id, name="claude"))
+        db.add(AgentType(id=agent_id, user_id=user_id, name="claude"))
         db.add(
             AgentInstance(
                 id=instance_id,
-                user_agent_id=agent_id,
+                agent_type_id=agent_id,
                 user_id=user_id,
                 status=AgentStatus.ACTIVE,
                 name="orig",
@@ -85,7 +85,7 @@ def user_and_instance() -> Iterator[tuple[UUID, UUID]]:
         with SessionLocal() as db:
             db.query(Message).filter(Message.agent_instance_id == instance_id).delete()
             db.query(AgentInstance).filter(AgentInstance.user_id == user_id).delete()
-            db.query(UserAgent).filter(UserAgent.user_id == user_id).delete()
+            db.query(AgentType).filter(AgentType.user_id == user_id).delete()
             db.query(User).filter(User.id == user_id).delete()
             db.commit()
 
@@ -196,7 +196,7 @@ def _mk_session(db, user_id: UUID, agent_id: UUID) -> UUID:
     db.add(
         AgentInstance(
             id=iid,
-            user_agent_id=agent_id,
+            agent_type_id=agent_id,
             user_id=user_id,
             status=AgentStatus.ACTIVE,
         )
@@ -230,7 +230,7 @@ def test_rate_limited_self_exclusion_is_scoped_to_the_calling_automation(
 
     with SessionLocal() as db:
         agent_id = (
-            db.query(AgentInstance.user_agent_id)
+            db.query(AgentInstance.agent_type_id)
             .filter(AgentInstance.id == target_id)
             .scalar()
         )

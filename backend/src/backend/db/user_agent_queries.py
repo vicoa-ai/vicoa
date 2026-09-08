@@ -1,5 +1,5 @@
 """
-Database queries for UserAgent operations.
+Database queries for AgentType operations.
 """
 
 import httpx
@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import hashlib
 
 from shared.database import (
-    UserAgent,
+    AgentType,
     AgentInstance,
     AgentStatus,
     APIKey,
@@ -36,12 +36,12 @@ def create_user_agent(
 
     # Check if non-deleted agent with same name already exists for this user
     existing = (
-        db.query(UserAgent)
+        db.query(AgentType)
         .filter(
             and_(
-                UserAgent.user_id == user_id,
-                UserAgent.name == request.name,
-                UserAgent.is_deleted.is_(False),
+                AgentType.user_id == user_id,
+                AgentType.name == request.name,
+                AgentType.is_deleted.is_(False),
             )
         )
         .first()
@@ -50,7 +50,7 @@ def create_user_agent(
     if existing:
         return None
 
-    user_agent = UserAgent(
+    agent_type = AgentType(
         user_id=user_id,
         name=request.name,
         webhook_type=request.webhook_type,
@@ -58,23 +58,23 @@ def create_user_agent(
         is_active=request.is_active,
     )
 
-    db.add(user_agent)
+    db.add(agent_type)
     db.commit()
-    db.refresh(user_agent)
+    db.refresh(agent_type)
 
-    return _format_user_agent(user_agent, db)
+    return _format_user_agent(agent_type, db)
 
 
 def get_user_agents(db: Session, user_id: UUID) -> list[dict]:
     """Get all non-deleted user agents for a specific user"""
 
-    user_agents = (
-        db.query(UserAgent)
-        .filter(and_(UserAgent.user_id == user_id, UserAgent.is_deleted.is_(False)))
+    agent_types = (
+        db.query(AgentType)
+        .filter(and_(AgentType.user_id == user_id, AgentType.is_deleted.is_(False)))
         .all()
     )
 
-    return [_format_user_agent(agent, db) for agent in user_agents]
+    return [_format_user_agent(agent, db) for agent in agent_types]
 
 
 def update_user_agent(
@@ -82,43 +82,43 @@ def update_user_agent(
 ) -> dict | None:
     """Update an existing user agent configuration"""
 
-    user_agent = (
-        db.query(UserAgent)
+    agent_type = (
+        db.query(AgentType)
         .filter(
             and_(
-                UserAgent.id == agent_id,
-                UserAgent.user_id == user_id,
-                UserAgent.is_deleted.is_(False),
+                AgentType.id == agent_id,
+                AgentType.user_id == user_id,
+                AgentType.is_deleted.is_(False),
             )
         )
         .first()
     )
 
-    if not user_agent:
+    if not agent_type:
         return None
 
-    user_agent.name = request.name
-    user_agent.webhook_type = request.webhook_type
-    user_agent.webhook_config = request.webhook_config
-    user_agent.is_active = request.is_active
-    user_agent.updated_at = datetime.now(timezone.utc)
+    agent_type.name = request.name
+    agent_type.webhook_type = request.webhook_type
+    agent_type.webhook_config = request.webhook_config
+    agent_type.is_active = request.is_active
+    agent_type.updated_at = datetime.now(timezone.utc)
 
     db.commit()
-    db.refresh(user_agent)
+    db.refresh(agent_type)
 
-    return _format_user_agent(user_agent, db)
+    return _format_user_agent(agent_type, db)
 
 
 async def trigger_webhook_agent(
     db: Session,
-    user_agent: UserAgent,
+    agent_type: AgentType,
     user_id: UUID,
     user_request_data: dict,
 ) -> WebhookTriggerResponse:
     """Trigger a webhook agent by calling the webhook URL"""
 
     # Check if webhook is configured
-    if not user_agent.webhook_type or not user_agent.webhook_config:
+    if not agent_type.webhook_type or not agent_type.webhook_config:
         return WebhookTriggerResponse(
             success=False,
             message="Webhook not configured",
@@ -126,14 +126,14 @@ async def trigger_webhook_agent(
         )
 
     # Validate runtime fields early
-    runtime_field_names = get_runtime_field_names(user_agent.webhook_type)
+    runtime_field_names = get_runtime_field_names(agent_type.webhook_type)
     user_request = {
         field: value
         for field, value in user_request_data.items()
         if field in runtime_field_names
     }
 
-    is_valid, error_msg = validate_runtime_fields(user_agent.webhook_type, user_request)
+    is_valid, error_msg = validate_runtime_fields(agent_type.webhook_type, user_request)
     if not is_valid:
         return WebhookTriggerResponse(
             success=False,
@@ -144,7 +144,7 @@ async def trigger_webhook_agent(
 
     agent_instance_id = uuid4()
 
-    api_key_name = f"{user_agent.name} Key"
+    api_key_name = f"{agent_type.name} Key"
 
     existing_key = (
         db.query(APIKey)
@@ -181,13 +181,13 @@ async def trigger_webhook_agent(
     # Prepare backend-generated fields
     backend_fields = {
         "agent_instance_id": str(agent_instance_id),
-        "agent_type": user_agent.name,
+        "agent_type": agent_type.name,
         "vicoa_api_key": vicoa_api_key,
     }
 
     # Get webhook configuration
-    webhook_type = user_agent.webhook_type
-    webhook_config = user_agent.webhook_config
+    webhook_type = agent_type.webhook_type
+    webhook_config = agent_type.webhook_config
 
     # Validate configuration
     is_valid, error_msg = validate_webhook_config(webhook_type, webhook_config)
@@ -226,7 +226,7 @@ async def trigger_webhook_agent(
 
             stmt = insert(AgentInstance).values(
                 id=agent_instance_id,
-                user_agent_id=user_agent.id,
+                agent_type_id=agent_type.id,
                 user_id=user_id,
                 status=AgentStatus.ACTIVE,
             )
@@ -313,28 +313,28 @@ def get_user_agent_instances(db: Session, agent_id: UUID, user_id: UUID) -> list
     """Get all instances for a specific user agent"""
 
     # Verify the user agent exists, belongs to the user, and is not deleted
-    user_agent = (
-        db.query(UserAgent)
+    agent_type = (
+        db.query(AgentType)
         .filter(
             and_(
-                UserAgent.id == agent_id,
-                UserAgent.user_id == user_id,
-                UserAgent.is_deleted.is_(False),
+                AgentType.id == agent_id,
+                AgentType.user_id == user_id,
+                AgentType.is_deleted.is_(False),
             )
         )
         .first()
     )
 
-    if not user_agent:
+    if not agent_type:
         return None
 
     # Get all instances for this user agent with relationships loaded
     instances = (
         db.query(AgentInstance)
         .options(
-            joinedload(AgentInstance.user_agent),
+            joinedload(AgentInstance.agent_type),
         )
-        .filter(AgentInstance.user_agent_id == agent_id)
+        .filter(AgentInstance.agent_type_id == agent_id)
         .order_by(AgentInstance.started_at.desc())
         .all()
     )
@@ -353,24 +353,24 @@ def delete_user_agent(db: Session, agent_id: UUID, user_id: UUID) -> bool:
     """Soft delete a user agent and mark its instances as deleted, while removing messages"""
 
     # First verify the user agent exists, belongs to the user, and is not already deleted
-    user_agent = (
-        db.query(UserAgent)
+    agent_type = (
+        db.query(AgentType)
         .filter(
             and_(
-                UserAgent.id == agent_id,
-                UserAgent.user_id == user_id,
-                UserAgent.is_deleted.is_(False),
+                AgentType.id == agent_id,
+                AgentType.user_id == user_id,
+                AgentType.is_deleted.is_(False),
             )
         )
         .first()
     )
 
-    if not user_agent:
+    if not agent_type:
         return False
 
     # Get all agent instances for this user agent
     agent_instances = (
-        db.query(AgentInstance).filter(AgentInstance.user_agent_id == agent_id).all()
+        db.query(AgentInstance).filter(AgentInstance.agent_type_id == agent_id).all()
     )
 
     # For each agent instance, delete all messages (for privacy/storage)
@@ -381,7 +381,7 @@ def delete_user_agent(db: Session, agent_id: UUID, user_id: UUID) -> bool:
     # ORM's onupdate hook, so updated_at must be set explicitly — otherwise
     # the WebSocket mutable-entity merge (§2.6) would treat the row as
     # unchanged and drop the instance-update broadcast.
-    db.query(AgentInstance).filter(AgentInstance.user_agent_id == agent_id).update(
+    db.query(AgentInstance).filter(AgentInstance.agent_type_id == agent_id).update(
         {
             "status": AgentStatus.DELETED,
             "updated_at": datetime.now(timezone.utc),
@@ -389,21 +389,21 @@ def delete_user_agent(db: Session, agent_id: UUID, user_id: UUID) -> bool:
     )
 
     # Soft delete the user agent
-    user_agent.is_deleted = True
-    user_agent.updated_at = datetime.now(timezone.utc)
+    agent_type.is_deleted = True
+    agent_type.updated_at = datetime.now(timezone.utc)
 
     db.commit()
 
     return True
 
 
-def _format_user_agent(user_agent: UserAgent, db: Session) -> dict:
+def _format_user_agent(agent_type: AgentType, db: Session) -> dict:
     """Helper function to format a user agent with instance counts"""
 
     # Get instance counts
     instance_count = (
         db.query(func.count(AgentInstance.id))
-        .filter(AgentInstance.user_agent_id == user_agent.id)
+        .filter(AgentInstance.agent_type_id == agent_type.id)
         .scalar()
     )
 
@@ -411,7 +411,7 @@ def _format_user_agent(user_agent: UserAgent, db: Session) -> dict:
         db.query(func.count(AgentInstance.id))
         .filter(
             and_(
-                AgentInstance.user_agent_id == user_agent.id,
+                AgentInstance.agent_type_id == agent_type.id,
                 AgentInstance.status == AgentStatus.ACTIVE,
             )
         )
@@ -422,7 +422,7 @@ def _format_user_agent(user_agent: UserAgent, db: Session) -> dict:
         db.query(func.count(AgentInstance.id))
         .filter(
             and_(
-                AgentInstance.user_agent_id == user_agent.id,
+                AgentInstance.agent_type_id == agent_type.id,
                 AgentInstance.status == AgentStatus.AWAITING_INPUT,
             )
         )
@@ -433,7 +433,7 @@ def _format_user_agent(user_agent: UserAgent, db: Session) -> dict:
         db.query(func.count(AgentInstance.id))
         .filter(
             and_(
-                AgentInstance.user_agent_id == user_agent.id,
+                AgentInstance.agent_type_id == agent_type.id,
                 AgentInstance.status == AgentStatus.COMPLETED,
             )
         )
@@ -444,7 +444,7 @@ def _format_user_agent(user_agent: UserAgent, db: Session) -> dict:
         db.query(func.count(AgentInstance.id))
         .filter(
             and_(
-                AgentInstance.user_agent_id == user_agent.id,
+                AgentInstance.agent_type_id == agent_type.id,
                 AgentInstance.status.in_([AgentStatus.FAILED, AgentStatus.KILLED]),
             )
         )
@@ -452,13 +452,13 @@ def _format_user_agent(user_agent: UserAgent, db: Session) -> dict:
     )
 
     return {
-        "id": str(user_agent.id),
-        "name": user_agent.name,
-        "webhook_type": user_agent.webhook_type,
-        "webhook_config": user_agent.webhook_config,
-        "is_active": user_agent.is_active,
-        "created_at": user_agent.created_at,
-        "updated_at": user_agent.updated_at,
+        "id": str(agent_type.id),
+        "name": agent_type.name,
+        "webhook_type": agent_type.webhook_type,
+        "webhook_config": agent_type.webhook_config,
+        "is_active": agent_type.is_active,
+        "created_at": agent_type.created_at,
+        "updated_at": agent_type.updated_at,
         "instance_count": instance_count or 0,
         "active_instance_count": active_instance_count or 0,
         "waiting_instance_count": waiting_instance_count or 0,

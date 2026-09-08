@@ -17,7 +17,7 @@ from shared.database.models import (
     AgentInstance,
     Message,
     User,
-    UserAgent,
+    AgentType,
 )
 from shared.database.session import SessionLocal
 
@@ -50,11 +50,11 @@ def user_with_activity() -> Iterator[UUID]:
     with SessionLocal() as db:
         db.add(User(id=user_id, email=f"{user_id}@test.vicoa", display_name="t"))
         db.flush()
-        db.add(UserAgent(id=agent_id, user_id=user_id, name="claude"))
+        db.add(AgentType(id=agent_id, user_id=user_id, name="claude"))
         db.add(
             AgentInstance(
                 id=instance_id,
-                user_agent_id=agent_id,
+                agent_type_id=agent_id,
                 user_id=user_id,
                 status=AgentStatus.ACTIVE,
                 name="s",
@@ -80,7 +80,7 @@ def user_with_activity() -> Iterator[UUID]:
         with SessionLocal() as db:
             db.query(Message).filter(Message.agent_instance_id == instance_id).delete()
             db.query(AgentInstance).filter(AgentInstance.user_id == user_id).delete()
-            db.query(UserAgent).filter(UserAgent.user_id == user_id).delete()
+            db.query(AgentType).filter(AgentType.user_id == user_id).delete()
             db.query(User).filter(User.id == user_id).delete()
             db.commit()
 
@@ -128,11 +128,11 @@ def test_activity_is_scoped_to_the_requesting_user(user_with_activity: UUID) -> 
     with SessionLocal() as db:
         db.add(User(id=other_id, email=f"{other_id}@test.vicoa", display_name="o"))
         db.flush()
-        db.add(UserAgent(id=other_agent, user_id=other_id, name="claude"))
+        db.add(AgentType(id=other_agent, user_id=other_id, name="claude"))
         db.add(
             AgentInstance(
                 id=other_instance,
-                user_agent_id=other_agent,
+                agent_type_id=other_agent,
                 user_id=other_id,
                 status=AgentStatus.ACTIVE,
                 name="s2",
@@ -154,6 +154,6 @@ def test_activity_is_scoped_to_the_requesting_user(user_with_activity: UUID) -> 
                 Message.agent_instance_id == other_instance
             ).delete()
             db.query(AgentInstance).filter(AgentInstance.user_id == other_id).delete()
-            db.query(UserAgent).filter(UserAgent.user_id == other_id).delete()
+            db.query(AgentType).filter(AgentType.user_id == other_id).delete()
             db.query(User).filter(User.id == other_id).delete()
             db.commit()

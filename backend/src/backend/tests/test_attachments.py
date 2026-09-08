@@ -205,7 +205,7 @@ class TestAttachmentAccess:
         authenticated_client,
         test_agent_instance,
         test_db,
-        test_user_agent,
+        test_agent_type,
         fake_storage,
     ):
         other_user = User(
@@ -217,7 +217,7 @@ class TestAttachmentAccess:
         )
         other_instance = AgentInstance(
             id=uuid4(),
-            user_agent_id=test_user_agent.id,
+            agent_type_id=test_agent_type.id,
             user_id=other_user.id,
             status=AgentStatus.ACTIVE,
             started_at=datetime.now(timezone.utc),

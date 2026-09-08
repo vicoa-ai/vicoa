@@ -23,7 +23,7 @@ from shared.database.models import (
     AgentInstance,
     Message,
     User,
-    UserAgent,
+    AgentType,
 )
 from shared.database.session import SessionLocal
 
@@ -31,18 +31,18 @@ pytestmark = pytest.mark.integration
 
 
 def _seed_user_with_instances(user_id: UUID, statuses: list[AgentStatus]) -> list[UUID]:
-    """Insert a user, one UserAgent, and one AgentInstance per status. Returns instance ids."""
+    """Insert a user, one AgentType, and one AgentInstance per status. Returns instance ids."""
     agent_id = uuid4()
     instance_ids = [uuid4() for _ in statuses]
     with SessionLocal() as db:
         db.add(User(id=user_id, email=f"{user_id}@test.vicoa", display_name="t"))
         db.flush()
-        db.add(UserAgent(id=agent_id, user_id=user_id, name=f"agent-{agent_id}"))
+        db.add(AgentType(id=agent_id, user_id=user_id, name=f"agent-{agent_id}"))
         for instance_id, status in zip(instance_ids, statuses, strict=True):
             db.add(
                 AgentInstance(
                     id=instance_id,
-                    user_agent_id=agent_id,
+                    agent_type_id=agent_id,
                     user_id=user_id,
                     status=status,
                 )
@@ -74,7 +74,7 @@ def cleanup_user() -> Iterator[UUID]:
             db.query(AgentInstance).filter(AgentInstance.user_id == user_id).delete(
                 synchronize_session=False
             )
-            db.query(UserAgent).filter(UserAgent.user_id == user_id).delete(
+            db.query(AgentType).filter(AgentType.user_id == user_id).delete(
                 synchronize_session=False
             )
             db.query(User).filter(User.id == user_id).delete(synchronize_session=False)

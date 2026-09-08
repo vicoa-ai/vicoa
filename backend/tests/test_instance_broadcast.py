@@ -24,7 +24,7 @@ from servers.api.routers import (
     update_agent_instance_status_endpoint,
 )
 from shared.database.enums import AgentStatus
-from shared.database.models import AgentInstance, Message, User, UserAgent
+from shared.database.models import AgentInstance, Message, User, AgentType
 from shared.database.session import SessionLocal
 from shared.websocket.connection_manager import Connection, connection_manager
 
@@ -37,11 +37,11 @@ def user_instance() -> Iterator[tuple[UUID, UUID]]:
     with SessionLocal() as db:
         db.add(User(id=user_id, email=f"{user_id}@test.vicoa", display_name="t"))
         db.flush()
-        db.add(UserAgent(id=agent_id, user_id=user_id, name=f"agent-{agent_id}"))
+        db.add(AgentType(id=agent_id, user_id=user_id, name=f"agent-{agent_id}"))
         db.add(
             AgentInstance(
                 id=instance_id,
-                user_agent_id=agent_id,
+                agent_type_id=agent_id,
                 user_id=user_id,
                 status=AgentStatus.ACTIVE,
             )
@@ -64,7 +64,7 @@ def user_instance() -> Iterator[tuple[UUID, UUID]]:
                     Message.agent_instance_id.in_(instance_ids)
                 ).delete(synchronize_session=False)
             db.query(AgentInstance).filter(AgentInstance.user_id == user_id).delete()
-            db.query(UserAgent).filter(UserAgent.user_id == user_id).delete()
+            db.query(AgentType).filter(AgentType.user_id == user_id).delete()
             db.query(User).filter(User.id == user_id).delete()
             db.commit()
 

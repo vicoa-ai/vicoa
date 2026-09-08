@@ -124,7 +124,7 @@ def search_sessions(db: Session, user_id: UUID, query: str, limit: int) -> list[
 
     instances = (
         db.query(AgentInstance)
-        .options(joinedload(AgentInstance.user_agent))
+        .options(joinedload(AgentInstance.agent_type))
         .filter(
             AgentInstance.user_id == user_id,
             AgentInstance.status != AgentStatus.DELETED,
@@ -149,7 +149,7 @@ def search_sessions(db: Session, user_id: UUID, query: str, limit: int) -> list[
         by_id = {
             instance.id: instance
             for instance in db.query(AgentInstance)
-            .options(joinedload(AgentInstance.user_agent))
+            .options(joinedload(AgentInstance.agent_type))
             .filter(AgentInstance.id.in_([hit_id for hit_id, _ in message_hits]))
             .all()
         }
@@ -190,7 +190,7 @@ def _session_row(
     return {
         "id": str(instance.id),
         "name": instance.name,
-        "agent_type_name": instance.user_agent.name if instance.user_agent else None,
+        "agent_type_name": instance.agent_type.name if instance.agent_type else None,
         "status": instance.status,
         "project": instance.project,
         "started_at": instance.started_at,

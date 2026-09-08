@@ -14,7 +14,7 @@ import pytest
 from servers.api.models import RegisterAgentInstanceRequest
 from servers.api.routers import register_agent_instance_endpoint
 from shared.database.agent_instances import create_agent_instance
-from shared.database.models import AgentInstance, Machine, User, UserAgent
+from shared.database.models import AgentInstance, Machine, User, AgentType
 from shared.database.session import SessionLocal
 
 pytestmark = pytest.mark.integration
@@ -36,7 +36,7 @@ def user_and_machine() -> Iterator[tuple[UUID, UUID]]:
     finally:
         with SessionLocal() as db:
             db.query(AgentInstance).filter(AgentInstance.user_id == uid).delete()
-            db.query(UserAgent).filter(UserAgent.user_id == uid).delete()
+            db.query(AgentType).filter(AgentType.user_id == uid).delete()
             db.query(Machine).filter(Machine.user_id == uid).delete()
             db.query(User).filter(User.id == uid).delete()
             db.commit()

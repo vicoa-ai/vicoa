@@ -43,7 +43,7 @@ async def send_message_notifications(
         logger.warning(f"User {instance.user_id} not found for notifications")
         return
 
-    agent_name = instance.user_agent.name if instance.user_agent else "Agent"
+    agent_name = instance.agent_type.name if instance.agent_type else "Agent"
 
     # Determine notification preferences based on message type
     if requires_user_input:

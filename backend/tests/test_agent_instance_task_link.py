@@ -24,7 +24,7 @@ from servers.api.routers import (
     update_agent_instance_endpoint,
 )
 from shared.database.agent_instances import create_agent_instance
-from shared.database.models import AgentInstance, User, UserAgent
+from shared.database.models import AgentInstance, User, AgentType
 from shared.database.session import SessionLocal
 from shared.database.task_models import Project, Task
 
@@ -45,7 +45,7 @@ def user_id() -> Iterator[UUID]:
             db.query(AgentInstance).filter(AgentInstance.user_id == uid).delete()
             db.query(Task).filter(Task.user_id == uid).delete()
             db.query(Project).filter(Project.user_id == uid).delete()
-            db.query(UserAgent).filter(UserAgent.user_id == uid).delete()
+            db.query(AgentType).filter(AgentType.user_id == uid).delete()
             db.query(User).filter(User.id == uid).delete()
             db.commit()
 

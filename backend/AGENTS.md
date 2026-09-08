@@ -38,7 +38,7 @@ backend/
 - **PostgreSQL** with **SQLAlchemy 2.0+**
 - **Alembic** for migrations - ALWAYS create migrations for schema changes
 - Multi-tenant design - all data is scoped by user_id
-- Key tables: users, user_agents, agent_instances, messages, api_keys
+- Key tables: users, agent_types, agent_instances, messages, api_keys
 - **Unified messaging system**: All agent interactions (steps, questions, feedback) are now stored in the `messages` table with `sender_type` and `requires_user_input` fields
 
 ### Server Architecture

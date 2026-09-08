@@ -6,7 +6,7 @@ from typing import List, Dict, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from shared.database.models import User, UserAgent
+from shared.database.models import User, AgentType
 from shared.database.session import get_db
 from shared.webhook_schemas import get_webhook_types
 from sqlalchemy.orm import Session
@@ -121,22 +121,22 @@ async def create_agent_instance(
     """Create a new instance of a user agent (trigger webhook if applicable)"""
 
     # Get the user agent (excluding soft-deleted ones)
-    user_agent = (
-        db.query(UserAgent)
+    agent_type = (
+        db.query(AgentType)
         .filter(
             and_(
-                UserAgent.id == agent_id,
-                UserAgent.user_id == current_user.id,
-                UserAgent.is_deleted.is_(False),
+                AgentType.id == agent_id,
+                AgentType.user_id == current_user.id,
+                AgentType.is_deleted.is_(False),
             )
         )
         .first()
     )
 
-    if not user_agent:
+    if not agent_type:
         raise HTTPException(status_code=404, detail="User agent not found")
 
-    if not user_agent.webhook_type or not user_agent.webhook_config:
+    if not agent_type.webhook_type or not agent_type.webhook_config:
         raise HTTPException(
             status_code=400,
             detail="Webhook configuration is required to create agent instances",
@@ -146,7 +146,7 @@ async def create_agent_instance(
     # This allows the webhook system to be completely dynamic
     result = await trigger_webhook_agent(
         db,
-        user_agent,
+        agent_type,
         current_user.id,
         request.model_dump(exclude_none=False),  # Include all fields, even if None
     )

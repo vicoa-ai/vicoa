@@ -111,10 +111,10 @@ class TestQuestionEndpoints:
         )
         test_db.add(other_user)
 
-        # Create user agent for other user
-        from shared.database.models import UserAgent
+        # Create agent type for other user
+        from shared.database.models import AgentType
 
-        other_user_agent = UserAgent(
+        other_agent_type = AgentType(
             id=uuid4(),
             user_id=other_user.id,
             name="other agent",
@@ -122,11 +122,11 @@ class TestQuestionEndpoints:
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
-        test_db.add(other_user_agent)
+        test_db.add(other_agent_type)
 
         other_instance = AgentInstance(
             id=uuid4(),
-            user_agent_id=other_user_agent.id,
+            agent_type_id=other_agent_type.id,
             user_id=other_user.id,
             status=AgentStatus.AWAITING_INPUT,
             started_at=datetime.now(timezone.utc),

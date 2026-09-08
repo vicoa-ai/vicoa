@@ -25,7 +25,7 @@ from starlette.websockets import WebSocketDisconnect
 from servers.api import ws_handler
 from servers.api.ws_handler import _user_exists, ws_router
 from shared.auth.tokens import TokenClaims
-from shared.database.models import AgentInstance, Machine, User, UserAgent
+from shared.database.models import AgentInstance, Machine, User, AgentType
 from shared.database.session import SessionLocal
 
 pytestmark = pytest.mark.integration
@@ -51,7 +51,7 @@ def live_user() -> Iterator[UUID]:
             db.query(AgentInstance).filter(AgentInstance.user_id == user_id).delete(
                 synchronize_session=False
             )
-            db.query(UserAgent).filter(UserAgent.user_id == user_id).delete(
+            db.query(AgentType).filter(AgentType.user_id == user_id).delete(
                 synchronize_session=False
             )
             db.query(Machine).filter(Machine.user_id == user_id).delete(

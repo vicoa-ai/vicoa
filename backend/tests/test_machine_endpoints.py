@@ -22,7 +22,7 @@ from shared.database.models import (
     Machine,
     MachineSpawnRequest,
     User,
-    UserAgent,
+    AgentType,
 )
 from shared.database.session import SessionLocal
 
@@ -43,7 +43,7 @@ def user() -> Iterator[UUID]:
             db.query(MachineSpawnRequest).filter(
                 MachineSpawnRequest.requested_by_user_id == uid
             ).delete()
-            db.query(UserAgent).filter(UserAgent.user_id == uid).delete()
+            db.query(AgentType).filter(AgentType.user_id == uid).delete()
             db.query(Machine).filter(Machine.user_id == uid).delete()
             db.query(User).filter(User.id == uid).delete()
             db.commit()

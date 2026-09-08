@@ -887,9 +887,9 @@ def _format_agent_instance(instance: AgentInstance) -> RegisterAgentInstanceResp
         if hasattr(instance.status, "value")
         else str(instance.status)
     )
-    agent_type_id = str(instance.user_agent_id) if instance.user_agent_id else None
+    agent_type_id = str(instance.agent_type_id) if instance.agent_type_id else None
     agent_type_name = (
-        instance.user_agent.name if getattr(instance, "user_agent", None) else None
+        instance.agent_type.name if getattr(instance, "agent_type", None) else None
     )
     session_config = (
         dict(instance.session_config)
@@ -1290,7 +1290,7 @@ def update_agent_instance_endpoint(
                 AgentInstance.id == instance_id,
                 AgentInstance.user_id == user_uuid,
             )
-            .options(joinedload(AgentInstance.user_agent))
+            .options(joinedload(AgentInstance.agent_type))
             .first()
         )
         if not instance:

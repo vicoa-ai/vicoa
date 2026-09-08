@@ -17,7 +17,7 @@ import pytest
 from servers.api.ws_handler import handle_fetch_messages_request
 from servers.shared.db.queries import create_user_message, fetch_session_messages
 from shared.database.enums import SenderType
-from shared.database.models import AgentInstance, Message, User, UserAgent
+from shared.database.models import AgentInstance, Message, User, AgentType
 from shared.database.session import SessionLocal
 from shared.websocket import Connection
 
@@ -35,8 +35,8 @@ def session_instance() -> Iterator[tuple[UUID, UUID]]:
     user_id, agent_id, instance_id = uuid4(), uuid4(), uuid4()
     with SessionLocal() as db:
         db.add(User(id=user_id, email=f"{user_id}@test.vicoa", display_name="t"))
-        db.add(UserAgent(id=agent_id, user_id=user_id, name=f"agent-{agent_id}"))
-        db.add(AgentInstance(id=instance_id, user_agent_id=agent_id, user_id=user_id))
+        db.add(AgentType(id=agent_id, user_id=user_id, name=f"agent-{agent_id}"))
+        db.add(AgentInstance(id=instance_id, agent_type_id=agent_id, user_id=user_id))
         db.commit()
     try:
         yield user_id, instance_id
@@ -44,7 +44,7 @@ def session_instance() -> Iterator[tuple[UUID, UUID]]:
         with SessionLocal() as db:
             db.query(Message).filter(Message.agent_instance_id == instance_id).delete()
             db.query(AgentInstance).filter(AgentInstance.id == instance_id).delete()
-            db.query(UserAgent).filter(UserAgent.id == agent_id).delete()
+            db.query(AgentType).filter(AgentType.id == agent_id).delete()
             db.query(User).filter(User.id == user_id).delete()
             db.commit()
 

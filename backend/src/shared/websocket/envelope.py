@@ -88,7 +88,12 @@ def _instance_row(inst: AgentInstance, t: str) -> dict:
     return {
         "t": t,
         "id": str(inst.id),
-        "user_agent_id": str(inst.user_agent_id),
+        # Wire key stays `user_agent_id` even though the column is now
+        # `agent_type_id` (P0.5 rename): shipped mobile builds read
+        # `body['user_agent_id']` in ws_client.dart and never force-upgrade, so
+        # renaming it would break every installed app. The local daemon mirrors
+        # this key in vicoa/local_server/envelopes.py — keep the two in step.
+        "user_agent_id": str(inst.agent_type_id),
         "status": inst.status.value,
         "name": inst.name,
         "project": inst.project,

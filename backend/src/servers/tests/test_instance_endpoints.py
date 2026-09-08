@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from servers.api.auth import get_current_user_id
 from servers.api.instances import instance_router
 from shared.database.enums import AgentStatus, SenderType
-from shared.database.models import AgentInstance, Message, User, UserAgent
+from shared.database.models import AgentInstance, Message, User, AgentType
 from shared.database.session import get_db
 
 
@@ -46,10 +46,10 @@ def client(test_db, test_user):
 
 def _make_instance(test_db, status=AgentStatus.ACTIVE, name=None, started_at=None):
     user = test_db.query(User).first()
-    user_agent = test_db.query(UserAgent).first()
+    agent_type = test_db.query(AgentType).first()
     instance = AgentInstance(
         id=uuid4(),
-        user_agent_id=user_agent.id,
+        agent_type_id=agent_type.id,
         user_id=user.id,
         name=name,
         status=status,

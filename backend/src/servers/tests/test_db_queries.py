@@ -10,7 +10,7 @@ from uuid import uuid4, UUID
 # Import the real models
 from shared.database.models import (
     User,
-    UserAgent,
+    AgentType,
     AgentInstance,
     Message,
 )
@@ -47,9 +47,9 @@ def test_user(test_db):
 
 
 @pytest.fixture
-def test_user_agent(test_db, test_user):
-    """Create a test user agent."""
-    user_agent = UserAgent(
+def test_agent_type(test_db, test_user):
+    """Create a test agent type."""
+    agent_type = AgentType(
         id=uuid4(),
         user_id=test_user.id,
         name="claude code test",  # lowercase as per normalization
@@ -57,9 +57,9 @@ def test_user_agent(test_db, test_user):
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
-    test_db.add(user_agent)
+    test_db.add(agent_type)
     test_db.commit()
-    return user_agent
+    return agent_type
 
 
 class TestMessageIntegration:
@@ -421,24 +421,24 @@ index 1234567..abcdefg 100644
         # Commit to ensure all data is persisted
         test_db.commit()
 
-        # All should use the same user agent (normalized to lowercase)
-        user_agents = (
-            test_db.query(UserAgent)
+        # All should use the same agent type (normalized to lowercase)
+        agent_types = (
+            test_db.query(AgentType)
             .filter_by(user_id=test_user.id, name="claude code")
             .all()
         )
 
-        assert len(user_agents) == 1
+        assert len(agent_types) == 1
 
-        # Verify all instances use the same user agent
+        # Verify all instances use the same agent type
         instance1 = test_db.query(AgentInstance).filter_by(id=instance1_id).first()
         instance2 = test_db.query(AgentInstance).filter_by(id=instance2_id).first()
         instance3 = test_db.query(AgentInstance).filter_by(id=instance3_id).first()
 
         assert (
-            instance1.user_agent_id
-            == instance2.user_agent_id
-            == instance3.user_agent_id
+            instance1.agent_type_id
+            == instance2.agent_type_id
+            == instance3.agent_type_id
         )
 
     @pytest.mark.integration

@@ -31,7 +31,7 @@ from shared.websocket.envelope import (
 def _instance() -> AgentInstance:
     return AgentInstance(
         id=uuid4(),
-        user_agent_id=uuid4(),
+        agent_type_id=uuid4(),
         user_id=uuid4(),
         status=AgentStatus.ACTIVE,
         started_at=_TS,
@@ -131,6 +131,21 @@ def test_build_instance_update_carries_the_full_row_with_updated_at() -> None:
     assert payload["body"]["has_git_changes"] is False
     assert payload["body"]["updated_at"] == _TS.isoformat()
     json.dumps(payload)
+
+
+def test_instance_body_keeps_the_legacy_user_agent_id_wire_key() -> None:
+    """The column is `agent_type_id`; the wire key must stay `user_agent_id`.
+
+    Shipped mobile builds read `body['user_agent_id']` (ws_client.dart) and
+    there is no force-upgrade, so the P0.5 rename deliberately stopped at the
+    ORM boundary. Renaming this key breaks every installed app.
+    """
+    inst = _instance()
+
+    body = build_instance_update(inst)["body"]
+
+    assert "agent_type_id" not in body
+    assert body["user_agent_id"] == str(inst.agent_type_id)
 
 
 def test_build_instance_created_update_uses_the_created_discriminator() -> None:

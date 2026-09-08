@@ -26,7 +26,7 @@ from shared.database.models import (
     AgentInstance,
     Message,
     User,
-    UserAgent,
+    AgentType,
     UserInstanceAccess,
 )
 from shared.database.session import SessionLocal
@@ -40,11 +40,11 @@ def user_and_instance() -> Iterator[tuple[User, UUID]]:
     email = f"{user_id}@test.vicoa"
     with SessionLocal() as db:
         db.add(User(id=user_id, email=email, display_name="Tester"))
-        db.add(UserAgent(id=agent_id, user_id=user_id, name=f"agent-{agent_id}"))
+        db.add(AgentType(id=agent_id, user_id=user_id, name=f"agent-{agent_id}"))
         db.add(
             AgentInstance(
                 id=instance_id,
-                user_agent_id=agent_id,
+                agent_type_id=agent_id,
                 user_id=user_id,
                 status=AgentStatus.ACTIVE,
             )
@@ -58,7 +58,7 @@ def user_and_instance() -> Iterator[tuple[User, UUID]]:
         with SessionLocal() as db:
             db.query(Message).filter(Message.agent_instance_id == instance_id).delete()
             db.query(AgentInstance).filter(AgentInstance.id == instance_id).delete()
-            db.query(UserAgent).filter(UserAgent.id == agent_id).delete()
+            db.query(AgentType).filter(AgentType.id == agent_id).delete()
             db.query(User).filter(User.id == user_id).delete()
             db.commit()
 

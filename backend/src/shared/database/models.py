@@ -58,8 +58,8 @@ class User(Base):
         "AgentInstance", back_populates="user"
     )
     api_keys: Mapped[list["APIKey"]] = relationship("APIKey", back_populates="user")
-    user_agents: Mapped[list["UserAgent"]] = relationship(
-        "UserAgent", back_populates="user"
+    agent_types: Mapped[list["AgentType"]] = relationship(
+        "AgentType", back_populates="user"
     )
     push_tokens: Mapped[list["PushToken"]] = relationship(
         "PushToken", back_populates="user"
@@ -81,18 +81,30 @@ class User(Base):
     # relationships — see plans/todos/oss-cut-manifest.md (A4 weld #2).
 
 
-class UserAgent(Base):
-    __tablename__ = "user_agents"
+class AgentType(Base):
+    """A kind of agent the user runs — "claude code", "codex", "opencode".
+
+    Auto-created per (user, name) on session registration by
+    ``get_or_create_agent_type``; ``webhook_type``/``webhook_config`` optionally
+    turn one into a remote-start webhook target.
+
+    Renamed from ``UserAgent``/``user_agents`` in P0.5 so the word "agent" is
+    free for the user-facing agent presets. The REST surface is deliberately
+    still ``/api/v1/user-agents`` — shipped mobile builds call it and never
+    force-upgrade. See plans/todos/collaboration-teams-sharing.md §5.
+    """
+
+    __tablename__ = "agent_types"
     __table_args__ = (
         # Partial unique index: only enforce uniqueness for non-deleted agents
         Index(
-            "uq_user_agents_user_id_name",
+            "uq_agent_types_user_id_name",
             "user_id",
             "name",
             unique=True,
             postgresql_where=text("is_deleted = FALSE"),
         ),
-        Index("ix_user_agents_user_id", "user_id"),
+        Index("ix_agent_types_user_id", "user_id"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -119,16 +131,16 @@ class UserAgent(Base):
     )
 
     # Relationships
-    user: Mapped["User"] = relationship("User", back_populates="user_agents")
+    user: Mapped["User"] = relationship("User", back_populates="agent_types")
     instances: Mapped[list["AgentInstance"]] = relationship(
-        "AgentInstance", back_populates="user_agent"
+        "AgentInstance", back_populates="agent_type"
     )
 
 
 class AgentInstance(Base):
     __tablename__ = "agent_instances"
     __table_args__ = (
-        Index("idx_agent_instances_user_agent_id", "user_agent_id"),
+        Index("idx_agent_instances_agent_type_id", "agent_type_id"),
         Index("idx_agent_instances_user_status", "user_id", "status"),
         Index("ix_agent_instances_user_updated", "user_id", "updated_at"),
         Index("ix_agent_instances_machine_id", "machine_id"),
@@ -148,8 +160,8 @@ class AgentInstance(Base):
     id: Mapped[UUID] = mapped_column(
         PostgresUUID(as_uuid=True), primary_key=True, default=uuid4
     )
-    user_agent_id: Mapped[UUID] = mapped_column(
-        ForeignKey("user_agents.id", ondelete="CASCADE"),
+    agent_type_id: Mapped[UUID] = mapped_column(
+        ForeignKey("agent_types.id", ondelete="CASCADE"),
         type_=PostgresUUID(as_uuid=True),
     )
     user_id: Mapped[UUID] = mapped_column(
@@ -249,8 +261,8 @@ class AgentInstance(Base):
     )
 
     # Relationships
-    user_agent: Mapped["UserAgent"] = relationship(
-        "UserAgent", back_populates="instances"
+    agent_type: Mapped["AgentType"] = relationship(
+        "AgentType", back_populates="instances"
     )
     user: Mapped["User"] = relationship("User", back_populates="agent_instances")
     # Host this session runs on. Read-only here — it exists so derived liveness
