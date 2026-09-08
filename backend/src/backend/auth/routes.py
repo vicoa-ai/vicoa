@@ -43,6 +43,12 @@ class UserProfile(BaseModel):
     email: str
     display_name: str | None
     created_at: str
+    # Identity (collaboration P0). ``avatar_image_uri`` is served by us
+    # (/api/v1/users/{id}/avatar) and is stable across replacements, so clients
+    # cache-bust with ``updated_at``.
+    avatar_image_uri: str | None = None
+    avatar_source: str | None = None
+    updated_at: str | None = None
 
 
 class UpdateProfileRequest(BaseModel):
@@ -133,6 +139,9 @@ async def get_session(user: User | None = Depends(get_optional_current_user)):
             email=user.email,
             display_name=user.display_name,
             created_at=user.created_at.isoformat(),
+            avatar_image_uri=user.avatar_image_uri,
+            avatar_source=user.avatar_source,
+            updated_at=user.updated_at.isoformat(),
         )
     else:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -146,6 +155,9 @@ async def get_current_user_profile(current_user: User = Depends(get_current_user
         email=current_user.email,
         display_name=current_user.display_name,
         created_at=current_user.created_at.isoformat(),
+        avatar_image_uri=current_user.avatar_image_uri,
+        avatar_source=current_user.avatar_source,
+        updated_at=current_user.updated_at.isoformat(),
     )
 
 
@@ -163,6 +175,9 @@ async def update_current_user_profile(
         email=updated_user.email,
         display_name=updated_user.display_name,
         created_at=updated_user.created_at.isoformat(),
+        avatar_image_uri=updated_user.avatar_image_uri,
+        avatar_source=updated_user.avatar_source,
+        updated_at=updated_user.updated_at.isoformat(),
     )
 
 

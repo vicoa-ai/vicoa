@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { WorktreeSetupSection } from '@/components/dashboard/worktree-setup-section';
 import { ProjectDisplaySection } from '@/components/dashboard/project-display-section';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
+import { UserAvatarEditor } from '@/components/dashboard/user-avatar-editor';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
@@ -50,6 +51,9 @@ type SupabaseUser = {
   email: string;
   createdAt: string;
   role?: string;
+  /** Backend avatar fields, threaded through /api/supabase-user. */
+  avatarImageUri?: string | null;
+  updatedAt?: string | null;
 };
 
 const tabs = [
@@ -542,8 +546,30 @@ function SupabaseProfileForm({ user, onRefresh }: SupabaseProfileFormProps) {
     }
   };
 
+  const handleUploadAvatar = async (file: File) => {
+    await getBackendAPI(true).uploadMyAvatar(file);
+    await onRefresh();
+  };
+
+  const handleRemoveAvatar = async () => {
+    await getBackendAPI(true).deleteMyAvatar();
+    await onRefresh();
+  };
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Identity first: the photo is what other people see of this account. */}
+      <UserAvatarEditor
+        principal={{
+          type: 'user',
+          id: user.id,
+          name: user.name || user.email,
+          avatarImageUri: user.avatarImageUri,
+          updatedAt: user.updatedAt,
+        }}
+        onUploadImage={handleUploadAvatar}
+        onRemoveImage={handleRemoveAvatar}
+      />
       <div className="grid gap-4">
         <div className="space-y-2">
           <Label htmlFor="supabase-name">Full name</Label>

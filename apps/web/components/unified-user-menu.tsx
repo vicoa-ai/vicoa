@@ -10,7 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import { signOutBrowser } from '@/lib/auth/sign-out';
 import { useRouter } from 'next/navigation';
 import type { AuthUser } from '@/lib/auth/user';
@@ -69,11 +69,6 @@ export function UnifiedUserMenu({ variant = 'avatar' }: UnifiedUserMenuProps) {
     return user?.email || user?.name || 'User';
   };
 
-  const getUserInitials = (user: any) => {
-    const name = getUserDisplayName(user);
-    return name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
-  };
-
   if (variant === 'button') {
     return (
       <Button asChild variant="outline" className="rounded-full h-10">
@@ -85,15 +80,23 @@ export function UnifiedUserMenu({ variant = 'avatar' }: UnifiedUserMenuProps) {
   return (
     <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
       <DropdownMenuTrigger asChild>
-        <Avatar className="cursor-pointer size-9">
-          <AvatarImage 
-            src={`https://avatar.vercel.sh/${user.email}`} 
-            alt={getUserDisplayName(user)} 
+        {/* PrincipalAvatar renders a bare <img>/<span>, so the trigger needs a
+            real button for asChild to attach to. One avatar component
+            everywhere: the old avatar.vercel.sh source put the user's email in a
+            third-party URL on every page load. */}
+        <button type="button" aria-label="Account menu" className="cursor-pointer">
+          <PrincipalAvatar
+            principal={{
+              type: 'user',
+              id: user.id,
+              name: user.name || user.email,
+              avatarImageUri: user.avatarImageUri,
+              updatedAt: user.updatedAt,
+            }}
+            size="md"
+            className="size-9"
           />
-          <AvatarFallback>
-            {getUserInitials(user)}
-          </AvatarFallback>
-        </Avatar>
+        </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="flex flex-col gap-1">
         <div className="px-2 py-1.5 text-sm text-muted-foreground border-b">

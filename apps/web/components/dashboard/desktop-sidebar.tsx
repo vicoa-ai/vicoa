@@ -1,9 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import useSWR from 'swr';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Plus, Loader2, LogIn, LogOut, User, PanelLeft, ListTodo, CalendarClock, BookOpen, Cog, ArrowUpCircle, Smartphone, Flag, Search } from 'lucide-react';
+import { Plus, Loader2, LogIn, LogOut, PanelLeft, ListTodo, CalendarClock, BookOpen, Cog, ArrowUpCircle, Smartphone, Flag, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -27,6 +28,8 @@ import { comboKeycaps, getShortcutCombo } from '@/lib/desktop-shortcuts';
 import { SidebarSessions } from '@/components/dashboard/sidebar-sessions';
 import { PluginSidebarItems } from '@/components/plugins/plugin-sidebar-items';
 import { SetupChecklist } from '@/components/dashboard/setup-checklist';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import type { AuthUser } from '@/lib/auth/user';
 import { useTerminalSessions } from '@/components/terminal-pane/terminal-sessions';
 
 // Selected-row highlight for the nav buttons (New Session / Mobile / Tasks).
@@ -367,8 +370,16 @@ function LocalAccountArea() {
 /** Cloud (logged-in) mode: account email + sign out via the Electron bridge. */
 function CloudAccountArea() {
   const [email, setEmail] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [reportIssueOpen, setReportIssueOpen] = useState(false);
+  // The avatar lives in our backend, not in the Supabase session, so it is
+  // fetched separately; until it arrives (or when there is none)
+  // `<PrincipalAvatar>` falls back to initials, then to the person glyph this
+  // row used to render unconditionally.
+  const { data: profile } = useSWR<AuthUser>('/api/supabase-user', (url: string) =>
+    fetch(url).then((res) => (res.ok ? res.json() : null)),
+  );
 
   useEffect(() => {
     const supabase = createClient();
@@ -378,11 +389,20 @@ function CloudAccountArea() {
       // Cloud mode always carries a validated Supabase session now (the gate
       // enforces it), so identity comes straight from the session.
       setEmail(session?.user?.email ?? null);
+      setUserId(session?.user?.id ?? null);
     });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const principal = {
+    type: 'user' as const,
+    id: userId ?? profile?.id,
+    name: profile?.name || email,
+    avatarImageUri: profile?.avatarImageUri,
+    updatedAt: profile?.updatedAt,
+  };
 
   const handleSignOut = async () => {
     if (signingOut) return;
@@ -421,7 +441,7 @@ function CloudAccountArea() {
           aria-label="Account menu"
           className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10"
         >
-          <User className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <PrincipalAvatar principal={principal} size="sm" className="size-4" />
           <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground" title={email ?? undefined}>
             {email ?? 'Signed in'}
           </span>
@@ -430,7 +450,7 @@ function CloudAccountArea() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="top" className="w-56 font-mono text-xs">
         <div className="flex items-center gap-2 bg-muted/40 px-3 py-2">
-          <User className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <PrincipalAvatar principal={principal} size="sm" className="size-4" />
           <span className="min-w-0 truncate text-muted-foreground" title={email ?? undefined}>
             {email ?? 'Account'}
           </span>

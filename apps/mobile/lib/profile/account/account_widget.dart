@@ -5,6 +5,8 @@ import '/backend/push_notifications/notification_util.dart';
 import '/flutter_flow/flutter_flow_animations.dart';
 import '/flutter_flow/flutter_flow_icon_button.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
+import '/components/principal_avatar/principal_avatar.dart';
+import '/components/principal_avatar/self_avatar.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/flutter_flow/flutter_flow_widgets.dart';
 import '/l10n/app_localizations.dart';
@@ -421,6 +423,17 @@ class _AccountWidgetState extends State<AccountWidget>
                 mainAxisSize: MainAxisSize.max,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Profile photo (collaboration P0). Rendered by the one
+                  // avatar widget the app has; upload lives on web/desktop
+                  // Settings -> Profile for now.
+                  Padding(
+                    padding:
+                        EdgeInsetsDirectional.fromSTEB(16.0, 24.0, 16.0, 0.0),
+                    child: Align(
+                      alignment: AlignmentDirectional(0.0, 0.0),
+                      child: SelfAvatar(size: PrincipalAvatarSize.lg),
+                    ),
+                  ),
                   Padding(
                     padding:
                         EdgeInsetsDirectional.fromSTEB(16.0, 16.0, 16.0, 0.0),

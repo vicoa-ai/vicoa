@@ -14,6 +14,7 @@ from shared.database.users import ensure_local_user
 from sqlalchemy.orm import Session
 
 from shared.auth import Principal, verify_user_token
+from shared.avatars import seed_user_avatar
 from shared.hooks import run_user_created_hooks
 
 logger = logging.getLogger(__name__)
@@ -113,16 +114,23 @@ def _schedule_user_created_hooks(background_tasks: BackgroundTasks, user: User) 
 
 
 def _schedule_signup_side_effects(
-    background_tasks: BackgroundTasks, user: User
+    background_tasks: BackgroundTasks, user: User, avatar_url: str | None = None
 ) -> None:
     """Everything that happens once, the moment a user's local row appears.
 
-    All of it runs via the open core's ``on_user_created`` hooks — the overlay
+    Most of it runs via the open core's ``on_user_created`` hooks — the overlay
     registers the welcome email and the marketing-list subscribe there. The open
     core carries no such wiring; each hook is isolated
     (``run_user_created_hooks``), so one failing cannot stop the others.
+
+    The avatar seed is core, not a hook: it needs the IdP's ``avatar_url``
+    claim, which only exists on this request. It is best-effort and stamps
+    ``avatar_source`` even when it misses, so it never runs twice for the same
+    user — including for the built-in provider, which has no avatar to offer and
+    passes None.
     """
     _schedule_user_created_hooks(background_tasks, user)
+    background_tasks.add_task(seed_user_avatar, user.id, avatar_url)
 
 
 async def get_current_user(
@@ -135,7 +143,7 @@ async def get_current_user(
     if user is None:
         raise AuthError("User not found")
     if created:
-        _schedule_signup_side_effects(background_tasks, user)
+        _schedule_signup_side_effects(background_tasks, user, claims.avatar_url)
     return user
 
 
@@ -158,5 +166,5 @@ async def get_optional_current_user(
         return None
 
     if user is not None and created:
-        _schedule_signup_side_effects(background_tasks, user)
+        _schedule_signup_side_effects(background_tasks, user, claims.avatar_url)
     return user

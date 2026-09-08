@@ -48,6 +48,10 @@ class Principal:
     kind: PrincipalKind = "user"
     email: str | None = None
     display_name: str | None = None
+    # The IdP's avatar URL, when it publishes one (OAuth sign-ins). Only ever
+    # used once, to seed our own copy at signup (:mod:`shared.avatars`) — it is
+    # never stored or rendered, so no client is pointed at the provider's CDN.
+    avatar_url: str | None = None
 
 
 @dataclass(slots=True)
