@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { principalAvatarSrc, principalColor, principalInitials } from './principals';
+import { principalAvatarSrc, principalColor, principalInitial } from './principals';
 import { projectAvatarColor } from './project-icons';
 
 describe('principalAvatarSrc', () => {
@@ -50,21 +50,23 @@ describe('principalColor', () => {
   });
 });
 
-describe('principalInitials', () => {
-  it('takes two initials from a full name, one from a single word', () => {
-    expect(principalInitials('Ada Lovelace')).toBe('AL');
-    expect(principalInitials('  ada   lovelace  king ')).toBe('AL');
-    expect(principalInitials('ada')).toBe('A');
+describe('principalInitial', () => {
+  it('is one letter, whatever the name is made of', () => {
+    expect(principalInitial('Ada Lovelace')).toBe('A');
+    expect(principalInitial('  ada   lovelace  king ')).toBe('A');
+    expect(principalInitial('ada')).toBe('A');
   });
 
   it('handles non-ASCII names by code point, not byte', () => {
-    expect(principalInitials('Émile Borel')).toBe('ÉB');
-    expect(principalInitials('张伟')).toBe('张');
+    expect(principalInitial('Émile Borel')).toBe('É');
+    expect(principalInitial('张伟')).toBe('张');
+    // A surrogate pair must not be sliced in half into a replacement glyph.
+    expect(principalInitial('🙂 nick')).toBe('🙂');
   });
 
   it('is null with no name, so the caller falls through to the glyph', () => {
-    expect(principalInitials('')).toBeNull();
-    expect(principalInitials('   ')).toBeNull();
-    expect(principalInitials(null)).toBeNull();
+    expect(principalInitial('')).toBeNull();
+    expect(principalInitial('   ')).toBeNull();
+    expect(principalInitial(null)).toBeNull();
   });
 });

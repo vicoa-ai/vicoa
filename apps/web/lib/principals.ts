@@ -50,13 +50,16 @@ export function principalColor(principal: Principal): string {
   return projectAvatarColor(principal.id || principal.name || principal.type);
 }
 
-/** Up to two initials from a display name — `null` when there is no name. */
-export function principalInitials(name: string | null | undefined): string | null {
+/**
+ * A principal's single initial — `null` when there is no name.
+ *
+ * One letter, not two: a monogram reads as a mark at any size, while "AL" in a
+ * 24px circle is two shapes fighting for the same space and starts to look like
+ * a label. Same rule the project icons already follow (`projectInitial`); the
+ * wrapper exists because they render `·` for an empty name and this has to
+ * return null so the caller can fall through to the glyph.
+ */
+export function principalInitial(name: string | null | undefined): string | null {
   const trimmed = (name ?? '').trim();
-  if (!trimmed) return null;
-  const words = trimmed.split(/\s+/).filter(Boolean);
-  if (words.length >= 2) {
-    return (projectInitial(words[0]) + projectInitial(words[1])).slice(0, 2);
-  }
-  return projectInitial(trimmed);
+  return trimmed ? projectInitial(trimmed) : null;
 }

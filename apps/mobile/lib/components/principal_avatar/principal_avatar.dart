@@ -19,14 +19,20 @@ import '/flutter_flow/flutter_flow_theme.dart';
 /// platform. Nothing else in the app should draw an avatar.
 enum PrincipalType { user, team, agent }
 
-/// Web's `xs | sm | md | lg`, in logical pixels.
-enum PrincipalAvatarSize { xs, sm, md, lg }
+/// Web's `xs | sm | md | lg | xl`, in logical pixels.
+enum PrincipalAvatarSize { xs, sm, md, lg, xl }
 
-const Map<PrincipalAvatarSize, double> _sizePx = {
-  PrincipalAvatarSize.xs: 16.0,
-  PrincipalAvatarSize.sm: 24.0,
-  PrincipalAvatarSize.md: 32.0,
-  PrincipalAvatarSize.lg: 56.0,
+/// Box size and the initial's type size, mirroring the SIZES table in
+/// apps/web/components/ui/principal-avatar.tsx one-for-one. The letter runs
+/// ~0.25-0.30 of the box (higher at the small end only because 16px has a
+/// legibility floor) so the monogram reads as a mark rather than filling the
+/// circle. Change one table, change the other.
+const Map<PrincipalAvatarSize, ({double box, double text})> _metrics = {
+  PrincipalAvatarSize.xs: (box: 16.0, text: 8.0),
+  PrincipalAvatarSize.sm: (box: 24.0, text: 9.0),
+  PrincipalAvatarSize.md: (box: 32.0, text: 11.0),
+  PrincipalAvatarSize.lg: (box: 56.0, text: 16.0),
+  PrincipalAvatarSize.xl: (box: 80.0, text: 20.0),
 };
 
 /// paseo's IDENTITY_COLORS — muted tones tuned for a white letter on top.
@@ -57,14 +63,15 @@ int _hashString(String seed) {
 Color identityColor(String seed) =>
     kIdentityPalette[_hashString(seed) % kIdentityPalette.length];
 
-/// Up to two initials from a display name, or null when there is no name.
-String? principalInitials(String? name) {
+/// A principal's single initial, or null when there is no name.
+///
+/// One letter, not two: a monogram reads as a mark at any size, while "AL" in a
+/// 24px circle is two shapes fighting for the same space. `runes` (not
+/// `codeUnits`) so an emoji or an astral-plane name is not sliced in half.
+String? principalInitial(String? name) {
   final trimmed = (name ?? '').trim();
   if (trimmed.isEmpty) return null;
-  final words = trimmed.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
-  String first(String w) => String.fromCharCode(w.runes.first).toUpperCase();
-  if (words.length >= 2) return '${first(words[0])}${first(words[1])}';
-  return first(trimmed);
+  return String.fromCharCode(trimmed.runes.first).toUpperCase();
 }
 
 class PrincipalAvatar extends StatelessWidget {
@@ -97,7 +104,8 @@ class PrincipalAvatar extends StatelessWidget {
 
   final PrincipalAvatarSize size;
 
-  double get _px => _sizePx[size]!;
+  double get _px => _metrics[size]!.box;
+  double get _textPx => _metrics[size]!.text;
 
   /// Agents are square-ish (a thing, not a face); people and teams are round.
   BorderRadius get _radius => type == PrincipalType.agent
@@ -148,18 +156,20 @@ class PrincipalAvatar extends StatelessWidget {
   }
 
   Widget _fallback(BuildContext context) {
-    final initials = principalInitials(name);
-    if (initials != null) {
+    final initial = principalInitial(name);
+    if (initial != null) {
       return Container(
         color: identityColor(id?.isNotEmpty == true ? id! : name!),
         alignment: Alignment.center,
         child: Text(
-          initials,
+          initial,
           style: TextStyle(
             color: Colors.white,
-            fontWeight: FontWeight.w600,
+            // Matches the web's font-normal — a heavier monogram reads as a
+            // badge rather than as identity.
+            fontWeight: FontWeight.w400,
             height: 1.0,
-            fontSize: _px * 0.4,
+            fontSize: _textPx,
           ),
         ),
       );

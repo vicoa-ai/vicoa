@@ -26,19 +26,22 @@ import {
   type PrincipalType,
   principalAvatarSrc,
   principalColor,
-  principalInitials,
+  principalInitial,
 } from '@/lib/principals';
 
 export type PrincipalAvatarSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
-// Box size, plus the type size the initials need to sit right inside it.
+// Box size, plus the type size the initial needs to sit right inside it.
+// The letter runs ~0.25-0.30 of the box (it climbs at the small end only
+// because 16px has a legibility floor): a monogram wants to read as a mark
+// inside the circle, not fill it. Keep the Flutter twin's table in step.
 const SIZES: Record<PrincipalAvatarSize, { box: string; text: string; glyph: string }> = {
   xs: { box: 'size-4', text: 'text-[8px]', glyph: 'size-2.5' },
-  sm: { box: 'size-6', text: 'text-[10px]', glyph: 'size-3.5' },
-  md: { box: 'size-8', text: 'text-xs', glyph: 'size-4' },
-  lg: { box: 'size-14', text: 'text-lg', glyph: 'size-7' },
+  sm: { box: 'size-6', text: 'text-[9px]', glyph: 'size-3.5' },
+  md: { box: 'size-8', text: 'text-[11px]', glyph: 'size-4' },
+  lg: { box: 'size-14', text: 'text-base', glyph: 'size-7' },
   // Profile pages, where the avatar is the page's subject rather than a label.
-  xl: { box: 'size-20', text: 'text-2xl', glyph: 'size-9' },
+  xl: { box: 'size-20', text: 'text-xl', glyph: 'size-9' },
 };
 
 // A team is a bag of people; an agent is not a person at all. Only the user
@@ -81,20 +84,20 @@ export function PrincipalAvatar({
     );
   }
 
-  const initials = principalInitials(principal.name);
-  if (initials) {
+  const initial = principalInitial(principal.name);
+  if (initial) {
     return (
       <span
         title={label}
         aria-hidden="true"
         style={{ backgroundColor: principalColor(principal) }}
         className={cn(
-          'inline-flex items-center justify-center font-semibold leading-none text-white uppercase',
+          'inline-flex items-center justify-center font-normal leading-none text-white uppercase',
           dims.text,
           box,
         )}
       >
-        {initials}
+        {initial}
       </span>
     );
   }
