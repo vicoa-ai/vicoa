@@ -33,8 +33,10 @@ jobs:
         id: detect
         shell: bash
         run: |
-          # --match 'v*' keeps this off the desktop-v* tags in the shared namespace.
-          LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || echo "")
+          # --match 'v*' keeps this off the desktop-v* trigger tags; --exclude 'v0.*'
+          # keeps it off the bare v0.1.x tags the desktop GitHub releases hang on,
+          # which are usually nearer than the real CLI tag. See backend-release.yml.
+          LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' --exclude 'v0.*' HEAD^ 2>/dev/null || echo "")
           if [ -n "$LAST_TAG" ]; then
             if git diff --quiet "$LAST_TAG"..HEAD -- src/integrations/cli_wrappers/codex; then
               echo "changed=false" >> $GITHUB_OUTPUT

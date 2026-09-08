@@ -100,9 +100,17 @@ jobs:
         shell: bash
         run: |
           set -e
-          # --match 'v*' keeps this off the desktop-v* tags that now share the
-          # monorepo tag namespace.
-          LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || echo "")
+          # Resolve the previous CLI tag. Both filters are load-bearing:
+          # --match 'v*' skips the desktop-v* trigger tags, and --exclude 'v0.*'
+          # skips the tag the desktop GitHub RELEASE hangs on (trigger is
+          # desktop-v0.1.22, but electron-builder publishes the release itself on
+          # a bare v0.1.22, which also matches v* and is usually nearer than the
+          # real CLI tag). Without the exclude, LAST_TAG resolves to e.g. v0.1.22,
+          # PREV_VERSION becomes 0.1.22, and every reuse path below misses --
+          # PyPI 404s and npm ETARGETs -- so codex-rs rebuilds from source on all
+          # 3 platforms even when the submodule pin never moved: ~60 min instead
+          # of ~7. Hit v1.7.16, v1.7.17 and v1.7.19.
+          LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' --exclude 'v0.*' HEAD^ 2>/dev/null || echo "")
           # Compare the codex SUBMODULE COMMIT, not a path diff. Tags cut before
           # the 2026-07-23 monorepo fold carry codex at the old repo-root path,
           # so a path diff across the fold boundary reports "changed" even when
