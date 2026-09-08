@@ -32,7 +32,7 @@ export async function generateMetadata(props: UpdatePageProps): Promise<Metadata
   const data = getUpdateData(entry);
   const url = `${UPDATES_BASE_URL}/updates/${slug}`;
   const title = `${data.title} | Vicoa Updates`;
-  const image = data.image ?? '/images/vicoa-banner.png';
+  const image = data.image ?? '/images/vicoa-banner-v2.png';
 
   return {
     title,

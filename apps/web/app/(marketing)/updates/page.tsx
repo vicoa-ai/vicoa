@@ -36,13 +36,13 @@ export const metadata: Metadata = {
     siteName: 'Vicoa',
     title: TITLE,
     description: DESCRIPTION,
-    images: [{ url: '/images/vicoa-banner.png', width: 1200, height: 630, alt: TITLE }]
+    images: [{ url: '/images/vicoa-banner-v2.png', width: 1200, height: 630, alt: TITLE }]
   },
   twitter: {
     card: 'summary_large_image',
     title: TITLE,
     description: DESCRIPTION,
-    images: ['/images/vicoa-banner.png']
+    images: ['/images/vicoa-banner-v2.png']
   }
 };
 

@@ -23,7 +23,7 @@ interface PageProps {
 }
 
 const FALLBACK_DESCRIPTION = 'Vicoa documentation';
-const OG_IMAGE = `${DOCS_BASE_URL}/images/vicoa-banner.png`;
+const OG_IMAGE = `${DOCS_BASE_URL}/images/vicoa-banner-v2.png`;
 
 function renderDoc(doc: DocEntry) {
   const Content = doc.body as ComponentType<
