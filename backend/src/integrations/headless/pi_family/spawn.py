@@ -25,6 +25,11 @@ import os
 from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Optional
 
+from integrations.headless.jsonl_stream import (
+    PI_MAX_LINE_BYTES,
+    STREAM_READ_AHEAD_BYTES,
+    JsonlLineReader,
+)
 from integrations.headless.pi_family.transport import PiTransport
 
 
@@ -33,22 +38,6 @@ logger = logging.getLogger(__name__)
 
 _STDERR_TAIL_MAX_LINES = 200
 
-#: Buffer ceiling for one physical JSONL line, handed to the child's
-#: ``StreamReader``.
-#:
-#: **Load-bearing.** ``asyncio``'s default is 64 KiB, and a ``StreamReader``
-#: whose ``readline`` overruns it raises ``LimitOverrunError`` *and leaves the
-#: data in the buffer*, so the read loop cannot recover — the transport simply
-#: dies. This is not hypothetical: it was hit on the very first live bring-up,
-#: where omp's ``get_available_models`` response (dozens of models with full
-#: capability blocks) is comfortably over 64 KiB.
-#:
-#: The protocol's own ceiling for a physical line is 1 MiB
-#: (``MAX_RPC_FRAME_BYTES``); anything larger is split into ``rpc_chunk``
-#: frames, which are smaller still. 2 MiB therefore covers every legal frame
-#: with room to spare, and a line past it is a protocol violation rather than
-#: something to tolerate.
-STREAM_READER_LIMIT = 2 * 1024 * 1024
 #: Char budget for the surfaced tail — enough for a stack trace without
 #: dumping the whole rolling buffer into a chat error.
 _STDERR_TAIL_MAX_CHARS = 4000
@@ -126,9 +115,9 @@ async def spawn_pi_agent(
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        # See STREAM_READER_LIMIT — the default 64 KiB is far below this
-        # protocol's frame size and kills the transport unrecoverably.
-        limit=STREAM_READER_LIMIT,
+        # Read-ahead window, not a frame cap — framing is JsonlLineReader's
+        # job. See STREAM_READ_AHEAD_BYTES.
+        limit=STREAM_READ_AHEAD_BYTES,
         # Own process group so a stop can reach the whole tree (both CLIs
         # spawn helpers — LSP servers, PTY bash, subagents).
         start_new_session=os.name != "nt",
@@ -142,7 +131,11 @@ async def spawn_pi_agent(
         stderr_task = asyncio.create_task(_drain_stderr(process.stderr, stderr_lines))
 
     transport = PiTransport(
-        reader=process.stdout,
+        reader=JsonlLineReader(
+            process.stdout,
+            max_line_bytes=PI_MAX_LINE_BYTES,
+            label=agent_label,
+        ),
         writer=process.stdin,
         stderr_tail=lambda: _format_stderr_tail(stderr_lines),
         agent_label=agent_label,
@@ -167,6 +160,12 @@ async def _drain_stderr(stream: asyncio.StreamReader, buffer: "Deque[str]") -> N
             line = await stream.readline()
         except asyncio.CancelledError:
             raise
+        except ValueError:
+            # One stderr line overran the read buffer. Dropping the drain here
+            # would let the OS pipe fill and block the child on its next write
+            # — exactly the hang this function exists to prevent — so skip the
+            # line and keep draining.
+            continue
         except Exception:
             return
         if not line:
@@ -180,4 +179,4 @@ def _format_stderr_tail(buffer: "Deque[str]") -> str:
     return "\n".join(buffer)[-_STDERR_TAIL_MAX_CHARS:]
 
 
-__all__ = ["STREAM_READER_LIMIT", "PiSubprocess", "spawn_pi_agent"]
+__all__ = ["PiSubprocess", "spawn_pi_agent"]

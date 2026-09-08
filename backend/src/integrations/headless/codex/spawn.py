@@ -18,6 +18,11 @@ from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Optional
 
 from integrations.headless.codex.transport import CodexTransport
+from integrations.headless.jsonl_stream import (
+    CODEX_MAX_LINE_BYTES,
+    STREAM_READ_AHEAD_BYTES,
+    JsonlLineReader,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -109,6 +114,9 @@ async def spawn_codex_app_server(
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        # Read-ahead window, not a frame cap — framing is JsonlLineReader's
+        # job. See STREAM_READ_AHEAD_BYTES.
+        limit=STREAM_READ_AHEAD_BYTES,
     )
     if process.stdin is None or process.stdout is None:
         raise RuntimeError("subprocess pipes did not materialize")
@@ -124,7 +132,14 @@ async def spawn_codex_app_server(
         stderr_task = asyncio.create_task(_drain_stderr(process.stderr, stderr_lines))
 
     transport = CodexTransport(
-        reader=process.stdout,
+        # Frame the child's stdout ourselves: a codex notification carrying a
+        # large tool result runs past any StreamReader limit we could pick, and
+        # dropping one costs a message or hangs a turn (issue #33).
+        reader=JsonlLineReader(
+            process.stdout,
+            max_line_bytes=CODEX_MAX_LINE_BYTES,
+            label="codex app-server",
+        ),
         writer=process.stdin,
         stderr_tail=lambda: _format_stderr_tail(stderr_lines),
     )
@@ -148,6 +163,12 @@ async def _drain_stderr(stream: asyncio.StreamReader, buffer: "Deque[str]") -> N
             line = await stream.readline()
         except asyncio.CancelledError:
             raise
+        except ValueError:
+            # One stderr line overran the read buffer. Dropping the drain here
+            # would let the OS pipe fill and block the child on its next write
+            # — exactly the hang this function exists to prevent — so skip the
+            # line and keep draining.
+            continue
         except Exception:
             return
         if not line:
