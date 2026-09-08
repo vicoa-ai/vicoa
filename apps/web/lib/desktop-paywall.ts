@@ -3,7 +3,7 @@
  *
  * Entitlement is `plan_type === 'pro'` — there is no `is_pro` boolean. The
  * backend keeps ONE `subscriptions` row per user with a `provider` column
- * (`stripe | apple | google`), so an existing iOS/Android subscriber already
+ * (`stripe | apple | google | coinpay`), so an existing iOS/Android subscriber already
  * resolves as pro here and is never re-prompted. No mobile-specific check
  * needed.
  *
