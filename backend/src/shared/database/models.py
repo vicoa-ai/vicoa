@@ -240,6 +240,17 @@ class AgentInstance(Base):
     session_config: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True, default=None
     )
+    # Which agent profile this session was started from (collab P1). Pure
+    # provenance: `session_config` above is the authoritative snapshot of what the
+    # session is actually running, and the two legitimately diverge the moment the
+    # user switches model mid-session. Read only to render the profile's name and
+    # avatar in place of the generic provider icon — never to re-derive config.
+    # SET NULL: deleting a profile must not touch the sessions it started.
+    agent_profile_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_profiles.id", ondelete="SET NULL"),
+        type_=PostgresUUID(as_uuid=True),
+        default=None,
+    )
     last_read_message_id: Mapped[UUID | None] = mapped_column(
         ForeignKey(
             "messages.id",

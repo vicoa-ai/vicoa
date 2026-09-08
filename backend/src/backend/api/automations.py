@@ -63,6 +63,7 @@ def create_automation_endpoint(
             directory=request.directory,
             worktree=request.worktree,
             session_config=request.session_config,
+            agent_profile_id=request.agent_profile_id,
             schedule_kind=request.schedule_kind,
             frequency=request.frequency,
             timezone=request.timezone,

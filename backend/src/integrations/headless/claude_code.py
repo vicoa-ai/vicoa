@@ -392,6 +392,7 @@ class HeadlessClaudeRunner:
         enable_thinking: bool = True,
         model: Optional[str] = None,
         thinking_effort: Optional[str] = None,
+        system_prompt: Optional[str] = None,
         debug: bool = False,
         is_resuming: bool = False,
     ):
@@ -410,6 +411,10 @@ class HeadlessClaudeRunner:
         # enable_thinking boolean (plan §3.6 dual-write contract). `off`
         # maps to ThinkingConfigDisabled; everything else to adaptive thinking.
         self.thinking_effort = thinking_effort
+        # Custom instructions from an agent profile. Claude is the SDK_APPEND
+        # transport: the text layers onto the stock claude_code preset rather
+        # than replacing it, so the agent keeps its normal tooling behaviour.
+        self.system_prompt = system_prompt
         self.permission_mode = permission_mode
         self.allowed_tools = allowed_tools
         self.disallowed_tools = disallowed_tools
@@ -654,6 +659,8 @@ class HeadlessClaudeRunner:
             thinking_config = ThinkingConfigDisabled(type="disabled")
             self.logger.info("Building options with thinking disabled")
 
+        system_prompt_option = self._build_system_prompt_option()
+
         # Pass Vicoa's session_id through to the Claude SDK so the transcript
         # at ~/.claude/projects/<cwd>/<session_id>.jsonl shares the same id
         # the dashboard shows. The SDK requires a valid UUID and reads this
@@ -692,7 +699,7 @@ class HeadlessClaudeRunner:
             can_use_tool=self._handle_tool_use,
             cwd=self.cwd,
             extra_args=self.extra_args or {},
-            system_prompt={"type": "preset", "preset": "claude_code"},
+            system_prompt=system_prompt_option,
             setting_sources=["user", "project", "local"],
             thinking=thinking_config,
             session_id=sdk_session_id,
@@ -704,6 +711,20 @@ class HeadlessClaudeRunner:
         if effort_for_options is not None:
             options_kwargs["effort"] = effort_for_options
         return ClaudeAgentOptions(**options_kwargs)
+
+    def _build_system_prompt_option(self) -> Dict[str, Any]:
+        """The SDK ``system_prompt`` option, with an agent profile's text appended.
+
+        Claude is the ``SDK_APPEND`` transport (``protocol/system_prompt.py``):
+        the profile's instructions layer *onto* the stock ``claude_code`` preset
+        instead of replacing it, so the agent keeps its normal tooling behaviour
+        and only gains the extra guidance. With no profile this is byte-identical
+        to what the wrapper sent before.
+        """
+        option: Dict[str, Any] = {"type": "preset", "preset": "claude_code"}
+        if self.system_prompt and self.system_prompt.strip():
+            option["append"] = self.system_prompt.strip()
+        return option
 
     # ------------------------------------------------------------------
     # Tool-use callback (replaces the MCP `approve` tool)
@@ -3526,6 +3547,13 @@ def main():
         help="Working directory for Claude (defaults to current directory)",
     )
     parser.add_argument(
+        "--system-prompt",
+        dest="system_prompt",
+        type=str,
+        default=None,
+        help="Custom instructions appended to the claude_code system preset",
+    )
+    parser.add_argument(
         "--session-id",
         type=str,
         default=os.environ.get("VICOA_AGENT_INSTANCE_ID"),
@@ -3641,6 +3669,7 @@ def main():
         enable_thinking=args.enable_thinking,
         model=args.model,
         thinking_effort=args.thinking_effort,
+        system_prompt=args.system_prompt,
         debug=args.debug,
         is_resuming=bool(resume_session_id),
     )

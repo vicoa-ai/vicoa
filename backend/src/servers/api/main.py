@@ -15,6 +15,7 @@ from .auth_keys import auth_keys_router
 from .automations import automation_router
 from .instances import instance_router
 from .routers import agent_router
+from .agent_profiles import agent_profile_router
 from .tasks import task_router
 
 # Configure logging
@@ -53,6 +54,7 @@ app.add_middleware(
 app.include_router(agent_router, prefix="/api/v1")
 app.include_router(auth_keys_router, prefix="/api/v1")
 app.include_router(task_router, prefix="/api/v1")
+app.include_router(agent_profile_router, prefix="/api/v1")
 app.include_router(automation_router, prefix="/api/v1")
 app.include_router(instance_router, prefix="/api/v1")
 

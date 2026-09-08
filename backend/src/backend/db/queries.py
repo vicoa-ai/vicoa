@@ -289,6 +289,9 @@ def format_agent_instance(
     payload = {
         "instance_metadata": metadata,
         "session_config": session_config,
+        "agent_profile_id": str(instance.agent_profile_id)
+        if instance.agent_profile_id
+        else None,
         "id": str(instance.id),
         "agent_type_id": str(instance.agent_type_id) if instance.agent_type_id else "",
         "agent_type_name": instance.agent_type.name
@@ -454,6 +457,9 @@ def get_all_agent_types_with_instances(
             payload = {
                 "instance_metadata": metadata,
                 "session_config": session_config,
+                "agent_profile_id": str(instance.agent_profile_id)
+                if instance.agent_profile_id
+                else None,
                 "id": str(instance.id),
                 "agent_type_id": str(instance.agent_type_id)
                 if instance.agent_type_id

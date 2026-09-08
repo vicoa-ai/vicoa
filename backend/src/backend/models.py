@@ -108,6 +108,13 @@ class AgentInstanceResponse(BaseModel):
     last_heartbeat_at: datetime | None = None
     instance_metadata: dict | None = None
     session_config: dict | None = None
+    # Agent profile this session was started from (collab P1). PROVENANCE ONLY:
+    # `session_config` above is what the session is actually running, and the
+    # two legitimately diverge the moment the user switches model mid-session.
+    # Clients render the profile's name/avatar by looking the id up in the list
+    # they already hold for the picker — deliberately not joined here, so list
+    # endpoints stay a single query.
+    agent_profile_id: str | None = None
     project: str | None = None
     # Formal projects-entity id, auto-matched from the working directory (the
     # session ↔ project link). Null when no project is set up for that checkout;
@@ -253,6 +260,7 @@ class AgentInstanceDetail(BaseModel):
     is_owner: bool = False
     instance_metadata: dict | None = None
     session_config: dict | None = None
+    agent_profile_id: str | None = None
     project: str | None = None
     home_dir: str | None = None
     machine_id: str | None = None
@@ -342,6 +350,15 @@ class SpawnSessionRequest(BaseModel):
     )
     metadata: dict | None = Field(
         default=None, description="Additional request metadata"
+    )
+    agent_profile_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Agent profile this session is started from (collab P1). Recorded on "
+            "the instance for display, and the source of the session's "
+            "system_prompt — which is resolved server-side rather than trusted "
+            "from `metadata`, so the two can never disagree."
+        ),
     )
 
     @field_validator("agent", mode="before")
@@ -762,6 +779,10 @@ class AutomationResponse(BaseModel):
     directory: str
     worktree: dict | None = None
     session_config: dict
+    # Live reference to an agent profile (collab P1). When set, the scheduler
+    # resolves the profile at dispatch and `session_config` is the fallback
+    # snapshot rather than the source of truth.
+    agent_profile_id: UUID | None = None
     schedule_kind: AutomationScheduleKindLiteral
     frequency: dict | None = None
     timezone: str
@@ -792,6 +813,7 @@ class CreateAutomationRequest(BaseModel):
     # {"mode": "none"|"new"|"existing", "path"?: str}
     worktree: dict | None = None
     session_config: dict
+    agent_profile_id: UUID | None = None
     schedule_kind: AutomationScheduleKindLiteral
     # One-time: absolute instant (client sends a UTC-anchored ISO datetime).
     run_at: datetime | None = None
@@ -825,6 +847,7 @@ class UpdateAutomationRequest(BaseModel):
     directory: str | None = Field(default=None, min_length=1)
     worktree: dict | None = None
     session_config: dict | None = None
+    agent_profile_id: UUID | None = None
     schedule_kind: AutomationScheduleKindLiteral | None = None
     run_at: datetime | None = None
     frequency: dict | None = None

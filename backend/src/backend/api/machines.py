@@ -25,6 +25,7 @@ from shared.websocket import after_commit, build_machine_update
 
 from ..auth.dependencies import get_current_user
 from ..broadcast_bridge import post_broadcast
+from ..db import agent_profile_queries
 from ..models import (
     MachineAgentModelsResponse,
     MachineListResponse,
@@ -213,6 +214,27 @@ def create_spawn_request_endpoint(
 ) -> SpawnSessionResponse:
     agent_instance_id = uuid4()
     machine = _get_machine_for_user(db, machine_id, current_user.id)
+
+    # Resolve the agent profile server-side rather than trusting a client-sent
+    # system_prompt: one source of truth, and it is what makes the CLI's
+    # `--agent-profile` a one-liner. The config itself still comes from the
+    # request — a preset is a shortcut, not a cage, so the user may have tweaked
+    # model/effort in the picker after choosing it.
+    profile = None
+    if request.agent_profile_id is not None:
+        profile = agent_profile_queries.get_agent_profile(
+            db, current_user.id, request.agent_profile_id
+        )
+        if profile is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found"
+            )
+        # Provider is identity, not state: a profile whose agent no longer
+        # matches what is being spawned is not this session's agent, so neither
+        # its name nor its instructions should follow.
+        if profile.agent != (request.agent or "claude"):
+            profile = None
+
     instance = create_agent_instance(
         db,
         current_user.id,
@@ -224,6 +246,7 @@ def create_spawn_request_endpoint(
         instance_metadata={"spawn_starting": True},
         machine_id=machine.id,
         status=AgentStatus.STARTING,
+        agent_profile_id=profile.id if profile else None,
     )
 
     request_metadata = (
@@ -236,6 +259,12 @@ def create_spawn_request_endpoint(
         request_metadata["prompt"] = request.prompt
     else:
         request_metadata.pop("prompt", None)
+
+    # Always server-set: drop anything the client sent under this key so a stale
+    # or hand-crafted value can't outlive the profile it came from.
+    request_metadata.pop("system_prompt", None)
+    if profile is not None and (profile.system_prompt or "").strip():
+        request_metadata["system_prompt"] = profile.system_prompt
 
     spawn_request = MachineSpawnRequest(
         id=uuid4(),

@@ -105,6 +105,7 @@ class PiFamilyRunner:
         model: Optional[str] = None,
         thinking_effort: Optional[str] = None,
         permission_mode: Optional[str] = None,
+        system_prompt: Optional[str] = None,
         agent_command: Optional[str] = None,
         is_resuming: bool = False,
     ) -> None:
@@ -120,6 +121,7 @@ class PiFamilyRunner:
         self.model = model
         self.thinking_effort = thinking_effort
         self.permission_mode = permission_mode
+        self.system_prompt = system_prompt
         self.agent_command = agent_command
         self.is_resuming = is_resuming
 
@@ -173,6 +175,12 @@ class PiFamilyRunner:
             flag_value = self.spec.approval_modes.get(self.permission_mode)
             if flag_value:
                 command.extend([self.spec.approval_mode_arg, flag_value])
+
+        # Agent-profile instructions. Appended (not replacing) so the agent
+        # keeps its own baseline prompt; see protocol/system_prompt.py.
+        system_prompt = (self.system_prompt or "").strip()
+        if self.spec.system_prompt_arg and system_prompt:
+            command.extend([self.spec.system_prompt_arg, system_prompt])
 
         if self.spec.session_arg and self.agent_session_id:
             command.extend([self.spec.session_arg, self.agent_session_id])
@@ -764,6 +772,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Vicoa permission mode; translated to the agent's approval flag",
     )
+    parser.add_argument(
+        "--system-prompt",
+        dest="system_prompt",
+        default=None,
+        help="Custom instructions, appended via the agent's system-prompt flag",
+    )
     parser.add_argument("--agent-command", default=None, help="Explicit binary path")
     parser.add_argument("--prompt", default=None, help="Initial prompt")
     parser.add_argument("--debug", action="store_true")
@@ -797,6 +811,7 @@ def main() -> int:
         model=args.model,
         thinking_effort=args.thinking_effort,
         permission_mode=args.permission_mode,
+        system_prompt=args.system_prompt,
         agent_command=args.agent_command,
         is_resuming=bool(args.resume),
     )

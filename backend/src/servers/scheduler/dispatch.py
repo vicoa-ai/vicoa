@@ -12,15 +12,23 @@ from uuid import UUID
 from shared.websocket.rpc import RpcError, rpc_router
 
 
-def to_spawn_metadata(session_config: dict, prompt: str | None) -> dict:
+def to_spawn_metadata(
+    session_config: dict, prompt: str | None, system_prompt: str | None = None
+) -> dict:
     """Build the daemon `spawn-session` `metadata` payload from a SessionConfig.
 
     A direct port of the web `toSpawnMetadata` (lib/agent-catalog.ts) so scheduled
     runs launch with the exact agent/model/effort/permission-mode the user picked.
+
+    ``system_prompt`` is agent-agnostic — every wrapper takes the same flag and
+    picks its own delivery channel (``protocol/system_prompt.py``) — so it sits
+    outside the per-agent branches below.
     """
     m: dict = {}
     if prompt is not None:
         m["prompt"] = prompt
+    if system_prompt and system_prompt.strip():
+        m["system_prompt"] = system_prompt
 
     agent = session_config.get("agent")
     model = session_config.get("model")
@@ -97,6 +105,7 @@ async def dispatch_automation(
     worktree: dict | None = None,
     session_config: dict,
     prompt: str,
+    system_prompt: str | None = None,
 ) -> DispatchResult:
     """Fire one automation run against its owning machine's daemon.
 
@@ -109,7 +118,7 @@ async def dispatch_automation(
     params: dict = {
         "directory": spawn_directory,
         "agent": agent,
-        "metadata": to_spawn_metadata(session_config, prompt),
+        "metadata": to_spawn_metadata(session_config, prompt, system_prompt),
     }
     if worktree_param is not None:
         params["worktree"] = worktree_param

@@ -1079,6 +1079,14 @@ class MachineDaemon:
             session_id=session_id,
             metadata=metadata,
         )
+        # Appended once here rather than inside each of the ten per-agent branches
+        # in the base builder (five frozen, five source): every wrapper takes the
+        # same `--system-prompt` flag, and *how* it delivers the text is decided
+        # per-agent inside the wrapper via protocol.system_prompt. Adding it here
+        # means a new agent branch cannot forget it.
+        system_prompt = self._extract_system_prompt(metadata)
+        if system_prompt:
+            cmd.extend(["--system-prompt", system_prompt])
         if is_resuming:
             cmd.extend(
                 self._resume_args(
@@ -1494,6 +1502,20 @@ class MachineDaemon:
         prompt = metadata.get("prompt") or metadata.get("initial_prompt")
         if isinstance(prompt, str) and prompt.strip():
             return prompt
+        return None
+
+    def _extract_system_prompt(self, metadata: dict[str, Any] | None) -> str | None:
+        """Custom instructions from an agent profile (collaboration P1).
+
+        Agent-agnostic on purpose: every wrapper takes the same flag and picks its
+        own delivery channel (``protocol.system_prompt``), so nothing here needs to
+        know which agent is being spawned.
+        """
+        if not metadata:
+            return None
+        value = metadata.get("system_prompt")
+        if isinstance(value, str) and value.strip():
+            return value
         return None
 
     def _extract_generic_model(self, metadata: dict[str, Any] | None) -> str | None:
