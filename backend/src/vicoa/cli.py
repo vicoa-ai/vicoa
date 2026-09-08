@@ -1042,7 +1042,7 @@ def maybe_start_machine_daemon(args, api_key: str) -> None:
         # The credential is dead (revoked key / deleted account) and re-auth
         # hasn't happened. Exit before launching the agent — otherwise the
         # wrapper would register an agent instance, FK-violate on
-        # `user_agents_user_id_fkey`, get 401 from PR #45's handler, and tear
+        # `agent_types_user_id_fkey`, get 401 from PR #45's handler, and tear
         # the link down anyway. Skipping that round-trip keeps the backend
         # logs clean and avoids a half-started agent the user didn't ask for.
         print("Vicoa is disconnected (credential expired), run vicoa --auth")

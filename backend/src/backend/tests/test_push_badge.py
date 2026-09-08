@@ -7,14 +7,14 @@ agent instances with status AWAITING_INPUT, scoped to the requesting user.
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from shared.database.models import AgentInstance, User, UserAgent
+from shared.database.models import AgentInstance, User, AgentType
 from shared.database.enums import AgentStatus
 
 
-def _make_instance(test_db, user_agent, user, status):
+def _make_instance(test_db, agent_type, user, status):
     instance = AgentInstance(
         id=uuid4(),
-        user_agent_id=user_agent.id,
+        agent_type_id=agent_type.id,
         user_id=user.id,
         status=status,
         started_at=datetime.now(timezone.utc),
@@ -26,10 +26,10 @@ def _make_instance(test_db, user_agent, user, status):
 
 class TestBadgeCount:
     def test_zero_when_nothing_awaiting(
-        self, authenticated_client, test_db, test_user, test_user_agent
+        self, authenticated_client, test_db, test_user, test_agent_type
     ):
-        _make_instance(test_db, test_user_agent, test_user, AgentStatus.ACTIVE)
-        _make_instance(test_db, test_user_agent, test_user, AgentStatus.COMPLETED)
+        _make_instance(test_db, test_agent_type, test_user, AgentStatus.ACTIVE)
+        _make_instance(test_db, test_agent_type, test_user, AgentStatus.COMPLETED)
 
         response = authenticated_client.get("/api/v1/push/badge-count")
 
@@ -37,12 +37,12 @@ class TestBadgeCount:
         assert response.json() == {"count": 0}
 
     def test_counts_only_awaiting_input(
-        self, authenticated_client, test_db, test_user, test_user_agent
+        self, authenticated_client, test_db, test_user, test_agent_type
     ):
-        _make_instance(test_db, test_user_agent, test_user, AgentStatus.AWAITING_INPUT)
-        _make_instance(test_db, test_user_agent, test_user, AgentStatus.AWAITING_INPUT)
-        _make_instance(test_db, test_user_agent, test_user, AgentStatus.ACTIVE)
-        _make_instance(test_db, test_user_agent, test_user, AgentStatus.COMPLETED)
+        _make_instance(test_db, test_agent_type, test_user, AgentStatus.AWAITING_INPUT)
+        _make_instance(test_db, test_agent_type, test_user, AgentStatus.AWAITING_INPUT)
+        _make_instance(test_db, test_agent_type, test_user, AgentStatus.ACTIVE)
+        _make_instance(test_db, test_agent_type, test_user, AgentStatus.COMPLETED)
 
         response = authenticated_client.get("/api/v1/push/badge-count")
 
@@ -50,10 +50,10 @@ class TestBadgeCount:
         assert response.json() == {"count": 2}
 
     def test_is_user_scoped(
-        self, authenticated_client, test_db, test_user, test_user_agent
+        self, authenticated_client, test_db, test_user, test_agent_type
     ):
         # This user has one session awaiting input.
-        _make_instance(test_db, test_user_agent, test_user, AgentStatus.AWAITING_INPUT)
+        _make_instance(test_db, test_agent_type, test_user, AgentStatus.AWAITING_INPUT)
 
         # Another user's awaiting-input session must not leak into the count.
         other_user = User(
@@ -65,7 +65,7 @@ class TestBadgeCount:
         )
         test_db.add(other_user)
         test_db.commit()
-        other_agent = UserAgent(
+        other_agent = AgentType(
             id=uuid4(),
             user_id=other_user.id,
             name="claude code",

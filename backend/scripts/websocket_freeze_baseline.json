@@ -17,6 +17,7 @@
     "9c1915ca1cd2_add_git_diff_update_trigger_for_agent_.py",
     "9fe045ea7ad9_fix_large_payload_notifications.py",
     "b2e3f4a5c6d7_add_smart_payload_to_message_notify.py",
-    "e1a42f472efc_add_user_instance_list_sse_channel.py"
+    "e1a42f472efc_add_user_instance_list_sse_channel.py",
+    "a3f1d95c7b02_rename_user_agents_to_agent_types.py"
   ]
 }

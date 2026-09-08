@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from testcontainers.postgres import PostgresContainer
 
-from shared.database.models import Base, User, UserAgent, AgentInstance
+from shared.database.models import Base, User, AgentType, AgentInstance
 from shared.database.enums import AgentStatus
 
 
@@ -45,7 +45,7 @@ def test_db(postgres_container):
         updated_at=datetime.now(timezone.utc),
     )
 
-    test_user_agent = UserAgent(
+    test_agent_type = AgentType(
         id=uuid4(),
         user_id=test_user.id,
         name="Claude Code",
@@ -55,7 +55,7 @@ def test_db(postgres_container):
     )
 
     session.add(test_user)
-    session.add(test_user_agent)
+    session.add(test_agent_type)
     session.commit()
 
     yield session
@@ -99,13 +99,13 @@ async def async_mock_context(test_db, mock_jwt_payload):
 @pytest.fixture
 def test_agent_instance(test_db):
     """Create a test agent instance."""
-    # Get test user and user agent
+    # Get test user and agent type
     user = test_db.query(User).first()
-    user_agent = test_db.query(UserAgent).first()
+    agent_type = test_db.query(AgentType).first()
 
     instance = AgentInstance(
         id=uuid4(),
-        user_agent_id=user_agent.id,
+        agent_type_id=agent_type.id,
         user_id=user.id,
         status=AgentStatus.ACTIVE,
         started_at=datetime.now(timezone.utc),

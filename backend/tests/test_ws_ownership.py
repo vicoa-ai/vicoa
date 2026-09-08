@@ -18,7 +18,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from shared.auth.tokens import TokenClaims
 from shared.database.enums import AgentStatus
-from shared.database.models import AgentInstance, Machine, User, UserAgent
+from shared.database.models import AgentInstance, Machine, User, AgentType
 from shared.database.session import SessionLocal
 from servers.api import ws_handler
 from servers.api.ws_handler import ws_router
@@ -46,11 +46,11 @@ def owned_rows() -> Iterator[tuple[UUID, UUID, UUID]]:
         # Machine has no relationship() to User, so SQLAlchemy's unit of work
         # does not order the User insert first — flush the parent to pin it.
         db.flush()
-        db.add(UserAgent(id=agent_id, user_id=owner_id, name="Claude", is_active=True))
+        db.add(AgentType(id=agent_id, user_id=owner_id, name="Claude", is_active=True))
         db.add(
             AgentInstance(
                 id=instance_id,
-                user_agent_id=agent_id,
+                agent_type_id=agent_id,
                 user_id=owner_id,
                 status=AgentStatus.ACTIVE,
                 started_at=now,
@@ -66,7 +66,7 @@ def owned_rows() -> Iterator[tuple[UUID, UUID, UUID]]:
         with SessionLocal() as db:
             db.query(AgentInstance).filter(AgentInstance.user_id == owner_id).delete()
             db.query(Machine).filter(Machine.user_id == owner_id).delete()
-            db.query(UserAgent).filter(UserAgent.user_id == owner_id).delete()
+            db.query(AgentType).filter(AgentType.user_id == owner_id).delete()
             db.query(User).filter(User.id == owner_id).delete()
             db.commit()
 

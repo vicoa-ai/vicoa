@@ -8,42 +8,42 @@ from uuid import UUID, uuid4
 from sqlalchemy.orm import Session
 
 from .enums import AgentStatus
-from .models import AgentInstance, UserAgent
+from .models import AgentInstance, AgentType
 
 
 def _normalize_agent_name(name: str) -> str:
     return name.strip().lower()
 
 
-def get_or_create_user_agent(
+def get_or_create_agent_type(
     db: Session,
     user_id: UUID,
     agent_name: str,
-) -> UserAgent:
-    """Fetch an existing user agent or create a new one for the given user."""
+) -> AgentType:
+    """Fetch an existing agent type or create a new one for the given user."""
 
     normalized_name = _normalize_agent_name(agent_name)
-    user_agent = (
-        db.query(UserAgent)
+    agent_type = (
+        db.query(AgentType)
         .filter(
-            UserAgent.user_id == user_id,
-            UserAgent.name == normalized_name,
-            UserAgent.is_deleted.is_(False),
+            AgentType.user_id == user_id,
+            AgentType.name == normalized_name,
+            AgentType.is_deleted.is_(False),
         )
         .first()
     )
-    if user_agent:
-        return user_agent
+    if agent_type:
+        return agent_type
 
-    user_agent = UserAgent(
+    agent_type = AgentType(
         user_id=user_id,
         name=normalized_name,
         is_active=True,
         is_deleted=False,
     )
-    db.add(user_agent)
+    db.add(agent_type)
     db.flush()
-    return user_agent
+    return agent_type
 
 
 def create_agent_instance(
@@ -63,7 +63,7 @@ def create_agent_instance(
 ) -> AgentInstance:
     """Create and persist an agent instance with optional relay metadata."""
 
-    user_agent = get_or_create_user_agent(db, user_id, agent_name)
+    agent_type = get_or_create_agent_type(db, user_id, agent_name)
     final_id = instance_id or uuid4()
 
     metadata_payload = None
@@ -75,7 +75,7 @@ def create_agent_instance(
     instance = AgentInstance(
         id=final_id,
         user_id=user_id,
-        user_agent_id=user_agent.id,
+        agent_type_id=agent_type.id,
         name=name,
         status=status,
         instance_metadata=metadata_payload,

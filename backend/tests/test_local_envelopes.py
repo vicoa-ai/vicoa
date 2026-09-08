@@ -70,10 +70,10 @@ _GIT_DIFF = (
 
 def _paired_instance() -> tuple[AgentInstance, StoredInstance]:
     instance_id = uuid4()
-    user_agent_id = uuid4()
+    agent_type_id = uuid4()
     orm = AgentInstance(
         id=instance_id,
-        user_agent_id=user_agent_id,
+        agent_type_id=agent_type_id,
         user_id=uuid4(),
         status=AgentStatus.AWAITING_INPUT,
         started_at=_TS,
@@ -90,7 +90,10 @@ def _paired_instance() -> tuple[AgentInstance, StoredInstance]:
     )
     stored = StoredInstance(
         id=str(instance_id),
-        user_agent_id=str(user_agent_id),
+        # The local store keeps the wire spelling `user_agent_id` (see
+        # shared/websocket/envelope.py) — the parity assertions below are what
+        # guard that the two sides never drift apart.
+        user_agent_id=str(agent_type_id),
         agent_type_name="Claude Code",
         status="AWAITING_INPUT",
         name="my session",

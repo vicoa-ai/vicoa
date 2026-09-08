@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from shared.database.models import (
     User,
-    UserAgent,
+    AgentType,
     AgentInstance,
     UserInstanceAccess,
 )
@@ -21,7 +21,7 @@ class TestAgentEndpoints:
     """Test agent management endpoints."""
 
     def test_list_agent_types(
-        self, authenticated_client, test_user_agent, test_agent_instance
+        self, authenticated_client, test_agent_type, test_agent_instance
     ):
         """Test listing agent types with instances."""
         response = authenticated_client.get("/api/v1/agent-types")
@@ -30,13 +30,13 @@ class TestAgentEndpoints:
 
         assert len(data) == 1
         agent_type = data[0]
-        assert agent_type["id"] == str(test_user_agent.id)
+        assert agent_type["id"] == str(test_agent_type.id)
         assert agent_type["name"] == "claude code"
         assert len(agent_type["recent_instances"]) == 1
         assert agent_type["recent_instances"][0]["id"] == str(test_agent_instance.id)
 
     def test_list_agent_types_multiple_users(
-        self, authenticated_client, test_db, test_user_agent
+        self, authenticated_client, test_db, test_agent_type
     ):
         """Test that users only see their own agent types."""
         # Create another user with agent
@@ -49,7 +49,7 @@ class TestAgentEndpoints:
         )
         test_db.add(other_user)
 
-        other_user_agent = UserAgent(
+        other_agent_type = AgentType(
             id=uuid4(),
             user_id=other_user.id,
             name="cursor",
@@ -57,7 +57,7 @@ class TestAgentEndpoints:
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
-        test_db.add(other_user_agent)
+        test_db.add(other_agent_type)
         test_db.commit()
 
         response = authenticated_client.get("/api/v1/agent-types")
@@ -69,13 +69,13 @@ class TestAgentEndpoints:
         assert data[0]["name"] == "claude code"
 
     def test_list_agent_types_with_pending_questions(
-        self, authenticated_client, test_db, test_user, test_user_agent
+        self, authenticated_client, test_db, test_user, test_agent_type
     ):
         """Test agent types listing with pending questions (catches timezone issues)."""
         # Create an agent instance
         instance = AgentInstance(
             id=uuid4(),
-            user_agent_id=test_user_agent.id,
+            agent_type_id=test_agent_type.id,
             user_id=test_user.id,
             status=AgentStatus.AWAITING_INPUT,
             started_at=datetime.now(timezone.utc),
@@ -155,7 +155,7 @@ class TestAgentEndpoints:
         )
         test_db.add(owner)
 
-        owner_agent = UserAgent(
+        owner_agent = AgentType(
             id=uuid4(),
             user_id=owner.id,
             name="shared agent",
@@ -167,7 +167,7 @@ class TestAgentEndpoints:
 
         shared_instance = AgentInstance(
             id=uuid4(),
-            user_agent_id=owner_agent.id,
+            agent_type_id=owner_agent.id,
             user_id=owner.id,
             status=AgentStatus.COMPLETED,
             started_at=datetime.now(timezone.utc),
@@ -210,7 +210,7 @@ class TestAgentEndpoints:
         )
         test_db.add(owner)
 
-        owner_agent = UserAgent(
+        owner_agent = AgentType(
             id=uuid4(),
             user_id=owner.id,
             name="analysis agent",
@@ -222,7 +222,7 @@ class TestAgentEndpoints:
 
         shared_instance = AgentInstance(
             id=uuid4(),
-            user_agent_id=owner_agent.id,
+            agent_type_id=owner_agent.id,
             user_id=owner.id,
             status=AgentStatus.ACTIVE,
             started_at=datetime.now(timezone.utc),
@@ -389,14 +389,14 @@ class TestAgentEndpoints:
         )
 
     def test_list_agent_instances_with_limit(
-        self, authenticated_client, test_db, test_user, test_user_agent
+        self, authenticated_client, test_db, test_user, test_agent_type
     ):
         """Test listing agent instances with limit."""
         # Create multiple instances
         for i in range(5):
             instance = AgentInstance(
                 id=uuid4(),
-                user_agent_id=test_user_agent.id,
+                agent_type_id=test_agent_type.id,
                 user_id=test_user.id,
                 status=AgentStatus.COMPLETED,
                 started_at=datetime.now(timezone.utc),
@@ -414,13 +414,13 @@ class TestAgentEndpoints:
         assert len(data["items"]) == 3
 
     def test_list_agent_instances_with_offset(
-        self, authenticated_client, test_db, test_user, test_user_agent
+        self, authenticated_client, test_db, test_user, test_agent_type
     ):
         """Test listing agent instances with offset pagination."""
         for i in range(4):
             instance = AgentInstance(
                 id=uuid4(),
-                user_agent_id=test_user_agent.id,
+                agent_type_id=test_agent_type.id,
                 user_id=test_user.id,
                 status=AgentStatus.COMPLETED,
                 started_at=datetime.now(timezone.utc),
@@ -443,14 +443,14 @@ class TestAgentEndpoints:
         authenticated_client,
         test_db,
         test_user,
-        test_user_agent,
+        test_agent_type,
         test_agent_instance,
     ):
         """Test getting agent summary."""
         # Add more instances with different statuses
         completed_instance = AgentInstance(
             id=uuid4(),
-            user_agent_id=test_user_agent.id,
+            agent_type_id=test_agent_type.id,
             user_id=test_user.id,
             status=AgentStatus.COMPLETED,
             started_at=datetime.now(timezone.utc),
@@ -484,11 +484,11 @@ class TestAgentEndpoints:
         assert len(data["agent_types"]) == 1
 
     def test_get_type_instances(
-        self, authenticated_client, test_user_agent, test_agent_instance
+        self, authenticated_client, test_agent_type, test_agent_instance
     ):
         """Test getting instances for a specific agent type."""
         response = authenticated_client.get(
-            f"/api/v1/agent-types/{test_user_agent.id}/instances"
+            f"/api/v1/agent-types/{test_agent_type.id}/instances"
         )
         assert response.status_code == 200
         data = response.json()
@@ -783,7 +783,7 @@ class TestPatchAgentInstance:
         assert "foo" in response.json()["detail"]
 
     def test_non_owner_returns_404(
-        self, authenticated_client, test_db, test_user_agent
+        self, authenticated_client, test_db, test_agent_type
     ):
         """PATCH against another user's instance returns 404 (user scoping)."""
         other_user = User(
@@ -795,7 +795,7 @@ class TestPatchAgentInstance:
         )
         test_db.add(other_user)
 
-        other_agent = UserAgent(
+        other_agent = AgentType(
             id=uuid4(),
             user_id=other_user.id,
             name="other agent",
@@ -807,7 +807,7 @@ class TestPatchAgentInstance:
 
         foreign_instance = AgentInstance(
             id=uuid4(),
-            user_agent_id=other_agent.id,
+            agent_type_id=other_agent.id,
             user_id=other_user.id,
             status=AgentStatus.ACTIVE,
             started_at=datetime.now(timezone.utc),

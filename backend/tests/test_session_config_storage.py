@@ -13,7 +13,7 @@ import pytest
 from servers.api.models import RegisterAgentInstanceRequest
 from servers.api.routers import register_agent_instance_endpoint
 from shared.database.enums import AgentStatus
-from shared.database.models import AgentInstance, Message, User, UserAgent
+from shared.database.models import AgentInstance, Message, User, AgentType
 from shared.database.session import SessionLocal
 from shared.websocket.connection_manager import Connection, connection_manager
 
@@ -49,7 +49,7 @@ def user_id() -> Iterator[UUID]:
                     Message.agent_instance_id.in_(instance_ids)
                 ).delete(synchronize_session=False)
             db.query(AgentInstance).filter(AgentInstance.user_id == uid).delete()
-            db.query(UserAgent).filter(UserAgent.user_id == uid).delete()
+            db.query(AgentType).filter(AgentType.user_id == uid).delete()
             db.query(User).filter(User.id == uid).delete()
             db.commit()
 
@@ -137,13 +137,13 @@ def test_activate_existing_field_present_overwrites(user_id: UUID) -> None:
     session_config in its self-register, the wrapper's value is authoritative."""
     new_id = uuid4()
     with SessionLocal() as db:
-        agent = UserAgent(user_id=user_id, name="claude")
+        agent = AgentType(user_id=user_id, name="claude")
         db.add(agent)
         db.flush()
         db.add(
             AgentInstance(
                 id=new_id,
-                user_agent_id=agent.id,
+                agent_type_id=agent.id,
                 user_id=user_id,
                 status=AgentStatus.STARTING,
                 instance_metadata={"spawn_starting": True},
@@ -177,13 +177,13 @@ def test_user_facing_detail_endpoint_includes_session_config(user_id: UUID) -> N
 
     new_id = uuid4()
     with SessionLocal() as db:
-        agent = UserAgent(user_id=user_id, name="claude")
+        agent = AgentType(user_id=user_id, name="claude")
         db.add(agent)
         db.flush()
         db.add(
             AgentInstance(
                 id=new_id,
-                user_agent_id=agent.id,
+                agent_type_id=agent.id,
                 user_id=user_id,
                 status=AgentStatus.ACTIVE,
                 session_config=CLAUDE_CONFIG,
@@ -204,13 +204,13 @@ def test_user_facing_list_endpoint_includes_session_config(user_id: UUID) -> Non
 
     new_id = uuid4()
     with SessionLocal() as db:
-        agent = UserAgent(user_id=user_id, name="claude")
+        agent = AgentType(user_id=user_id, name="claude")
         db.add(agent)
         db.flush()
         db.add(
             AgentInstance(
                 id=new_id,
-                user_agent_id=agent.id,
+                agent_type_id=agent.id,
                 user_id=user_id,
                 status=AgentStatus.ACTIVE,
                 session_config=CLAUDE_CONFIG,
@@ -231,13 +231,13 @@ def test_activate_existing_field_absent_preserves(user_id: UUID) -> None:
     new_id = uuid4()
     prestaged = {"agent": "claude", "model": "claude-opus-4-7"}
     with SessionLocal() as db:
-        agent = UserAgent(user_id=user_id, name="claude")
+        agent = AgentType(user_id=user_id, name="claude")
         db.add(agent)
         db.flush()
         db.add(
             AgentInstance(
                 id=new_id,
-                user_agent_id=agent.id,
+                agent_type_id=agent.id,
                 user_id=user_id,
                 status=AgentStatus.STARTING,
                 instance_metadata={"spawn_starting": True},

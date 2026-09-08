@@ -21,7 +21,7 @@ from shared.database.models import (
     MachineAgentModels,
     Message,
     User,
-    UserAgent,
+    AgentType,
 )
 from shared.database.session import SessionLocal
 
@@ -40,11 +40,11 @@ def user_machine_instance() -> Iterator[tuple[UUID, UUID, UUID]]:
         db.add(User(id=user_id, email=f"{user_id}@test.vicoa", display_name="t"))
         db.flush()
         db.add(Machine(id=machine_id, user_id=user_id, display_name="M"))
-        db.add(UserAgent(id=agent_id, user_id=user_id, name="cursor"))
+        db.add(AgentType(id=agent_id, user_id=user_id, name="cursor"))
         db.add(
             AgentInstance(
                 id=instance_id,
-                user_agent_id=agent_id,
+                agent_type_id=agent_id,
                 user_id=user_id,
                 machine_id=machine_id,
                 status=AgentStatus.ACTIVE,
@@ -62,7 +62,7 @@ def user_machine_instance() -> Iterator[tuple[UUID, UUID, UUID]]:
             ).delete()
             db.query(Message).filter(Message.agent_instance_id == instance_id).delete()
             db.query(AgentInstance).filter(AgentInstance.user_id == user_id).delete()
-            db.query(UserAgent).filter(UserAgent.user_id == user_id).delete()
+            db.query(AgentType).filter(AgentType.user_id == user_id).delete()
             db.query(Machine).filter(Machine.user_id == user_id).delete()
             db.query(User).filter(User.id == user_id).delete()
             db.commit()

@@ -12,7 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from testcontainers.postgres import PostgresContainer
 
 from shared.config import settings
-from shared.database.models import Base, User, UserAgent, AgentInstance
+from shared.database.models import Base, User, AgentType, AgentInstance
 from shared.database.enums import AgentStatus
 from backend.main import app
 from backend.auth.dependencies import (
@@ -68,9 +68,9 @@ def test_user(test_db):
 
 
 @pytest.fixture
-def test_user_agent(test_db, test_user):
-    """Create a test user agent."""
-    user_agent = UserAgent(
+def test_agent_type(test_db, test_user):
+    """Create a test agent type."""
+    agent_type = AgentType(
         id=uuid4(),
         user_id=test_user.id,
         name="claude code",  # Lowercase as per the actual implementation
@@ -78,17 +78,17 @@ def test_user_agent(test_db, test_user):
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
-    test_db.add(user_agent)
+    test_db.add(agent_type)
     test_db.commit()
-    return user_agent
+    return agent_type
 
 
 @pytest.fixture
-def test_agent_instance(test_db, test_user, test_user_agent):
+def test_agent_instance(test_db, test_user, test_agent_type):
     """Create a test agent instance."""
     instance = AgentInstance(
         id=uuid4(),
-        user_agent_id=test_user_agent.id,
+        agent_type_id=test_agent_type.id,
         user_id=test_user.id,
         status=AgentStatus.ACTIVE,
         started_at=datetime.now(timezone.utc),

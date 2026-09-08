@@ -701,7 +701,7 @@ class TestStatusLinkage:
             assert linked_task.status == "todo", agent_status
 
     def test_late_task_id_stamp_reevaluates_current_status(
-        self, test_db, test_user, test_user_agent
+        self, test_db, test_user, test_agent_type
     ):
         """§8b mitigation: the PATCH that stamps task_id lands after the
         instance already went ACTIVE — linking must still sync the task."""
@@ -711,7 +711,7 @@ class TestStatusLinkage:
         task = Task(user_id=test_user.id, project_id=inbox.id, title="late-link")
         instance = AgentInstance(
             id=uuid4(),
-            user_agent_id=test_user_agent.id,
+            agent_type_id=test_agent_type.id,
             user_id=test_user.id,
             status=AgentStatus.ACTIVE,
         )
@@ -773,7 +773,7 @@ class TestProjectAutoMatch:
         self,
         db,
         user_id,
-        user_agent_id,
+        agent_type_id,
         machine_id,
         project,
         project_id=None,
@@ -783,7 +783,7 @@ class TestProjectAutoMatch:
 
         inst = AgentInstance(
             id=uuid4(),
-            user_agent_id=user_agent_id,
+            agent_type_id=agent_type_id,
             user_id=user_id,
             status=AgentStatus.ACTIVE,
             machine_id=machine_id,
@@ -929,7 +929,7 @@ class TestProjectAutoMatch:
         )
 
     def test_backfill_fills_nulls_without_stealing(
-        self, test_db, test_user, test_user_agent
+        self, test_db, test_user, test_agent_type
     ):
         from shared.database.project_matching import backfill_project_id_for_directory
 
@@ -940,24 +940,24 @@ class TestProjectAutoMatch:
         test_db.flush()
 
         under = self._instance(
-            test_db, test_user.id, test_user_agent.id, machine.id, "/home/nick/alpha/x"
+            test_db, test_user.id, test_agent_type.id, machine.id, "/home/nick/alpha/x"
         )
         already = self._instance(
             test_db,
             test_user.id,
-            test_user_agent.id,
+            test_agent_type.id,
             machine.id,
             "/home/nick/alpha/y",
             project_id=other.id,
         )
         elsewhere = self._instance(
-            test_db, test_user.id, test_user_agent.id, machine.id, "/home/nick/beta"
+            test_db, test_user.id, test_agent_type.id, machine.id, "/home/nick/beta"
         )
         # A worktree session: cwd outside the repo, repo_root in metadata.
         worktree = self._instance(
             test_db,
             test_user.id,
-            test_user_agent.id,
+            test_agent_type.id,
             machine.id,
             "/home/nick/vicoa/workspaces/alpha-worktrees/feat/alpha",
             metadata={"repo_root": "/home/nick/alpha"},

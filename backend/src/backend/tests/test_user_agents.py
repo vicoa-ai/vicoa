@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from unittest.mock import patch, AsyncMock
 
-from shared.database.models import UserAgent, AgentInstance, User
+from shared.database.models import AgentType, AgentInstance, User
 from shared.database.enums import AgentStatus
 from backend.models import WebhookTriggerResponse
 
@@ -13,11 +13,11 @@ class TestUserAgentEndpoints:
     """Test user agent management endpoints."""
 
     def test_list_user_agents(
-        self, authenticated_client, test_db, test_user, test_user_agent
+        self, authenticated_client, test_db, test_user, test_agent_type
     ):
         """Test listing user agents."""
         # Create additional user agent
-        another_agent = UserAgent(
+        another_agent = AgentType(
             id=uuid4(),
             user_id=test_user.id,
             name="cursor",
@@ -38,7 +38,7 @@ class TestUserAgentEndpoints:
         assert "cursor" in names
 
     def test_list_user_agents_different_users(
-        self, authenticated_client, test_db, test_user_agent
+        self, authenticated_client, test_db, test_agent_type
     ):
         """Test that users only see their own user agents."""
         # Create another user with agent
@@ -51,7 +51,7 @@ class TestUserAgentEndpoints:
         )
         test_db.add(other_user)
 
-        other_agent = UserAgent(
+        other_agent = AgentType(
             id=uuid4(),
             user_id=other_user.id,
             name="other agent",
@@ -90,13 +90,13 @@ class TestUserAgentEndpoints:
         assert "id" in data
 
         # Verify in database
-        agent = test_db.query(UserAgent).filter_by(name="New Agent").first()
+        agent = test_db.query(AgentType).filter_by(name="New Agent").first()
         assert agent is not None
         assert agent.user_id == test_user.id
         assert agent.webhook_type == "DEFAULT"
         assert agent.webhook_config["url"] == "https://example.com/webhook"
 
-    def test_update_user_agent(self, authenticated_client, test_db, test_user_agent):
+    def test_update_user_agent(self, authenticated_client, test_db, test_agent_type):
         """Test updating a user agent."""
         update_data = {
             "name": "Updated Claude",
@@ -106,7 +106,7 @@ class TestUserAgentEndpoints:
         }
 
         response = authenticated_client.patch(
-            f"/api/v1/user-agents/{test_user_agent.id}", json=update_data
+            f"/api/v1/user-agents/{test_agent_type.id}", json=update_data
         )
         assert response.status_code == 200
         data = response.json()
@@ -117,11 +117,11 @@ class TestUserAgentEndpoints:
         assert data["webhook_config"]["url"] == "https://new-webhook.com"
 
         # Verify in database
-        test_db.refresh(test_user_agent)
-        assert test_user_agent.name == "Updated Claude"
-        assert test_user_agent.is_active is False
-        assert test_user_agent.webhook_type == "DEFAULT"
-        assert test_user_agent.webhook_config["url"] == "https://new-webhook.com"
+        test_db.refresh(test_agent_type)
+        assert test_agent_type.name == "Updated Claude"
+        assert test_agent_type.is_active is False
+        assert test_agent_type.webhook_type == "DEFAULT"
+        assert test_agent_type.webhook_config["url"] == "https://new-webhook.com"
 
     def test_update_user_agent_not_found(self, authenticated_client):
         """Test updating a non-existent user agent."""
@@ -144,7 +144,7 @@ class TestUserAgentEndpoints:
         )
         test_db.add(other_user)
 
-        other_agent = UserAgent(
+        other_agent = AgentType(
             id=uuid4(),
             user_id=other_user.id,
             name="other agent",
@@ -162,20 +162,20 @@ class TestUserAgentEndpoints:
         assert response.json()["detail"] == "User agent not found"
 
     def test_get_user_agent_instances(
-        self, authenticated_client, test_db, test_user, test_user_agent
+        self, authenticated_client, test_db, test_user, test_agent_type
     ):
         """Test getting instances for a user agent."""
         # Create instances
         instance1 = AgentInstance(
             id=uuid4(),
-            user_agent_id=test_user_agent.id,
+            agent_type_id=test_agent_type.id,
             user_id=test_user.id,
             status=AgentStatus.ACTIVE,
             started_at=datetime.now(timezone.utc),
         )
         instance2 = AgentInstance(
             id=uuid4(),
-            user_agent_id=test_user_agent.id,
+            agent_type_id=test_agent_type.id,
             user_id=test_user.id,
             status=AgentStatus.COMPLETED,
             started_at=datetime.now(timezone.utc),
@@ -185,7 +185,7 @@ class TestUserAgentEndpoints:
         test_db.commit()
 
         response = authenticated_client.get(
-            f"/api/v1/user-agents/{test_user_agent.id}/instances"
+            f"/api/v1/user-agents/{test_agent_type.id}/instances"
         )
         assert response.status_code == 200
         data = response.json()
@@ -203,11 +203,11 @@ class TestUserAgentEndpoints:
         assert response.json()["detail"] == "User agent not found"
 
     def test_create_agent_instance_no_webhook(
-        self, authenticated_client, test_db, test_user_agent
+        self, authenticated_client, test_db, test_agent_type
     ):
         """Test creating an instance for agent without webhook returns error."""
         response = authenticated_client.post(
-            f"/api/v1/user-agents/{test_user_agent.id}/instances",
+            f"/api/v1/user-agents/{test_agent_type.id}/instances",
             json={"prompt": "Test prompt"},
         )
 
@@ -221,18 +221,18 @@ class TestUserAgentEndpoints:
         # Verify no instance was created
         instance = (
             test_db.query(AgentInstance)
-            .filter_by(user_agent_id=test_user_agent.id)
+            .filter_by(agent_type_id=test_agent_type.id)
             .first()
         )
         assert instance is None
 
     def test_create_agent_instance_with_webhook(
-        self, authenticated_client, test_db, test_user_agent
+        self, authenticated_client, test_db, test_agent_type
     ):
         """Test creating an instance for agent with webhook."""
         # Set webhook configuration
-        test_user_agent.webhook_type = "DEFAULT"
-        test_user_agent.webhook_config = {"url": "https://example.com/webhook"}
+        test_agent_type.webhook_type = "DEFAULT"
+        test_agent_type.webhook_config = {"url": "https://example.com/webhook"}
         test_db.commit()
 
         # Mock the async webhook function
@@ -248,7 +248,7 @@ class TestUserAgentEndpoints:
             )
 
             response = authenticated_client.post(
-                f"/api/v1/user-agents/{test_user_agent.id}/instances",
+                f"/api/v1/user-agents/{test_agent_type.id}/instances",
                 json={"prompt": "Test prompt with webhook"},
             )
 
@@ -280,7 +280,7 @@ class TestUserAgentEndpoints:
         )
         test_db.add(other_user)
 
-        other_agent = UserAgent(
+        other_agent = AgentType(
             id=uuid4(),
             user_id=other_user.id,
             name="other agent",

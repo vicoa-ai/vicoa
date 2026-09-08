@@ -16,7 +16,7 @@ from shared.database import (
     Message,
     MessageAttachment,
     SenderType,
-    UserAgent,
+    AgentType,
 )
 from shared.websocket import (
     build_instance_update,
@@ -34,39 +34,39 @@ from fastmcp import Context
 logger = logging.getLogger(__name__)
 
 
-def create_or_get_user_agent(db: Session, name: str, user_id: str) -> UserAgent:
-    """Create or get a non-deleted user agent by name for a specific user"""
+def create_or_get_agent_type(db: Session, name: str, user_id: str) -> AgentType:
+    """Create or get a non-deleted agent type by name for a specific user"""
     # Normalize name to lowercase for consistent storage
     normalized_name = name.lower()
 
-    # Only look for non-deleted user agents
-    user_agent = (
-        db.query(UserAgent)
+    # Only look for non-deleted agent types
+    agent_type = (
+        db.query(AgentType)
         .filter(
-            UserAgent.name == normalized_name,
-            UserAgent.user_id == UUID(user_id),
-            UserAgent.is_deleted.is_(False),
+            AgentType.name == normalized_name,
+            AgentType.user_id == UUID(user_id),
+            AgentType.is_deleted.is_(False),
         )
         .first()
     )
-    if not user_agent:
-        user_agent = UserAgent(
+    if not agent_type:
+        agent_type = AgentType(
             name=normalized_name,
             user_id=UUID(user_id),
             is_active=True,
             is_deleted=False,  # Explicitly set to False for new agents
         )
-        db.add(user_agent)
-        db.flush()  # Flush to get the user_agent ID
-    return user_agent
+        db.add(agent_type)
+        db.flush()  # Flush to get the agent type ID
+    return agent_type
 
 
 def create_agent_instance(
-    db: Session, user_agent_id: UUID | None, user_id: str
+    db: Session, agent_type_id: UUID | None, user_id: str
 ) -> AgentInstance:
     """Create a new agent instance"""
     instance = AgentInstance(
-        user_agent_id=user_agent_id, user_id=UUID(user_id), status=AgentStatus.ACTIVE
+        agent_type_id=agent_type_id, user_id=UUID(user_id), status=AgentStatus.ACTIVE
     )
     db.add(instance)
     return instance
@@ -444,12 +444,12 @@ def get_or_create_agent_instance(
         if not agent_type:
             raise ValueError("agent_type is required when creating new instance")
 
-        agent_type_obj = create_or_get_user_agent(db, agent_type, user_id)
+        agent_type_obj = create_or_get_agent_type(db, agent_type, user_id)
 
         # Create instance with the specific ID
         instance = AgentInstance(
             id=UUID(agent_instance_id),
-            user_agent_id=agent_type_obj.id,
+            agent_type_id=agent_type_obj.id,
             user_id=UUID(user_id),
             status=AgentStatus.ACTIVE,
         )

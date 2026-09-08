@@ -26,7 +26,7 @@ from shared.database import (
     Project,
     Task,
     User,
-    UserAgent,
+    AgentType,
 )
 from shared.database.enums import AgentStatus, SenderType
 from shared.database.session import SessionLocal
@@ -78,9 +78,9 @@ def workspace() -> Iterator[dict]:
         # Flush parents before children — the messages↔agent_instances FK cycle
         # keeps SQLAlchemy from topologically sorting one big flush.
         db.flush()
-        db.add(UserAgent(id=agent_id, user_id=user_id, name=f"agent-{agent_id}"))
+        db.add(AgentType(id=agent_id, user_id=user_id, name=f"agent-{agent_id}"))
         db.add(
-            UserAgent(
+            AgentType(
                 id=other_agent_id, user_id=other_user_id, name=f"agent-{other_agent_id}"
             )
         )
@@ -102,7 +102,7 @@ def workspace() -> Iterator[dict]:
             db.add(
                 AgentInstance(
                     id=ids[key],
-                    user_agent_id=agent,
+                    agent_type_id=agent,
                     user_id=user,
                     name=name,
                     project=project,
@@ -230,7 +230,7 @@ def workspace() -> Iterator[dict]:
                 db.query(Task).filter(Task.user_id == user).delete()
                 db.query(Project).filter(Project.user_id == user).delete()
                 db.query(Machine).filter(Machine.user_id == user).delete()
-                db.query(UserAgent).filter(UserAgent.user_id == user).delete()
+                db.query(AgentType).filter(AgentType.user_id == user).delete()
                 db.query(User).filter(User.id == user).delete()
             db.commit()
 

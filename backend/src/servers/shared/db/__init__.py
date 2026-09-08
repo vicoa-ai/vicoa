@@ -3,7 +3,7 @@
 from .queries import (
     # Low-level functions
     create_agent_instance,
-    create_or_get_user_agent,
+    create_or_get_agent_type,
     create_agent_message,
     create_user_message,
     end_session,
@@ -26,7 +26,7 @@ from .queries import (
 __all__ = [
     # Low-level functions
     "create_agent_instance",
-    "create_or_get_user_agent",
+    "create_or_get_agent_type",
     "create_agent_message",
     "create_user_message",
     "end_session",
