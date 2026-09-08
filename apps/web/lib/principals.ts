@@ -40,9 +40,10 @@ export type Principal = {
  */
 export function principalAvatarSrc(principal: Principal | null | undefined): string | null {
   if (!principal?.id || !principal.avatarImageUri) return null;
-  if (principal.type !== 'user') return null; // teams/agents get images in P3/P1
+  if (principal.type === 'team') return null; // teams get images in P3
   const version = principal.updatedAt ? `?v=${encodeURIComponent(principal.updatedAt)}` : '';
-  return `/api/users/${principal.id}/avatar${version}`;
+  const base = principal.type === 'agent' ? 'agents' : 'users';
+  return `/api/${base}/${principal.id}/avatar${version}`;
 }
 
 /** Deterministic palette color for a principal (seeded by id, then name). */

@@ -29,6 +29,7 @@ import {
 import { BillingSettingsSection } from './billing-settings-section';
 import { OnboardingModal, ONBOARDING_KEY } from '@/components/dashboard/onboarding-modal';
 import { DesktopSettings } from '@/components/dashboard/desktop-settings';
+import { AgentsSettingsSection } from '@/components/dashboard/agents-settings-section';
 import { ProvidersSettingsSection } from '@/components/dashboard/providers-settings-section';
 import { MachinesSettingsSection } from '@/components/dashboard/machines-settings-section';
 import { ThemeSelect } from '@/components/plugins/theme-select';
@@ -59,6 +60,7 @@ type SupabaseUser = {
 const tabs = [
   { id: 'profile', label: 'Profile' },
   { id: 'appearance', label: 'Appearance' },
+  { id: 'agents', label: 'Agents' },
   { id: 'providers', label: 'Providers' },
   { id: 'machines', label: 'Machines' },
   { id: 'billing', label: 'Billing' },
@@ -410,6 +412,8 @@ function SettingsContent() {
                 </CardContent>
               </Card>
             )}
+
+            {activeTab === 'agents' && <AgentsSettingsSection />}
 
             {activeTab === 'providers' && <ProvidersSettingsSection />}
 

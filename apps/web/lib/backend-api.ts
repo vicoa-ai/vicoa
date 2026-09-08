@@ -37,6 +37,44 @@ export interface UserProfile {
   updated_at?: string | null;
 }
 
+/**
+ * A saved agent preset (collaboration P1): provider + model + config +
+ * instructions, with a name and an avatar. `config` is the verbatim
+ * `SessionConfig` shape, so it can be handed straight to `reconcileAgainst`.
+ */
+export interface AgentProfile {
+  id: string;
+  name: string;
+  description: string | null;
+  avatar_image_uri: string | null;
+  avatar_source: string | null;
+  color: string | null;
+  emoji: string | null;
+  agent: string;
+  config: Record<string, unknown>;
+  system_prompt: string | null;
+  default_machine_id: string | null;
+  default_project_id: string | null;
+  position: number;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentProfileInput {
+  name?: string;
+  agent?: string;
+  description?: string | null;
+  color?: string | null;
+  emoji?: string | null;
+  config?: Record<string, unknown>;
+  system_prompt?: string | null;
+  default_machine_id?: string | null;
+  default_project_id?: string | null;
+  position?: number;
+  is_archived?: boolean;
+}
+
 /** The avatar endpoints' payload. Deliberately carries no email — an avatar is
  *  the one identity field a shared surface renders. */
 export interface UserAvatar {
@@ -78,6 +116,13 @@ export interface AgentInstanceResponse {
   project_id?: string | null;
   home_dir?: string | null;
   pinned_at?: string | null;
+  /**
+   * Which agent profile started this session (collab P1) — provenance only, so
+   * the row can show that agent's name and avatar rather than a generic
+   * provider mark. Resolved client-side against the profile list the picker
+   * already holds; see lib/use-agent-profiles.ts.
+   */
+  agent_profile_id?: string | null;
   /** Host this session runs on. Null for legacy TUI-registered sessions. */
   machine_id?: string | null;
   last_heartbeat_at?: string | null;
@@ -209,6 +254,13 @@ export interface AgentInstanceDetail {
   home_dir?: string | null;
   pinned_at?: string | null;
   session_config?: Record<string, unknown> | null;
+  /**
+   * Which agent profile started this session (collab P1). PROVENANCE ONLY —
+   * `session_config` is what it's actually running, and the two legitimately
+   * diverge the moment the user switches model mid-session. Resolve the name
+   * and avatar from the profile list the picker already holds.
+   */
+  agent_profile_id?: string | null;
   instance_metadata?: SessionInstanceMetadata | null;
   machine_id?: string | null;
   last_heartbeat_at?: string | null;
@@ -503,6 +555,9 @@ export interface AutomationResponse {
   worktree: AutomationWorktree | null;
   /** SessionConfig shape (agent / model / effort / permission-mode). */
   session_config: Record<string, unknown>;
+  /** Live reference to a saved agent. When set, the scheduler resolves it at
+   *  dispatch and `session_config` above is only the fallback snapshot. */
+  agent_profile_id?: string | null;
   schedule_kind: AutomationScheduleKind;
   frequency: AutomationFrequency | null;
   timezone: string;
@@ -576,6 +631,7 @@ export interface CreateAutomationRequest {
   directory: string;
   worktree?: AutomationWorktree | null;
   session_config: Record<string, unknown>;
+  agent_profile_id?: string | null;
   schedule_kind: AutomationScheduleKind;
   /** One-time: absolute ISO instant (UTC-anchored). */
   run_at?: string | null;
@@ -592,6 +648,7 @@ export interface UpdateAutomationRequest {
   directory?: string;
   worktree?: AutomationWorktree | null;
   session_config?: Record<string, unknown>;
+  agent_profile_id?: string | null;
   schedule_kind?: AutomationScheduleKind;
   run_at?: string | null;
   frequency?: AutomationFrequency | null;
@@ -771,6 +828,66 @@ class BackendAPI {
   /** Drop the caller's avatar image → generated initials. */
   async deleteMyAvatar(): Promise<UserAvatar> {
     return this.request<UserAvatar>('/api/v1/me/avatar', { method: 'DELETE' });
+  }
+
+  // Agent profiles — the "Agents" the UI shows (collaboration P1). Not to be
+  // confused with agent *types* (`/api/v1/user-agents`), which mean "claude
+  // code" / "codex" and are auto-created per session.
+
+  async listAgentProfiles(includeArchived = false): Promise<AgentProfile[]> {
+    const query = includeArchived ? '?include_archived=true' : '';
+    return this.request<AgentProfile[]>(`/api/v1/agents${query}`);
+  }
+
+  async createAgentProfile(input: AgentProfileInput): Promise<AgentProfile> {
+    return this.request<AgentProfile>('/api/v1/agents', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  }
+
+  async updateAgentProfile(id: string, input: AgentProfileInput): Promise<AgentProfile> {
+    return this.request<AgentProfile>(`/api/v1/agents/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+  }
+
+  /** Hard delete. Returns how many automations referenced it — they keep running
+   *  off their fallback snapshot, so this is a warning, never a blocker. */
+  async deleteAgentProfile(id: string): Promise<{ id: string; automations_affected: number }> {
+    return this.request<{ id: string; automations_affected: number }>(
+      `/api/v1/agents/${id}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async uploadAgentProfileAvatar(id: string, file: File | Blob): Promise<AgentProfile> {
+    const headers = await this.getHeaders();
+    // Let the browser set the multipart boundary; a fixed JSON type breaks it.
+    delete headers['Content-Type'];
+    const form = new FormData();
+    form.append('file', file);
+    const response = await fetch(`${this.config.baseUrl}/api/v1/agents/${id}/avatar`, {
+      method: 'PUT',
+      headers,
+      body: form,
+    });
+    if (!response.ok) {
+      let message = `Backend API error: ${response.status} ${response.statusText}`;
+      try {
+        const body = await response.json();
+        if (typeof body?.detail === 'string' && body.detail.trim()) message = body.detail;
+      } catch {
+        // fall back to the generic HTTP error
+      }
+      throw Object.assign(new Error(message), { status: response.status });
+    }
+    return response.json();
+  }
+
+  async deleteAgentProfileAvatar(id: string): Promise<AgentProfile> {
+    return this.request<AgentProfile>(`/api/v1/agents/${id}/avatar`, { method: 'DELETE' });
   }
 
   // API Key management
@@ -1056,7 +1173,15 @@ class BackendAPI {
 
   async spawnRemoteSession(
     machineId: string,
-    request: { directory: string; agent?: RemoteAgentType; prompt?: string; metadata?: Record<string, unknown> }
+    request: {
+      directory: string;
+      agent?: RemoteAgentType;
+      prompt?: string;
+      metadata?: Record<string, unknown>;
+      /** Records provenance on the session AND is what the server reads the
+       *  profile's instructions from — they are never sent in `metadata`. */
+      agent_profile_id?: string | null;
+    }
   ): Promise<SpawnRemoteSessionResponse> {
     const { metadata, ...rest } = request;
     return this.request<SpawnRemoteSessionResponse>(

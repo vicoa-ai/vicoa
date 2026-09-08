@@ -45,6 +45,7 @@ import {
 } from '@/lib/desktop-cli';
 import { DRAG_REGION } from '@/lib/app-region';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { AgentsSettingsSection } from '@/components/dashboard/agents-settings-section';
 import { UserAvatarEditor } from '@/components/dashboard/user-avatar-editor';
 import type { UserProfile } from '@/lib/backend-api';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
@@ -98,6 +99,8 @@ export function DesktopSettings() {
             <AppearanceSection />
           ) : tab === 'profile' ? (
             <ProfileSection />
+          ) : tab === 'agents' ? (
+            <AgentsSection />
           ) : tab === 'providers' ? (
             <ProvidersSettingsSection />
           ) : tab === 'machines' ? (
@@ -399,6 +402,18 @@ const NOTIFICATION_MODE_LABELS: Record<NotificationMode, string> = {
 
 /** Appearance tab: theme selection (base modes + plugin themes). Its own tab so
  *  it has room to grow (e.g. accent tint, density) beyond the single Theme row. */
+function AgentsSection() {
+  return (
+    <section>
+      <SectionTitle>Agents</SectionTitle>
+      <div className="mt-8">
+        <AgentsSettingsSection />
+      </div>
+    </section>
+  );
+}
+
+
 function AppearanceSection() {
   return (
     <section>

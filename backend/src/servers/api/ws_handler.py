@@ -56,6 +56,8 @@ from servers.shared.db.queries import (
     fetch_user_instances,
     fetch_user_machines,
     push_recent_directory_after_spawn,
+    resolve_spawn_agent_profile,
+    stamp_instance_agent_profile,
 )
 
 logger = logging.getLogger(__name__)
@@ -320,6 +322,30 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
     machine_id = str(frame.get("machine_id"))
     method = str(frame.get("method"))
     params = frame.get("params") or {}
+    # An agent profile's instructions are resolved from its id HERE, server-side
+    # and scoped to the caller, and written into the metadata the daemon is about
+    # to receive — never taken from what the client sent, so a hand-crafted
+    # `system_prompt` cannot ride along and the two can never disagree.
+    agent_profile: dict | None = None
+    if method == "spawn-session" and isinstance(params, dict):
+        raw_profile_id = params.pop("agent_profile_id", None)
+        if isinstance(raw_profile_id, str) and raw_profile_id:
+            agent_profile = await asyncio.to_thread(
+                resolve_spawn_agent_profile, conn.user_id, raw_profile_id
+            )
+        metadata = params.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata.pop("system_prompt", None)
+        # Provider is identity: a profile whose agent no longer matches what is
+        # being spawned is not this session's agent, so nothing of it follows.
+        if agent_profile and agent_profile["agent"] != params.get("agent"):
+            agent_profile = None
+        if agent_profile and (agent_profile["system_prompt"] or "").strip():
+            metadata["system_prompt"] = agent_profile["system_prompt"]
+        if metadata:
+            params["metadata"] = metadata
+
     try:
         result = await rpc_router.call(conn.user_id, machine_id, method, params)
         conn.enqueue({"type": "rpc-result", "request_id": request_id, "result": result})
@@ -342,6 +368,13 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
                     logger.exception(
                         "failed to update recent_directories after spawn-session"
                     )
+            instance_id = result.get("agent_instance_id")
+            if agent_profile and isinstance(instance_id, str) and instance_id:
+                asyncio.create_task(
+                    _stamp_agent_profile_when_registered(
+                        conn.user_id, instance_id, agent_profile["id"]
+                    )
+                )
     except RpcError as exc:
         if exc.code == "no_handler":
             logger.warning(
@@ -352,6 +385,35 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
                 method,
             )
         conn.enqueue({"type": "rpc-error", "request_id": request_id, "code": exc.code})
+
+
+async def _stamp_agent_profile_when_registered(
+    user_id: str, instance_id: str, agent_profile_id: str
+) -> None:
+    """Record the session's originating agent profile once its row exists.
+
+    The daemon mints the instance id locally and returns it immediately; the row
+    itself only appears when the wrapper registers a moment later, so a write
+    inside the spawn would race it. Same bounded-wait shape the automation
+    sweeper uses to link a run to its instance.
+
+    Purely cosmetic — it decides whether the session shows the profile's name and
+    avatar instead of a generic provider icon — so every failure is silent.
+    """
+    for delay in (0.5, 1.0, 2.0, 4.0, 8.0):
+        try:
+            if await asyncio.to_thread(
+                stamp_instance_agent_profile, user_id, instance_id, agent_profile_id
+            ):
+                return
+        except Exception:  # noqa: BLE001 — provenance must never break a spawn
+            logger.exception("failed to stamp agent_profile_id on %s", instance_id)
+            return
+        await asyncio.sleep(delay)
+    logger.info(
+        "instance %s never registered; agent profile provenance not recorded",
+        instance_id,
+    )
 
 
 async def _serve_connection(websocket: WebSocket, conn: Connection) -> None:

@@ -21,10 +21,12 @@ import {
   X,
 } from 'lucide-react';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
-import type { MachineSummary, ProjectResponse, TaskResponse } from '@/lib/backend-api';
+import type { AgentProfile, MachineSummary, ProjectResponse, TaskResponse } from '@/lib/backend-api';
 import { TaskPickerPopover } from '@/components/dashboard/task-picker-popover';
 import { MentionTextarea } from '@/components/mention-textarea';
 import { AgentTypeIcon, getAgentLogoSrc } from '@/components/dashboard/agent-type-icon';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { agentProfileBlockedReason } from '@/lib/use-agent-profiles';
 import { ChipDropdown, ModeIcon, TickItem, modelListWidthClass, modelSublabel } from '@/components/dashboard/session-config-dropdown';
 import { rpcGitStatus } from '@/components/files-git-panel/rpc';
 import { FilesGitPanel, FilesGitPanelToggle, usePanelState } from '@/components/files-git-panel';
@@ -343,6 +345,11 @@ function NewSessionContent() {
   const [catalog, setCatalog] = useState<AgentCatalog>(AGENT_CATALOG_FALLBACK);
   const [perAgentConfigs, setPerAgentConfigs] = useState<Record<string, SessionConfig>>({});
   const [activeAgent, setActiveAgent] = useState<string>('claude');
+  // Saved agent presets (collab P1). Empty for most users, and the picker then
+  // renders exactly as it did before — the "My agents" section only appears
+  // once there is something to put in it.
+  const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   // Selected machine's cached real per-agent model lists, fetched lazily so the
   // picker can show actual models instead of catalog placeholders.
   const [cachedAgentModels, setCachedAgentModels] = useState<Record<string, { id: string; label: string }[]>>({});
@@ -433,6 +440,10 @@ function NewSessionContent() {
   );
 
   const sessionConfig: SessionConfig = perAgentConfigs[activeAgent] ?? defaultsFor(effectiveCatalog, activeAgent);
+  const selectedProfile = useMemo(
+    () => agentProfiles.find((p) => p.id === selectedProfileId) ?? null,
+    [agentProfiles, selectedProfileId],
+  );
   // Map the (possibly ACP) selected agent onto the three command-bearing types.
   const slashAgentType: AgentType =
     sessionConfig.agent === 'codex' ? 'codex' : sessionConfig.agent === 'opencode' ? 'opencode' : 'claude';
@@ -533,6 +544,15 @@ function NewSessionContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    api.listAgentProfiles()
+      .then((list) => { if (!cancelled) setAgentProfiles(list); })
+      .catch(() => { /* presets are additive; the picker works without them */ });
+    return () => { cancelled = true; };
+  }, [api]);
+
   // Background catalog fetch — reconcile per-agent configs against the live
   // catalog when it arrives so opt_in additions and label changes propagate.
   useEffect(() => {
@@ -614,12 +634,33 @@ function NewSessionContent() {
   // Switching agents is a different shape: the new agent has its own
   // remembered config, so just flip the active key.
   const switchAgent = useCallback((nextAgentId: string) => {
+    // Picking a raw provider clears any selected preset: the provider is part of
+    // an agent's identity (unlike model/effort, which stay editable within it),
+    // so a profile whose agent no longer matches is no longer what's running.
+    setSelectedProfileId(null);
     setActiveAgent(nextAgentId);
     setPerAgentConfigs((prev) => {
       if (prev[nextAgentId]) return prev;
       return { ...prev, [nextAgentId]: defaultsFor(effectiveCatalog, nextAgentId) };
     });
     persistSelection({ agent: nextAgentId });
+  }, [effectiveCatalog, persistSelection]);
+
+  /**
+   * Apply a saved agent: its config lands in the ordinary per-agent config, so
+   * every chip below stays live and the user can tweak one field without
+   * "leaving" the preset. A preset is a shortcut, never a cage.
+   */
+  const applyAgentProfile = useCallback((profile: AgentProfile) => {
+    const next = reconcileAgainst(
+      { ...(profile.config as unknown as SessionConfig), agent: profile.agent },
+      effectiveCatalog,
+    );
+    setActiveAgent(profile.agent);
+    setPerAgentConfigs((prev) => ({ ...prev, [profile.agent]: next }));
+    setSelectedProfileId(profile.id);
+    if (profile.default_machine_id) setSelectedMachineId(profile.default_machine_id);
+    persistSelection({ agent: profile.agent });
   }, [effectiveCatalog, persistSelection]);
 
   // Select/clear the task chip and persist the choice. Marking restoredTaskIdRef
@@ -1228,6 +1269,21 @@ function NewSessionContent() {
   const handleSubmit = useCallback(async () => {
     if (!api || !selectedMachineId || !directory.trim() || isSubmitting) return;
 
+    // The picker greys out profiles an out-of-date machine can't carry, but the
+    // machine can be switched *after* one is chosen. Refuse rather than spawn an
+    // agent that silently loses its instructions.
+    if (selectedProfile) {
+      const machineForProfile = machines.find((m) => m.machine_id === selectedMachineId);
+      const blocked = agentProfileBlockedReason(
+        selectedProfile,
+        (machineForProfile?.metadata as { cli_version?: string } | null)?.cli_version,
+      );
+      if (blocked) {
+        setErrorMessage(blocked);
+        return;
+      }
+    }
+
     // Where the user launched from. Spawning is async (RPC + waitForEntity), and
     // if they navigate away before it finishes we must not yank them to the new
     // session — see openCreatedSession below.
@@ -1284,6 +1340,9 @@ function NewSessionContent() {
           directory: spawn.directory,
           agent: sessionConfig.agent,
           metadata,
+          // The server resolves the profile's instructions from this id — they
+          // are deliberately never sent in `metadata`.
+          ...(selectedProfileId ? { agent_profile_id: selectedProfileId } : {}),
           ...(spawn.worktree ? { worktree: spawn.worktree } : {}),
         },
       );
@@ -1419,7 +1478,7 @@ function NewSessionContent() {
       setErrorMessage(message);
       setIsSubmitting(false);
     }
-  }, [api, selectedMachineId, directory, sessionConfig, prompt, selectedTask, subtasks, pendingImages, pendingFolderRefs, forkContext, machines, isSubmitting, worktreeMode, selectedWorktreePath, persistSelection, refreshData, router]);
+  }, [api, selectedMachineId, directory, sessionConfig, prompt, selectedTask, subtasks, pendingImages, pendingFolderRefs, forkContext, machines, isSubmitting, worktreeMode, selectedWorktreePath, selectedProfile, selectedProfileId, persistSelection, refreshData, router]);
 
   // Insert the highlighted command into the prompt (vs. the chat input, which
   // sends immediately — starting a session is heavier, so we let the user
@@ -1930,26 +1989,88 @@ function NewSessionContent() {
                       title="Agent"
                       contentClassName="w-52"
                       chip={
-                        <>
-                          <AgentTypeIcon agentTypeName={sessionConfig.agent} size={12} whiteForOpenAI />
-                          <span className="min-w-0 truncate">
-                            {agentEntries.find((a) => a.id === sessionConfig.agent)?.label ?? sessionConfig.agent}
-                          </span>
-                        </>
+                        selectedProfile ? (
+                          <>
+                            <PrincipalAvatar
+                              principal={{
+                                type: 'agent',
+                                id: selectedProfile.id,
+                                name: selectedProfile.name,
+                                avatarImageUri: selectedProfile.avatar_image_uri,
+                                updatedAt: selectedProfile.updated_at,
+                              }}
+                              size="xs"
+                            />
+                            <span className="min-w-0 truncate">{selectedProfile.name}</span>
+                          </>
+                        ) : (
+                          <>
+                            <AgentTypeIcon agentTypeName={sessionConfig.agent} size={12} whiteForOpenAI />
+                            <span className="min-w-0 truncate">
+                              {agentEntries.find((a) => a.id === sessionConfig.agent)?.label ?? sessionConfig.agent}
+                            </span>
+                          </>
+                        )
                       }
                     >
-                      {(close) =>
-                        agentEntries.map((a) => (
-                          <TickItem
-                            key={a.id}
-                            label={a.label}
-                            leading={<AgentTypeIcon agentTypeName={a.id} size={12} whiteForOpenAI />}
-                            isSelected={a.id === sessionConfig.agent}
-                            isPending={false}
-                            onClick={() => { switchAgent(a.id); close(); }}
-                          />
-                        ))
-                      }
+                      {(close) => (
+                        <>
+                          {/* Saved presets first, then the raw providers. The
+                              section only renders when the user has agents, so
+                              nobody pays for a feature they haven't used. */}
+                          {agentProfiles.length > 0 && (
+                            <>
+                              <div className="px-2 pt-1 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                My agents
+                              </div>
+                              {agentProfiles.map((profile) => {
+                                // Instructions need a daemon new enough to carry
+                                // them; an older one drops the metadata silently,
+                                // so offer the profile as unavailable rather than
+                                // let it spawn a quietly de-fanged agent.
+                                const blocked = agentProfileBlockedReason(
+                                  profile,
+                                  (currentMachine?.metadata as { cli_version?: string } | null)?.cli_version,
+                                );
+                                return (
+                                <TickItem
+                                  key={profile.id}
+                                  label={profile.name}
+                                  sublabel={blocked ? 'Update required' : undefined}
+                                  disabled={!!blocked}
+                                  leading={
+                                    <PrincipalAvatar
+                                      principal={{
+                                        type: 'agent',
+                                        id: profile.id,
+                                        name: profile.name,
+                                        avatarImageUri: profile.avatar_image_uri,
+                                        updatedAt: profile.updated_at,
+                                      }}
+                                      size="xs"
+                                    />
+                                  }
+                                  isSelected={profile.id === selectedProfileId}
+                                  isPending={false}
+                                  onClick={() => { applyAgentProfile(profile); close(); }}
+                                />
+                                );
+                              })}
+                              <div className="my-1 h-px bg-border" />
+                            </>
+                          )}
+                          {agentEntries.map((a) => (
+                            <TickItem
+                              key={a.id}
+                              label={a.label}
+                              leading={<AgentTypeIcon agentTypeName={a.id} size={12} whiteForOpenAI />}
+                              isSelected={!selectedProfileId && a.id === sessionConfig.agent}
+                              isPending={false}
+                              onClick={() => { switchAgent(a.id); close(); }}
+                            />
+                          ))}
+                        </>
+                      )}
                     </ChipDropdown>
                     {modelEntries && modelEntries.length > 0 && (
                       <ChipDropdown

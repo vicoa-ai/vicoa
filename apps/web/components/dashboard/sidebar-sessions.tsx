@@ -33,6 +33,8 @@ import { cn } from '@/lib/utils';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { useSessionOperations, useCopyToClipboard } from '@/lib/hooks/use-session-operations';
 import { AgentTypeIcon } from '@/components/dashboard/agent-type-icon';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { agentPrincipal, useAgentProfiles } from '@/lib/use-agent-profiles';
 import { SnakeLoader } from '@/components/dashboard/snake-loader';
 import {
   SessionActionsMenu,
@@ -772,6 +774,8 @@ export function SidebarSessions({
     if (container.scrollHeight <= container.clientHeight + 120) void loadMoreInstances();
   }, [enableInfiniteScroll, hasMoreInstances, isLoading, isLoadingMoreInstances, loadMoreInstances, recentInstances.length]);
 
+  const { byId: agentProfilesById } = useAgentProfiles();
+
   const renderSession = useCallback((instance: AgentInstanceResponse) => {
     const isSelected = instance.id === selectedInstanceId;
     const isNavigating = navigatingId === instance.id;
@@ -790,6 +794,9 @@ export function SidebarSessions({
     const title = getSessionTitle(instance);
     const time = formatSidebarTime(instance);
     const resumeReason = resumeBlockedReason(instance, liveState);
+    const rowAgentProfile = instance.agent_profile_id
+      ? (agentProfilesById.get(instance.agent_profile_id) ?? null)
+      : null;
 
     // One config drives both the hover three-dot (SessionActionsMenu) and the
     // right-click context menu below, so the two menus can never list different
@@ -849,10 +856,16 @@ export function SidebarSessions({
                 <SnakeLoader size={13} />
               ) : (
                 <span className="relative flex-shrink-0 flex items-center">
-                  <AgentTypeIcon
-                    agentTypeName={instance.agent_type_name ?? null}
-                    whiteForOpenAI
-                  />
+                  {/* A session started from a saved agent wears that agent's
+                      face instead of the generic provider mark (collab P1). */}
+                  {rowAgentProfile ? (
+                    <PrincipalAvatar principal={agentPrincipal(rowAgentProfile)} size="xs" />
+                  ) : (
+                    <AgentTypeIcon
+                      agentTypeName={instance.agent_type_name ?? null}
+                      whiteForOpenAI
+                    />
+                  )}
                   {stopped && !done && (
                     <span
                       className="absolute -right-0.5 -bottom-0.5 size-2 rounded-full bg-muted-foreground/50 ring-1 ring-background"

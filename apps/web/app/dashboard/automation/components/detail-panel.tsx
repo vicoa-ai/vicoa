@@ -16,6 +16,7 @@ import {
   type SessionConfig,
 } from '@/lib/agent-catalog';
 import type {
+  AgentProfile,
   AutomationResponse,
   getBackendAPI,
   MachineSummary,
@@ -72,6 +73,11 @@ export function DetailPanel({
   const [sessionConfig, setSessionConfig] = useState<SessionConfig>(() =>
     defaultsFor(catalog, 'claude'),
   );
+  // Live reference to a saved agent (collab P1). Unlike a session — which can
+  // only ever snapshot, being already running — an automation resolves its
+  // agent at dispatch, so editing the agent changes what the next run does.
+  const [agentProfileId, setAgentProfileId] = useState<string | null>(null);
+  const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
   const [schedule, setSchedule] = useState<ScheduleDraft>(() => defaultScheduleDraft());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +101,7 @@ export function DetailPanel({
       setSessionConfig(
         reconcileAgainst(automation.session_config as unknown as SessionConfig, catalog),
       );
+      setAgentProfileId(automation.agent_profile_id ?? null);
       setSchedule(automationToDraft(automation));
     } else {
       // A template may already know a machine/directory (e.g. seeded from a
@@ -112,6 +119,7 @@ export function DetailPanel({
       );
       setWorktree({ mode: 'none', path: null });
       setSessionConfig(defaultsFor(catalog, 'claude'));
+      setAgentProfileId(null);
       setSchedule(
         template?.schedule
           ? { ...defaultScheduleDraft(), ...template.schedule }
@@ -120,6 +128,14 @@ export function DetailPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [automation?.id, template?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.listAgentProfiles()
+      .then((list) => { if (!cancelled) setAgentProfiles(list); })
+      .catch(() => { /* additive: the free-form chips work without presets */ });
+    return () => { cancelled = true; };
+  }, [api]);
 
   // Every user edit marks the form dirty; `touch` wraps a setter to do so.
   const touch = <T,>(fn: (v: T) => void) => (v: T) => {
@@ -170,7 +186,11 @@ export function DetailPanel({
       machine_id: machineId,
       directory: directory.trim(),
       worktree: { mode: worktree.mode, path: worktree.path },
+      // Always sent, even when a profile is referenced: it doubles as the
+      // fallback snapshot the scheduler runs off if the profile is later
+      // archived or deleted, so a 3am run is never left without a config.
       session_config: sessionConfig as unknown as Record<string, unknown>,
+      agent_profile_id: agentProfileId,
       ...draftToScheduleApi(schedule),
     };
     try {
@@ -250,6 +270,21 @@ export function DetailPanel({
           onWorktreeChange={touch(setWorktree)}
           sessionConfig={sessionConfig}
           onSessionConfigChange={touch(setSessionConfig)}
+          agentProfiles={agentProfiles}
+          agentProfileId={agentProfileId}
+          onAgentProfileChange={touch((profile: AgentProfile | null) => {
+            setAgentProfileId(profile?.id ?? null);
+            // Mirror the resolved config into the fallback snapshot right away,
+            // so what the user sees is what a run would use if the link broke.
+            if (profile) {
+              setSessionConfig(
+                reconcileAgainst(
+                  { ...(profile.config as unknown as SessionConfig), agent: profile.agent },
+                  catalog,
+                ),
+              );
+            }
+          })}
           catalog={catalog}
         />
 
