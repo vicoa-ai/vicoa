@@ -1,7 +1,7 @@
 'use client';
 
 import type React from 'react';
-import { Archive, Check, CirclePlay, Copy, Mail, MoreVertical, Pencil, Pin, PinOff, Trash2, type LucideIcon } from 'lucide-react';
+import { Archive, Check, CirclePlay, Copy, Mail, MoreHorizontal, Pencil, Pin, PinOff, Trash2, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -144,22 +144,22 @@ type SessionActionsMenuProps = SessionActionsConfig & {
   className?: string;
   iconClassName?: string;
   contentClassName?: string;
-  /** Extra items rendered above the standard actions, separated from them.
+  /** Extra items rendered below the standard actions, separated from them.
       Dropdown-only: the sidebar's context-menu variant builds from
       `buildSessionActions` and can't host DropdownMenu children. Used by the
       session header for the "Open in ▸" submenu. */
-  leadingItems?: React.ReactNode;
+  trailingItems?: React.ReactNode;
 };
 
 export function SessionActionsMenu({
   className,
   iconClassName,
   contentClassName,
-  leadingItems,
+  trailingItems,
   ...config
 }: SessionActionsMenuProps) {
   const actions = buildSessionActions(config);
-  if (actions.length === 0 && !leadingItems) {
+  if (actions.length === 0 && !trailingItems) {
     return null;
   }
 
@@ -171,12 +171,10 @@ export function SessionActionsMenu({
           size="sm"
           className={className ?? 'h-6 w-6 p-0'}
         >
-          <MoreVertical className={iconClassName ?? 'h-3 w-3'} />
+          <MoreHorizontal className={iconClassName ?? 'h-3 w-3'} />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className={contentClassName ?? 'font-mono'}>
-        {leadingItems}
-        {leadingItems && actions.length > 0 && <DropdownMenuSeparator />}
         {actions.map((action) => (
           <DropdownMenuItem
             key={action.key}
@@ -188,6 +186,8 @@ export function SessionActionsMenu({
             <SessionActionItemContent action={action} />
           </DropdownMenuItem>
         ))}
+        {trailingItems && actions.length > 0 && <DropdownMenuSeparator />}
+        {trailingItems}
       </DropdownMenuContent>
     </DropdownMenu>
   );

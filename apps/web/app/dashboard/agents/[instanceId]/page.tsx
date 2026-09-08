@@ -2238,7 +2238,7 @@ function AgentInstanceContent() {
                   files panel keeps a top-level "Open in" because there the
                   target is the file on screen. */}
               <SessionActionsMenu
-                leadingItems={
+                trailingItems={
                   <OpenInSubMenu
                     machineId={instance.machine_id ?? null}
                     cwd={instance.project ?? null}
