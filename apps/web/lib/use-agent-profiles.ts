@@ -44,34 +44,19 @@ export function agentPrincipal(profile: AgentProfile): Principal {
 }
 
 /**
- * Minimum daemon version that understands `system_prompt` in spawn metadata.
- * Mirrors `MIN_DAEMON_VERSION_FOR_SYSTEM_PROMPT` in
- * `backend/src/protocol/system_prompt.py`; kept in sync by hand, like the CLI's
- * copy of the task vocabulary.
+ * Whether a machine's daemon forwards `system_prompt` to the agent, read from
+ * the `capabilities` list it publishes in `metadata` — the same feature-detect
+ * mechanism `machineSupportsWorktree` and the Files/Git panels already use.
  *
- * The gate exists because an old daemon drops metadata it doesn't recognise
- * *silently*: the agent would spawn with none of its instructions while the UI
- * went on showing the profile's name, and the user would just experience it as
- * "this agent doesn't listen".
+ * Capability, not version number: the daemon declares what it can actually do,
+ * so this needs no release number to be predicted or kept in sync, and a
+ * developer running the daemon from source gets the right answer immediately.
  */
-export const MIN_DAEMON_VERSION_FOR_SYSTEM_PROMPT = '1.7.20';
-
-/** `a >= b` over dotted numeric versions; unparseable input compares as older. */
-function versionAtLeast(a: string, b: string): boolean {
-  const parse = (v: string) =>
-    v
-      .trim()
-      .split('.')
-      .map((part) => Number.parseInt(part, 10));
-  const left = parse(a);
-  const right = parse(b);
-  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
-    const l = left[i];
-    const r = right[i] ?? 0;
-    if (!Number.isFinite(l)) return false;
-    if (l !== r) return l > r;
-  }
-  return true;
+function machineSupportsSystemPrompt(
+  machine: { metadata?: Record<string, unknown> | null } | null | undefined,
+): boolean {
+  const caps = machine?.metadata?.capabilities;
+  return Array.isArray(caps) && caps.some((c) => String(c) === 'system-prompt');
 }
 
 /**
@@ -79,17 +64,15 @@ function versionAtLeast(a: string, b: string): boolean {
  *
  * Only instructions are gated — a profile that is just a model/config preset
  * works on any daemon, so the check is skipped entirely when `system_prompt` is
- * empty. An unknown version (a machine that never reported one) is treated as
- * too old: failing closed here costs a nudge to update, while failing open
- * costs a silently de-fanged agent.
+ * empty. A daemon that doesn't advertise the capability is treated as unable:
+ * failing closed costs a nudge to update, while failing open costs a silently
+ * de-fanged agent, which is the harder failure to diagnose.
  */
 export function agentProfileBlockedReason(
   profile: AgentProfile,
-  machineCliVersion: string | null | undefined,
+  machine: { metadata?: Record<string, unknown> | null } | null | undefined,
 ): string | null {
   if (!(profile.system_prompt || '').trim()) return null;
-  if (machineCliVersion && versionAtLeast(machineCliVersion, MIN_DAEMON_VERSION_FOR_SYSTEM_PROMPT)) {
-    return null;
-  }
-  return `Update Vicoa on this machine to ${MIN_DAEMON_VERSION_FOR_SYSTEM_PROMPT} or later to use custom instructions.`;
+  if (machineSupportsSystemPrompt(machine)) return null;
+  return 'Update Vicoa on this machine to use an agent with custom instructions.';
 }

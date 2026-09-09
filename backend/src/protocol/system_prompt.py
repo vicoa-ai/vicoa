@@ -1,7 +1,7 @@
 """How an agent profile's ``system_prompt`` reaches each agent (collaboration P1).
 
 One enum, one per-agent table, and **this is the only place the decision exists**.
-Everything else — the daemon, the wrappers, the version gate — asks this module
+Everything else — the daemon, the wrappers, the capability gate — asks this module
 rather than branching on the agent id itself. Modelled on ``block/buzz``'s
 ``SystemPromptTransport`` (`crates/buzz-acp/src/acp.rs`); the shape generalises
 multica's boolean ``providerNeedsInlineSystemPrompt``.
@@ -76,12 +76,17 @@ CLI_FLAG_BY_AGENT: dict[str, str] = {
     "omp": "--append-system-prompt",
 }
 
-#: Minimum daemon version that understands ``system_prompt`` in spawn metadata.
-#: Older daemons drop unknown metadata **silently**, which would spawn an agent
-#: with no instructions while the UI still shows the profile's name — so clients
-#: gate on this and refuse to offer such a profile for an out-of-date machine,
-#: exactly as the catalog's ``min_cli_version`` gates the pickers.
-MIN_DAEMON_VERSION_FOR_SYSTEM_PROMPT = "1.7.20"
+#: Capability flag the daemon publishes in its registration metadata so clients
+#: can feature-detect this (``machine_daemon._capabilities``). Gating on a
+#: declared capability rather than a version number is what the rest of the app
+#: already does (``worktree``, ``file-index``, ``terminal``, …): the daemon says
+#: what it can actually do, so nothing has to predict a release number and a
+#: daemon run from source reports the truth immediately.
+#:
+#: It matters here more than for most flags because an old daemon drops unknown
+#: metadata *silently* — without the check an agent would spawn with none of its
+#: instructions while the UI still showed the profile's name.
+SYSTEM_PROMPT_CAPABILITY = "system-prompt"
 
 
 def transport_for(agent: str) -> SystemPromptTransport:

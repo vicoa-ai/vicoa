@@ -1274,10 +1274,7 @@ function NewSessionContent() {
     // agent that silently loses its instructions.
     if (selectedProfile) {
       const machineForProfile = machines.find((m) => m.machine_id === selectedMachineId);
-      const blocked = agentProfileBlockedReason(
-        selectedProfile,
-        (machineForProfile?.metadata as { cli_version?: string } | null)?.cli_version,
-      );
+      const blocked = agentProfileBlockedReason(selectedProfile, machineForProfile);
       if (blocked) {
         setErrorMessage(blocked);
         return;
@@ -2028,10 +2025,7 @@ function NewSessionContent() {
                                 // them; an older one drops the metadata silently,
                                 // so offer the profile as unavailable rather than
                                 // let it spawn a quietly de-fanged agent.
-                                const blocked = agentProfileBlockedReason(
-                                  profile,
-                                  (currentMachine?.metadata as { cli_version?: string } | null)?.cli_version,
-                                );
+                                const blocked = agentProfileBlockedReason(profile, currentMachine);
                                 return (
                                 <TickItem
                                   key={profile.id}
