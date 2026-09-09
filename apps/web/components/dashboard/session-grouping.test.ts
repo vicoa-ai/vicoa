@@ -32,6 +32,7 @@ const make = (over: Partial<AgentInstanceResponse>): AgentInstanceResponse => ({
 
 const proj = (over: Partial<ProjectResponse> & { id: string }): ProjectResponse => ({
   name: over.id,
+  key: null,
   git_remote_url: null,
   color: null,
   icon: null,

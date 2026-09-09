@@ -420,6 +420,13 @@ export interface ProjectDirectory {
 export interface ProjectResponse {
   id: string;
   name: string;
+  /**
+   * Task-identifier prefix — "VIC" makes this project's tasks read "VIC-42".
+   * Auto-derived on the project's first task, so it is null for a project that
+   * has never held one. Editable in project settings; unique within the owner,
+   * never globally.
+   */
+  key: string | null;
   git_remote_url: string | null;
   color: string | null;
   icon: string | null;
@@ -448,20 +455,86 @@ export interface TaskLabelResponse {
   color: string;
 }
 
+/** A user or an agent, in the one shape `<PrincipalAvatar>` renders. */
+export interface PrincipalResponse {
+  type: 'user' | 'agent' | 'system';
+  id: string | null;
+  name: string | null;
+  avatar_image_uri: string | null;
+  emoji: string | null;
+  updated_at: string | null;
+}
+
 export interface TaskResponse {
   id: string;
   project_id: string;
+  /** Per-project sequential number; null for a task that predates the backfill. */
+  number: number | null;
+  /** "VIC-42" — null when the project has no key or the task has no number. */
+  identifier: string | null;
   title: string;
   description: string | null;
   status: TaskStatus;
   priority: TaskPriority;
   position: number;
   parent_task_id: string | null;
+  /** Denormalized so a sub-task can say "Part of: <title>" without a refetch. */
+  parent_title: string | null;
+  assignee_type: 'user' | 'agent' | null;
+  assignee_id: string | null;
+  assignee: PrincipalResponse | null;
   labels: TaskLabelResponse[];
   start_date: string | null;
   due_date: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface TaskReactionSummary {
+  emoji: string;
+  count: number;
+  /** Whether the signed-in user is one of them — drives the pill's filled state. */
+  reacted: boolean;
+  /**
+   * Who reacted, oldest first, capped server-side. `count` is the true total,
+   * so "and N others" is the difference.
+   */
+  reactors: PrincipalResponse[];
+}
+
+export interface TaskCommentResponse {
+  id: string;
+  task_id: string;
+  /**
+   * The root this comment answers, or null when it is one. Threads are one
+   * level deep, so this always names a root — never another reply. The list
+   * arrives in thread order: each root immediately followed by its replies.
+   */
+  parent_comment_id: string | null;
+  author: PrincipalResponse;
+  /** null once soft-deleted; render a tombstone, not an empty comment. */
+  body: string | null;
+  kind: 'comment' | 'system';
+  reactions: TaskReactionSummary[];
+  created_at: string;
+  edited_at: string | null;
+  deleted_at: string | null;
+}
+
+export interface TaskActivityResponse {
+  id: string;
+  /** null when the change had no request context (a background sweep). */
+  actor: PrincipalResponse | null;
+  action: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface TaskTimelineResponse {
+  comments: TaskCommentResponse[];
+  activity: TaskActivityResponse[];
+  /** Reactions on the task itself, not on any comment. */
+  reactions: TaskReactionSummary[];
 }
 
 export interface CreateProjectRequest {
@@ -504,6 +577,9 @@ export interface UpdateTaskRequest {
   label_ids?: string[];
   start_date?: string | null;
   due_date?: string | null;
+  /** The pair moves together — the backend rejects one without the other. */
+  assignee_type?: 'user' | 'agent' | null;
+  assignee_id?: string | null;
 }
 
 export interface CreateTaskLabelRequest {
@@ -1407,6 +1483,58 @@ class BackendAPI {
   /** Agent sessions started from this task, most recent first. */
   async listTaskSessions(taskId: string): Promise<AgentInstanceResponse[]> {
     return this.request<AgentInstanceResponse[]>(`/api/v1/tasks/${taskId}/sessions`);
+  }
+
+  /** Comments + activity in one round trip (no WS channel for tasks). */
+  async getTaskTimeline(taskId: string): Promise<TaskTimelineResponse> {
+    return this.request<TaskTimelineResponse>(`/api/v1/tasks/${taskId}/timeline`);
+  }
+
+  // Every mutation below answers with the whole timeline: the caller was going
+  // to revalidate anyway, and it closes the window where an optimistic append
+  // and a background poll disagree about ordering.
+  async createTaskComment(
+    taskId: string,
+    body: string,
+    /** Reply into this comment's thread. Replying to a reply lands in the same thread. */
+    parentCommentId?: string,
+  ): Promise<TaskTimelineResponse> {
+    return this.request<TaskTimelineResponse>(`/api/v1/tasks/${taskId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ body, parent_comment_id: parentCommentId ?? null }),
+    });
+  }
+
+  async updateTaskComment(
+    taskId: string,
+    commentId: string,
+    body: string,
+  ): Promise<TaskTimelineResponse> {
+    return this.request<TaskTimelineResponse>(
+      `/api/v1/tasks/${taskId}/comments/${commentId}`,
+      { method: 'PATCH', body: JSON.stringify({ body }) },
+    );
+  }
+
+  async deleteTaskComment(taskId: string, commentId: string): Promise<TaskTimelineResponse> {
+    return this.request<TaskTimelineResponse>(
+      `/api/v1/tasks/${taskId}/comments/${commentId}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async toggleTaskReaction(
+    taskId: string,
+    target: { targetType: 'task' | 'comment'; targetId: string; emoji: string },
+  ): Promise<TaskTimelineResponse> {
+    return this.request<TaskTimelineResponse>(`/api/v1/tasks/${taskId}/reactions`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        target_type: target.targetType,
+        target_id: target.targetId,
+        emoji: target.emoji,
+      }),
+    });
   }
 
   async updateTask(taskId: string, data: UpdateTaskRequest): Promise<TaskResponse> {

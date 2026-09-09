@@ -143,7 +143,7 @@ export function NavigationHeader() {
               rel="noopener noreferrer"
               aria-label="Vicoa on GitHub"
               title="Vicoa is open source — star us on GitHub"
-              className="flex h-10 w-10 items-center justify-center rounded-full text-foreground/80 hover:text-foreground hover:bg-muted transition-all"
+              className="flex h-10 w-10 items-center justify-center rounded-full text-foreground hover:bg-muted transition-all"
             >
               <GithubIcon className="h-6 w-6" />
             </a>

@@ -217,7 +217,58 @@ const AVATAR_GROUPS: EmojiGroup[] = [
   },
 ];
 
-export type EmojiPickerVariant = 'project' | 'avatar';
+// Reactions want a third vocabulary again: not nouns for work and not a
+// character, but the small set of things people actually answer a comment with.
+// Everything else is one click away behind "All emoji".
+const REACTION_GROUPS: EmojiGroup[] = [
+  {
+    label: 'Common',
+    entries: [
+      { emoji: '\u{1F44D}', keywords: 'thumbs up yes agree approve lgtm +1' },
+      { emoji: '\u{1F44E}', keywords: 'thumbs down no disagree reject -1' },
+      { emoji: '\u{2764}\u{FE0F}', keywords: 'heart love like' },
+      { emoji: '\u{1F389}', keywords: 'tada party celebrate shipped done' },
+      { emoji: '\u{1F680}', keywords: 'rocket ship launch shipped fast' },
+      { emoji: '\u{1F440}', keywords: 'eyes looking reviewing watching' },
+      { emoji: '\u{1F525}', keywords: 'fire hot great burn' },
+      { emoji: '\u{1F4AF}', keywords: 'hundred perfect score exactly' },
+      { emoji: '\u{2705}', keywords: 'check done complete resolved fixed' },
+      { emoji: '\u{274C}', keywords: 'cross no wrong failed broken' },
+      { emoji: '\u{1F914}', keywords: 'thinking hmm unsure question' },
+      { emoji: '\u{1F64F}', keywords: 'pray thanks please thank you' },
+    ],
+  },
+  {
+    label: 'Faces',
+    entries: [
+      { emoji: '\u{1F604}', keywords: 'smile happy grin laugh' },
+      { emoji: '\u{1F602}', keywords: 'joy laughing tears funny lol' },
+      { emoji: '\u{1F60D}', keywords: 'heart eyes love adore' },
+      { emoji: '\u{1F62E}', keywords: 'surprised wow open mouth' },
+      { emoji: '\u{1F622}', keywords: 'cry sad tear' },
+      { emoji: '\u{1F621}', keywords: 'angry mad rage' },
+      { emoji: '\u{1F605}', keywords: 'sweat smile nervous phew close call' },
+      { emoji: '\u{1F643}', keywords: 'upside down irony sarcasm' },
+      { emoji: '\u{1F9D0}', keywords: 'monocle inspect scrutiny suspicious' },
+      { emoji: '\u{1F634}', keywords: 'sleeping tired boring zzz' },
+    ],
+  },
+  {
+    label: 'Work',
+    entries: [
+      { emoji: '\u{1F41B}', keywords: 'bug defect issue broken' },
+      { emoji: '\u{1F6A2}', keywords: 'ship shipped release deploy' },
+      { emoji: '\u{1F6A8}', keywords: 'siren alert urgent incident' },
+      { emoji: '\u{1F44F}', keywords: 'clap applause well done nice' },
+      { emoji: '\u{1F91D}', keywords: 'handshake agree deal thanks' },
+      { emoji: '\u{1F4A1}', keywords: 'idea bulb suggestion insight' },
+      { emoji: '\u{26A0}\u{FE0F}', keywords: 'warning caution careful risk' },
+      { emoji: '\u{1F6D1}', keywords: 'stop blocked halt' },
+    ],
+  },
+];
+
+export type EmojiPickerVariant = 'project' | 'avatar' | 'reaction';
 
 /** The full Unicode set, grouped, as `unicode-emoji-json` ships it. */
 type RawEmojiGroup = {
@@ -264,6 +315,7 @@ async function loadFullEmojiGroups(): Promise<EmojiGroup[]> {
 const GROUPS_BY_VARIANT: Record<EmojiPickerVariant, EmojiGroup[]> = {
   project: PROJECT_GROUPS,
   avatar: AVATAR_GROUPS,
+  reaction: REACTION_GROUPS,
 };
 
 export function EmojiPicker({

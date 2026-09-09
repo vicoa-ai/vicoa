@@ -1769,7 +1769,7 @@ Examples:
 
     task_parser = subparsers.add_parser(
         "task",
-        help="List, read, create, update, or delete tasks",
+        help="List, read, create, update, comment on, or delete tasks",
     )
     task_sub = task_parser.add_subparsers(dest="task_command")
 
@@ -1805,7 +1805,7 @@ Examples:
     task_get = task_sub.add_parser(
         "get", parents=[task_common], help="Show one task's full details"
     )
-    task_get.add_argument("task_id", help="Task id (full UUID)")
+    task_get.add_argument("task_id", help="Task identifier (VIC-42) or full UUID")
 
     task_create = task_sub.add_parser(
         "create", parents=[task_common], help="Create a task"
@@ -1824,7 +1824,9 @@ Examples:
         "--priority", choices=TASK_PRIORITIES, help="Priority (default: none)"
     )
     task_create.add_argument(
-        "--parent", metavar="TASK_ID", help="Parent task id (creates a subtask)"
+        "--parent",
+        metavar="TASK",
+        help="Parent task, VIC-42 or UUID (creates a subtask)",
     )
     task_create.add_argument(
         "--start", metavar="ISO8601", help="Start date, e.g. 2026-08-01"
@@ -1838,7 +1840,7 @@ Examples:
         parents=[task_common],
         help="Update a task (only the flags you pass change)",
     )
-    task_update.add_argument("task_id", help="Task id (full UUID)")
+    task_update.add_argument("task_id", help="Task identifier (VIC-42) or full UUID")
     task_update.add_argument("--title", help="New title")
     task_update.add_argument("--description", help="New description")
     task_update.add_argument(
@@ -1846,14 +1848,47 @@ Examples:
     )
     task_update.add_argument("--status", choices=TASK_STATUSES, help="New status")
     task_update.add_argument("--priority", choices=TASK_PRIORITIES, help="New priority")
-    task_update.add_argument("--parent", metavar="TASK_ID", help="New parent task id")
+    task_update.add_argument(
+        "--parent", metavar="TASK", help="New parent task, VIC-42 or UUID"
+    )
     task_update.add_argument("--start", metavar="ISO8601", help="New start date")
     task_update.add_argument("--due", metavar="ISO8601", help="New due date")
+
+    task_comments = task_sub.add_parser(
+        "comments",
+        parents=[task_common],
+        help="Read a task's comment thread",
+    )
+    task_comments.add_argument("task_id", help="Task identifier (VIC-42) or full UUID")
+    task_comments.add_argument(
+        "--activity",
+        action="store_true",
+        help="Also print the generated activity log (status changes, edits)",
+    )
+
+    task_comment = task_sub.add_parser(
+        "comment",
+        parents=[task_common],
+        help="Post a comment on a task (use '-' to read the body from stdin)",
+    )
+    task_comment.add_argument("task_id", help="Task identifier (VIC-42) or full UUID")
+    task_comment.add_argument(
+        "body",
+        help="Comment body (markdown). Pass '-' to read it from stdin instead.",
+    )
+    task_comment.add_argument(
+        "--reply-to",
+        metavar="COMMENT_ID",
+        help=(
+            "Reply to this comment. Threads are one level deep — replying to a "
+            "reply lands in the same thread."
+        ),
+    )
 
     task_delete = task_sub.add_parser(
         "delete", parents=[task_common], help="Delete a task"
     )
-    task_delete.add_argument("task_id", help="Task id (full UUID)")
+    task_delete.add_argument("task_id", help="Task identifier (VIC-42) or full UUID")
     task_delete.add_argument(
         "-y", "--yes", action="store_true", help="Skip the confirmation prompt"
     )

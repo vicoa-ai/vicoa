@@ -21,6 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import Link from 'next/link';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
   DropdownMenu,
@@ -331,7 +332,21 @@ export function TaskDialog({
           <div className="flex items-center gap-1.5 text-xs">
             <span className="text-muted-foreground">Tasks</span>
             <ChevronRight className="size-3 text-muted-foreground/50" />
-            <span className="font-medium">{task ? 'Edit task' : 'New task'}</span>
+            {/* The identifier doubles as the way into the full task page — the
+                dialog stays the fast edit path, so it needs one obvious exit to
+                the surface that has comments and history. Absent for a task
+                that predates the number backfill. */}
+            {task?.identifier ? (
+              <Link
+                href={`/dashboard/tasks/${task.id}`}
+                className="cursor-pointer rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] tracking-tight text-muted-foreground transition-colors hover:text-foreground"
+                title="Open full task page"
+              >
+                {task.identifier}
+              </Link>
+            ) : (
+              <span className="font-medium">{task ? 'Edit task' : 'New task'}</span>
+            )}
           </div>
           <div className="flex items-center gap-0.5">
             <button

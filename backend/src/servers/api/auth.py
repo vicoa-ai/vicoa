@@ -11,6 +11,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from shared.auth import Principal, TokenVerificationError, verify_agent_jwt
+from shared.database.actor import Actor, set_session_actor
 from shared.database.session import get_db
 from sqlalchemy.orm import Session
 
@@ -28,13 +29,20 @@ async def get_current_principal(
     reuses it rather than opening a second one.
     """
     try:
-        return verify_agent_jwt(credentials.credentials, db)
+        principal = verify_agent_jwt(credentials.credentials, db)
     except TokenVerificationError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(exc),
             headers={"WWW-Authenticate": "Bearer"},
         )
+    # Attribution for generated task activity (collaboration §3.5). An API key
+    # identifies a user, not an agent profile — `vicoa task update` looks the
+    # same whether a human typed it or an agent ran it — so this attributes to
+    # the user. Genuinely agent-authored writes (an agent posting a comment)
+    # name their author explicitly instead of inheriting this.
+    set_session_actor(db, Actor(type="user", id=principal.user_id))
+    return principal
 
 
 async def get_current_user_id(
