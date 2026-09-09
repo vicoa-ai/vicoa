@@ -92,10 +92,16 @@ def _build_runner(
     # Sub-agents announced but not yet settled; defers the awaiting-input
     # settle while background (``run_in_background: true``) sub-agents run.
     runner._pending_background_tasks = set()
+    # Interrupt's per-task stop sweep (``_schedule_background_task_stop``)
+    # parks its handle here so the background task isn't GC'd.
+    runner._stop_tasks_task = None
     # Session-lifetime stream reader + event-derived turn state (see
     # ``HeadlessClaudeRunner.__init__``). The reader task is started lazily
     # by ``run_conversation_turn`` via ``_ensure_stream_reader``.
     runner._open_turns = deque()
+    # How many open turns an interrupt is still unwinding (drives forwarding
+    # suppression). See ``HeadlessClaudeRunner.__init__``.
+    runner._interrupt_unwind_turns = 0
     runner._foreground_turn_done = None
     runner._foreground_settle_deferred = False
     runner._stream_reader_task = None
