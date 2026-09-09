@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, Bot, Keyboard, Monitor, Palette, Puzzle, Settings, Sparkles, User } from 'lucide-react';
+import { ArrowLeft, Bot, Keyboard, Monitor, Palette, Puzzle, Settings, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { DesktopTitlebarLead } from '@/components/desktop/window-chrome';
@@ -26,7 +26,6 @@ export const DESKTOP_SETTINGS_TABS = [
   { id: 'general', label: 'General', Icon: Settings },
   { id: 'appearance', label: 'Appearance', Icon: Palette },
   { id: 'profile', label: 'Profile', Icon: User },
-  { id: 'agents', label: 'Agents', Icon: Sparkles },
   { id: 'providers', label: 'Providers', Icon: Bot },
   { id: 'machines', label: 'Machines', Icon: Monitor },
   { id: 'plugins', label: 'Plugins', Icon: Puzzle },

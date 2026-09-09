@@ -370,11 +370,16 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
                     )
             instance_id = result.get("agent_instance_id")
             if agent_profile and isinstance(instance_id, str) and instance_id:
-                asyncio.create_task(
+                # Held in `_stamp_tasks` until it finishes: the event loop only
+                # references a task weakly, so a detached one that waits this
+                # long can be garbage-collected mid-flight.
+                task = asyncio.create_task(
                     _stamp_agent_profile_when_registered(
                         conn.user_id, instance_id, agent_profile["id"]
                     )
                 )
+                _stamp_tasks.add(task)
+                task.add_done_callback(_stamp_tasks.discard)
     except RpcError as exc:
         if exc.code == "no_handler":
             logger.warning(
@@ -387,20 +392,36 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
         conn.enqueue({"type": "rpc-error", "request_id": request_id, "code": exc.code})
 
 
+# How long to wait for a spawned session to register before giving up on its
+# provenance. A constant rather than a literal in the loop so a test can shorten
+# it, and so the budget is visible in one place: the daemon returns as soon as
+# the agent process is *launched*, so anything here shorter than a cold agent
+# start silently drops the stamp — and a dropped stamp looks to the user exactly
+# like the session never ran.
+_STAMP_DELAYS: tuple[float, ...] = (0.5, 1.0, 2.0, 4.0, 8.0)
+
+# Detached tasks are referenced only weakly by the event loop, so one that waits
+# minutes can be collected mid-flight. Same guard the local server keeps over its
+# RPC tasks.
+_stamp_tasks: set[asyncio.Task] = set()
+
+
 async def _stamp_agent_profile_when_registered(
     user_id: str, instance_id: str, agent_profile_id: str
 ) -> None:
     """Record the session's originating agent profile once its row exists.
 
-    The daemon mints the instance id locally and returns it immediately; the row
-    itself only appears when the wrapper registers a moment later, so a write
-    inside the spawn would race it. Same bounded-wait shape the automation
-    sweeper uses to link a run to its instance.
+    The daemon mints the instance id locally and returns it as soon as the agent
+    process is *launched*; the row itself only appears when that agent boots and
+    registers, so a write inside the spawn would race it. Same bounded-wait shape
+    the automation sweeper uses to link a run to its instance.
 
-    Purely cosmetic — it decides whether the session shows the profile's name and
-    avatar instead of a generic provider icon — so every failure is silent.
+    A failure is silent for the spawn — this is display-only provenance and must
+    never break a launch — but it is not harmless: the stamp is what the Agents
+    page reads as "Run history", so giving up early looks to the user exactly
+    like the session never ran. See `_STAMP_DELAYS`.
     """
-    for delay in (0.5, 1.0, 2.0, 4.0, 8.0):
+    for delay in _STAMP_DELAYS:
         try:
             if await asyncio.to_thread(
                 stamp_instance_agent_profile, user_id, instance_id, agent_profile_id
@@ -410,9 +431,11 @@ async def _stamp_agent_profile_when_registered(
             logger.exception("failed to stamp agent_profile_id on %s", instance_id)
             return
         await asyncio.sleep(delay)
-    logger.info(
-        "instance %s never registered; agent profile provenance not recorded",
+    logger.warning(
+        "instance %s never registered within %.0fs; agent profile provenance "
+        "not recorded (its Run history will not show this session)",
         instance_id,
+        sum(_STAMP_DELAYS),
     )
 
 

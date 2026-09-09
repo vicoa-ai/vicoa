@@ -15,7 +15,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from shared import avatars, storage
@@ -44,7 +44,15 @@ class UserAvatarResponse(BaseModel):
     display_name: str | None
     avatar_image_uri: str | None
     avatar_source: str | None
+    avatar_emoji: str | None
     updated_at: str
+
+
+class AvatarEmojiRequest(BaseModel):
+    """``null`` clears the emoji. Bounded like ``agent_profiles.emoji`` — a
+    grapheme cluster with modifiers can be several code points wide."""
+
+    emoji: str | None = Field(default=None, max_length=16)
 
 
 def _avatar_response(user: User) -> UserAvatarResponse:
@@ -53,6 +61,7 @@ def _avatar_response(user: User) -> UserAvatarResponse:
         display_name=user.display_name,
         avatar_image_uri=user.avatar_image_uri,
         avatar_source=user.avatar_source,
+        avatar_emoji=user.avatar_emoji,
         updated_at=user.updated_at.isoformat(),
     )
 
@@ -108,6 +117,18 @@ def delete_my_avatar(
             # Orphaned S3 object is harmless; never fail the reset on it.
             logger.warning("avatar S3 delete failed for %s", current_user.id)
     return _avatar_response(user_queries.clear_user_avatar(db, current_user))
+
+
+@router.put("/me/avatar-emoji", response_model=UserAvatarResponse)
+def set_my_avatar_emoji(
+    request: AvatarEmojiRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> UserAvatarResponse:
+    """Pick (or clear, with ``null``) the emoji shown when there is no image."""
+    return _avatar_response(
+        user_queries.set_user_avatar_emoji(db, current_user, emoji=request.emoji)
+    )
 
 
 @router.get("/users/{user_id}/avatar")

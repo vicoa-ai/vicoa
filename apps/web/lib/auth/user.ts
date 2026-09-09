@@ -11,6 +11,8 @@ export type AuthUser = {
   role?: string;
   /** Backend `users.avatar_image_uri` — null when the user has no stored image. */
   avatarImageUri?: string | null;
+  /** Backend `users.avatar_emoji` — shown when there is no stored image. */
+  avatarEmoji?: string | null;
   /** Backend `users.updated_at` — cache-buster for the stable avatar URL. */
   updatedAt?: string | null;
 };

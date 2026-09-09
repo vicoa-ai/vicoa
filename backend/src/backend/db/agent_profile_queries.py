@@ -13,6 +13,7 @@ into someone's agent process, so a cross-user read would be an instruction
 
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -127,3 +128,39 @@ def count_automations_using(db: Session, profile_id: UUID) -> int:
         ).scalar()
         or 0
     )
+
+
+def session_stats_by_profile(
+    db: Session, user_id: UUID, profile_ids: list[UUID]
+) -> dict[UUID, tuple[int, datetime | None]]:
+    """``{profile_id: (session_count, last_active_at)}`` — one grouped query.
+
+    Powers the agent row's "N sessions" and "used 2h ago": the same two facts the
+    Run history card spells out, condensed. Uses the partial
+    ``ix_agent_instances_agent_profile`` index.
+
+    Recency is ``max(updated_at)``, not ``max(started_at)``: "last used" should
+    mean the last time the agent was *doing* something. ``updated_at`` is the
+    monotonic last-modified marker the WebSocket catch-up already relies on, so
+    it moves with status and message activity — whereas a start time would show
+    a session opened three days ago and worked in five minutes ago as "3d ago".
+    """
+    from shared.database.agent_instances import AgentInstance
+    from shared.database.enums import AgentStatus
+
+    if not profile_ids:
+        return {}
+    rows = db.execute(
+        select(
+            AgentInstance.agent_profile_id,
+            func.count(),
+            func.max(AgentInstance.updated_at),
+        )
+        .where(
+            AgentInstance.agent_profile_id.in_(profile_ids),
+            AgentInstance.user_id == user_id,
+            AgentInstance.status != AgentStatus.DELETED,
+        )
+        .group_by(AgentInstance.agent_profile_id)
+    ).all()
+    return {row[0]: (row[1], row[2]) for row in rows}

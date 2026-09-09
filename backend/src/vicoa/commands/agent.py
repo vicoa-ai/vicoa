@@ -1,7 +1,7 @@
 """``vicoa agent`` — list, create, and remove named agent profiles.
 
 An "Agent" here is the user-facing preset: a saved provider + model + config +
-instructions with a name, the same thing Settings → Agents edits in the web app
+instructions with a name, the same thing the web app's Agents page edits
 (collaboration P1, `plans/todos/agent-profiles-p1.md`). Its main use from a
 terminal is ``vicoa session start --agent-profile <name>``.
 

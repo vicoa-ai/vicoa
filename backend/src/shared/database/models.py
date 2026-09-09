@@ -34,6 +34,11 @@ class User(Base):
     # ``projects.icon_source``: a 'user' upload is never clobbered.
     avatar_image_uri: Mapped[str | None] = mapped_column(Text, default=None)
     avatar_source: Mapped[str | None] = mapped_column(String(16), default=None)
+    # A picked emoji, rendered in place of the generated initial when there is no
+    # image. Same role (and same column width) as ``agent_profiles.emoji`` and
+    # ``projects.icon``: not everyone wants to upload a photo, and a glyph is a
+    # cheaper, more private way to be recognisable than a face.
+    avatar_emoji: Mapped[str | None] = mapped_column(String(16), default=None)
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc)
     )
@@ -154,6 +159,15 @@ class AgentInstance(Base):
             "ix_agent_instances_rate_limited_until",
             "rate_limited_until",
             postgresql_where=text("rate_limited_until IS NOT NULL"),
+        ),
+        # An agent preset's run history and its session count both filter on
+        # this column, and Postgres does not index a FK for you. Partial,
+        # because the overwhelming majority of sessions are ad-hoc and carry
+        # NULL here — same reasoning as the rate-limit index above.
+        Index(
+            "ix_agent_instances_agent_profile",
+            "agent_profile_id",
+            postgresql_where=text("agent_profile_id IS NOT NULL"),
         ),
     )
 

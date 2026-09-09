@@ -45,8 +45,7 @@ import {
 } from '@/lib/desktop-cli';
 import { DRAG_REGION } from '@/lib/app-region';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
-import { AgentsSettingsSection } from '@/components/dashboard/agents-settings-section';
-import { UserAvatarEditor } from '@/components/dashboard/user-avatar-editor';
+import { AvatarEditor } from '@/components/dashboard/avatar-editor';
 import type { UserProfile } from '@/lib/backend-api';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { computeStreaks, formatCompact, formatDays } from '@/lib/profile-stats';
@@ -99,8 +98,6 @@ export function DesktopSettings() {
             <AppearanceSection />
           ) : tab === 'profile' ? (
             <ProfileSection />
-          ) : tab === 'agents' ? (
-            <AgentsSection />
           ) : tab === 'providers' ? (
             <ProvidersSettingsSection />
           ) : tab === 'machines' ? (
@@ -268,6 +265,7 @@ function ProfileSection() {
     // Falls back to the email only to derive an initial; never rendered as text.
     name: profile?.display_name || name || email,
     avatarImageUri: profile?.avatar_image_uri,
+    emoji: profile?.avatar_emoji,
     updatedAt: profile?.updated_at,
   };
   // Show the email under the name, unless the name slot already shows it.
@@ -284,7 +282,7 @@ function ProfileSection() {
           attach one to (and no API client yet, briefly, on first paint), so it
           just renders. */}
       {isCloud && api ? (
-        <UserAvatarEditor
+        <AvatarEditor
           principal={avatarPrincipal}
           size="xl"
           onUploadImage={async (file) => {
@@ -293,6 +291,14 @@ function ProfileSection() {
           }}
           onRemoveImage={async () => {
             await api.deleteMyAvatar();
+            await refreshProfile();
+          }}
+          onSetEmoji={async (emoji) => {
+            await api.updateMyAvatarEmoji(emoji);
+            await refreshProfile();
+          }}
+          onClearEmoji={async () => {
+            await api.updateMyAvatarEmoji(null);
             await refreshProfile();
           }}
         />
@@ -402,18 +408,6 @@ const NOTIFICATION_MODE_LABELS: Record<NotificationMode, string> = {
 
 /** Appearance tab: theme selection (base modes + plugin themes). Its own tab so
  *  it has room to grow (e.g. accent tint, density) beyond the single Theme row. */
-function AgentsSection() {
-  return (
-    <section>
-      <SectionTitle>Agents</SectionTitle>
-      <div className="mt-8">
-        <AgentsSettingsSection />
-      </div>
-    </section>
-  );
-}
-
-
 function AppearanceSection() {
   return (
     <section>

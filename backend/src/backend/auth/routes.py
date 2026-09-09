@@ -48,6 +48,7 @@ class UserProfile(BaseModel):
     # cache-bust with ``updated_at``.
     avatar_image_uri: str | None = None
     avatar_source: str | None = None
+    avatar_emoji: str | None = None
     updated_at: str | None = None
 
 
@@ -141,6 +142,7 @@ async def get_session(user: User | None = Depends(get_optional_current_user)):
             created_at=user.created_at.isoformat(),
             avatar_image_uri=user.avatar_image_uri,
             avatar_source=user.avatar_source,
+            avatar_emoji=user.avatar_emoji,
             updated_at=user.updated_at.isoformat(),
         )
     else:
@@ -157,6 +159,7 @@ async def get_current_user_profile(current_user: User = Depends(get_current_user
         created_at=current_user.created_at.isoformat(),
         avatar_image_uri=current_user.avatar_image_uri,
         avatar_source=current_user.avatar_source,
+        avatar_emoji=current_user.avatar_emoji,
         updated_at=current_user.updated_at.isoformat(),
     )
 
@@ -177,6 +180,7 @@ async def update_current_user_profile(
         created_at=updated_user.created_at.isoformat(),
         avatar_image_uri=updated_user.avatar_image_uri,
         avatar_source=updated_user.avatar_source,
+        avatar_emoji=updated_user.avatar_emoji,
         updated_at=updated_user.updated_at.isoformat(),
     )
 

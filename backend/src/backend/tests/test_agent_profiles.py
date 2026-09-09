@@ -317,3 +317,144 @@ class TestAutomationReference:
         assert resp.status_code == 200
         # Powers the "N automations use this agent" warning — warn, never block.
         assert resp.json()["automations_affected"] == 1
+
+
+class TestRunHistory:
+    """``GET /agents/{id}/sessions`` — what the Agents page's Run history reads."""
+
+    @staticmethod
+    def _instance(test_db, user, agent_type, profile_id, *, started_at=None):
+        from shared.database.agent_instances import AgentInstance
+        from shared.database.enums import AgentStatus
+
+        instance = AgentInstance(
+            id=uuid4(),
+            agent_type_id=agent_type.id,
+            user_id=user.id,
+            status=AgentStatus.ACTIVE,
+            agent_profile_id=profile_id,
+            started_at=started_at or datetime.now(timezone.utc),
+        )
+        test_db.add(instance)
+        test_db.commit()
+        return instance
+
+    def test_lists_only_this_profiles_sessions_newest_first(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        mine = _create(authenticated_client, name="Mine").json()
+        other = _create(authenticated_client, name="Other").json()
+
+        older = self._instance(
+            test_db,
+            test_user,
+            test_agent_type,
+            mine["id"],
+            started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        newer = self._instance(
+            test_db,
+            test_user,
+            test_agent_type,
+            mine["id"],
+            started_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        )
+        self._instance(test_db, test_user, test_agent_type, other["id"])
+        # An ad-hoc session (no preset) must never appear in anyone's history.
+        self._instance(test_db, test_user, test_agent_type, None)
+
+        resp = authenticated_client.get(f"/api/v1/agents/{mine['id']}/sessions")
+        assert resp.status_code == 200
+        assert [row["id"] for row in resp.json()] == [str(newer.id), str(older.id)]
+
+    def test_survives_an_edit_to_the_profile(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        """History is provenance, not a live join: editing the preset must not
+        rewrite or drop what already ran."""
+        profile = _create(
+            authenticated_client, config={"model": "claude-opus-5"}
+        ).json()
+        instance = self._instance(test_db, test_user, test_agent_type, profile["id"])
+        authenticated_client.patch(
+            f"/api/v1/agents/{profile['id']}",
+            json={"config": {"model": "claude-haiku-4-5"}},
+        )
+        rows = authenticated_client.get(
+            f"/api/v1/agents/{profile['id']}/sessions"
+        ).json()
+        assert [row["id"] for row in rows] == [str(instance.id)]
+
+    def test_other_users_profile_is_404(
+        self, authenticated_client, test_db, other_user
+    ):
+        theirs = AgentProfile(
+            id=uuid4(),
+            user_id=other_user.id,
+            name="Theirs",
+            agent="claude",
+            config={"agent": "claude"},
+        )
+        test_db.add(theirs)
+        test_db.commit()
+        assert (
+            authenticated_client.get(f"/api/v1/agents/{theirs.id}/sessions").status_code
+            == 404
+        )
+
+    def test_stats_are_on_the_row_and_survive_an_edit(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        """The agent list row shows the count and "used Nh ago", so a PATCH
+        response must carry them too — otherwise editing an agent blanks them
+        out of the list that just edited it."""
+        profile = _create(authenticated_client).json()
+        assert profile["session_count"] == 0
+        assert profile["last_active_at"] is None
+
+        self._instance(test_db, test_user, test_agent_type, profile["id"])
+        self._instance(test_db, test_user, test_agent_type, profile["id"])
+        # An ad-hoc session must not be counted against any agent.
+        self._instance(test_db, test_user, test_agent_type, None)
+
+        listed = authenticated_client.get("/api/v1/agents").json()
+        assert [p["session_count"] for p in listed] == [2]
+        assert listed[0]["last_active_at"] is not None
+
+        patched = authenticated_client.patch(
+            f"/api/v1/agents/{profile['id']}", json={"description": "edited"}
+        ).json()
+        assert patched["session_count"] == 2
+        assert patched["last_active_at"] == listed[0]["last_active_at"]
+
+    def test_recency_follows_activity_not_start_time(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        """ "Last used" means the last time the agent was *doing* something.
+
+        A long session opened days ago and worked in minutes ago must read as
+        recent, which is why the column is ``max(updated_at)`` rather than
+        ``max(started_at)``.
+        """
+        profile = _create(authenticated_client).json()
+        old_session = self._instance(
+            test_db,
+            test_user,
+            test_agent_type,
+            profile["id"],
+            started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        recent_start = self._instance(
+            test_db,
+            test_user,
+            test_agent_type,
+            profile["id"],
+            started_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        )
+        # The older session is the one still being worked in.
+        old_session.updated_at = datetime(2026, 3, 1, tzinfo=timezone.utc)
+        recent_start.updated_at = datetime(2026, 2, 1, tzinfo=timezone.utc)
+        test_db.commit()
+
+        listed = authenticated_client.get("/api/v1/agents").json()
+        assert listed[0]["last_active_at"].startswith("2026-03-01")

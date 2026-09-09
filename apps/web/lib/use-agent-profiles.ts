@@ -39,6 +39,7 @@ export function agentPrincipal(profile: AgentProfile): Principal {
     id: profile.id,
     name: profile.name,
     avatarImageUri: profile.avatar_image_uri,
+    emoji: profile.emoji,
     updatedAt: profile.updated_at,
   };
 }

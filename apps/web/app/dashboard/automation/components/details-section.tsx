@@ -19,6 +19,7 @@ import { machineSupportsWorktree, type WorktreeMode } from '@/lib/worktree-selec
 import type { AgentCatalog, SessionConfig } from '@/lib/agent-catalog';
 import type { AgentProfile, MachineSummary } from '@/lib/backend-api';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { agentPrincipal } from '@/lib/use-agent-profiles';
 import { FieldGroup, FieldRow } from './field-row';
 
 export interface WorktreeDraft {
@@ -228,13 +229,7 @@ export function DetailsSection({
                     {selectedProfile ? (
                       <>
                         <PrincipalAvatar
-                          principal={{
-                            type: 'agent',
-                            id: selectedProfile.id,
-                            name: selectedProfile.name,
-                            avatarImageUri: selectedProfile.avatar_image_uri,
-                            updatedAt: selectedProfile.updated_at,
-                          }}
+                          principal={agentPrincipal(selectedProfile)}
                           size="xs"
                         />
                         <span className="min-w-0 truncate">{selectedProfile.name}</span>

@@ -15,9 +15,10 @@ validation, same served-URL indirection, same key-by-id-alone storage shape.
 """
 
 import logging
+from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.exc import IntegrityError
@@ -32,6 +33,8 @@ from shared.images import InvalidImageError, process_image
 
 from ..auth.dependencies import get_current_user
 from ..db import agent_profile_queries as queries
+from ..db.queries import get_agent_profile_instances
+from ..models import AgentInstanceResponse
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +77,13 @@ class AgentProfileResponse(BaseModel):
     is_archived: bool
     created_at: str
     updated_at: str
+    # How many sessions this agent has started, and when any of them was last
+    # active (``max(updated_at)``, not the newest start time — see
+    # ``session_stats_by_profile``). ``None`` means "not computed": the
+    # agent-facing mirror in ``servers/api/agent_profiles.py`` shares this model
+    # and the CLI has no use for either number.
+    session_count: int | None = None
+    last_active_at: str | None = None
 
 
 class AgentProfileCreate(BaseModel):
@@ -141,7 +151,12 @@ class AgentProfileDeleteResponse(BaseModel):
     automations_affected: int
 
 
-def to_response(profile: AgentProfile) -> AgentProfileResponse:
+def to_response(
+    profile: AgentProfile,
+    *,
+    session_count: int | None = None,
+    last_active_at: datetime | None = None,
+) -> AgentProfileResponse:
     return AgentProfileResponse(
         id=str(profile.id),
         name=profile.name,
@@ -163,7 +178,24 @@ def to_response(profile: AgentProfile) -> AgentProfileResponse:
         is_archived=profile.is_archived,
         created_at=profile.created_at.isoformat(),
         updated_at=profile.updated_at.isoformat(),
+        session_count=session_count,
+        last_active_at=last_active_at.isoformat() if last_active_at else None,
     )
+
+
+def _with_stats(
+    db: Session, user_id: UUID, profile: AgentProfile
+) -> AgentProfileResponse:
+    """Single-profile response carrying its session count and recency.
+
+    Every endpoint that returns one profile goes through here, so a PATCH
+    response can't hand the client a row whose stats are suddenly ``null`` and
+    blank them out of the list it just edited.
+    """
+    count, last = queries.session_stats_by_profile(db, user_id, [profile.id]).get(
+        profile.id, (0, None)
+    )
+    return to_response(profile, session_count=count, last_active_at=last)
 
 
 def _load_or_404(db: Session, user: User, profile_id: UUID) -> AgentProfile:
@@ -181,11 +213,19 @@ def list_agents(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[AgentProfileResponse]:
+    profiles = queries.list_agent_profiles(
+        db, current_user.id, include_archived=include_archived
+    )
+    stats = queries.session_stats_by_profile(
+        db, current_user.id, [p.id for p in profiles]
+    )
     return [
-        to_response(p)
-        for p in queries.list_agent_profiles(
-            db, current_user.id, include_archived=include_archived
+        to_response(
+            p,
+            session_count=stats.get(p.id, (0, None))[0],
+            last_active_at=stats.get(p.id, (0, None))[1],
         )
+        for p in profiles
     ]
 
 
@@ -220,7 +260,7 @@ def create_agent(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"You already have an agent named '{payload.name}'",
         ) from exc
-    return to_response(profile)
+    return _with_stats(db, current_user.id, profile)
 
 
 @router.get("/agents/{profile_id}", response_model=AgentProfileResponse)
@@ -229,7 +269,7 @@ def get_agent(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AgentProfileResponse:
-    return to_response(_load_or_404(db, current_user, profile_id))
+    return _with_stats(db, current_user.id, _load_or_404(db, current_user, profile_id))
 
 
 @router.patch("/agents/{profile_id}", response_model=AgentProfileResponse)
@@ -259,7 +299,7 @@ def update_agent(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"You already have an agent named '{supplied.get('name')}'",
         ) from exc
-    return to_response(updated)
+    return _with_stats(db, current_user.id, updated)
 
 
 @router.delete("/agents/{profile_id}", response_model=AgentProfileDeleteResponse)
@@ -278,6 +318,25 @@ def delete_agent(
             logger.warning("agent avatar S3 delete failed for %s", profile.id)
     queries.delete_agent_profile(db, profile)
     return AgentProfileDeleteResponse(id=str(profile_id), automations_affected=affected)
+
+
+@router.get("/agents/{profile_id}/sessions", response_model=list[AgentInstanceResponse])
+def list_agent_sessions(
+    profile_id: UUID,
+    limit: int = Query(default=50, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[AgentInstanceResponse]:
+    """This agent's run history: the sessions it has started, newest first.
+
+    A sub-resource rather than a filter on ``/agent-instances`` because it is a
+    different question — "what has this agent done", not "what am I running" —
+    and because ownership of the profile is then checked in exactly one place
+    (``_load_or_404``) instead of being a second predicate on the shared list
+    query every client already depends on.
+    """
+    profile = _load_or_404(db, current_user, profile_id)
+    return get_agent_profile_instances(db, profile.id, current_user.id, limit=limit)
 
 
 @router.put("/agents/{profile_id}/avatar", response_model=AgentProfileResponse)
@@ -313,10 +372,12 @@ def upload_agent_avatar(
         logger.exception("agent avatar upload to S3 failed")
         raise HTTPException(status_code=502, detail="Failed to store image") from exc
 
-    return to_response(
+    return _with_stats(
+        db,
+        current_user.id,
         queries.set_agent_profile_avatar(
             db, profile, avatar_image_uri=avatar_served_url(profile.id)
-        )
+        ),
     )
 
 
@@ -332,7 +393,9 @@ def delete_agent_avatar(
             storage.delete_object(storage.agent_profile_avatar_key(str(profile.id)))
         except Exception:
             logger.warning("agent avatar S3 delete failed for %s", profile.id)
-    return to_response(queries.clear_agent_profile_avatar(db, profile))
+    return _with_stats(
+        db, current_user.id, queries.clear_agent_profile_avatar(db, profile)
+    )
 
 
 @router.get("/agents/{profile_id}/avatar")

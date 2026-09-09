@@ -33,6 +33,8 @@ export interface UserProfile {
   /** Served by us (/api/v1/users/{id}/avatar); render via `<PrincipalAvatar>`. */
   avatar_image_uri?: string | null;
   avatar_source?: string | null;
+  /** Picked emoji, shown when there is no image (see lib/principals.ts). */
+  avatar_emoji?: string | null;
   /** Cache-buster for the stable avatar URL (see lib/principals.ts). */
   updated_at?: string | null;
 }
@@ -59,6 +61,13 @@ export interface AgentProfile {
   is_archived: boolean;
   created_at: string;
   updated_at: string;
+  /** Sessions this agent has started. Null from the agent-facing CLI mirror,
+   *  which does not compute it. */
+  session_count?: number | null;
+  /** When any of those sessions was last active — `max(updated_at)`, not the
+   *  newest start time, so a long session still being worked in reads as
+   *  recent. Null when the agent has never run (or from the CLI mirror). */
+  last_active_at?: string | null;
 }
 
 export interface AgentProfileInput {
@@ -82,6 +91,7 @@ export interface UserAvatar {
   display_name: string | null;
   avatar_image_uri: string | null;
   avatar_source: string | null;
+  avatar_emoji: string | null;
   updated_at: string;
 }
 
@@ -830,6 +840,14 @@ class BackendAPI {
     return this.request<UserAvatar>('/api/v1/me/avatar', { method: 'DELETE' });
   }
 
+  /** Pick (or clear, with `null`) the emoji shown when there is no image. */
+  async updateMyAvatarEmoji(emoji: string | null): Promise<UserAvatar> {
+    return this.request<UserAvatar>('/api/v1/me/avatar-emoji', {
+      method: 'PUT',
+      body: JSON.stringify({ emoji }),
+    });
+  }
+
   // Agent profiles — the "Agents" the UI shows (collaboration P1). Not to be
   // confused with agent *types* (`/api/v1/user-agents`), which mean "claude
   // code" / "codex" and are auto-created per session.
@@ -888,6 +906,14 @@ class BackendAPI {
 
   async deleteAgentProfileAvatar(id: string): Promise<AgentProfile> {
     return this.request<AgentProfile>(`/api/v1/agents/${id}/avatar`, { method: 'DELETE' });
+  }
+
+  /** This agent's run history: the sessions it started, newest first. Stamped at
+   *  spawn, so editing the agent never rewrites what already ran. */
+  async listAgentProfileSessions(id: string, limit = 50): Promise<AgentInstanceResponse[]> {
+    return this.request<AgentInstanceResponse[]>(
+      `/api/v1/agents/${id}/sessions?limit=${limit}`,
+    );
   }
 
   // API Key management

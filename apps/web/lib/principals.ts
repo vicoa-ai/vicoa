@@ -27,6 +27,15 @@ export type Principal = {
   name?: string | null;
   /** Backend-relative served URL (e.g. `users.avatar_image_uri`), or null. */
   avatarImageUri?: string | null;
+  /**
+   * A picked emoji, rendered when there is no image.
+   *
+   * Sits *between* the image and the generated initial rather than replacing
+   * either: an uploaded photo still wins (it is the more specific choice), and
+   * clearing the photo reveals an emoji picked earlier instead of discarding
+   * it. Same role as `projects.icon`.
+   */
+  emoji?: string | null;
   /** Cache-buster — the row's `updated_at`; the avatar URL itself is stable. */
   updatedAt?: string | null;
 };

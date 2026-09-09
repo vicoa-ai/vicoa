@@ -26,7 +26,7 @@ import { TaskPickerPopover } from '@/components/dashboard/task-picker-popover';
 import { MentionTextarea } from '@/components/mention-textarea';
 import { AgentTypeIcon, getAgentLogoSrc } from '@/components/dashboard/agent-type-icon';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
-import { agentProfileBlockedReason } from '@/lib/use-agent-profiles';
+import { agentPrincipal, agentProfileBlockedReason } from '@/lib/use-agent-profiles';
 import { ChipDropdown, ModeIcon, TickItem, modelListWidthClass, modelSublabel } from '@/components/dashboard/session-config-dropdown';
 import { rpcGitStatus } from '@/components/files-git-panel/rpc';
 import { FilesGitPanel, FilesGitPanelToggle, usePanelState } from '@/components/files-git-panel';
@@ -1989,13 +1989,7 @@ function NewSessionContent() {
                         selectedProfile ? (
                           <>
                             <PrincipalAvatar
-                              principal={{
-                                type: 'agent',
-                                id: selectedProfile.id,
-                                name: selectedProfile.name,
-                                avatarImageUri: selectedProfile.avatar_image_uri,
-                                updatedAt: selectedProfile.updated_at,
-                              }}
+                              principal={agentPrincipal(selectedProfile)}
                               size="xs"
                             />
                             <span className="min-w-0 truncate">{selectedProfile.name}</span>
@@ -2034,13 +2028,7 @@ function NewSessionContent() {
                                   disabled={!!blocked}
                                   leading={
                                     <PrincipalAvatar
-                                      principal={{
-                                        type: 'agent',
-                                        id: profile.id,
-                                        name: profile.name,
-                                        avatarImageUri: profile.avatar_image_uri,
-                                        updatedAt: profile.updated_at,
-                                      }}
+                                      principal={agentPrincipal(profile)}
                                       size="xs"
                                     />
                                   }
