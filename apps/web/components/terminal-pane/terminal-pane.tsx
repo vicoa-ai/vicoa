@@ -23,7 +23,7 @@ import type { Terminal } from '@xterm/xterm';
 import type { PtyTransport } from './pty-transport';
 import { buildTerminalOptions, VICOA_TERMINAL_BACKGROUND } from './terminal-options';
 import { openTerminalLink, trackLinkModifier } from './terminal-links';
-import { chunkPtyInput, isLineEditorReady } from './initial-input';
+import { isLineEditorReady, prepareInitialInput } from './initial-input';
 import { RpcError } from '@/lib/ws-client';
 
 const RESIZE_DEBOUNCE_MS = 50;
@@ -59,11 +59,21 @@ export interface TerminalPaneProps {
 // `initialInput` may only be typed once the shell's line editor is reading —
 // input written while it's still sourcing rc files overflows the tty's small
 // input queue (1024 bytes on macOS) and the tail, CR included, is dropped. The
-// bracketed-paste-on sequence says so exactly (see ./initial-input); these
-// timers cover shells that never emit it: write once output has been quiet for
-// a beat, and no later than the ceiling even if the shell never stops printing.
+// bracketed-paste-on sequence says so exactly (see ./initial-input); seeing it
+// also means the shell takes a bracketed paste, which is how the text is then
+// handed over — a line editor loaded with per-keystroke widgets (oh-my-zsh +
+// syntax highlighting) cannot drain a typed 1.5KB chain fast enough to keep the
+// queue from overflowing either.
+//
+// Two fallbacks cover shells that never announce bracketed paste, and BOTH are
+// keyed off the shell having spoken at least once. A stock oh-my-zsh + starship
+// prints nothing at all for the first ~1.5s while it sources rc files: arming
+// the quiet timer at spawn (as this did) fired it into a shell that was not yet
+// reading, which is the 1024-byte-truncated setup chain. So: quiet only counts
+// after the first output, and the ceiling refuses to fire while the shell is
+// still silent (it waits another round instead).
 const INITIAL_INPUT_QUIET_MS = 300;
-const INITIAL_INPUT_MAX_WAIT_MS = 5000;
+const INITIAL_INPUT_MAX_WAIT_MS = 8000;
 // Gap between chunks, so the shell drains each one before the next lands.
 const INITIAL_INPUT_CHUNK_DELAY_MS = 20;
 
@@ -109,6 +119,14 @@ export function TerminalPane({
     // Worktree setup: one-shot input written once the shell is live, then
     // cleared so a manual restart (which reuses spawn/onData) never resends it.
     let pendingInitialInput = initialInputRef.current || null;
+    // Set once the shell advertises bracketed paste, so the input goes over as
+    // a paste rather than as 1.5KB of simulated keystrokes. Stays false for a
+    // shell that never says so (then only the timers below release the input).
+    let bracketedPasteOn = false;
+    // Whether the shell has printed a single byte yet. Until it has, it is
+    // still sourcing rc files and is not reading stdin, so nothing may be
+    // written to it — see releaseOnDeadline.
+    let sawOutput = false;
     let initialInputTimer: number | null = null;
     let initialInputDeadline: number | null = null;
     let chunkTimer: number | null = null;
@@ -124,9 +142,10 @@ export function TerminalPane({
     };
     // Fed in queue-sized bites rather than one write: a setup chain runs well
     // past the tty's 1024-byte input queue, and anything that doesn't fit while
-    // the shell isn't reading is dropped outright.
+    // the shell isn't reading is dropped outright. `prepareInitialInput` also
+    // frames it as a paste when the shell supports one.
     const writeChunked = (data: string): void => {
-      const chunks = chunkPtyInput(data);
+      const chunks = prepareInitialInput(data, { bracketedPaste: bracketedPasteOn });
       let next = 0;
       const step = (): void => {
         chunkTimer = null;
@@ -146,12 +165,28 @@ export function TerminalPane({
       pendingInitialInput = null;
       writeChunked(data);
     };
-    /** Re-arm the quiet timer on each burst of shell output; the deadline set
-     *  at spawn keeps a never-quiet shell from deferring setup forever. */
+    /** Arm (and re-arm) the quiet timer on each burst of shell output, so the
+     *  fallback only ever fires against a shell that has started talking; the
+     *  deadline below keeps a never-quiet shell from deferring setup forever. */
     const deferInitialInput = (): void => {
       if (pendingInitialInput === null || disposed) return;
       if (initialInputTimer !== null) window.clearTimeout(initialInputTimer);
       initialInputTimer = window.setTimeout(flushInitialInput, INITIAL_INPUT_QUIET_MS);
+    };
+    /** Last-resort release, for a shell that talks but never announces
+     *  bracketed paste and never pauses long enough for the quiet timer.
+     *  A shell that has printed NOTHING is a different case: it isn't reading
+     *  stdin either (a cold zsh can spend seconds in compinit), and writing
+     *  into that is exactly what drops the tail of the chain — so wait another
+     *  round instead, and let its first output drive the release. */
+    const releaseOnDeadline = (): void => {
+      initialInputDeadline = null;
+      if (pendingInitialInput === null || disposed) return;
+      if (!sawOutput) {
+        initialInputDeadline = window.setTimeout(releaseOnDeadline, INITIAL_INPUT_MAX_WAIT_MS);
+        return;
+      }
+      flushInitialInput();
     };
 
     // Armed synchronously (not inside the async import below) so the pane is
@@ -213,14 +248,16 @@ export function TerminalPane({
           if (!disposed) {
             setStatus({ kind: 'running' });
             term.focus();
-            // Arm both fallbacks now: the quiet timer covers a shell that
-            // prints nothing at all, the deadline one that never stops.
+            // Only the ceiling is armed here. The quiet timer starts on the
+            // shell's first output (see onData): a shell that hasn't printed
+            // anything yet is still sourcing rc files, not draining stdin, and
+            // 300ms of that silence is not a readiness signal — it's the window
+            // where written input gets dropped on the floor.
             if (pendingInitialInput !== null && initialInputDeadline === null) {
               initialInputDeadline = window.setTimeout(
-                flushInitialInput,
+                releaseOnDeadline,
                 INITIAL_INPUT_MAX_WAIT_MS,
               );
-              deferInitialInput();
             }
           }
         } catch (err) {
@@ -238,8 +275,11 @@ export function TerminalPane({
           // input: type setup right away. Otherwise wait out the quiet period —
           // first output alone only means the shell started, and it drops
           // anything past its input queue while it's still sourcing rc files.
-          if (isLineEditorReady(bytes)) flushInitialInput();
-          else deferInitialInput();
+          sawOutput = true;
+          if (isLineEditorReady(bytes)) {
+            bracketedPasteOn = true;
+            flushInitialInput();
+          } else deferInitialInput();
         }),
       );
       unsubs.push(

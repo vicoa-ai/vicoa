@@ -193,7 +193,9 @@ def test_back_to_back_model_then_effort_waits_serially() -> None:
 
     pty_writes: List[bytes] = []
 
-    def _on_write(data: bytes) -> None:
+    def _on_write(data: bytes, timeout: float = 0.0) -> None:
+        # `timeout` mirrors PTYManager.write_to_pty's bounded-retry parameter;
+        # unused here, the fake never blocks.
         pty_writes.append(data)
         # Append the matching echo ~250ms after each write.
         if data.startswith(b"/model"):

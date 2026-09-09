@@ -27,6 +27,12 @@ if _POSIX:
     import termios
     import tty
 
+# A write to the master blocks (EAGAIN, here) once the slave's input queue is
+# full — 1024 bytes on macOS, 4096 on Linux — and stays that way until the
+# foreground process reads. Bounded so one such write can't wedge the shared
+# ordered-input worker; ordinary keystrokes never come close to it.
+PTY_WRITE_TIMEOUT_S = 5.0
+
 
 class PTYManager:
     """Manages pseudo-terminal for Claude CLI interaction.
@@ -157,14 +163,17 @@ class PTYManager:
             except Exception as e:
                 self.log_func(f"[WARNING] Failed to restore terminal: {e}")
 
-    def write_to_pty(self, data: bytes) -> None:
+    def write_to_pty(self, data: bytes, timeout: float = PTY_WRITE_TIMEOUT_S) -> None:
         """Write data to the PTY master, handling partial writes.
 
         Args:
             data: Bytes to write to PTY
+            timeout: Seconds to keep retrying a tty that won't accept more
+                input before giving up on the remainder
 
         Raises:
             RuntimeError: If PTY is not initialized
+            TimeoutError: If the tty stayed full for ``timeout`` seconds
             OSError: If write fails (other than EAGAIN/EWOULDBLOCK)
         """
         if not data:
@@ -175,6 +184,7 @@ class PTYManager:
 
         view = memoryview(data)
         total_written = 0
+        deadline = time.monotonic() + timeout
 
         while total_written < len(view):
             try:
@@ -183,11 +193,22 @@ class PTYManager:
                     time.sleep(0.01)
                     continue
                 total_written += written
+                continue
             except OSError as e:
-                if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
-                    time.sleep(0.01)
-                    continue
-                raise
+                if e.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    raise
+            # The slave's input queue is full and its reader isn't draining it.
+            # Retry, but never forever: pty writes run on ONE ordered worker
+            # thread shared by every terminal on this machine (see
+            # PTY_ORDERED_METHODS), so a single wedged write freezes input for
+            # all of them. Losing the tail of one oversized write is the lesser
+            # failure, and it is what the tty itself does with the overflow.
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"pty write stalled: {total_written}/{len(view)} bytes "
+                    f"accepted in {timeout:g}s (tty input queue full)"
+                )
+            time.sleep(0.01)
 
     def read_from_pty(self, size: int = 4096) -> bytes:
         """Read data from PTY master (non-blocking).
