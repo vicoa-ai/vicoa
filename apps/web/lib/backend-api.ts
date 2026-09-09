@@ -495,6 +495,11 @@ export interface TaskReactionSummary {
   count: number;
   /** Whether the signed-in user is one of them — drives the pill's filled state. */
   reacted: boolean;
+  /**
+   * Who reacted, oldest first, capped server-side. `count` is the true total,
+   * so "and N others" is the difference.
+   */
+  reactors: PrincipalResponse[];
 }
 
 export interface TaskCommentResponse {

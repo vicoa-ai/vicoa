@@ -807,6 +807,12 @@ TaskReactionTargetLiteral = Literal["task", "comment"]
 MAX_COMMENT_BODY_CHARS = 20_000
 
 
+# How many reactors a summary names before it stops. A tooltip that lists forty
+# people is not more informative than one that lists eight and says "and 32
+# others", and the payload grows with every reaction on a shared board.
+MAX_NAMED_REACTORS = 8
+
+
 class TaskReactionSummary(BaseModel):
     """One emoji on one target, collapsed across users."""
 
@@ -814,6 +820,10 @@ class TaskReactionSummary(BaseModel):
     count: int
     # Whether the requesting user is one of them — drives the pill's filled state.
     reacted: bool
+    # Who reacted, oldest first, capped at MAX_NAMED_REACTORS. `count` is the
+    # true total, so a client can render "and N others" from the difference.
+    # Display names only, never emails (§10.4) — this feeds public pages in P4.
+    reactors: list[PrincipalResponse] = Field(default_factory=list)
 
 
 class TaskCommentResponse(BaseModel):

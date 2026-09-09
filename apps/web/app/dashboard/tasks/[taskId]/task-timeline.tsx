@@ -37,6 +37,12 @@ import {
 import { EmojiPicker } from '@/components/ui/emoji-picker';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
   principalDisplayName,
   principalForAvatar,
   principalFromResponse,
@@ -191,6 +197,36 @@ export function buildEntries(
 }
 
 /**
+ * "Nick and Ada reacted with 👍" — the sentence a pill's tooltip reads.
+ *
+ * The signed-in user comes first and reads as "You", the way Slack and GitHub
+ * put you at the front of your own reactions. Past the server's cap the
+ * remainder collapses to "and N others" rather than the list simply ending,
+ * so the tooltip never quietly under-reports who is on a pill.
+ */
+export function describeReactors(
+  reaction: TaskReactionSummary,
+  viewer: Principal | null,
+): string {
+  const named = reaction.reactors.map((r) => {
+    const principal = principalFromResponse(r);
+    const isViewer = !!viewer?.id && r.id === viewer.id;
+    return isViewer ? 'You' : principalDisplayName(principal, viewer);
+  });
+  const mine = named.indexOf('You');
+  if (mine > 0) named.unshift(...named.splice(mine, 1));
+
+  const unnamed = reaction.count - named.length;
+  if (unnamed > 0) named.push(`${unnamed} other${unnamed === 1 ? '' : 's'}`);
+
+  const people =
+    named.length <= 1
+      ? (named[0] ?? 'Someone')
+      : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`;
+  return `${people} reacted with ${reaction.emoji}`;
+}
+
+/**
  * The pill row plus its add button.
  *
  * The add button opens the shared `<EmojiPicker>` — the one project icons and
@@ -201,31 +237,42 @@ export function buildEntries(
  */
 export function ReactionRow({
   reactions,
+  viewer,
   onToggle,
   className,
 }: {
   reactions: TaskReactionSummary[];
+  /** Resolves a nameless reactor to "You" rather than "Unknown". */
+  viewer: Principal | null;
   onToggle: (emoji: string) => void;
   className?: string;
 }) {
   const [picking, setPicking] = useState(false);
   return (
     <div className={cn('flex flex-wrap items-center gap-1', className)}>
-      {reactions.map((reaction) => (
-        <button
-          key={reaction.emoji}
-          type="button"
-          onClick={() => onToggle(reaction.emoji)}
-          className={cn(
-            'flex cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] transition-colors',
-            reaction.reacted
-              ? 'border-primary/40 bg-primary/10 text-foreground'
-              : 'bg-muted/50 hover:bg-muted',
-          )}
-        >
-          {reaction.emoji} {reaction.count}
-        </button>
-      ))}
+      <TooltipProvider delayDuration={200}>
+        {reactions.map((reaction) => (
+          <Tooltip key={reaction.emoji}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => onToggle(reaction.emoji)}
+                className={cn(
+                  'flex cursor-pointer items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] transition-colors',
+                  reaction.reacted
+                    ? 'border-primary/40 bg-primary/10 text-foreground'
+                    : 'bg-muted/50 hover:bg-muted',
+                )}
+              >
+                {reaction.emoji} {reaction.count}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-56">
+              {describeReactors(reaction, viewer)}
+            </TooltipContent>
+          </Tooltip>
+        ))}
+      </TooltipProvider>
       <Popover open={picking} onOpenChange={setPicking}>
         <PopoverTrigger asChild>
           <button
@@ -301,6 +348,7 @@ function CommentGroup({
                 <ReactionRow
                   className="mt-2"
                   reactions={comment.reactions}
+                  viewer={viewer}
                   onToggle={(emoji) => onToggleReaction(comment.id, emoji)}
                 />
               </>

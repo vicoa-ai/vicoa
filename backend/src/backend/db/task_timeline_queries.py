@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session
 
 from shared.database import (
@@ -29,6 +30,7 @@ from shared.database.agent_profile_models import AgentProfile
 from shared.database.reactions import is_emoji
 
 from ..models import (
+    MAX_NAMED_REACTORS,
     PrincipalResponse,
     TaskActivityResponse,
     TaskCommentResponse,
@@ -117,7 +119,12 @@ def resolve_principals(
 def _reaction_summaries(
     db: Session, user_id: UUID, targets: list[tuple[str, UUID]]
 ) -> dict[tuple[str, UUID], list[TaskReactionSummary]]:
-    """Counts per (target, emoji) plus whether `user_id` is among them."""
+    """Counts per (target, emoji), who reacted, and whether `user_id` did.
+
+    The reactor names come back in the same aggregate rather than as a second
+    query per pill: a page can carry dozens of pills, and "who reacted" is a
+    hover away on every one of them.
+    """
     if not targets:
         return {}
     target_ids = [tid for _, tid in targets]
@@ -128,15 +135,35 @@ def _reaction_summaries(
             TaskReaction.emoji,
             func.count().label("n"),
             func.bool_or(TaskReaction.user_id == user_id).label("mine"),
+            # Oldest first, so the order a tooltip reads in is the order people
+            # actually reacted rather than whatever the planner returns.
+            func.array_agg(
+                aggregate_order_by(TaskReaction.user_id, TaskReaction.created_at)
+            ).label("user_ids"),
         )
         .where(TaskReaction.target_id.in_(target_ids))
         .group_by(TaskReaction.target_type, TaskReaction.target_id, TaskReaction.emoji)
     ).all()
 
+    # One principal lookup for every reactor on the page, not one per pill.
+    named: set[PrincipalRef] = set()
+    for row in rows:
+        for reactor_id in row.user_ids[:MAX_NAMED_REACTORS]:
+            named.add(("user", reactor_id))
+    principals = resolve_principals(db, named) if named else {}
+
     out: dict[tuple[str, UUID], list[TaskReactionSummary]] = {}
-    for target_type, target_id, emoji, count, mine in rows:
+    for target_type, target_id, emoji, count, mine, user_ids in rows:
         out.setdefault((target_type, target_id), []).append(
-            TaskReactionSummary(emoji=emoji, count=int(count), reacted=bool(mine))
+            TaskReactionSummary(
+                emoji=emoji,
+                count=int(count),
+                reacted=bool(mine),
+                reactors=[
+                    principals[("user", reactor_id)]
+                    for reactor_id in user_ids[:MAX_NAMED_REACTORS]
+                ],
+            )
         )
     # Most-used first, then by emoji so ties don't shuffle between renders.
     # There is no offered-set order to sort by any more — reactions are open.

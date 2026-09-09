@@ -288,6 +288,7 @@ export default function TaskDetailPage() {
             {/* The task itself is reactable, like an issue's opening post. */}
             <ReactionRow
               reactions={taskReactions}
+              viewer={viewer}
               onToggle={(emoji) => void toggleReaction('task', task.id, emoji)}
             />
           </div>

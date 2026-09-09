@@ -178,6 +178,50 @@ class TestReactions:
                 test_db, test_user.id, "task", task.id, value
             )
 
+    def test_summary_names_who_reacted(self, test_db, test_user, stranger, task):
+        """A pill has to be able to answer "who?" on hover without a second
+        request per pill."""
+        comment = task_timeline_queries.create_comment(
+            test_db, task, test_user.id, "nice"
+        )
+        for user_id in (test_user.id, stranger.id):
+            task_timeline_queries.toggle_reaction(
+                test_db, user_id, "comment", comment.id, "\U0001f44d"
+            )
+        timeline = task_timeline_queries.build_timeline(test_db, task, test_user.id)
+        summary = timeline.comments[0].reactions[0]
+        # Oldest first — the order people actually reacted in.
+        assert [r.id for r in summary.reactors] == [test_user.id, stranger.id]
+        assert summary.count == 2
+
+    def test_reactor_names_are_capped(self, test_db, test_user, task):
+        """`count` stays true so the client can say "and N others"; the named
+        list stops before a tooltip becomes a directory."""
+        from backend.models import MAX_NAMED_REACTORS
+
+        extras = []
+        for i in range(MAX_NAMED_REACTORS + 3):
+            user = User(
+                id=uuid4(),
+                email=f"reactor{i}@example.com",
+                display_name=f"Reactor {i}",
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+            test_db.add(user)
+            extras.append(user)
+        test_db.commit()
+        for user in extras:
+            task_timeline_queries.toggle_reaction(
+                test_db, user.id, "task", task.id, "\U0001f680"
+            )
+
+        summary = task_timeline_queries.build_timeline(
+            test_db, task, test_user.id
+        ).reactions[0]
+        assert summary.count == MAX_NAMED_REACTORS + 3
+        assert len(summary.reactors) == MAX_NAMED_REACTORS
+
     def test_summaries_are_ordered_by_count(self, test_db, test_user, stranger, task):
         comment = task_timeline_queries.create_comment(
             test_db, task, test_user.id, "nice"
