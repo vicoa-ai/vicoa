@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from shared.database import (
@@ -17,10 +18,17 @@ from shared.database import (
     Project,
     ProjectDirectory,
     Task,
+    TaskActivity,
+    TaskComment,
     TaskLabel,
     get_or_create_inbox,
 )
+from shared.database.agent_profile_models import AgentProfile
 from shared.database.project_matching import backfill_project_id_for_directory
+from shared.database.task_identity import (
+    allocate_task_number,
+    ensure_project_key_committed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +54,16 @@ class ProjectNotFoundError(Exception):
     """Raised when a referenced project doesn't exist or isn't the user's."""
 
 
+class ProjectKeyTakenError(Exception):
+    """Another of this owner's projects already holds that task key."""
+
+
 class LabelNotFoundError(Exception):
     """Raised when a referenced label doesn't exist or isn't the user's."""
+
+
+class AssigneeNotFoundError(Exception):
+    """The assignee isn't the requesting user or one of their agent profiles."""
 
 
 class ParentTaskError(Exception):
@@ -241,10 +257,17 @@ def update_project(
         if archived != project.is_archived:
             project.is_archived = archived
             project.archived_at = datetime.now(timezone.utc) if archived else None
-    for key in ("name", "color", "icon", "git_remote_url"):
-        if key in fields:
-            setattr(project, key, fields[key])
-    db.commit()
+    for field in ("name", "color", "icon", "git_remote_url", "key"):
+        if field in fields:
+            setattr(project, field, fields[field])
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        # The only unique constraint reachable from here is the task key, which
+        # is unique within the owner. Surface it as a conflict rather than a 500
+        # so the settings form can say "that key is taken".
+        db.rollback()
+        raise ProjectKeyTakenError("That project key is already in use") from exc
     return project
 
 
@@ -411,6 +434,30 @@ def _resolve_labels(
     return labels
 
 
+def _validate_assignee(
+    db: Session, user_id: UUID, assignee_type: str | None, assignee_id: UUID | None
+) -> None:
+    """A task may only be assigned to a principal this user can actually see.
+
+    Today that is themselves or one of their own agent profiles. When P3 lands
+    project grants this grows a "…or a grantee on the task's project" branch —
+    it is deliberately one function so that stays a single edit.
+    """
+    if assignee_type is None or assignee_id is None:
+        return
+    if assignee_type == "user":
+        if assignee_id != user_id:
+            raise AssigneeNotFoundError("Assignee not found")
+        return
+    owned = (
+        db.query(AgentProfile.id)
+        .filter(AgentProfile.id == assignee_id, AgentProfile.user_id == user_id)
+        .first()
+    )
+    if owned is None:
+        raise AssigneeNotFoundError("Assignee not found")
+
+
 def _validate_parent(
     db: Session, user_id: UUID, task_id: UUID | None, parent_id: UUID
 ) -> None:
@@ -474,6 +521,8 @@ def create_task(
     label_ids: list[UUID] | None = None,
     start_date: datetime | None = None,
     due_date: datetime | None = None,
+    assignee_type: str | None = None,
+    assignee_id: UUID | None = None,
 ) -> Task:
     """Create a task; without an explicit project it lands in the Inbox."""
     if project_id is None:
@@ -485,10 +534,21 @@ def create_task(
 
     if parent_task_id is not None:
         _validate_parent(db, user_id, None, parent_task_id)
+    _validate_assignee(db, user_id, assignee_type, assignee_id)
+    # Resolve labels before taking a number: _resolve_labels raises on an
+    # unknown label, and a rejected create should not burn an identifier.
+    labels = _resolve_labels(db, user_id, label_ids or [])
+
+    # Identity (§3.5). The key is allocated lazily, on the project's first task,
+    # in its own savepoint; the number comes from UPDATE ... RETURNING on the
+    # counter, whose row lock serializes concurrent inserts into this project.
+    ensure_project_key_committed(db, project)
+    number = allocate_task_number(db, project)
 
     task = Task(
         user_id=user_id,
         project_id=project.id,
+        number=number,
         title=title,
         description=description,
         status=status,
@@ -497,9 +557,11 @@ def create_task(
         parent_task_id=parent_task_id,
         start_date=start_date,
         due_date=due_date,
+        assignee_type=assignee_type,
+        assignee_id=assignee_id,
     )
-    if label_ids:
-        task.labels = _resolve_labels(db, user_id, label_ids)
+    if labels:
+        task.labels = labels
     db.add(task)
     db.commit()
     return task
@@ -528,7 +590,23 @@ def update_task(db: Session, user_id: UUID, task_id: UUID, fields: dict) -> Task
             project = _get_project(db, user_id, project_id)
             if project is None:
                 raise ProjectNotFoundError("Project not found")
-        task.project_id = project.id
+        if project.id != task.project_id:
+            # Moving a task reassigns BOTH halves of its identifier — GitHub does
+            # the same on issue transfer, and D-B accepts the cost: "VIC-42"
+            # written in an old comment goes stale. The number it vacates is
+            # never reused; counters only ever climb.
+            #
+            # The child rows carry a denormalized project_id (so P3 can add a
+            # project-level access predicate without a join), so they have to
+            # move too — a comment left pointing at the old project would be
+            # readable through a grant on a project it no longer belongs to.
+            ensure_project_key_committed(db, project)
+            for model in (TaskComment, TaskActivity):
+                db.query(model).filter(model.task_id == task.id).update(
+                    {"project_id": project.id}, synchronize_session=False
+                )
+            task.project_id = project.id
+            task.number = allocate_task_number(db, project)
 
     if "parent_task_id" in fields:
         parent_id = fields.pop("parent_task_id")
@@ -539,6 +617,19 @@ def update_task(db: Session, user_id: UUID, task_id: UUID, fields: dict) -> Task
     if "label_ids" in fields:
         label_ids = fields.pop("label_ids") or []
         task.labels = _resolve_labels(db, user_id, label_ids)
+
+    # The assignee pair moves together (the request model enforces that both are
+    # present or both null), so one branch applies both columns.
+    if "assignee_type" in fields or "assignee_id" in fields:
+        assignee_type = fields.pop("assignee_type", task.assignee_type)
+        assignee_id = fields.pop("assignee_id", task.assignee_id)
+        _validate_assignee(db, user_id, assignee_type, assignee_id)
+        task.assignee_type = assignee_type
+        task.assignee_id = assignee_id
+        if assignee_type == "user" and assignee_id is not None:
+            from .task_timeline_queries import subscribe
+
+            subscribe(db, task.id, assignee_id, "assignee")
 
     for key in (
         "title",

@@ -11,6 +11,7 @@ from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, attributes
 
+from .actor import Actor, register_activity_override
 from .enums import AgentStatus
 from .models import AgentInstance
 from .task_models import Project, Task
@@ -101,6 +102,20 @@ def _sync_task_status_before_flush(session: Session, flush_context, instances) -
             obj.status.value,
             task.id,
             mapped,
+        )
+        # Attribute the move to the agent, not to whoever's request happened to
+        # carry the status update — the daemon posts it authenticated as the
+        # user, but the thing that moved the task is the session. Carrying the
+        # instance id lets the task timeline fold this session's status hops
+        # into its session card rather than listing each one.
+        register_activity_override(
+            session,
+            task.id,
+            Actor(
+                type="agent" if obj.agent_profile_id else "system",
+                id=obj.agent_profile_id,
+                agent_instance_id=obj.id,
+            ),
         )
         task.status = mapped
 

@@ -28,6 +28,7 @@ from shared.database.session import get_db
 # Reused human-facing query layer + DTOs. See module docstring for why this
 # servers→backend import is deliberate rather than a duplicate implementation.
 from backend.db import task_queries
+from backend.db.task_serializers import serialize_task, serialize_tasks
 from backend.db.task_queries import (
     LabelNotFoundError,
     ParentTaskError,
@@ -92,7 +93,7 @@ def list_tasks_endpoint(
         status=task_status,
         priority=task_priority,
     )
-    return [TaskResponse.model_validate(t) for t in tasks]
+    return serialize_tasks(db, tasks)
 
 
 @task_router.post(
@@ -123,7 +124,7 @@ def create_task_endpoint(
     except (ProjectNotFoundError, LabelNotFoundError, ParentTaskError) as exc:
         _raise_task_ref_errors(exc)
         raise  # unreachable; keeps the type checker satisfied
-    return TaskResponse.model_validate(task)
+    return serialize_task(db, task)
 
 
 @task_router.get("/tasks/{task_id}", response_model=TaskResponse)
@@ -137,7 +138,7 @@ def get_task_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
         )
-    return TaskResponse.model_validate(task)
+    return serialize_task(db, task)
 
 
 @task_router.patch("/tasks/{task_id}", response_model=TaskResponse)
@@ -157,7 +158,7 @@ def update_task_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
         )
-    return TaskResponse.model_validate(task)
+    return serialize_task(db, task)
 
 
 @task_router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
