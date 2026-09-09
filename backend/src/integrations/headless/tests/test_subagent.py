@@ -7,6 +7,7 @@ from claude_agent_sdk import (
     SystemMessage,
     TaskNotificationMessage,
     TaskStartedMessage,
+    TaskUpdatedMessage,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
@@ -597,4 +598,59 @@ async def test_watchdog_defers_while_reply_pending(make_runner, monkeypatch):
         runner._auq_registry.cancel("req-1")
 
     assert fake_vicoa.mark_requires_input_calls == []
+    assert runner._pending_background_tasks == {"task-1"}
+
+
+# ---------------------------------------------------------------------------
+# Task ledger: what belongs in ``_pending_background_tasks``, and what clears it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_terminal_task_updated_clears_the_pending_task(make_runner):
+    """A background task's terminal state can arrive *only* as ``task_updated``.
+
+    A task stopped via ``TaskStop`` — or by the Stop button's own ``stop_task``
+    sweep — reports ``killed`` there and the matching ``task_notification`` is
+    sometimes suppressed. Tracking just the notification leaked the id, and a
+    leaked id defers the awaiting-input settle indefinitely.
+    """
+    runner = make_runner()
+    runner._track_task_lifecycle(_task_started("task-1", "tu-1"))
+    assert runner._pending_background_tasks == {"task-1"}
+
+    runner._track_task_lifecycle(
+        TaskUpdatedMessage(
+            subtype="task_updated",
+            data={},
+            task_id="task-1",
+            patch={"status": "killed"},
+            status="killed",
+            session_id="sdk-sess-1",
+            uuid="u-updated",
+        )
+    )
+
+    assert runner._pending_background_tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_background_shell_is_not_tracked_as_a_subagent(make_runner):
+    """Only delegated agent work counts.
+
+    A background shell (``Bash(run_in_background=True)`` on a dev server) rides
+    the same task frames but may never reach a terminal status, so tracking one
+    would defer the settle forever — and the Stop button's sweep would kill the
+    user's dev server.
+    """
+    runner = make_runner()
+
+    shell = _task_started("shell-1", "tu-1")
+    shell.task_type = "local_bash"
+    runner._track_task_lifecycle(shell)
+    assert runner._pending_background_tasks == set()
+
+    agent = _task_started("task-1", "tu-2")
+    agent.task_type = "local_agent"
+    runner._track_task_lifecycle(agent)
     assert runner._pending_background_tasks == {"task-1"}
