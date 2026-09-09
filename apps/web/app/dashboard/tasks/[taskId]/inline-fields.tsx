@@ -22,11 +22,12 @@ import { ChevronDown } from 'lucide-react';
 import { MessageMarkdown } from '@/components/ui/message-markdown';
 import { cn } from '@/lib/utils';
 
-// How tall a collapsed description is allowed to be — roughly eight lines at
+// How tall a collapsed description is allowed to be — roughly fourteen lines at
 // this leading. Anything under it renders whole and grows no affordance; the
 // point is to stop a spec-length description from pushing the timeline off the
-// screen, not to put a "Show more" on every two-line note.
-const COLLAPSED_MAX_PX = 192;
+// screen, not to make people expand an ordinary paragraph. A clamp that fires
+// on a normal-sized description just adds a click to reading the task.
+const COLLAPSED_MAX_PX = 320;
 
 /** Grow a textarea to fit its content, coalesced into one reflow per frame. */
 function useAutoResize(value: string, enabled: boolean) {

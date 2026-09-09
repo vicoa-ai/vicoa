@@ -467,6 +467,39 @@ export function ProjectIcon({
   return <Icon aria-hidden="true" className={cn('text-muted-foreground', box)} />;
 }
 
+/**
+ * "VIC-42" — the task's identifier, wherever a task is listed.
+ *
+ * Always rendered, not behind the display menu that governs priority, labels
+ * and dates. Those are properties you may not care about; this is the task's
+ * name. The whole reason the key exists (D-B) is to give every task something
+ * speakable and greppable to use in chat, in an agent prompt and in a commit
+ * message — hiding it by default would defeat the feature.
+ *
+ * Renders nothing when the task has no identifier: a project only takes a key
+ * on its first task, and rows created before the backfill have no number. A
+ * placeholder there would look like a reference that doesn't resolve.
+ */
+export function TaskIdentifier({
+  task,
+  className,
+}: {
+  task: Pick<TaskResponse, 'identifier'>;
+  className?: string;
+}) {
+  if (!task.identifier) return null;
+  return (
+    <span
+      className={cn(
+        'shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground/70',
+        className,
+      )}
+    >
+      {task.identifier}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // PillButton — the trigger every property picker renders
 //
