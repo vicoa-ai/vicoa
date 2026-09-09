@@ -191,9 +191,12 @@ export default function TaskDetailPage() {
   );
 
   const postComment = useCallback(
-    async (body: string) => {
+    async (body: string, parentCommentId?: string) => {
       if (!api || !task) return;
-      const timeline = await api.createTaskComment(task.id, body);
+      const timeline = await api.createTaskComment(task.id, body, parentCommentId);
+      // The whole timeline comes back rather than the one new comment, so a
+      // reply lands already spliced under its root instead of the client having
+      // to guess where in the thread it goes.
       setComments(timeline.comments);
       setActivity(timeline.activity);
       setTaskReactions(timeline.reactions);
@@ -302,8 +305,11 @@ export default function TaskDetailPage() {
               onToggleCommentReaction={(commentId, emoji) =>
                 void toggleReaction('comment', commentId, emoji)
               }
+              onReply={(parentCommentId, body) => postComment(body, parentCommentId)}
             />
-            <CommentComposer onSubmit={postComment} />
+            {/* The bottom composer always starts a new thread; replying is
+                the affordance inside a thread. */}
+            <CommentComposer onSubmit={(body) => postComment(body)} />
           </div>
         </div>
 

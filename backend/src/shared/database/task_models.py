@@ -364,7 +364,16 @@ class Task(Base):
 
 
 class TaskComment(Base):
-    """A markdown comment on a task, by a user or an agent."""
+    """A markdown comment on a task, by a user or an agent.
+
+    Comments thread **one level deep**: a comment is either a root or a reply to
+    a root, never a reply to a reply. `create_comment` enforces that by
+    re-pointing a reply-to-a-reply at the thread's root rather than rejecting it,
+    which is what Slack and GitHub Discussions do and for the same reason — an
+    arbitrarily deep tree has to be indent-capped somewhere in the UI anyway, and
+    capping it in the data keeps every client (web, mobile, CLI) rendering the
+    same shape instead of each inventing its own flattening rule.
+    """
 
     __tablename__ = "task_comments"
     __table_args__ = (
@@ -374,6 +383,13 @@ class TaskComment(Base):
         CheckConstraint("kind IN ('comment','system')", name="ck_task_comments_kind"),
         Index("ix_task_comments_task", "task_id", "created_at"),
         Index("ix_task_comments_project", "project_id"),
+        # Partial: only replies carry a parent, and the lookup is always
+        # "the replies under this root", never "the roots".
+        Index(
+            "ix_task_comments_parent",
+            "parent_comment_id",
+            postgresql_where=text("parent_comment_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -385,6 +401,17 @@ class TaskComment(Base):
     project_id: Mapped[UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"),
         type_=PostgresUUID(as_uuid=True),
+    )
+    # The root this comment answers, or NULL when it *is* a root. Always points
+    # at a root (see the class docstring), so `parent_comment_id IS NULL` is the
+    # whole test for "is a root" and no client ever walks a chain. CASCADE is
+    # unreachable in practice — a comment is soft-deleted, so the only hard
+    # delete is the task's — but it keeps replies from outliving their root if
+    # one ever is purged.
+    parent_comment_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("task_comments.id", ondelete="CASCADE"),
+        type_=PostgresUUID(as_uuid=True),
+        default=None,
     )
     # Polymorphic author: users.id or agent_profiles.id. Not an FK — the two
     # targets are different tables and a deleted principal must leave the thread

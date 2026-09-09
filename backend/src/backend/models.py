@@ -829,6 +829,10 @@ class TaskReactionSummary(BaseModel):
 class TaskCommentResponse(BaseModel):
     id: UUID
     task_id: UUID
+    # The root this answers, or None when it is one. Threads are one level deep,
+    # so this always names a root and no client walks a chain. The list arrives
+    # already in thread order — each root followed by its replies.
+    parent_comment_id: UUID | None = None
     author: PrincipalResponse
     # None once soft-deleted: the row stays so the thread keeps its shape, but
     # the text does not travel to the client.
@@ -867,6 +871,24 @@ class TaskTimelineResponse(BaseModel):
 
 class CreateTaskCommentRequest(BaseModel):
     body: str = Field(..., min_length=1, max_length=MAX_COMMENT_BODY_CHARS)
+    # Reply to this comment. Threads are one level deep: passing a reply's id
+    # attaches to that reply's root rather than nesting further.
+    parent_comment_id: UUID | None = None
+
+
+class CreateAgentTaskCommentRequest(CreateTaskCommentRequest):
+    """The agent-facing body — the human one plus an authorship channel.
+
+    An API key identifies a *user*, so a comment posted through it is the user's
+    unless the caller says otherwise. `vicoa task comment` run inside a Vicoa
+    session passes that session's id (it has it as `VICOA_AGENT_INSTANCE_ID`),
+    and the server authors the comment as the session's agent profile — the only
+    way a comment ever gets `author_type='agent'`. A session with no profile, or
+    one belonging to another user, falls back to the user rather than failing:
+    losing the byline is a better outcome than losing the comment.
+    """
+
+    agent_instance_id: UUID | None = None
 
 
 class UpdateTaskCommentRequest(BaseModel):

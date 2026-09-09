@@ -223,16 +223,61 @@ def subscribe(db: Session, task_id: UUID, user_id: UUID, reason: str) -> None:
 # --- Comments ---------------------------------------------------------------
 
 
-def create_comment(db: Session, task: Task, user_id: UUID, body: str) -> TaskComment:
+def resolve_thread_root(db: Session, task: Task, parent_comment_id: UUID) -> UUID:
+    """The root a reply to `parent_comment_id` should hang off.
+
+    Threads are one level deep (see `TaskComment`), so a reply *to a reply* is
+    re-pointed at that reply's root rather than rejected: the person clicking
+    "Reply" under a nested comment means "answer in this thread", and refusing
+    them would be a rule about our schema, not about what they asked for.
+    """
+    parent = (
+        db.query(TaskComment)
+        .filter(TaskComment.id == parent_comment_id, TaskComment.task_id == task.id)
+        .first()
+    )
+    # A deleted parent still anchors a thread — its replies are still on screen
+    # under the tombstone, and "Reply" there has to keep working.
+    if parent is None:
+        raise CommentNotFoundError("Parent comment not found")
+    return parent.parent_comment_id or parent.id
+
+
+def create_comment(
+    db: Session,
+    task: Task,
+    user_id: UUID,
+    body: str,
+    *,
+    parent_comment_id: UUID | None = None,
+    author: PrincipalRef | None = None,
+) -> TaskComment:
+    """Post a comment as `user_id`, or as `author` when an agent wrote it.
+
+    `author` is how an agent-authored comment gets its own name in the timeline:
+    the agent-facing API resolves the calling session's agent profile and passes
+    ('agent', profile_id). `user_id` still governs *scope* — the comment lands on
+    a task that user owns either way.
+    """
+    author_type, author_id = author or ("user", user_id)
+    root_id = (
+        resolve_thread_root(db, task, parent_comment_id)
+        if parent_comment_id is not None
+        else None
+    )
     comment = TaskComment(
         task_id=task.id,
         project_id=task.project_id,
-        author_type="user",
-        author_id=user_id,
+        parent_comment_id=root_id,
+        author_type=author_type,
+        author_id=author_id,
         body=body,
     )
     db.add(comment)
-    subscribe(db, task.id, user_id, "commenter")
+    # Only when the human is the one talking. An agent commenting through this
+    # user's API key is not that user choosing to follow the thread.
+    if author_type == "user" and author_id == user_id:
+        subscribe(db, task.id, user_id, "commenter")
     db.commit()
     return comment
 
@@ -273,9 +318,34 @@ def delete_comment(db: Session, task: Task, comment_id: UUID, user_id: UUID) -> 
 # --- Timeline ---------------------------------------------------------------
 
 
+def thread_order(comments: list[TaskComment]) -> list[TaskComment]:
+    """Roots oldest-first, each immediately followed by its replies.
+
+    Serving the list already threaded means a client that wants the tree reads
+    `parent_comment_id` and one that just wants to print the conversation (the
+    CLI, mobile's first pass) can walk the list straight through. A reply whose
+    root somehow isn't in the list is emitted as a root rather than dropped —
+    a comment that exists must be readable.
+    """
+    replies: dict[UUID, list[TaskComment]] = {}
+    by_id = {c.id: c for c in comments}
+    roots: list[TaskComment] = []
+    for comment in sorted(comments, key=lambda c: c.created_at):
+        parent_id = comment.parent_comment_id
+        if parent_id is not None and parent_id in by_id:
+            replies.setdefault(parent_id, []).append(comment)
+        else:
+            roots.append(comment)
+    ordered: list[TaskComment] = []
+    for root in roots:
+        ordered.append(root)
+        ordered.extend(replies.get(root.id, ()))
+    return ordered
+
+
 def build_timeline(db: Session, task: Task, user_id: UUID) -> TaskTimelineResponse:
     """Everything the task-detail timeline renders, in one round trip."""
-    comments = (
+    comments = thread_order(
         db.query(TaskComment)
         .filter(TaskComment.task_id == task.id)
         .order_by(TaskComment.created_at.asc())
@@ -305,6 +375,7 @@ def build_timeline(db: Session, task: Task, user_id: UUID) -> TaskTimelineRespon
             TaskCommentResponse(
                 id=c.id,
                 task_id=c.task_id,
+                parent_comment_id=c.parent_comment_id,
                 author=principals[(c.author_type, c.author_id)],
                 body=None if c.deleted_at else c.body,
                 kind="system" if c.kind == "system" else "comment",

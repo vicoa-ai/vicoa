@@ -10,15 +10,28 @@
 //    leading glyph at the same x and uses the same avatar size. Cards carry a
 //    real border and bare rows a transparent one so a 1px edge can't knock the
 //    column out of true.
-// 2. ONE SURFACE PER RUN OF COMMENTS. Consecutive comments share a single card
-//    with dividers between them rather than each getting its own floating
-//    bubble; the author row lives inside that surface. A thread should read as
-//    one object, not as a chat between two parties.
+// 2. ONE SURFACE PER THREAD. A root, its replies and the box you answer in
+//    share a single card with dividers between them, rather than each comment
+//    getting its own floating bubble. The thread is the object; the card is its
+//    edge. (Before threads existed this grouped *runs* of comments instead —
+//    once a comment can be answered, the run is no longer the real unit.)
 // 3. SESSIONS ABSORB THEIR OWN NOISE. A session's status hops (in_progress →
 //    done → in_review) are real activity rows, but they are folded into that
 //    session's card via `details.agent_instance_id` instead of being listed
 //    three times in the stream. Without this the timeline of a task that ran
 //    three sessions is nine automated lines and no content.
+// 4. A THREAD SITS WHERE IT STARTED, AND NEVER BRANCHES — SO IT NEVER INDENTS.
+//    Replies are one level deep (the server guarantees it): under a root they
+//    are a single ordered chain, never a tree. That is exactly why they are NOT
+//    indented — an indent encodes depth, and there is no second level for it to
+//    distinguish. The card's edge and the reply box at its foot already say
+//    "one conversation", so rule 1 holds with no exception. The thread is placed
+//    at its ROOT's timestamp, so an answer written a day later appears next to
+//    the thing it answers rather than stranded at the bottom of the page.
+// 5. THE REPLY BOX IS ALWAYS THERE. Every thread ends in a quiet "Leave a
+//    reply…" row — click and type. A hover-revealed or click-to-open affordance
+//    costs a click to discover that it exists, and this page is also a phone
+//    browser, where hover does not exist at all.
 
 import { useMemo, useState } from 'react';
 import { ChevronDown, ExternalLink, SmilePlus } from 'lucide-react';
@@ -35,6 +48,7 @@ import {
   TaskReactionSummary,
 } from '@/lib/backend-api';
 import { EmojiPicker } from '@/components/ui/emoji-picker';
+import { CommentComposer } from './comment-composer';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Tooltip,
@@ -56,8 +70,11 @@ const ROW_INSET = 'border px-3';
 const CARD_ROW = `${ROW_INSET} rounded-lg border-border bg-card`;
 const BARE_ROW = `${ROW_INSET} border-transparent`;
 
+/** A root comment and the replies hanging off it. Never deeper than this. */
+type Thread = { root: TaskCommentResponse; replies: TaskCommentResponse[] };
+
 type Entry =
-  | { kind: 'comments'; id: string; at: string; items: TaskCommentResponse[] }
+  | { kind: 'thread'; id: string; at: string; thread: Thread }
   | { kind: 'activity'; id: string; at: string; items: TaskActivityResponse[] }
   | {
       kind: 'session';
@@ -126,6 +143,45 @@ function timeLabel(iso: string): string {
 }
 
 /**
+ * Group a flat comment list into one-level threads.
+ *
+ * Built from `parent_comment_id` rather than from arrival order: the server
+ * already sends the list threaded, but a client that silently depends on that
+ * ordering breaks in a way nobody notices until a reply renders as a root.
+ * A reply whose root isn't in the list is promoted to a root — a comment that
+ * exists must be readable.
+ */
+export function buildThreads(comments: TaskCommentResponse[]): Thread[] {
+  const threads = new Map<string, Thread>();
+  const order: string[] = [];
+  const orphans: TaskCommentResponse[] = [];
+
+  for (const comment of comments) {
+    if (comment.parent_comment_id === null) {
+      threads.set(comment.id, { root: comment, replies: [] });
+      order.push(comment.id);
+    }
+  }
+  for (const comment of comments) {
+    if (comment.parent_comment_id === null) continue;
+    const thread = threads.get(comment.parent_comment_id);
+    if (thread) thread.replies.push(comment);
+    else orphans.push(comment);
+  }
+  for (const orphan of orphans) {
+    threads.set(orphan.id, { root: orphan, replies: [] });
+    order.push(orphan.id);
+  }
+
+  const out = order.map((id) => threads.get(id)!);
+  out.sort((a, b) => a.root.created_at.localeCompare(b.root.created_at));
+  for (const thread of out) {
+    thread.replies.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }
+  return out;
+}
+
+/**
  * Fold the three sources into one ordered stream.
  *
  * Sessions are placed at their start time and swallow the activity rows they
@@ -137,11 +193,20 @@ export function buildEntries(
   activity: TaskActivityResponse[],
   sessions: AgentInstanceResponse[],
 ): Entry[] {
+  // Threads are placed by their ROOT's timestamp (rule 4), so a reply never
+  // pulls its thread down the page away from the conversation it belongs to.
+  const threads = buildThreads(comments);
+  // Only a session that is actually on this task can absorb anything. An
+  // activity row naming a session the task no longer links to (unlinked, or
+  // deleted) would otherwise be bucketed against a card that never renders and
+  // vanish from the timeline — the change really happened, so it stays as a
+  // normal line instead.
+  const linked = new Set(sessions.map((session) => session.id));
   const bySession = new Map<string, TaskActivityResponse[]>();
   const loose: TaskActivityResponse[] = [];
   for (const row of activity) {
     const instanceId = row.details?.agent_instance_id;
-    if (typeof instanceId === 'string') {
+    if (typeof instanceId === 'string' && linked.has(instanceId)) {
       const bucket = bySession.get(instanceId);
       if (bucket) bucket.push(row);
       else bySession.set(instanceId, [row]);
@@ -151,12 +216,16 @@ export function buildEntries(
   }
 
   type Raw =
-    | { at: string; kind: 'comment'; comment: TaskCommentResponse }
+    | { at: string; kind: 'comment'; thread: Thread }
     | { at: string; kind: 'activity'; row: TaskActivityResponse }
     | { at: string; kind: 'session'; session: AgentInstanceResponse };
 
   const raw: Raw[] = [
-    ...comments.map((comment) => ({ at: comment.created_at, kind: 'comment' as const, comment })),
+    ...threads.map((thread) => ({
+      at: thread.root.created_at,
+      kind: 'comment' as const,
+      thread,
+    })),
     ...loose.map((row) => ({ at: row.created_at, kind: 'activity' as const, row })),
     // A session with no start time sorts to the top rather than being dropped;
     // it is still a real link on the task.
@@ -171,14 +240,14 @@ export function buildEntries(
   for (const item of raw) {
     const last = entries[entries.length - 1];
     if (item.kind === 'comment') {
-      if (last?.kind === 'comments') last.items.push(item.comment);
-      else
-        entries.push({
-          kind: 'comments',
-          id: `c-${item.comment.id}`,
-          at: item.at,
-          items: [item.comment],
-        });
+      // Never merged with the thread before it (rule 2): each thread owns its
+      // own card because each thread owns its own reply box.
+      entries.push({
+        kind: 'thread',
+        id: `c-${item.thread.root.id}`,
+        at: item.at,
+        thread: item.thread,
+      });
     } else if (item.kind === 'activity') {
       if (last?.kind === 'activity') last.items.push(item.row);
       else
@@ -297,65 +366,100 @@ export function ReactionRow({
   );
 }
 
-function CommentGroup({
-  comments,
+function CommentBody({
+  comment,
   viewer,
   onToggleReaction,
 }: {
-  comments: TaskCommentResponse[];
+  comment: TaskCommentResponse;
   viewer: Principal | null;
   onToggleReaction: (commentId: string, emoji: string) => void;
 }) {
+  const author = principalFromResponse(comment.author);
+  return (
+    <>
+      <div className="flex items-center gap-2">
+        <PrincipalAvatar principal={principalForAvatar(author, viewer)} size="xs" />
+        <span className="text-sm font-medium">
+          {principalDisplayName(author, viewer)}
+        </span>
+        {comment.author.type === 'agent' && (
+          <span className="rounded bg-muted px-1 py-px text-[10px] text-muted-foreground">
+            agent
+          </span>
+        )}
+        <span className="text-xs text-muted-foreground">
+          {timeLabel(comment.created_at)}
+        </span>
+        {comment.edited_at && (
+          <span className="text-xs text-muted-foreground/60">(edited)</span>
+        )}
+      </div>
+      {comment.deleted_at || comment.body === null ? (
+        // The tombstone stays: its replies are still on screen under it, and a
+        // thread with a hole where its opening post was is unreadable.
+        <div className="mt-1.5 text-sm italic text-muted-foreground/60">
+          This comment was deleted.
+        </div>
+      ) : (
+        <>
+          {/* Body starts at the avatar's left edge, not indented under the
+              name — the indent buys nothing and costs the column. */}
+          <div className="mt-1.5 text-sm leading-relaxed">
+            <MessageMarkdown>{comment.body}</MessageMarkdown>
+          </div>
+          <ReactionRow
+            className="mt-2"
+            reactions={comment.reactions}
+            viewer={viewer}
+            onToggle={(emoji) => onToggleReaction(comment.id, emoji)}
+          />
+        </>
+      )}
+    </>
+  );
+}
+
+function ThreadCard({
+  thread,
+  viewer,
+  onToggleReaction,
+  onReply,
+}: {
+  thread: Thread;
+  viewer: Principal | null;
+  onToggleReaction: (commentId: string, emoji: string) => void;
+  onReply?: (parentCommentId: string, body: string) => Promise<void>;
+}) {
   return (
     <div className={cn(CARD_ROW, 'px-0')}>
-      {comments.map((comment, index) => {
-        const author = principalFromResponse(comment.author);
-        return (
-          <div
-            key={comment.id}
-            // Divider between entries, never around them: the run is one
-            // surface, and a border on each child would rebuild the bubbles.
-            className={cn('px-3 py-2.5', index > 0 && 'border-t')}
-          >
-            <div className="flex items-center gap-2">
-              <PrincipalAvatar principal={principalForAvatar(author, viewer)} size="xs" />
-              <span className="text-sm font-medium">
-                {principalDisplayName(author, viewer)}
-              </span>
-              {comment.author.type === 'agent' && (
-                <span className="rounded bg-muted px-1 py-px text-[10px] text-muted-foreground">
-                  agent
-                </span>
-              )}
-              <span className="text-xs text-muted-foreground">
-                {timeLabel(comment.created_at)}
-              </span>
-              {comment.edited_at && (
-                <span className="text-xs text-muted-foreground/60">(edited)</span>
-              )}
-            </div>
-            {comment.deleted_at || comment.body === null ? (
-              <div className="mt-1.5 text-sm italic text-muted-foreground/60">
-                This comment was deleted.
-              </div>
-            ) : (
-              <>
-                {/* Body starts at the avatar's left edge, not indented under the
-                    name — the indent buys nothing and costs the column. */}
-                <div className="mt-1.5 text-sm leading-relaxed">
-                  <MessageMarkdown>{comment.body}</MessageMarkdown>
-                </div>
-                <ReactionRow
-                  className="mt-2"
-                  reactions={comment.reactions}
-                  viewer={viewer}
-                  onToggle={(emoji) => onToggleReaction(comment.id, emoji)}
-                />
-              </>
-            )}
-          </div>
-        );
-      })}
+      <div className="px-3 py-2.5">
+        <CommentBody comment={thread.root} viewer={viewer} onToggleReaction={onToggleReaction} />
+      </div>
+      {/* Not indented (rule 4). The card's edge already says these belong
+          together, and there is no second level to distinguish them from — a
+          reply cannot itself be replied to, so an indent would only encode
+          depth that cannot exist. */}
+      {thread.replies.map((reply) => (
+        <div key={reply.id} className="border-t px-3 py-2.5">
+          <CommentBody comment={reply} viewer={viewer} onToggleReaction={onToggleReaction} />
+        </div>
+      ))}
+      {onReply && (
+        <div className="border-t px-3 py-1.5">
+          <CommentComposer
+            variant="inline"
+            placeholder="Leave a reply…"
+            leading={
+              <PrincipalAvatar
+                principal={viewer ?? { type: 'user', name: null }}
+                size="xs"
+              />
+            }
+            onSubmit={(body) => onReply(thread.root.id, body)}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -493,6 +597,7 @@ export function TaskTimeline({
   sessions,
   viewer,
   onToggleCommentReaction,
+  onReply,
 }: {
   comments: TaskCommentResponse[];
   activity: TaskActivityResponse[];
@@ -500,6 +605,8 @@ export function TaskTimeline({
   /** The signed-in user, so a nameless principal can still read as "You". */
   viewer: Principal | null;
   onToggleCommentReaction: (commentId: string, emoji: string) => void;
+  /** Omitted on a read-only surface (P4's public board): no composer, no Reply. */
+  onReply?: (parentCommentId: string, body: string) => Promise<void>;
 }) {
   const entries = useMemo(
     () => buildEntries(comments, activity, sessions),
@@ -509,13 +616,14 @@ export function TaskTimeline({
   return (
     <div className="space-y-1.5">
       {entries.map((entry) => {
-        if (entry.kind === 'comments') {
+        if (entry.kind === 'thread') {
           return (
-            <CommentGroup
+            <ThreadCard
               key={entry.id}
-              comments={entry.items}
+              thread={entry.thread}
               viewer={viewer}
               onToggleReaction={onToggleCommentReaction}
+              onReply={onReply}
             />
           );
         }
@@ -528,4 +636,4 @@ export function TaskTimeline({
   );
 }
 
-export type { Entry, Principal };
+export type { Entry, Thread, Principal };

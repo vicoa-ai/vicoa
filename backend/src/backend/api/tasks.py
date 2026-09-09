@@ -443,42 +443,35 @@ def create_task_endpoint(
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
 def get_task_endpoint(
-    task_id: UUID,
+    task_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TaskResponse:
-    task = task_queries.get_task(db, current_user.id, task_id)
-    if task is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
-        )
-    return serialize_task(db, task)
+    return serialize_task(db, _require_task(db, current_user.id, task_id))
 
 
 @router.get("/tasks/{task_id}/sessions", response_model=list[AgentInstanceResponse])
 def list_task_sessions_endpoint(
-    task_id: UUID,
+    task_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[AgentInstanceResponse]:
     """Agent sessions started from this task, most recent first."""
-    if task_queries.get_task(db, current_user.id, task_id) is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
-        )
-    return list_task_instances(db, current_user.id, task_id)
+    task = _require_task(db, current_user.id, task_id)
+    return list_task_instances(db, current_user.id, task.id)
 
 
 @router.patch("/tasks/{task_id}", response_model=TaskResponse)
 def update_task_endpoint(
-    task_id: UUID,
+    task_id: str,
     request: UpdateTaskRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TaskResponse:
     fields = request.model_dump(exclude_unset=True)
+    existing = _require_task(db, current_user.id, task_id)
     try:
-        task = task_queries.update_task(db, current_user.id, task_id, fields)
+        task = task_queries.update_task(db, current_user.id, existing.id, fields)
     except (
         ProjectNotFoundError,
         LabelNotFoundError,
@@ -496,11 +489,12 @@ def update_task_endpoint(
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_task_endpoint(
-    task_id: UUID,
+    task_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
-    if not task_queries.delete_task(db, current_user.id, task_id):
+    task = _require_task(db, current_user.id, task_id)
+    if not task_queries.delete_task(db, current_user.id, task.id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
         )
@@ -516,14 +510,17 @@ def delete_task_endpoint(
 # ---------------------------------------------------------------------------
 
 
-def _require_task(db: Session, user_id: UUID, task_id: UUID):
-    """The user-scoped resolve every timeline route starts from.
+def _require_task(db: Session, user_id: UUID, task_id: str):
+    """The user-scoped resolve every task route starts from.
 
-    The timeline tables carry no `user_id` of their own, so this is what keeps
-    them scoped: nothing below reaches a comment or activity row except through
-    a task this user owns.
+    Takes the reference as it arrived — a UUID *or* a "VIC-42" identifier, since
+    that is the only handle a person can read off the screen and say out loud.
+
+    It is also what keeps the timeline scoped: those tables carry no `user_id`
+    of their own, so nothing below reaches a comment or activity row except
+    through a task this user owns.
     """
-    task = task_queries.get_task(db, user_id, task_id)
+    task = task_queries.resolve_task(db, user_id, task_id)
     if task is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
@@ -533,7 +530,7 @@ def _require_task(db: Session, user_id: UUID, task_id: UUID):
 
 @router.get("/tasks/{task_id}/timeline", response_model=TaskTimelineResponse)
 def get_task_timeline_endpoint(
-    task_id: UUID,
+    task_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TaskTimelineResponse:
@@ -548,19 +545,32 @@ def get_task_timeline_endpoint(
     status_code=status.HTTP_201_CREATED,
 )
 def create_task_comment_endpoint(
-    task_id: UUID,
+    task_id: str,
     request: CreateTaskCommentRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TaskTimelineResponse:
-    """Post a comment and return the whole timeline.
+    """Post a comment — or a reply to one — and return the whole timeline.
 
     Returning the timeline rather than the one new comment costs nothing (the
     caller was about to revalidate anyway) and closes the window where an
-    optimistic append and a background poll disagree about ordering.
+    optimistic append and a background poll disagree about ordering. With
+    threads it also saves the client from having to splice a reply into the
+    right place itself.
     """
     task = _require_task(db, current_user.id, task_id)
-    task_timeline_queries.create_comment(db, task, current_user.id, request.body)
+    try:
+        task_timeline_queries.create_comment(
+            db,
+            task,
+            current_user.id,
+            request.body,
+            parent_comment_id=request.parent_comment_id,
+        )
+    except task_timeline_queries.CommentNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
     return task_timeline_queries.build_timeline(db, task, current_user.id)
 
 
@@ -568,7 +578,7 @@ def create_task_comment_endpoint(
     "/tasks/{task_id}/comments/{comment_id}", response_model=TaskTimelineResponse
 )
 def update_task_comment_endpoint(
-    task_id: UUID,
+    task_id: str,
     comment_id: UUID,
     request: UpdateTaskCommentRequest,
     current_user: User = Depends(get_current_user),
@@ -590,7 +600,7 @@ def update_task_comment_endpoint(
     "/tasks/{task_id}/comments/{comment_id}", response_model=TaskTimelineResponse
 )
 def delete_task_comment_endpoint(
-    task_id: UUID,
+    task_id: str,
     comment_id: UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -607,7 +617,7 @@ def delete_task_comment_endpoint(
 
 @router.put("/tasks/{task_id}/reactions", response_model=TaskTimelineResponse)
 def toggle_task_reaction_endpoint(
-    task_id: UUID,
+    task_id: str,
     request: ToggleTaskReactionRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

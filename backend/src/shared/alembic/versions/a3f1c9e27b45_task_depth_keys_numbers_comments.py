@@ -141,6 +141,10 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("task_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("project_id", postgresql.UUID(as_uuid=True), nullable=False),
+        # One-level threads: a reply points at a root, and a reply to a reply is
+        # re-pointed at that root by the write path, so this column never forms
+        # a chain deeper than one hop.
+        sa.Column("parent_comment_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("author_type", sa.String(length=8), nullable=False),
         sa.Column("author_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("body", sa.Text(), nullable=False),
@@ -157,10 +161,19 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(["task_id"], ["tasks.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["parent_comment_id"], ["task_comments.id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_task_comments_task", "task_comments", ["task_id", "created_at"])
     op.create_index("ix_task_comments_project", "task_comments", ["project_id"])
+    op.create_index(
+        "ix_task_comments_parent",
+        "task_comments",
+        ["parent_comment_id"],
+        postgresql_where=sa.text("parent_comment_id IS NOT NULL"),
+    )
 
     op.create_table(
         "task_reactions",
@@ -238,6 +251,7 @@ def downgrade() -> None:
     op.drop_table("task_activity")
     op.drop_index("ix_task_reactions_target", table_name="task_reactions")
     op.drop_table("task_reactions")
+    op.drop_index("ix_task_comments_parent", table_name="task_comments")
     op.drop_index("ix_task_comments_project", table_name="task_comments")
     op.drop_index("ix_task_comments_task", table_name="task_comments")
     op.drop_table("task_comments")

@@ -5,6 +5,7 @@ bucket: lazily created, never archivable or deletable.
 """
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -572,6 +573,50 @@ def get_task(db: Session, user_id: UUID, task_id: UUID) -> Task | None:
         db.query(Task)
         .options(selectinload(Task.labels))
         .filter(Task.id == task_id, Task.user_id == user_id)
+        .first()
+    )
+
+
+# "VIC-42" — a project key (2-8 chars, letter-led) and a per-project number.
+# Deliberately not anchored to the key length the deriver produces: a key is
+# user-editable, and a resolver that rejected what the editor accepted would be
+# the worse of the two bugs.
+_IDENTIFIER_RE = re.compile(r"^([A-Za-z][A-Za-z0-9]{1,7})-([0-9]+)$")
+
+
+def resolve_task(db: Session, user_id: UUID, ref: str) -> Task | None:
+    """Find one of `user_id`'s tasks by UUID **or** by its "VIC-42" identifier.
+
+    Every surface where a person or an agent types a task reference goes through
+    here, because the identifier is the only handle either of them can actually
+    see: it is what the task-detail header shows, what `vicoa task ls` prints,
+    and what someone says out loud. A UUID is an implementation detail that
+    happens to be in a URL. Both are accepted — the web already holds UUIDs and
+    should not have to translate.
+
+    The key is matched case-insensitively and scoped to `user_id`, which is also
+    what makes it unambiguous: keys are unique per owner, not globally, so
+    "VIC-1" means a different task in a different account and neither can reach
+    the other.
+    """
+    ref = (ref or "").strip()
+    try:
+        return get_task(db, user_id, UUID(ref))
+    except ValueError:
+        pass
+    match = _IDENTIFIER_RE.match(ref)
+    if match is None:
+        return None
+    key, number = match.group(1), int(match.group(2))
+    return (
+        db.query(Task)
+        .options(selectinload(Task.labels))
+        .join(Project, Project.id == Task.project_id)
+        .filter(
+            Task.user_id == user_id,
+            func.upper(Project.key) == key.upper(),
+            Task.number == number,
+        )
         .first()
     )
 

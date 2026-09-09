@@ -505,6 +505,12 @@ export interface TaskReactionSummary {
 export interface TaskCommentResponse {
   id: string;
   task_id: string;
+  /**
+   * The root this comment answers, or null when it is one. Threads are one
+   * level deep, so this always names a root — never another reply. The list
+   * arrives in thread order: each root immediately followed by its replies.
+   */
+  parent_comment_id: string | null;
   author: PrincipalResponse;
   /** null once soft-deleted; render a tombstone, not an empty comment. */
   body: string | null;
@@ -1487,10 +1493,15 @@ class BackendAPI {
   // Every mutation below answers with the whole timeline: the caller was going
   // to revalidate anyway, and it closes the window where an optimistic append
   // and a background poll disagree about ordering.
-  async createTaskComment(taskId: string, body: string): Promise<TaskTimelineResponse> {
+  async createTaskComment(
+    taskId: string,
+    body: string,
+    /** Reply into this comment's thread. Replying to a reply lands in the same thread. */
+    parentCommentId?: string,
+  ): Promise<TaskTimelineResponse> {
     return this.request<TaskTimelineResponse>(`/api/v1/tasks/${taskId}/comments`, {
       method: 'POST',
-      body: JSON.stringify({ body }),
+      body: JSON.stringify({ body, parent_comment_id: parentCommentId ?? null }),
     });
   }
 

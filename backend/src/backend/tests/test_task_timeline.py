@@ -113,6 +113,161 @@ class TestComments:
             )
 
 
+class TestTaskReferences:
+    """`resolve_task` — the identifier is the handle people can actually see."""
+
+    @pytest.fixture
+    def keyed_task(self, test_db, test_user):
+        project = task_queries.create_project(test_db, test_user.id, name="Vicoa")
+        return task_queries.create_task(
+            test_db, test_user.id, "keyed", project_id=project.id
+        )
+
+    def test_resolves_a_uuid(self, test_db, test_user, keyed_task):
+        found = task_queries.resolve_task(test_db, test_user.id, str(keyed_task.id))
+        assert found is not None and found.id == keyed_task.id
+
+    def test_resolves_an_identifier(self, test_db, test_user, keyed_task):
+        identifier = serialize_task(test_db, keyed_task).identifier
+        assert identifier is not None
+        found = task_queries.resolve_task(test_db, test_user.id, identifier)
+        assert found is not None and found.id == keyed_task.id
+
+    def test_identifier_is_case_insensitive(self, test_db, test_user, keyed_task):
+        """People type what they remember, not what they copied."""
+        identifier = serialize_task(test_db, keyed_task).identifier
+        assert identifier is not None
+        found = task_queries.resolve_task(test_db, test_user.id, identifier.lower())
+        assert found is not None and found.id == keyed_task.id
+
+    def test_whitespace_is_tolerated(self, test_db, test_user, keyed_task):
+        identifier = serialize_task(test_db, keyed_task).identifier
+        assert identifier is not None
+        found = task_queries.resolve_task(test_db, test_user.id, f"  {identifier} ")
+        assert found is not None and found.id == keyed_task.id
+
+    @pytest.mark.parametrize("ref", ["", "nonsense", "VIC-", "-42", "VIC-9999", "V-1"])
+    def test_unresolvable_refs_are_none_not_errors(self, test_db, test_user, ref):
+        """A bad reference is a 404, never a 500 — the route hands this whatever
+        the user typed."""
+        assert task_queries.resolve_task(test_db, test_user.id, ref) is None
+
+    def test_another_users_identifier_does_not_resolve(
+        self, test_db, test_user, stranger, keyed_task
+    ):
+        """Keys are unique per owner, not globally: the same "VIC-1" means a
+        different task in a different account, and neither can reach the other."""
+        identifier = serialize_task(test_db, keyed_task).identifier
+        assert identifier is not None
+        assert task_queries.resolve_task(test_db, stranger.id, identifier) is None
+
+
+class TestThreads:
+    """One-level threading (collab §3.5, decided 2026-09-09)."""
+
+    def test_reply_hangs_off_its_root(self, test_db, test_user, task):
+        root = task_timeline_queries.create_comment(
+            test_db, task, test_user.id, "question"
+        )
+        reply = task_timeline_queries.create_comment(
+            test_db, task, test_user.id, "answer", parent_comment_id=root.id
+        )
+        assert reply.parent_comment_id == root.id
+
+    def test_reply_to_a_reply_joins_the_same_thread(self, test_db, test_user, task):
+        """Not rejected, re-pointed: clicking "Reply" under a nested comment
+        means "answer in this thread", and refusing would be a rule about our
+        schema rather than about what the user asked for."""
+        root = task_timeline_queries.create_comment(test_db, task, test_user.id, "root")
+        reply = task_timeline_queries.create_comment(
+            test_db, task, test_user.id, "reply", parent_comment_id=root.id
+        )
+        nested = task_timeline_queries.create_comment(
+            test_db, task, test_user.id, "nested", parent_comment_id=reply.id
+        )
+        assert nested.parent_comment_id == root.id
+
+    def test_a_deleted_root_still_anchors_its_thread(self, test_db, test_user, task):
+        """Its replies are still on screen under the tombstone, so Reply there
+        has to keep working."""
+        root = task_timeline_queries.create_comment(test_db, task, test_user.id, "oops")
+        task_timeline_queries.delete_comment(test_db, task, root.id, test_user.id)
+        reply = task_timeline_queries.create_comment(
+            test_db, task, test_user.id, "still answering", parent_comment_id=root.id
+        )
+        assert reply.parent_comment_id == root.id
+
+    def test_parent_on_another_task_is_rejected(self, test_db, test_user, task):
+        other = task_queries.create_task(
+            test_db, test_user.id, "elsewhere", project_id=task.project_id
+        )
+        stray = task_timeline_queries.create_comment(
+            test_db, other, test_user.id, "over here"
+        )
+        with pytest.raises(task_timeline_queries.CommentNotFoundError):
+            task_timeline_queries.create_comment(
+                test_db, task, test_user.id, "reply", parent_comment_id=stray.id
+            )
+
+    def test_timeline_arrives_in_thread_order(self, test_db, test_user, task):
+        """Each root immediately followed by its replies — so the CLI and
+        mobile can print the list straight through without building a tree."""
+        first = task_timeline_queries.create_comment(
+            test_db, task, test_user.id, "first"
+        )
+        second = task_timeline_queries.create_comment(
+            test_db, task, test_user.id, "second"
+        )
+        task_timeline_queries.create_comment(
+            test_db, task, test_user.id, "reply to first", parent_comment_id=first.id
+        )
+        timeline = task_timeline_queries.build_timeline(test_db, task, test_user.id)
+        assert [c.body for c in timeline.comments] == [
+            "first",
+            "reply to first",
+            "second",
+        ]
+        assert timeline.comments[1].parent_comment_id == first.id
+        assert timeline.comments[2].id == second.id
+
+    def test_agent_authored_comment_keeps_the_agents_name(
+        self, test_db, test_user, agent_profile, task
+    ):
+        """How `author_type='agent'` ever happens: the agent-facing API resolves
+        the calling session's profile and passes it here."""
+        task_timeline_queries.create_comment(
+            test_db,
+            task,
+            test_user.id,
+            "ran the tests, all green",
+            author=("agent", agent_profile.id),
+        )
+        timeline = task_timeline_queries.build_timeline(test_db, task, test_user.id)
+        assert timeline.comments[0].author.type == "agent"
+        assert timeline.comments[0].author.name == "Claude"
+
+    def test_an_agent_comment_does_not_subscribe_the_key_owner(
+        self, test_db, test_user, agent_profile, task
+    ):
+        """An agent talking through the user's API key is not that user choosing
+        to follow the thread."""
+        from shared.database import TaskSubscriber
+
+        task_timeline_queries.create_comment(
+            test_db,
+            task,
+            test_user.id,
+            "done",
+            author=("agent", agent_profile.id),
+        )
+        assert (
+            test_db.query(TaskSubscriber)
+            .filter(TaskSubscriber.task_id == task.id)
+            .count()
+            == 0
+        )
+
+
 class TestReactions:
     def test_toggle_on_then_off(self, test_db, test_user, task):
         comment = task_timeline_queries.create_comment(
