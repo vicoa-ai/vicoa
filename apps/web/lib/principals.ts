@@ -55,6 +55,90 @@ export function principalAvatarSrc(principal: Principal | null | undefined): str
   return `/api/${base}/${principal.id}/avatar${version}`;
 }
 
+/**
+ * Map the backend's `PrincipalResponse` onto the client shape.
+ *
+ * The two disagree on one field name — `avatar_image_uri` on the wire (it
+ * mirrors the DB column) versus `avatarImageUri` here — and §8.1 asked whoever
+ * shipped the first backend serializer to pick one and make the other follow
+ * rather than let them drift. This is that one place; nothing else should be
+ * hand-rolling the conversion.
+ */
+export function principalFromResponse(
+  response: {
+    type: 'user' | 'agent' | 'system';
+    id: string | null;
+    name: string | null;
+    avatar_image_uri: string | null;
+    emoji: string | null;
+    updated_at: string | null;
+  } | null
+  | undefined,
+): Principal | null {
+  if (!response) return null;
+  return {
+    // 'system' is an actor, not a principal that can hold an avatar; it falls
+    // back to the agent glyph, which is what an automated action reads as.
+    type: response.type === 'system' ? 'agent' : response.type,
+    id: response.id,
+    name: response.name,
+    avatarImageUri: response.avatar_image_uri,
+    emoji: response.emoji,
+    updatedAt: response.updated_at,
+  };
+}
+
+/**
+ * What to call a principal on screen.
+ *
+ * `users.display_name` is nullable and a lot of accounts have none (an
+ * email/password signup carries no full name), so the raw name is often null
+ * and "Unknown" is the wrong thing to show someone about themselves. The
+ * backend deliberately does NOT fall back to the email — that serializer also
+ * feeds shared and public surfaces, where §10.4 says an email may never appear.
+ *
+ * The viewer is the one principal whose email is already on screen in their own
+ * chrome, so the fallback is resolved here, client-side, and only for them.
+ */
+export function principalDisplayName(
+  principal: Principal | null | undefined,
+  viewer?: Principal | null,
+): string {
+  const name = principal?.name?.trim();
+  if (name) return name;
+  if (viewer && principal?.id && principal.id === viewer.id) {
+    const own = viewer.name?.trim();
+    if (own) return own;
+    return 'You';
+  }
+  return principal?.type === 'agent' ? 'Agent' : 'Unknown';
+}
+
+/**
+ * The principal to hand `<PrincipalAvatar>`, with the viewer fallback applied.
+ *
+ * Separate from `principalDisplayName` because the avatar wants a *real* name or
+ * nothing at all. A letter is a better fallback than the generic glyph — the
+ * account menu already seeds one from the email when `display_name` is null, and
+ * a row reading "test1@gmail.com" next to a featureless person icon is the same
+ * identity rendered two different ways on one screen.
+ *
+ * But only when the name is real. Seeding a monogram from "You" would stamp a Y
+ * on every author, and seeding one from "Deleted user" invents an identity mark
+ * for someone who is not there. Those keep the glyph, which is the honest
+ * rendering of "we don't know who this is".
+ */
+export function principalForAvatar(
+  principal: Principal | null | undefined,
+  viewer?: Principal | null,
+): Principal {
+  if (!principal) return { type: 'user' };
+  if (principal.name?.trim()) return principal;
+  const isViewer = !!viewer && !!principal.id && principal.id === viewer.id;
+  const own = viewer?.name?.trim();
+  return isViewer && own ? { ...principal, name: own } : principal;
+}
+
 /** Deterministic palette color for a principal (seeded by id, then name). */
 export function principalColor(principal: Principal): string {
   return projectAvatarColor(principal.id || principal.name || principal.type);
