@@ -3,6 +3,8 @@
 // truth for next_run_at — the app only edits the stored schedule shape and
 // renders summaries.
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -373,13 +375,46 @@ AutomationScheduleDraft automationToDraft(dynamic a) {
 bool _tzInitialized = false;
 String? _cachedDeviceZone;
 
+/// Ask the platform for the device's IANA timezone and cache it, so the
+/// synchronous [deviceIanaTimezone] can hand out the real name afterwards.
+/// Call this before building a schedule draft; it is a no-op once resolved.
+///
+/// The OS is the only source of the *actual* zone (`Asia/Shanghai`), which is
+/// what the server needs to turn a schedule's wall-clock times into fire times
+/// — the offset scan in [deviceIanaTimezone] can only pick some zone that
+/// happens to share today's offsets, and its answer can drift from the user's
+/// real zone at a future DST change. Falls back to that scan when the platform
+/// channel is unavailable or returns something that isn't an IANA name (e.g.
+/// Android's "GMT+08:00" for a manually-set offset).
+Future<String> loadDeviceIanaTimezone() async {
+  final cached = _cachedDeviceZone;
+  if (cached != null) return cached;
+  try {
+    final name = (await FlutterTimezone.getLocalTimezone()).identifier;
+    // Every zone the OS reports for a real region is 'Area/Location'; 'UTC' is
+    // the one bare name worth honouring.
+    if (name.contains('/') || name == 'UTC') {
+      return _cachedDeviceZone = name;
+    }
+  } catch (_) {
+    // No platform implementation, or the call failed — fall through to the scan.
+  }
+  return deviceIanaTimezone();
+}
+
+/// Drop the cached zone so the next [loadDeviceIanaTimezone] queries the
+/// platform again.
+@visibleForTesting
+void resetDeviceIanaTimezoneCache() => _cachedDeviceZone = null;
+
 /// Best-effort IANA name for the device's timezone, e.g. `Asia/Shanghai`.
 ///
-/// Dart has no direct API for this (DateTime.timeZoneName is an abbreviation),
-/// so match the device's UTC offset at four points across the year against the
-/// bundled tz database and take the first zone that agrees at all of them. A
-/// functionally equivalent zone (same rules, different name) is fine — the
-/// server only uses the name to compute wall-clock fire times. Falls back to
+/// Fallback for [loadDeviceIanaTimezone], which should be preferred: Dart has
+/// no direct API for this (DateTime.timeZoneName is an abbreviation), so match
+/// the device's UTC offset at four points across the year against the bundled
+/// tz database and take the first zone that agrees at all of them. That yields
+/// a zone with the same offsets *today* but an arbitrary name (a UTC+8 device
+/// resolves to 'Antarctica/Casey'), so it is only a stand-in. Falls back to
 /// 'UTC' if nothing matches.
 String deviceIanaTimezone() {
   final cached = _cachedDeviceZone;
