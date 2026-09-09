@@ -4,6 +4,8 @@ import { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore
 import { useParams, useRouter } from 'next/navigation';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { AgentTypeIcon } from '@/components/dashboard/agent-type-icon';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { agentPrincipal, useAgentProfiles } from '@/lib/use-agent-profiles';
 import { Button } from '@/components/ui/button';
 import { X, ArrowDown, Pin, Loader2, Menu, PanelLeft, Folder, FolderPlus, MessageCircle, FileCode } from 'lucide-react';
 import { useDesktopChrome } from '@/components/dashboard/desktop-chrome-context';
@@ -185,6 +187,7 @@ function AgentInstanceContent() {
   const dashboardContext = useAgentDashboard();
   const { refreshData, updateInstanceStatus } = dashboardContext;
   const { openSidebar } = useDashboardNavigation();
+  const { byId: agentProfilesById } = useAgentProfiles();
 
   // The message store (lib/message-store.ts) owns this session's messages +
   // instance metadata; the page paints whatever the store already has. A
@@ -202,6 +205,9 @@ function AgentInstanceContent() {
     () => (storeEntry?.instance ? { ...storeEntry.instance, messages: storeEntry.messages } : null),
     [storeEntry],
   );
+  const sessionAgentProfile = instance?.agent_profile_id
+    ? (agentProfilesById.get(instance.agent_profile_id) ?? null)
+    : null;
   const hasOlderMessages = storeEntry?.hasOlder ?? false;
   const [error, setError] = useState<string | null>(null);
   // Loading = nothing to paint yet and no failure to report. Derived, not
@@ -2151,7 +2157,20 @@ function AgentInstanceContent() {
               <Menu className="h-5 w-5" />
               <span className="sr-only">Open sidebar</span>
             </Button>
-            <AgentTypeIcon agentTypeName={instance.agent_type_name} size={14} whiteForOpenAI />
+            {/* The session's identity, when it was started from a saved agent.
+                Provenance, not a live link: the config chips below stay the
+                authority on what it's actually running, and the two legitimately
+                diverge as soon as the user switches model mid-session. */}
+            {sessionAgentProfile ? (
+              <span title={sessionAgentProfile.system_prompt || undefined} className="flex items-center gap-1.5 min-w-0">
+                <PrincipalAvatar principal={agentPrincipal(sessionAgentProfile)} size="xs" />
+                <span className="truncate text-xs text-muted-foreground">
+                  {sessionAgentProfile.name}
+                </span>
+              </span>
+            ) : (
+              <AgentTypeIcon agentTypeName={instance.agent_type_name} size={14} whiteForOpenAI />
+            )}
             {instance.pinned_at ? <Pin className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" /> : null}
             <h1 className="text-sm font-normal font-mono flex items-center gap-2 min-w-0 max-w-md">
               {(() => {

@@ -171,6 +171,7 @@ class GenericACPConfig(ACPWrapperConfig):
         model: Optional[str] = None,
         permission_mode: Optional[str] = None,
         initial_prompt: Optional[str] = None,
+        system_prompt: Optional[str] = None,
         is_resuming: bool = False,
         acp_session_id: Optional[str] = None,
         agent_command: Optional[str] = None,
@@ -193,6 +194,7 @@ class GenericACPConfig(ACPWrapperConfig):
         self.is_resuming = is_resuming
         self.acp_session_id = acp_session_id
         self.initial_prompt = initial_prompt
+        self.system_prompt = system_prompt
 
         # Explicit binary path from --agent-command (skips PATH resolution).
         self._agent_command_override = agent_command
@@ -240,6 +242,7 @@ class GenericACPConfig(ACPWrapperConfig):
         model: Optional[str] = None,
         permission_mode: Optional[str] = None,
         initial_prompt: Optional[str] = None,
+        system_prompt: Optional[str] = None,
         is_resuming: bool = False,
         acp_session_id: Optional[str] = None,
         agent_command: Optional[str] = None,
@@ -267,6 +270,7 @@ class GenericACPConfig(ACPWrapperConfig):
             model=model,
             permission_mode=permission_mode,
             initial_prompt=initial_prompt,
+            system_prompt=system_prompt,
             is_resuming=is_resuming,
             acp_session_id=acp_session_id,
             agent_command=agent_command,
@@ -341,6 +345,12 @@ def main() -> int:
     parser.add_argument(
         "--prompt", default=None, help="Initial prompt to send on session start"
     )
+    parser.add_argument(
+        "--system-prompt",
+        dest="system_prompt",
+        default=None,
+        help="Custom instructions, prefixed onto every turn (ACP has no system-prompt slot)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -361,6 +371,7 @@ def main() -> int:
             model=args.model,
             permission_mode=args.permission_mode,
             initial_prompt=args.prompt,
+            system_prompt=args.system_prompt,
             is_resuming=bool(args.resume),
             acp_session_id=args.acp_session_id,
             agent_command=args.agent_command,

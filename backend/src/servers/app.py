@@ -37,6 +37,7 @@ from servers.api.auth_keys import auth_keys_router
 from servers.api.automations import automation_router
 from servers.api.instances import instance_router
 from servers.api.routers import agent_router
+from servers.api.agent_profiles import agent_profile_router
 from servers.api.tasks import task_router
 from servers.api.ws_handler import ws_router
 from servers.scheduler import AutomationScheduler
@@ -256,6 +257,7 @@ app.include_router(agent_router, prefix="/api/v1")
 app.include_router(auth_keys_router, prefix="/api/v1")
 # Task tracker CRUD for CLI agents (agent-facing mirror of backend/api/tasks.py).
 app.include_router(task_router, prefix="/api/v1")
+app.include_router(agent_profile_router, prefix="/api/v1")
 # Scheduled-automation CRUD for CLI agents (agent-facing mirror of
 # backend/api/automations.py). Dispatch stays in this process's scheduler sweep.
 app.include_router(automation_router, prefix="/api/v1")

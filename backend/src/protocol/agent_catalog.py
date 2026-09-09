@@ -386,6 +386,53 @@ PERMISSION_MODES, THINKING_EFFORTS, REASONING_EFFORTS = _build_enum_indices(
     AGENT_CATALOG
 )
 
+#: The exact key set of ``apps/web/lib/agent-catalog.ts::SessionConfig``. Three
+#: tables store this shape verbatim — ``agent_instances.session_config``,
+#: ``automations.session_config`` and ``agent_profiles.config`` — which is what
+#: lets the web client run ``reconcileAgainst(config, catalog)`` over any of them
+#: and get stale-model repair for free. Keep in sync with that interface.
+SESSION_CONFIG_KEYS: frozenset[str] = frozenset(
+    {
+        "agent",
+        "model",
+        "thinking_effort",
+        "reasoning_effort",
+        "permission_mode",
+        "opencode_mode",
+    }
+)
+
+
+def known_agent_ids() -> set[str]:
+    """Catalog agent ids ('claude', 'codex', 'opencode', …)."""
+    return {agent["id"] for agent in AGENT_CATALOG["agents"]}
+
+
+def normalize_session_config(config: Any, agent: str) -> dict[str, Any]:
+    """Coerce arbitrary input to a clean ``SessionConfig`` dict.
+
+    Drops unknown keys and null/empty values, and forces ``agent`` to the caller's
+    authoritative value — for ``agent_profiles`` that is the indexed column, which
+    must never disagree with the copy inside the JSON blob.
+
+    Deliberately does NOT validate model/effort ids against the catalog: those go
+    stale on their own (a provider retires a model), and the clients already repair
+    them silently via ``reconcileAgainst``. Rejecting them here would turn a
+    self-healing case into a 422 on a profile the user cannot fix.
+    """
+    out: dict[str, Any] = {}
+    if isinstance(config, dict):
+        for key, value in config.items():
+            if (
+                key in SESSION_CONFIG_KEYS
+                and key != "agent"
+                and value not in (None, "")
+            ):
+                out[key] = value
+    out["agent"] = agent
+    return out
+
+
 # JSON-encoded once at import: stable bytes for ETag computation and direct
 # Response body without per-request `json.dumps`.
 AGENT_CATALOG_JSON: str = json.dumps(AGENT_CATALOG, sort_keys=True)

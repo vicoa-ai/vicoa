@@ -45,7 +45,7 @@ import {
 } from '@/lib/desktop-cli';
 import { DRAG_REGION } from '@/lib/app-region';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
-import { UserAvatarEditor } from '@/components/dashboard/user-avatar-editor';
+import { AvatarEditor } from '@/components/dashboard/avatar-editor';
 import type { UserProfile } from '@/lib/backend-api';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { computeStreaks, formatCompact, formatDays } from '@/lib/profile-stats';
@@ -265,6 +265,7 @@ function ProfileSection() {
     // Falls back to the email only to derive an initial; never rendered as text.
     name: profile?.display_name || name || email,
     avatarImageUri: profile?.avatar_image_uri,
+    emoji: profile?.avatar_emoji,
     updatedAt: profile?.updated_at,
   };
   // Show the email under the name, unless the name slot already shows it.
@@ -281,7 +282,7 @@ function ProfileSection() {
           attach one to (and no API client yet, briefly, on first paint), so it
           just renders. */}
       {isCloud && api ? (
-        <UserAvatarEditor
+        <AvatarEditor
           principal={avatarPrincipal}
           size="xl"
           onUploadImage={async (file) => {
@@ -290,6 +291,14 @@ function ProfileSection() {
           }}
           onRemoveImage={async () => {
             await api.deleteMyAvatar();
+            await refreshProfile();
+          }}
+          onSetEmoji={async (emoji) => {
+            await api.updateMyAvatarEmoji(emoji);
+            await refreshProfile();
+          }}
+          onClearEmoji={async () => {
+            await api.updateMyAvatarEmoji(null);
             await refreshProfile();
           }}
         />

@@ -34,6 +34,11 @@ class User(Base):
     # ``projects.icon_source``: a 'user' upload is never clobbered.
     avatar_image_uri: Mapped[str | None] = mapped_column(Text, default=None)
     avatar_source: Mapped[str | None] = mapped_column(String(16), default=None)
+    # A picked emoji, rendered in place of the generated initial when there is no
+    # image. Same role (and same column width) as ``agent_profiles.emoji`` and
+    # ``projects.icon``: not everyone wants to upload a photo, and a glyph is a
+    # cheaper, more private way to be recognisable than a face.
+    avatar_emoji: Mapped[str | None] = mapped_column(String(16), default=None)
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc)
     )
@@ -155,6 +160,15 @@ class AgentInstance(Base):
             "rate_limited_until",
             postgresql_where=text("rate_limited_until IS NOT NULL"),
         ),
+        # An agent preset's run history and its session count both filter on
+        # this column, and Postgres does not index a FK for you. Partial,
+        # because the overwhelming majority of sessions are ad-hoc and carry
+        # NULL here — same reasoning as the rate-limit index above.
+        Index(
+            "ix_agent_instances_agent_profile",
+            "agent_profile_id",
+            postgresql_where=text("agent_profile_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -239,6 +253,17 @@ class AgentInstance(Base):
     # surface. See plans/session-config-storage.md §3.1.
     session_config: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True, default=None
+    )
+    # Which agent profile this session was started from (collab P1). Pure
+    # provenance: `session_config` above is the authoritative snapshot of what the
+    # session is actually running, and the two legitimately diverge the moment the
+    # user switches model mid-session. Read only to render the profile's name and
+    # avatar in place of the generic provider icon — never to re-derive config.
+    # SET NULL: deleting a profile must not touch the sessions it started.
+    agent_profile_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_profiles.id", ondelete="SET NULL"),
+        type_=PostgresUUID(as_uuid=True),
+        default=None,
     )
     last_read_message_id: Mapped[UUID | None] = mapped_column(
         ForeignKey(

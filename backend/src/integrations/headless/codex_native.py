@@ -140,6 +140,7 @@ class CodexNativeRunner:
         model: Optional[str] = None,
         effort: Optional[str] = None,
         permission_mode: Optional[str] = None,
+        system_prompt: Optional[str] = None,
         is_resuming: bool = False,
     ) -> None:
         self.api_key = vicoa_api_key
@@ -161,6 +162,7 @@ class CodexNativeRunner:
         self.model = model
         self.effort = effort
         self.permission_mode = permission_mode
+        self.system_prompt = system_prompt
 
         self.running = True
         self.vicoa_client: Optional[AsyncVicoaClient] = None
@@ -322,6 +324,7 @@ class CodexNativeRunner:
                 model=self.model,
                 effort=self.effort,
                 permission_mode=self.permission_mode,
+                system_prompt=self.system_prompt,
             )
             await self.session.start()
 
@@ -847,6 +850,12 @@ def main() -> int:
     parser.add_argument("--openai-api-key", default=None)
     parser.add_argument("--prompt", default=None)
     parser.add_argument(
+        "--system-prompt",
+        dest="system_prompt",
+        default=None,
+        help="Custom instructions, sent as codex `developer_instructions`",
+    )
+    parser.add_argument(
         "--model",
         default=None,
         help="Codex model id (e.g. gpt-5). Default codex pick is gpt-5-codex, "
@@ -948,6 +957,7 @@ def main() -> int:
         model=args.model,
         effort=args.reasoning_effort,
         permission_mode=args.permission_mode,
+        system_prompt=args.system_prompt,
     )
 
     logger.info(

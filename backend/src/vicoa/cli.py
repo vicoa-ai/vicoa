@@ -39,6 +39,7 @@ from .commands.plugin import add_plugin_subparser, run_plugin_command
 from .commands.instance import run_session_command
 from .commands.ls import cmd_ls as _cmd_ls
 from .commands.stop import cmd_stop
+from .commands.agent import run_agent_command
 from .commands.task import TASK_PRIORITIES, TASK_STATUSES, run_task_command
 
 
@@ -700,6 +701,11 @@ def cmd_headless(args, unknown_args):
 
     if hasattr(args, "session_id") and args.session_id:
         new_argv.extend(["--session-id", args.session_id])
+
+    # Agent-agnostic: every wrapper accepts --system-prompt and picks its own
+    # delivery channel, so this sits above the per-agent split deliberately.
+    if getattr(args, "system_prompt", None):
+        new_argv.extend(["--system-prompt", args.system_prompt])
 
     if agent_type == "claude":
         # Claude headless-specific flags
@@ -1527,6 +1533,16 @@ Examples:
         "acceptEdits/plan/bypassPermissions/auto; ACP agents: their mode ids)",
     )
     headless_parser.add_argument(
+        "--system-prompt",
+        dest="system_prompt",
+        default=None,
+        help=(
+            "Custom instructions from an agent profile. Delivered through the "
+            "agent's own channel (see protocol/system_prompt.py) — a real system "
+            "prompt where the agent has one, a per-turn prompt prefix otherwise."
+        ),
+    )
+    headless_parser.add_argument(
         "--allowed-tools",
         type=str,
         help="Comma-separated list of allowed tools (e.g., 'Read,Write,Bash')",
@@ -1677,6 +1693,80 @@ Examples:
 
     # 'task' subcommand — manage the user's task backlog. Primary consumer is a
     # running agent (`vicoa task create ...`), so every leaf accepts --json.
+    agent_parser = subparsers.add_parser(
+        "agent",
+        help="List, create, or remove named agent profiles (provider + model + config)",
+    )
+    agent_sub = agent_parser.add_subparsers(dest="agent_command")
+
+    # Same argparse-parent trick as `task`, so flags work after the leaf verb.
+    agent_common = argparse.ArgumentParser(add_help=False)
+    agent_common.add_argument(
+        "--api-key",
+        help="API key (defaults to VICOA_API_KEY or the stored credential)",
+    )
+    agent_common.add_argument(
+        "--base-url",
+        default=DEFAULT_API_URL,
+        help="Base URL of the Vicoa API server",
+    )
+    agent_common.add_argument(
+        "--json",
+        action="store_true",
+        help="Output raw JSON instead of a table",
+    )
+
+    agent_ls = agent_sub.add_parser(
+        "ls", parents=[agent_common], help="List your agents"
+    )
+    agent_ls.add_argument(
+        "--include-archived",
+        dest="include_archived",
+        action="store_true",
+        help="Also show archived agents",
+    )
+
+    agent_add = agent_sub.add_parser(
+        "add", parents=[agent_common], help="Create an agent"
+    )
+    agent_add.add_argument("name", help="Agent name (unique, case-insensitive)")
+    agent_add.add_argument(
+        "--agent",
+        required=True,
+        help="Provider id, e.g. claude / codex / opencode (`session start --list-models`)",
+    )
+    agent_add.add_argument("--model", help="Model slug")
+    agent_add.add_argument(
+        "--effort",
+        help="Reasoning effort — claude thinking_effort / codex reasoning_effort",
+    )
+    agent_add.add_argument(
+        "--permission-mode", dest="permission_mode", help="Permission mode"
+    )
+    agent_add.add_argument(
+        "--opencode-mode", dest="opencode_mode", help="OpenCode agent mode (build|plan)"
+    )
+    agent_add.add_argument(
+        "--system-prompt",
+        dest="system_prompt",
+        metavar="TEXT|@FILE",
+        help="Custom instructions; `@path` reads them from a file",
+    )
+    agent_add.add_argument("--description", help="What this agent is for")
+    agent_add.add_argument("--emoji", help="Emoji shown when there's no avatar")
+    agent_add.add_argument("--color", help="Fallback avatar colour")
+    agent_add.add_argument(
+        "--machine", metavar="MACHINE_ID", help="Default machine for new sessions"
+    )
+    agent_add.add_argument(
+        "--project", metavar="PROJECT_ID", help="Default project for new sessions"
+    )
+
+    agent_rm = agent_sub.add_parser(
+        "rm", parents=[agent_common], help="Delete an agent"
+    )
+    agent_rm.add_argument("name", help="Agent name")
+
     task_parser = subparsers.add_parser(
         "task",
         help="List, read, create, update, or delete tasks",
@@ -1842,6 +1932,15 @@ Examples:
         choices=spawn_agent_choices,
         default=None,
         help="Agent to run (default: claude); also filters --list-models",
+    )
+    session_start.add_argument(
+        "--agent-profile",
+        dest="agent_profile",
+        metavar="NAME",
+        help=(
+            "Start from a saved agent (`vicoa agent ls`). Supplies the provider, "
+            "model, config and instructions; any explicit flag below still wins."
+        ),
     )
     session_start.add_argument(
         "--model",
@@ -2144,6 +2243,8 @@ Examples:
         args.agent = None
         args.yes = False
         cmd_stop(args)
+    elif args.command == "agent":
+        sys.exit(run_agent_command(args))
     elif args.command == "task":
         sys.exit(run_task_command(args))
     elif args.command == "automation":

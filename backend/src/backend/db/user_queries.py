@@ -33,3 +33,16 @@ def clear_user_avatar(db: Session, user: User) -> User:
     db.commit()
     db.refresh(user)
     return user
+
+
+def set_user_avatar_emoji(db: Session, user: User, *, emoji: str | None) -> User:
+    """Pick (or clear) the emoji shown when there is no avatar image.
+
+    Independent of ``avatar_image_uri`` rather than a third ``avatar_source``
+    value: the image wins while it exists, and clearing it should reveal an
+    emoji the user chose earlier instead of silently discarding it.
+    """
+    user.avatar_emoji = emoji or None
+    db.commit()
+    db.refresh(user)
+    return user

@@ -289,6 +289,9 @@ def format_agent_instance(
     payload = {
         "instance_metadata": metadata,
         "session_config": session_config,
+        "agent_profile_id": str(instance.agent_profile_id)
+        if instance.agent_profile_id
+        else None,
         "id": str(instance.id),
         "agent_type_id": str(instance.agent_type_id) if instance.agent_type_id else "",
         "agent_type_name": instance.agent_type.name
@@ -454,6 +457,9 @@ def get_all_agent_types_with_instances(
             payload = {
                 "instance_metadata": metadata,
                 "session_config": session_config,
+                "agent_profile_id": str(instance.agent_profile_id)
+                if instance.agent_profile_id
+                else None,
                 "id": str(instance.id),
                 "agent_type_id": str(instance.agent_type_id)
                 if instance.agent_type_id
@@ -836,6 +842,39 @@ def get_agent_type_instances(
     message_stats = _get_instance_message_stats(db, instance_ids)
 
     # Format instances using helper function with pre-computed stats
+    return [format_agent_instance(instance, message_stats) for instance in instances]
+
+
+def get_agent_profile_instances(
+    db: Session, profile_id: UUID, user_id: UUID, limit: int = 50
+) -> list[AgentInstanceResponse]:
+    """An agent preset's run history: the sessions it started, newest first.
+
+    ``agent_instances.agent_profile_id`` is provenance stamped at spawn, so this
+    is a true history — it keeps listing runs whose preset has since been
+    edited, and editing the preset never rewrites what already ran.
+
+    The caller has already proven it owns the profile; the ``user_id`` filter
+    here is the house rule, and load-bearing — a session must never be readable
+    through a second door that skips the instance's own scoping.
+    """
+    instances = (
+        db.query(AgentInstance)
+        .filter(
+            AgentInstance.agent_profile_id == profile_id,
+            AgentInstance.user_id == user_id,
+            AgentInstance.status != AgentStatus.DELETED,
+        )
+        .options(
+            joinedload(AgentInstance.agent_type),
+            # live_state compares against the machine heartbeat.
+            joinedload(AgentInstance.machine),
+        )
+        .order_by(desc(AgentInstance.started_at))
+        .limit(limit)
+        .all()
+    )
+    message_stats = _get_instance_message_stats(db, [i.id for i in instances])
     return [format_agent_instance(instance, message_stats) for instance in instances]
 
 

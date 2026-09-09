@@ -27,6 +27,15 @@ export type Principal = {
   name?: string | null;
   /** Backend-relative served URL (e.g. `users.avatar_image_uri`), or null. */
   avatarImageUri?: string | null;
+  /**
+   * A picked emoji, rendered when there is no image.
+   *
+   * Sits *between* the image and the generated initial rather than replacing
+   * either: an uploaded photo still wins (it is the more specific choice), and
+   * clearing the photo reveals an emoji picked earlier instead of discarding
+   * it. Same role as `projects.icon`.
+   */
+  emoji?: string | null;
   /** Cache-buster — the row's `updated_at`; the avatar URL itself is stable. */
   updatedAt?: string | null;
 };
@@ -40,9 +49,10 @@ export type Principal = {
  */
 export function principalAvatarSrc(principal: Principal | null | undefined): string | null {
   if (!principal?.id || !principal.avatarImageUri) return null;
-  if (principal.type !== 'user') return null; // teams/agents get images in P3/P1
+  if (principal.type === 'team') return null; // teams get images in P3
   const version = principal.updatedAt ? `?v=${encodeURIComponent(principal.updatedAt)}` : '';
-  return `/api/users/${principal.id}/avatar${version}`;
+  const base = principal.type === 'agent' ? 'agents' : 'users';
+  return `/api/${base}/${principal.id}/avatar${version}`;
 }
 
 /** Deterministic palette color for a principal (seeded by id, then name). */

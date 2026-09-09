@@ -190,6 +190,7 @@ class CodexAppServerSession:
         model: Optional[str] = None,
         effort: Optional[str] = None,
         permission_mode: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ) -> None:
         self.vicoa_client = vicoa_client
         self.instance_id = instance_id
@@ -203,6 +204,11 @@ class CodexAppServerSession:
         # chatgpt — otherwise the first turn fails with HTTP 400.
         self.model = model
         self.effort = effort
+        # Custom instructions from an agent profile. codex is the
+        # COLLAB_SETTINGS transport (protocol/system_prompt.py): the text rides
+        # the CollaborationMode Settings struct's own `developer_instructions`
+        # field, so it is a real system-level instruction, not prompt text.
+        self.system_prompt = system_prompt
         # vicoa-side permission_mode ("default" / "bypassPermissions").
         # `default` inherits the user's codex config; `bypassPermissions`
         # overrides approvalPolicy + sandboxPolicy. See PERMISSION_MODE_*
@@ -975,6 +981,8 @@ class CodexAppServerSession:
         settings: Dict[str, Any] = {"model": self.model or ""}
         if self.effort:
             settings["reasoning_effort"] = self.effort
+        if self.system_prompt and self.system_prompt.strip():
+            settings["developer_instructions"] = self.system_prompt.strip()
         return settings
 
     async def _set_status(self, new_status: str) -> None:

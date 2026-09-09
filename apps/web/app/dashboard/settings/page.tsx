@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { WorktreeSetupSection } from '@/components/dashboard/worktree-setup-section';
 import { ProjectDisplaySection } from '@/components/dashboard/project-display-section';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
-import { UserAvatarEditor } from '@/components/dashboard/user-avatar-editor';
+import { AvatarEditor } from '@/components/dashboard/avatar-editor';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
@@ -53,6 +53,7 @@ type SupabaseUser = {
   role?: string;
   /** Backend avatar fields, threaded through /api/supabase-user. */
   avatarImageUri?: string | null;
+  avatarEmoji?: string | null;
   updatedAt?: string | null;
 };
 
@@ -556,19 +557,27 @@ function SupabaseProfileForm({ user, onRefresh }: SupabaseProfileFormProps) {
     await onRefresh();
   };
 
+  const handleSetAvatarEmoji = async (emoji: string | null) => {
+    await getBackendAPI(true).updateMyAvatarEmoji(emoji);
+    await onRefresh();
+  };
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Identity first: the photo is what other people see of this account. */}
-      <UserAvatarEditor
+      <AvatarEditor
         principal={{
           type: 'user',
           id: user.id,
           name: user.name || user.email,
           avatarImageUri: user.avatarImageUri,
+          emoji: user.avatarEmoji,
           updatedAt: user.updatedAt,
         }}
         onUploadImage={handleUploadAvatar}
         onRemoveImage={handleRemoveAvatar}
+        onSetEmoji={(emoji) => handleSetAvatarEmoji(emoji)}
+        onClearEmoji={() => handleSetAvatarEmoji(null)}
       />
       <div className="grid gap-4">
         <div className="space-y-2">

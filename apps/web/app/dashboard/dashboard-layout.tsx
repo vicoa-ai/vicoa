@@ -22,6 +22,7 @@ import {
   Key,
   Cog,
   BookOpen,
+  Bot,
   Layers2,
   ArrowUpCircle,
   User,
@@ -237,6 +238,7 @@ function DashboardSidebar({
       id: user?.id,
       name: user?.name || user?.email,
       avatarImageUri: user?.avatarImageUri,
+      emoji: user?.avatarEmoji,
       updatedAt: user?.updatedAt,
     }),
     [user],
@@ -249,6 +251,8 @@ function DashboardSidebar({
       router.push('/dashboard/tasks');
     } else if (tab === 'automation') {
       router.push('/dashboard/automation');
+    } else if (tab === 'agents') {
+      router.push('/dashboard/agents');
     } else if (tab === 'skills') {
       router.push('/dashboard/skills');
     }
@@ -473,6 +477,23 @@ function DashboardSidebar({
           >
             <CalendarClock className={cn("h-4 w-4", showSideBar && "mr-2")} />
             {showSideBar ? 'Automations' : null}
+          </Button>
+
+          {/* Saved agent presets (provider + model + instructions). Distinct
+              from the session list below, which is what those agents are doing. */}
+          <Button
+            variant="subtle"
+            className={cn(
+              !showSideBar
+                ? "h-9 w-9 justify-center rounded-lg px-0 bg-transparent"
+                : "w-full justify-start h-auto py-1.5 mt-1 text-xs",
+              showSideBar && activeTab === 'agents' && sidebarItemSelected
+            )}
+            onClick={() => handleTabClick('agents')}
+            title="Agents"
+          >
+            <Bot className={cn("h-4 w-4", showSideBar && "mr-2")} />
+            {showSideBar ? 'Agents' : null}
           </Button>
 
           {/* Agent skills installed per machine. */}
@@ -753,6 +774,7 @@ function DashboardContent({
     pathname === '/dashboard/automation' ||
     pathname === '/dashboard/tasks' ||
     pathname === '/dashboard/skills' ||
+    pathname === '/dashboard/agents' ||
     !!pathname?.match(/^\/dashboard\/agents\/[^\/]+$/);
   if (isFullHeightPage) {
     return (
@@ -811,7 +833,8 @@ function DashboardShell({
     isInstancePage ||
     shellPathname === '/dashboard/automation' ||
     shellPathname === '/dashboard/tasks' ||
-    shellPathname === '/dashboard/skills';
+    shellPathname === '/dashboard/skills' ||
+    shellPathname === '/dashboard/agents';
   // Windows draws its own min/max/close cluster fixed at the window's top-right
   // (DesktopWindowControls). Instance pages clear it via the chat/files headers;
   // every other page needs a reserved titlebar-height strip so its content isn't
@@ -1043,6 +1066,9 @@ export default function DashboardLayout({
       setSelectedInstanceId(null);
     } else if (pathname === '/dashboard/skills') {
       setActiveTab('skills');
+      setSelectedInstanceId(null);
+    } else if (pathname === '/dashboard/agents') {
+      setActiveTab('agents');
       setSelectedInstanceId(null);
     } else if (pathname === '/dashboard/agents/new-session') {
       setActiveTab('session');

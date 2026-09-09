@@ -23,6 +23,7 @@ from shared.websocket import (
     build_machine_update,
     build_new_message_update,
 )
+from shared.database.agent_profile_models import AgentProfile
 from shared.database.session import SessionLocal
 from shared.database.utils import sanitize_git_diff
 from shared.llms import generate_conversation_title
@@ -999,3 +1000,69 @@ def trigger_webhook_for_user_response(
         logger.error(
             f"Failed to trigger webhook for agent instance {agent_instance_id}: {e}"
         )
+
+
+def resolve_spawn_agent_profile(user_id: str, agent_profile_id: str) -> dict | None:
+    """Load an agent profile for a spawn, scoped to its owner.
+
+    Returns ``{"id", "agent", "system_prompt"}`` or ``None`` when the id is
+    unknown, malformed, archived, or belongs to someone else. The user scope is
+    the point: a ``system_prompt`` is text injected into the agent process, so
+    resolving it server-side from an id — rather than trusting instructions sent
+    in the spawn metadata — is what keeps one user's profile out of another's
+    session.
+    """
+    try:
+        owner_uuid = UUID(user_id)
+        profile_uuid = UUID(agent_profile_id)
+    except (ValueError, TypeError):
+        return None
+    with SessionLocal() as db:
+        profile = (
+            db.query(AgentProfile)
+            .filter(
+                AgentProfile.id == profile_uuid,
+                AgentProfile.user_id == owner_uuid,
+                AgentProfile.is_archived.is_(False),
+            )
+            .first()
+        )
+        if profile is None:
+            return None
+        return {
+            "id": str(profile.id),
+            "agent": profile.agent,
+            "system_prompt": profile.system_prompt,
+        }
+
+
+def stamp_instance_agent_profile(
+    user_id: str, instance_id: str, agent_profile_id: str
+) -> bool:
+    """Record which profile a session was started from (display-only provenance).
+
+    Separate from the spawn RPC because the daemon mints the instance id locally
+    and the row only appears when the wrapper registers, moments later — so the
+    caller polls with this rather than writing inside the spawn transaction.
+    Returns False while the row is still missing, so the caller can retry.
+    """
+    try:
+        owner_uuid = UUID(user_id)
+        instance_uuid = UUID(instance_id)
+        profile_uuid = UUID(agent_profile_id)
+    except (ValueError, TypeError):
+        return True  # unusable input: nothing to wait for
+    with SessionLocal() as db:
+        instance = (
+            db.query(AgentInstance)
+            .filter(
+                AgentInstance.id == instance_uuid,
+                AgentInstance.user_id == owner_uuid,
+            )
+            .first()
+        )
+        if instance is None:
+            return False
+        instance.agent_profile_id = profile_uuid
+        db.commit()
+        return True

@@ -12,9 +12,10 @@ import { getSupabaseToken } from '@/lib/auth/supabase-helpers';
  */
 async function fetchBackendAvatar(): Promise<{
   avatarImageUri: string | null;
+  avatarEmoji: string | null;
   updatedAt: string | null;
 }> {
-  const empty = { avatarImageUri: null, updatedAt: null };
+  const empty = { avatarImageUri: null, avatarEmoji: null, updatedAt: null };
   try {
     const token = await getSupabaseToken(true);
     if (!token) return empty;
@@ -27,6 +28,7 @@ async function fetchBackendAvatar(): Promise<{
     const profile = await response.json();
     return {
       avatarImageUri: profile?.avatar_image_uri ?? null,
+      avatarEmoji: profile?.avatar_emoji ?? null,
       updatedAt: profile?.updated_at ?? null,
     };
   } catch (error) {

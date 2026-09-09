@@ -48,11 +48,11 @@ from vicoa.attachments import (
     save_attachment,
     unavailable_note,
 )
+from protocol.system_prompt import format_prompt_prefix
 from vicoa.sdk.client import VicoaClient
 from vicoa.sdk.exceptions import AuthenticationError
 from vicoa.session_ws_client import SessionMessagesWsClient
 from vicoa.utils import derive_ws_url
-
 
 logger = logging.getLogger(__name__)
 FILE_DUMP_BLOCK_PATTERN = re.compile(
@@ -103,6 +103,11 @@ class ACPWrapperConfig(ABC):
     # Catalog id persisted in session_config PATCHes ("cursor", "gemini", …).
     # Falls back to agent_type.lower() when unset.
     catalog_agent_id: Optional[str] = None
+    # Custom instructions from an agent profile. ACP agents are the
+    # PROMPT_PREFIX transport (protocol/system_prompt.py): ACP has no
+    # system-prompt slot in v1 or v2, so the text rides as a leading content
+    # block on EVERY turn. See _build_prompt_blocks.
+    system_prompt: Optional[str] = None
 
     @abstractmethod
     def get_acp_command(self) -> list[str]:
@@ -1708,7 +1713,22 @@ class ACPWrapperBase(ABC):
 
         full_text = "\n".join(part for part in [message, *notes] if part)
         blocks: list[Dict[str, Any]] = []
-        if full_text:
+        # Agent-profile instructions, re-sent on every turn. ACP offers no
+        # system-prompt slot (v1 and v2 alike), so this prefix IS the transport.
+        # Every turn, not just the first: once the agent compacts, a first-turn
+        # -only injection is silently gone and the session quietly reverts to a
+        # plain agent while the UI still shows the profile's name.
+        #
+        # Invisible to the user: the transcript is the `messages` row the client
+        # POSTed, a separate write from this wire payload.
+        prefix = (self.config.system_prompt or "").strip()
+        if prefix:
+            full_text = format_prompt_prefix(prefix) + full_text
+        # `or not image_blocks` preserves the behaviour of the non-attachment
+        # path this builder replaced, which always emitted exactly one text
+        # block even for an empty message. Without it a bare empty prompt would
+        # now produce an empty `prompt` array, which agents reject.
+        if full_text or not image_blocks:
             blocks.append({"type": "text", "text": full_text})
         blocks.extend(image_blocks)
         return blocks
@@ -1724,9 +1744,11 @@ class ACPWrapperBase(ABC):
 
             payload = {
                 "sessionId": self.session_id,
-                "prompt": self._build_prompt_blocks(message, attachments)
-                if attachments
-                else [{"type": "text", "text": message}],
+                # Always via _build_prompt_blocks. It used to be bypassed when
+                # there were no attachments (the common case), which would mean
+                # only attachment-bearing turns carried the system-prompt prefix
+                # added there — a near-impossible bug to notice.
+                "prompt": self._build_prompt_blocks(message, attachments),
             }
             response = acp.send_request(
                 "session/prompt",

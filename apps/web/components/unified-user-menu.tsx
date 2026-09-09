@@ -91,6 +91,7 @@ export function UnifiedUserMenu({ variant = 'avatar' }: UnifiedUserMenuProps) {
               id: user.id,
               name: user.name || user.email,
               avatarImageUri: user.avatarImageUri,
+              emoji: user.avatarEmoji,
               updatedAt: user.updatedAt,
             }}
             size="md"
