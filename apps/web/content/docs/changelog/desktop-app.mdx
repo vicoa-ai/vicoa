@@ -5,6 +5,15 @@ description: Release notes for the Vicoa desktop app (macOS, Windows) — new fe
 
 # Desktop App
 
+### v0.1.24
+10 September, 2026
+- Bundle Vicoa CLI daemon [v1.8.0](/docs/changelog/vicoa-cli#v180)
+- Save agent presets in Settings → Agents — a provider, model, config and system prompt under one name — then pick one from "My agents" in the new-session Agent chip; sessions started from a preset carry its name and avatar, and automations can reference one
+- Give tasks a short `KEY-42` identifier, a comment thread with emoji reactions, and an activity timeline showing every change and the sessions that made it
+- Say why a new session can't be sent yet — the reason now sits right above the composer instead of off-screen at the top of the pane, and you can type your message while the machine is still connecting
+- Fix worktree setup hanging with a half-typed command in the terminal tab — long setup chains now run
+- Fix Stop leaving Claude's background sub-agents running, and a session that showed as active with nothing in it afterwards
+
 ### v0.1.23
 8 September, 2026
 - Bundle Vicoa CLI daemon [v1.7.19](/docs/changelog/vicoa-cli#v1719)
