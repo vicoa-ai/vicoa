@@ -2501,6 +2501,8 @@ function AgentInstanceContent() {
                           description={item.description}
                           expanded={expandedToolItems.has(item.key)}
                           onToggle={() => toggleToolItem(item.key)}
+                          agentType={agentType}
+                          projectPath={projectRootPath}
                           renderMessage={(message) => (
                             <MessageItem
                               message={message}

@@ -5,6 +5,7 @@ import type { MessageResponse } from '@/lib/backend-api';
  *
  * The backend tags every child message a sub-agent produces with
  * `message_metadata.subagent = { tool_use_id, subagent_type, description, role }`
+ * — plus `status` on the settled report —
  * (see `integrations/headless/subagent.py`). `tool_use_id` is the id of the
  * launching `Task` block, so it's the group key: every message stamped with
  * the same `tool_use_id` belongs to the same sub-agent run, however it's
@@ -19,6 +20,10 @@ export interface SubagentPayload {
   toolUseId: string;
   subagentType: string;
   description: string;
+  /** 'step' for work the sub-agent did, 'result' for its settled report. */
+  role: string;
+  /** Terminal status, on the report only: 'completed' | 'failed' | 'stopped'. */
+  status: string | null;
 }
 
 /** Read a message's `message_metadata.subagent` payload, or null when absent
@@ -37,12 +42,34 @@ export function parseSubagentPayload(message: MessageResponse): SubagentPayload 
 
   const subagentTypeRaw = typeof raw.subagent_type === 'string' ? raw.subagent_type.trim() : '';
   const descriptionRaw = typeof raw.description === 'string' ? raw.description : '';
+  const roleRaw = typeof raw.role === 'string' ? raw.role.trim() : '';
+  const statusRaw = typeof raw.status === 'string' ? raw.status.trim() : '';
 
   return {
     toolUseId,
     subagentType: subagentTypeRaw || 'agent',
     description: descriptionRaw,
+    role: roleRaw || 'step',
+    status: statusRaw || null,
   };
+}
+
+/**
+ * How a sub-agent run ended: `'completed'` | `'failed'` | `'stopped'`, or null
+ * while it is still running (or against a backend predating the field).
+ *
+ * Only the settled report carries a status, so this is the last non-null one
+ * in the run — a re-announced task's later report supersedes the earlier one.
+ * The group header marks anything other than a clean completion; the run's
+ * messages otherwise render in chat order, exactly like a tool run.
+ */
+export function subagentGroupStatus(messages: MessageResponse[]): string | null {
+  let status: string | null = null;
+  for (const message of messages) {
+    const payload = parseSubagentPayload(message);
+    if (payload?.status) status = payload.status;
+  }
+  return status;
 }
 
 export type SubagentBucketItem =

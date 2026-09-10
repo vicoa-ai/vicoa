@@ -7,7 +7,11 @@ break the dashboard's tool-call rendering.
 
 from __future__ import annotations
 
-from integrations.headless.format_tools import format_tool_use
+from integrations.headless.format_tools import (
+    format_background_task_notification,
+    format_tool_use,
+    subagent_label,
+)
 
 
 def test_bash_uses_backticked_command():
@@ -155,3 +159,78 @@ def test_unknown_tool_picks_common_param():
 def test_unknown_tool_with_no_recognized_param():
     out = format_tool_use("WeirdTool", {"unrelated": True})
     assert out == "🔧 Using tool: WeirdTool"
+
+
+# --- Agent / Task ----------------------------------------------------------
+
+
+def test_agent_row_carries_the_prompt_as_its_body():
+    """The assignment is the only record of what the sub-agent was asked to do
+    — the child ``UserMessage`` repeating it is dropped with the other
+    sub-agent tool results — so it rides the row's collapsible body."""
+    out = format_tool_use(
+        "Agent",
+        {
+            "description": "Map the auth flow",
+            "subagent_type": "Explore",
+            "prompt": "Find every call site of ensure_local_user.",
+        },
+    )
+    assert out == (
+        "🔧 Using tool: Agent - `Map the auth flow` (agent: Explore)\n\n"
+        "Find every call site of ensure_local_user."
+    )
+
+
+def test_agent_row_without_a_prompt_stays_one_line():
+    out = format_tool_use(
+        "Agent", {"description": "Map the auth flow", "subagent_type": "Explore"}
+    )
+    assert out == "🔧 Using tool: Agent - `Map the auth flow` (agent: Explore)"
+
+
+def test_agent_row_marks_a_background_launch():
+    out = format_tool_use(
+        "Agent",
+        {
+            "description": "Watch CI",
+            "subagent_type": "Explore",
+            "model": "opus",
+            "run_in_background": True,
+        },
+    )
+    assert out == (
+        "🔧 Using tool: Agent - `Watch CI` (agent: Explore, model: opus, background)"
+    )
+
+
+def test_subagent_label_prefers_an_explicit_name():
+    assert (
+        subagent_label({"name": "reviewer", "subagent_type": "Explore"}) == "reviewer"
+    )
+    assert subagent_label({"subagent_type": "Explore"}) == "Explore"
+    assert subagent_label({"name": "  ", "subagent_type": "Explore"}) == "Explore"
+    assert subagent_label({}) == ""
+
+
+# --- Background task notifications -----------------------------------------
+
+
+def test_background_task_notification_is_a_one_line_tool_row():
+    out = format_background_task_notification("Sync main", "completed")
+    assert out == "🔧 Using tool: Background task - `Sync main`"
+
+
+def test_background_task_notification_keeps_the_rest_as_a_body():
+    out = format_background_task_notification("Watch CI\n\nexit code 0", "completed")
+    assert out == "🔧 Using tool: Background task - `Watch CI`\n\nexit code 0"
+
+
+def test_background_task_notification_reports_a_non_completed_status():
+    out = format_background_task_notification("Watch CI", "failed")
+    assert out == "🔧 Using tool: Background task - `Watch CI` (failed)"
+
+
+def test_background_task_notification_without_a_summary_still_labels_itself():
+    out = format_background_task_notification("   ", None)
+    assert out == "🔧 Using tool: Background task - `Background task finished`"
