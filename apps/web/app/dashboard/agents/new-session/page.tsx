@@ -36,6 +36,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  resetNewSessionGuards,
+  trackNewSessionViewed,
+  trackSessionCreateFailed,
+  trackSubmitBlocked,
+  type MachineState,
+  type SessionCreateFailure,
+  type SubmitBlockedReason,
+} from '@/lib/desktop-telemetry';
 import { toAbsolutePath } from '@/lib/utils';
 import {
   isMachineOnline as isMachineOnlineShared,
@@ -171,6 +180,33 @@ const LIFTED_DROPDOWN_CLASSES =
   'w-[var(--radix-dropdown-menu-trigger-width)] py-1 font-mono ' +
   'border border-foreground/15 shadow-xl';
 const LIFTED_DROPDOWN_SIDE_OFFSET = 8;
+
+/**
+ * What to say when the composer can't submit, per surface.
+ *
+ * Split by surface because the original copy was web-only: "Run `vicoa daemon`
+ * to connect this machine" is unactionable in the desktop app, where the daemon
+ * is bundled and supervised by Electron. The user has no such command and
+ * should never need one.
+ */
+const SUBMIT_BLOCKED_COPY: Record<SubmitBlockedReason, { web: string; desktop: string }> = {
+  no_api: {
+    web: 'Unable to reach the API. Check that you are still signed in.',
+    desktop: 'Unable to reach the API. Check that you are still signed in.',
+  },
+  no_machine: {
+    web: 'No machines connected. Run `vicoa daemon` on a machine to connect it.',
+    desktop: 'Waiting for this machine to connect. The Vicoa daemon is still starting up.',
+  },
+  machine_offline: {
+    web: 'This machine is offline. Sessions can only be started on online machines.',
+    desktop: 'This machine is offline because the Vicoa daemon stopped. Restarting Vicoa reconnects it.',
+  },
+  no_directory: {
+    web: 'Choose a folder to work in before starting a session.',
+    desktop: 'Choose a folder to work in before starting a session.',
+  },
+};
 
 /** Setup chips above the prompt box (machine · directory · worktree).
     Same surface as the prompt box; hover ≈ the dropdown-item highlight
@@ -773,6 +809,36 @@ function NewSessionContent() {
 
   useEffect(() => { loadMachines(); }, [loadMachines]);
 
+  // What the picker actually resolved to, as a single value both the telemetry
+  // and the submit guard can read. Kept in a ref as well as derived at render
+  // because `handleSubmit` needs it from inside a callback without taking a
+  // dependency on every liveness tick.
+  const machineState: MachineState =
+    machines.length === 0 ? 'none' : machines.some(isMachineOnline) ? 'online' : 'offline';
+  const machineStateRef = useRef(machineState);
+  machineStateRef.current = machineState;
+
+  // Which shell this is. Runtime (not the compile-time NEXT_PUBLIC flag) because
+  // this page is served by the same bundle on web and desktop.
+  const isDesktop = !!getDesktopConfig();
+
+  // `submitBlockedReason` is derived far below, with the other render values —
+  // this ref lets `handleSubmit` read it without taking a dependency on every
+  // liveness tick.
+  const submitBlockedRef = useRef<SubmitBlockedReason | null>(null);
+
+  // Fires once, after the FIRST machine fetch settles — mount-time would report
+  // `none` for everybody, since the list is empty on the first render. This is
+  // the missing top of the activation funnel: of the people who reach this
+  // screen, how many are looking at a machine they can actually launch on.
+  useEffect(() => {
+    if (isLoadingMachines || !api) return;
+    trackNewSessionViewed(machineState, machines.length);
+  }, [isLoadingMachines, api, machineState, machines.length]);
+
+  // Re-arm the once-per-mount guards so a later visit is measured again.
+  useEffect(() => resetNewSessionGuards, []);
+
   // Realtime machine list over the shared WebSocket: a daemon connecting or
   // heartbeating broadcasts a `machine-update`, which we fold into the list at
   // once instead of waiting up to 30s for the poll. Reconnect (e.g. tab
@@ -1267,7 +1333,18 @@ function NewSessionContent() {
   }, [prompt, slashCommands]);
 
   const handleSubmit = useCallback(async () => {
-    if (!api || !selectedMachineId || !directory.trim() || isSubmitting) return;
+    if (isSubmitting) return;
+    // A blocked press is a real event, not a no-op. The reason is already on
+    // screen, in the banner directly above the composer, so the press adds no new
+    // UI — but the send button stays clickable rather than `disabled` so the
+    // press is measurable at all: a disabled button fires no onClick, which is
+    // why this leak was invisible for seven weeks.
+    const blocked = submitBlockedRef.current;
+    if (blocked) {
+      trackSubmitBlocked(blocked, machineStateRef.current);
+      return;
+    }
+    if (!api || !selectedMachineId || !directory.trim()) return;
 
     // The picker greys out profiles an out-of-date machine can't carry, but the
     // machine can be switched *after* one is chosen. Refuse rather than spawn an
@@ -1344,6 +1421,7 @@ function NewSessionContent() {
         },
       );
       if (result.error) {
+        trackSessionCreateFailed('spawn_error');
         setErrorMessage(String(result.error));
         setIsSubmitting(false);
         return;
@@ -1463,15 +1541,20 @@ function NewSessionContent() {
       openCreatedSession(router, startPath, `/dashboard/agents/${newInstanceId}`);
     } catch (error) {
       let message = 'Failed to start session. Please verify the daemon is running.';
+      let reason: SessionCreateFailure = 'unknown';
       if (error instanceof RpcError) {
         if (error.code === 'no_handler') {
           message = 'That machine is offline. Make sure the Vicoa daemon is running.';
+          reason = 'machine_offline';
         } else if (error.code === 'timeout') {
           message = "The daemon didn't respond in time. It may be busy — try again.";
+          reason = 'daemon_timeout';
         } else if (error.code === 'target_disconnected') {
           message = 'The daemon disconnected before responding. Try again in a moment.';
+          reason = 'daemon_disconnected';
         }
       }
+      trackSessionCreateFailed(reason);
       setErrorMessage(message);
       setIsSubmitting(false);
     }
@@ -1525,11 +1608,28 @@ function NewSessionContent() {
   const currentMachine = machines.find((m) => m.machine_id === selectedMachineId) || null;
   const recentDirectories = currentMachine ? getRecentDirectories(currentMachine) : [];
   const isOnline = currentMachine ? isMachineOnline(currentMachine) : false;
-  // Derived empty-machine notice — recomputed every render (incl. the liveness
-  // tick), so it clears the instant a daemon connects and reappears when the
-  // last one drops. Suppressed while a real error banner is showing.
-  const showNoMachinesNotice =
-    !!api && !isLoadingMachines && machines.length === 0 && !errorMessage;
+  /**
+   * The one reason the composer can't submit, in precedence order — recomputed
+   * every render (incl. the liveness tick), so it clears the instant a daemon
+   * connects and returns when the last one drops.
+   *
+   * `null` while the first machine fetch is in flight: showing "no machines" for
+   * the second before the list arrives is what made the screen read as broken on
+   * a slow start. Suppressed while a real error banner is showing, which is
+   * strictly more specific.
+   */
+  const submitBlockedReason: SubmitBlockedReason | null = (() => {
+    if (isLoadingMachines || errorMessage) return null;
+    if (!api) return 'no_api';
+    if (machines.length === 0 || !selectedMachineId) return 'no_machine';
+    if (!isOnline) return 'machine_offline';
+    if (!directory.trim()) return 'no_directory';
+    return null;
+  })();
+  submitBlockedRef.current = submitBlockedReason;
+  const blockedMessage = submitBlockedReason
+    ? SUBMIT_BLOCKED_COPY[submitBlockedReason][isDesktop ? 'desktop' : 'web']
+    : null;
   const canSubmit = !isSubmitting && !!api && !!selectedMachineId && !!directory.trim() && isOnline;
 
   // Live Claude plan usage (Session/Weekly limits) for the selected machine,
@@ -1650,30 +1750,10 @@ function NewSessionContent() {
         </div>
       </div>
 
-      {/* Main area — banners at the top, hero centered in the remaining space.
-          All selectors live as chips around the prompt box below. */}
+      {/* Main area: just the hero, centered. Banners live down in the composer,
+          next to the controls they are about. */}
       <div className="flex-1 min-h-0 overflow-y-auto p-6 pb-32 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full dark:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/20">
         <div className="max-w-4xl mx-auto flex h-full flex-col">
-          {(errorMessage || showNoMachinesNotice || (currentMachine && !isOnline)) && (
-            <div className="space-y-4">
-              {errorMessage && (
-                <div className="bg-destructive/10 text-destructive text-sm px-3 py-2 rounded-lg font-mono">
-                  {errorMessage}
-                </div>
-              )}
-              {showNoMachinesNotice && (
-                <div className="bg-muted text-muted-foreground text-sm px-3 py-2 rounded-lg font-mono">
-                  No machines connected. Run{' '}
-                  <code className="text-foreground">vicoa daemon</code> to connect this machine.
-                </div>
-              )}
-              {currentMachine && !isOnline && (
-                <div className="bg-orange-500/10 text-orange-600 dark:text-orange-500 text-sm px-3 py-2 rounded-lg font-mono">
-                  This machine is currently offline. Sessions can only be started on online machines.
-                </div>
-              )}
-            </div>
-          )}
           <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6">
             <Image
               src="/images/vicoa-light.webp"
@@ -1703,6 +1783,30 @@ function NewSessionContent() {
       {/* Chat-style input pinned to bottom */}
       <div className="flex-shrink-0 p-4">
         <div className="max-w-4xl mx-auto">
+          {/* Why the composer can't submit, immediately above the machine chip it
+              is usually about. It used to sit at the top of the scrolling pane,
+              a full viewport away from the control it explains — on a short
+              window the composer looked dead with the reason off-screen. */}
+          {(errorMessage || blockedMessage) && (
+            <div className="mb-3 space-y-2">
+              {errorMessage && (
+                <div className="bg-destructive/10 text-destructive text-sm px-3 py-2 rounded-lg font-mono">
+                  {errorMessage}
+                </div>
+              )}
+              {blockedMessage && (
+                <div
+                  className={
+                    submitBlockedReason === 'machine_offline'
+                      ? 'bg-orange-500/10 text-orange-600 dark:text-orange-500 text-sm px-3 py-2 rounded-lg font-mono'
+                      : 'bg-muted text-muted-foreground text-sm px-3 py-2 rounded-lg font-mono'
+                  }
+                >
+                  {blockedMessage}
+                </div>
+              )}
+            </div>
+          )}
           {/* Setup chips: machine · working dir · worktree (when supported) */}
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
             <DropdownMenu>
@@ -1957,7 +2061,7 @@ function NewSessionContent() {
                   onKeyDown={handleKeyDown}
                   placeholder="Type messages, @files, /skills or commands"
                   rows={1}
-                  disabled={isSubmitting || !canSubmit}
+                  disabled={isSubmitting}
                   className="w-full bg-transparent border-0 py-2 px-2 text-sm resize-none focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50 leading-5 placeholder:text-muted-foreground/30"
                   style={{
                     height: '36px',
@@ -2197,8 +2301,11 @@ function NewSessionContent() {
                   type="button"
                   size="icon"
                   onClick={handleSubmit}
-                  disabled={!canSubmit}
-                  className="shrink-0 rounded-full w-7 h-7 p-0 border-0 focus:outline-none focus:ring-0 focus-visible:ring-0 focus-visible:border-transparent focus-visible:outline-none"
+                  disabled={isSubmitting}
+                  aria-disabled={!canSubmit}
+                  className={`shrink-0 rounded-full w-7 h-7 p-0 border-0 focus:outline-none focus:ring-0 focus-visible:ring-0 focus-visible:border-transparent focus-visible:outline-none ${
+                    canSubmit ? '' : 'opacity-50'
+                  }`}
                 >
                   {isSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
                 </Button>
