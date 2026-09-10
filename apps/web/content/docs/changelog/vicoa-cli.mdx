@@ -5,6 +5,14 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.8.0
+10 September, 2026
+- Save named agent presets — a provider, model, config and system prompt under one name — and start a session or an automation from one, with `vicoa agent ls|add|rm` and `vicoa session start --agent-profile <name>`
+- Give a preset's system prompt to any agent without writing a file into your repo or home directory
+- Address tasks by a short `KEY-42` identifier, and give them comments, emoji reactions and an activity log that records every change — whether it came from the app, the CLI, an agent or an automation
+- Fix worktree setup leaving the terminal parked on a half-typed command: a long setup chain now waits for the shell to actually start reading, and arrives in one piece instead of a character at a time (#42)
+- Fix Stop leaving Claude's background sub-agents running for minutes afterwards — Stop now stops them too, and pressing it again while they wind down works (#41)
+
 ### v1.7.19
 8 September, 2026
 - Fix a Codex session dying for good after a large tool result — oversized frames from the codex app-server are no longer dropped, at any size (#33)
