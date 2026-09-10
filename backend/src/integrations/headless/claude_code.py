@@ -45,7 +45,11 @@ from vicoa.session_ws_client import SessionMessagesWsClient
 from vicoa.utils import derive_ws_url, get_project_path
 from integrations.headless.session_lifecycle import instance_update_requests_stop
 from integrations.utils.heartbeat import AsyncSessionHeartbeat
-from integrations.headless.format_tools import format_tool_use
+from integrations.headless.format_tools import (
+    format_background_task_notification,
+    format_tool_use,
+    subagent_label,
+)
 from integrations.headless import auq
 from integrations.headless import permission as permission_module
 from integrations.headless import control_command
@@ -59,7 +63,11 @@ from integrations.headless.claude_model_catalog import build_claude_available_mo
 from integrations.headless.permission import (
     format_dict_as_markdown as _format_dict_as_markdown,  # re-exported for tests
 )
-from integrations.headless.subagent import SubAgentTracker, build_metadata
+from integrations.headless.subagent import (
+    AGENT_TASK_TYPES as _AGENT_TASK_TYPES,
+    SubAgentTracker,
+    build_metadata,
+)
 from integrations.headless.thinking import build_thinking_metadata
 
 try:
@@ -123,15 +131,14 @@ _CLAUDE_LIMITS_FETCH_INTERVAL = 60.0
 # running either way — this only bounds how long the run loop stays parked.
 _INTERRUPT_RESULT_TIMEOUT = 15.0
 
-# Task types the CLI reports through ``task_started`` that mean delegated
-# *agent* work — a Task-tool sub-agent or a workflow. Those are the ones a Stop
-# has to reach and the ones whose completion wakes the parent for a follow-up
-# turn. A background shell (``Bash(run_in_background=True)`` on a dev server)
-# rides the same frames but may never reach a terminal status, so tracking one
-# would defer the awaiting-input settle forever — and a Stop would kill the
-# user's dev server. Mirrors the SDK's own ``DEFERRING_TASK_TYPES``. A missing
-# ``task_type`` (older CLI) stays tracked, i.e. the previous behaviour.
-_AGENT_TASK_TYPES = frozenset({"local_agent", "local_workflow"})
+# ``_AGENT_TASK_TYPES`` (imported above from ``integrations.headless.subagent``)
+# names the task types that mean delegated *agent* work. Those are the ones a
+# Stop has to reach and the ones whose completion wakes the parent for a
+# follow-up turn. A background shell (``Bash(run_in_background=True)`` on a dev
+# server) rides the same frames but may never reach a terminal status, so
+# tracking one would defer the awaiting-input settle forever — and a Stop would
+# kill the user's dev server. A missing ``task_type`` (older CLI) stays tracked,
+# i.e. the previous behaviour.
 
 # Overall budget for the ``stop_task`` sweep an interrupt fires at the
 # background sub-agents. Each stop is a control round-trip to the CLI; they go
@@ -1366,10 +1373,13 @@ class HeadlessClaudeRunner:
             return
         for block in message.content:
             if isinstance(block, ToolUseBlock) and block.name in ("Task", "Agent"):
+                block_input = block.input or {}
                 self._subagent_tracker.remember_task(
                     block.id,
-                    (block.input or {}).get("subagent_type", "agent"),
-                    (block.input or {}).get("description", ""),
+                    # Same label the launching tool row shows, so the row and
+                    # the group header beneath it agree.
+                    subagent_label(block_input) or "agent",
+                    block_input.get("description", ""),
                 )
 
     def _track_task_lifecycle(self, message) -> None:
@@ -1393,6 +1403,13 @@ class HeadlessClaudeRunner:
         """
         if isinstance(message, TaskStartedMessage):
             task_type = getattr(message, "task_type", None)
+            # Remember the announcement either way: the matching
+            # ``task_notification`` carries no ``task_type``, and it is the
+            # frame that has to decide whether it's a sub-agent report or a
+            # backgrounded shell finishing (see ``_send_subagent_result``).
+            self._subagent_tracker.observe_task_started(
+                message.task_id, task_type, getattr(message, "tool_use_id", None)
+            )
             if task_type is not None and task_type not in _AGENT_TASK_TYPES:
                 return
             self._pending_background_tasks.add(message.task_id)
@@ -1924,19 +1941,44 @@ class HeadlessClaudeRunner:
         We forward this copy rather than the tool_result because it carries the
         ``task_id``/``status`` and none of the tool_result's internal plumbing
         (the "agentId: … use SendMessage to continue" block).
+
+        Not every settled task is a sub-agent, though: a backgrounded shell
+        settles through the very same frame as ``local_bash``. Those used to
+        land here too and, with no ``Task`` block to label them, fell back to
+        the ``("agent", "")`` sentinel — so a slow ``git push`` rendered as a
+        "Sub-agent: agent" card holding the Bash call's one-line description.
+        They're routed to a plain background-task tool row instead.
         """
         tool_use_id = message.tool_use_id
         summary = (message.summary or "").strip()
-        if not tool_use_id or not summary:
+        if not summary:
+            return
+
+        if not self._subagent_tracker.is_agent_task(message.task_id, tool_use_id):
+            await self.send_to_vicoa(
+                format_background_task_notification(summary, message.status)
+            )
+            return
+
+        if not tool_use_id:
             return
 
         subagent_type, description = self._subagent_tracker.label_for(tool_use_id)
+        # The status also rides the metadata (new clients mark the group header
+        # with it), but it stays in the body too: a client that predates the
+        # metadata field would otherwise show a failed run as a normal one.
         if message.status != "completed":
             summary = f"⚠️ Sub-agent {message.status}\n\n{summary}"
 
         await self.send_to_vicoa(
             summary,
-            build_metadata(tool_use_id, subagent_type, description, role="result"),
+            build_metadata(
+                tool_use_id,
+                subagent_type,
+                description,
+                role="result",
+                status=message.status,
+            ),
         )
 
     async def _maybe_handle_subagent_message(self, message) -> bool:

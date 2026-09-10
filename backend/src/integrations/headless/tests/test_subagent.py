@@ -331,7 +331,9 @@ async def test_receive_loop_diverts_children_and_keeps_main_stream_flat(make_run
 # ---------------------------------------------------------------------------
 
 
-def _task_started(task_id: str, tool_use_id: str) -> TaskStartedMessage:
+def _task_started(
+    task_id: str, tool_use_id: str, task_type: str | None = None
+) -> TaskStartedMessage:
     return TaskStartedMessage(
         subtype="task_started",
         data={},
@@ -340,6 +342,7 @@ def _task_started(task_id: str, tool_use_id: str) -> TaskStartedMessage:
         uuid="u-start",
         session_id="sdk-sess-1",
         tool_use_id=tool_use_id,
+        task_type=task_type,
     )
 
 
@@ -485,6 +488,7 @@ async def test_subagent_result_is_forwarded_tagged(make_runner):
         "subagent_type": "Explore",
         "description": "map",
         "role": "result",
+        "status": "completed",
     }
 
 
@@ -494,15 +498,20 @@ async def test_failed_subagent_result_is_marked(make_runner):
     sends = []
 
     async def _capture(content, message_metadata=None):
-        sends.append(content)
+        sends.append((content, message_metadata))
 
     runner.send_to_vicoa = _capture  # type: ignore
+    runner._remember_tasks_in_message(_assistant_with_task("tu-1", "Explore", "map"))
 
     await runner._send_subagent_result(
         _task_notification("task-1", "tu-1", "ran out of context", status="failed")
     )
 
-    assert sends[-1] == "⚠️ Sub-agent failed\n\nran out of context"
+    content, metadata = sends[-1]
+    # The status rides the metadata for the header, and stays in the body so a
+    # client predating that field still shows the run as failed.
+    assert content == "⚠️ Sub-agent failed\n\nran out of context"
+    assert metadata["subagent"]["status"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -514,11 +523,133 @@ async def test_empty_subagent_summary_is_not_forwarded(make_runner):
         sends.append(content)
 
     runner.send_to_vicoa = _capture  # type: ignore
+    runner._remember_tasks_in_message(_assistant_with_task("tu-1", "Explore", "map"))
 
     await runner._send_subagent_result(_task_notification("task-1", "tu-1", "   "))
-    await runner._send_subagent_result(_task_notification("task-1", "", "non-empty"))
 
     assert sends == []
+
+
+@pytest.mark.asyncio
+async def test_background_shell_notification_is_not_a_subagent(make_runner):
+    """A backgrounded Bash settles through the same ``task_notification`` frame
+    a sub-agent does. It used to be tagged with the ``("agent", "")`` sentinel
+    and render as a "Sub-agent: agent" card holding one line — the Bash call's
+    own description. It is a plain tool row instead."""
+    runner = make_runner()
+    sends = []
+
+    async def _capture(content, message_metadata=None):
+        sends.append((content, message_metadata))
+
+    runner.send_to_vicoa = _capture  # type: ignore
+    runner._track_task_lifecycle(_task_started("task-1", "tu-bash", "local_bash"))
+
+    await runner._send_subagent_result(
+        _task_notification("task-1", "tu-bash", "Sync main")
+    )
+
+    content, metadata = sends[-1]
+    assert content == "🔧 Using tool: Background task - `Sync main`"
+    assert metadata is None
+
+
+@pytest.mark.asyncio
+async def test_failed_background_shell_notification_reports_its_status(make_runner):
+    runner = make_runner()
+    sends = []
+
+    async def _capture(content, message_metadata=None):
+        sends.append((content, message_metadata))
+
+    runner.send_to_vicoa = _capture  # type: ignore
+    runner._track_task_lifecycle(_task_started("task-1", "tu-bash", "local_bash"))
+
+    await runner._send_subagent_result(
+        _task_notification("task-1", "tu-bash", "Watch CI", status="failed")
+    )
+
+    assert sends[-1][0] == "🔧 Using tool: Background task - `Watch CI` (failed)"
+
+
+@pytest.mark.asyncio
+async def test_announced_agent_task_is_tagged_without_a_seen_task_block(make_runner):
+    """``task_type`` is authoritative on its own: a sub-agent whose launching
+    Task block never reached us (a resumed session) is still a sub-agent."""
+    runner = make_runner()
+    sends = []
+
+    async def _capture(content, message_metadata=None):
+        sends.append((content, message_metadata))
+
+    runner.send_to_vicoa = _capture  # type: ignore
+    runner._track_task_lifecycle(_task_started("task-1", "tu-1", "local_agent"))
+
+    await runner._send_subagent_result(
+        _task_notification("task-1", "tu-1", "Found 3 call sites.")
+    )
+
+    content, metadata = sends[-1]
+    assert content == "Found 3 call sites."
+    # No Task block was seen, so the label falls back to the sentinel — but the
+    # message is still grouped as sub-agent activity.
+    assert metadata["subagent"]["role"] == "result"
+    assert metadata["subagent"]["tool_use_id"] == "tu-1"
+
+
+@pytest.mark.asyncio
+async def test_task_type_less_cli_still_tags_a_known_task_block(make_runner):
+    """Releases predating ``task_type`` announce nothing to classify on, so the
+    fallback is having actually seen the ``Task`` block."""
+    runner = make_runner()
+    sends = []
+
+    async def _capture(content, message_metadata=None):
+        sends.append((content, message_metadata))
+
+    runner.send_to_vicoa = _capture  # type: ignore
+    runner._remember_tasks_in_message(_assistant_with_task("tu-1", "Explore", "map"))
+    runner._track_task_lifecycle(_task_started("task-1", "tu-1"))
+
+    await runner._send_subagent_result(
+        _task_notification("task-1", "tu-1", "Found 3 call sites.")
+    )
+
+    assert sends[-1][1]["subagent"]["subagent_type"] == "Explore"
+
+
+def test_tracker_classifies_by_task_type():
+    t = SubAgentTracker()
+    t.observe_task_started("task-agent", "local_agent", "tu-a")
+    t.observe_task_started("task-flow", "local_workflow", "tu-w")
+    t.observe_task_started("task-bash", "local_bash", "tu-b")
+
+    assert t.is_agent_task("task-agent", "tu-a") is True
+    assert t.is_agent_task("task-flow", "tu-w") is True
+    assert t.is_agent_task("task-bash", "tu-b") is False
+
+
+def test_tracker_classifies_unannounced_tasks_by_seen_task_block():
+    t = SubAgentTracker()
+    t.remember_task("tu-1", "Explore", "map the code")
+
+    assert t.is_agent_task("task-1", "tu-1") is True
+    assert t.is_agent_task("task-2", "tu-unknown") is False
+    assert t.is_agent_task(None, None) is False
+
+
+def test_tracker_resolves_tool_use_id_from_the_announcement():
+    """``task_notification`` may omit ``tool_use_id``; ``task_started`` carries
+    it, so the announcement is what links the two."""
+    t = SubAgentTracker()
+    t.remember_task("tu-1", "Explore", "map the code")
+    t.observe_task_started("task-1", None, "tu-1")
+
+    assert t.is_agent_task("task-1", None) is True
+
+
+def test_build_metadata_omits_absent_status():
+    assert "status" not in build_metadata("tu-1", "Explore", "map")["subagent"]
 
 
 @pytest.mark.asyncio

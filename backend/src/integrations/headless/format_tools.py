@@ -116,6 +116,42 @@ def _format_edit_diff(
     return "\n".join(diff_lines)
 
 
+def subagent_label(tool_input: Dict[str, Any]) -> str:
+    """What to call the sub-agent a ``Task``/``Agent`` call launches.
+
+    An explicit ``name`` on the call wins over the agent type: a fan-out of
+    five ``Explore``s otherwise reads as five identical rows. Falls back to
+    ``subagent_type``, then to "" for the caller to default.
+    """
+    for key in ("name", "subagent_type"):
+        value = str(tool_input.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def format_background_task_notification(summary: str, status: Any = None) -> str:
+    """A settled *non-agent* task — a backgrounded shell — as a tool-use row.
+
+    Claude announces a backgrounded ``Bash`` (explicit, or auto-backgrounded
+    once it outruns the foreground timeout) through the same
+    ``task_started``/``task_notification`` frames a Task-tool sub-agent uses,
+    so its report has to land somewhere. It is not sub-agent activity, so it
+    renders as an ordinary collapsible tool row rather than a sub-agent card —
+    matching how paseo maps the same frame onto a synthetic ``task_notification``
+    tool call. The first line labels the row; anything after it becomes the
+    expandable body.
+    """
+    text = (summary or "").strip()
+    lines = text.split("\n")
+    label = lines[0].strip() or "Background task finished"
+    body = "\n".join(lines[1:]).strip()
+    state = str(status or "").strip().lower()
+    suffix = "" if state in ("", "completed") else f" ({state})"
+    header = f"🔧 Using tool: Background task - `{label}`{suffix}"
+    return f"{header}\n\n{body}" if body else header
+
+
 def format_tool_use(tool_name: str, tool_input: Dict[str, Any]) -> str:
     """Format a tool use into a human-readable message.
 
@@ -129,15 +165,28 @@ def format_tool_use(tool_name: str, tool_input: Dict[str, Any]) -> str:
     # Agent / Task - delegates work to specialized subagents
     if tool_name in ("Agent", "Task"):
         description = tool_input.get("description", "task")
-        subagent_type = tool_input.get("subagent_type", "")
+        subagent_type = subagent_label(tool_input)
         model = tool_input.get("model", "")
         meta = []
         if subagent_type:
             meta.append(f"agent: {subagent_type}")
         if model:
             meta.append(f"model: {model}")
+        if tool_input.get("run_in_background"):
+            meta.append("background")
         suffix = f" ({', '.join(meta)})" if meta else ""
-        return f"🔧 Using tool: Agent - `{description}`{suffix}"
+        header = f"🔧 Using tool: Agent - `{description}`{suffix}"
+
+        # The prompt is the only place that says what this sub-agent was
+        # actually asked to do, and it was being dropped everywhere: this row
+        # showed the one-line description, and the child ``UserMessage`` that
+        # repeats it is skipped along with every other sub-agent tool result.
+        # So a reader saw the answers to a question never shown. It rides the
+        # row's collapsible body, the same way Edit's diff does.
+        prompt = str(tool_input.get("prompt") or "").strip()
+        if prompt:
+            return f"{header}\n\n{prompt}"
+        return header
 
     # Bash - execute shell commands
     elif tool_name == "Bash":

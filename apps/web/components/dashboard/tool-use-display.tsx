@@ -224,6 +224,106 @@ const LONG_DESCRIPTION_CHARS = 80;
 /** Cap on edited-file chips shown inline on a collapsed group before "+N more". */
 const MAX_INLINE_FILE_CHIPS = 4;
 
+/** One tool-use message, reduced to what a run summary needs. */
+export interface ToolRunItem {
+  /** Stable identity for the chip list across virtualization (a message id). */
+  id: string;
+  content: string;
+}
+
+/**
+ * What a collapsed run of tool uses says about itself: the aggregate action
+ * label, and — when the run edited files — a chip per file carrying its
+ * `+N -M` and a hover diff preview, so the changed files are visible without
+ * expanding anything.
+ *
+ * Shared by `ToolUseGroup` and `SubagentGroup` so a sub-agent's collapsed
+ * header reads in exactly the same vocabulary as a top-level tool run; before
+ * this, a sub-agent that rewrote three files announced itself as one line of
+ * text naming neither the work nor the files.
+ *
+ * Renders as a fragment (no wrapper) — the caller owns the row.
+ */
+export function ToolRunSummary({
+  items,
+  agentType,
+  projectPath,
+  showFileChips,
+}: {
+  items: ToolRunItem[];
+  agentType: ToolUseAgentType;
+  projectPath?: string | null;
+  /** Chips are for the collapsed state; expanded rows show their own diffs. */
+  showFileChips: boolean;
+}) {
+  const { query: findQuery } = useFindHighlight();
+  const contents = useMemo(() => items.map((item) => item.content), [items]);
+
+  // "Run 2 commands, edit 2 files, read a file" — distinct tools, first-use order.
+  const runLabel = useMemo(() => describeToolRun(contents, agentType), [contents, agentType]);
+
+  // Same label minus the edit segments — edits are shown inline as file chips,
+  // so the collapsed row reads "Run a command · foo.ts +3 -1 · …" ('' if only
+  // edits). Only used when the run has edits and is collapsed.
+  const nonEditLabel = useMemo(
+    () => describeToolRun(contents, agentType, { excludeFileEdits: true }),
+    [contents, agentType],
+  );
+
+  // Files this run edited, in order. Keyed by message id for a stable list
+  // across virtualization.
+  const editedFiles = useMemo(
+    () =>
+      items
+        .map((item) => ({ id: item.id, edit: editedFileFromContent(item.content, agentType) }))
+        .filter((entry): entry is { id: string; edit: EditedFileSummary } => entry.edit !== null),
+    [items, agentType],
+  );
+
+  if (!showFileChips || editedFiles.length === 0) {
+    if (!runLabel) return null;
+    return (
+      <span className="min-w-0 truncate text-muted-foreground" title={runLabel}>
+        <HighlightedText text={runLabel} query={findQuery} />
+      </span>
+    );
+  }
+
+  const inlineFiles = editedFiles.slice(0, MAX_INLINE_FILE_CHIPS);
+  const overflowCount = editedFiles.length - inlineFiles.length;
+
+  return (
+    <>
+      {nonEditLabel && <span className="shrink-0 text-muted-foreground">{nonEditLabel},</span>}
+      <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+        {inlineFiles.map(({ id, edit }, index) => {
+          // Prefix the file with its tool name ("Edit"/"Write"/…), but only
+          // when it changes — a run of same-tool files shares one label:
+          // "Edit foo.ts bar.ts", "Edit foo.ts Write baz.ts".
+          const showToolLabel = index === 0 || edit.toolName !== inlineFiles[index - 1].edit.toolName;
+          return (
+            <span key={id} className="flex min-w-0 items-center gap-1.5">
+              {showToolLabel && <span className="shrink-0 text-muted-foreground">{edit.toolName}</span>}
+              <FileChip
+                inline
+                fileName={edit.fileName}
+                fullPath={edit.fullPath}
+                diffStat={edit.diffStat}
+                diffContent={edit.diffContent}
+                agentType={agentType}
+                projectPath={projectPath}
+              />
+            </span>
+          );
+        })}
+      </div>
+      {overflowCount > 0 && (
+        <span className="shrink-0 text-muted-foreground/70">+{overflowCount} more</span>
+      )}
+    </>
+  );
+}
+
 /** One tool use: a single-line summary row, expandable when there's detail. */
 export function ToolUseLine({
   content,
@@ -381,39 +481,15 @@ export function ToolUseGroup({
   // Per-tool expansion inside an expanded group. Local state: it resets if
   // the row is recycled offscreen by the virtual list, which is acceptable.
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
-  const { query: findQuery } = useFindHighlight();
 
-  // "Run 2 commands, edit 2 files, read a file" — distinct tools, first-use order.
-  const runLabel = useMemo(
-    () => describeToolRun(messages.map((message) => message.content), agentType),
-    [messages, agentType],
-  );
-
-  // Same label minus the edit segments — edits are shown inline as file chips,
-  // so the collapsed row reads "Run a command · foo.ts +3 -1 · …" ('' if only
-  // edits). Only used when the group has edits and is collapsed.
-  const nonEditLabel = useMemo(
-    () =>
-      describeToolRun(messages.map((message) => message.content), agentType, {
-        excludeFileEdits: true,
-      }),
-    [messages, agentType],
+  const summaryItems = useMemo(
+    () => messages.map((message) => ({ id: message.id, content: message.content })),
+    [messages],
   );
 
   // The single icon that stands in for the whole collapsed run.
   const groupIconName = useMemo(
     () => representativeToolName(toolNamesInRun(messages.map((message) => message.content), agentType)),
-    [messages, agentType],
-  );
-
-  // Files this run edited, in order — surfaced as chips under the collapsed
-  // header so the changed files (and their diffs, on hover) are visible without
-  // expanding. Keyed by message id for a stable list across virtualization.
-  const editedFiles = useMemo(
-    () =>
-      messages
-        .map((message) => ({ id: message.id, edit: editedFileFromContent(message.content, agentType) }))
-        .filter((entry): entry is { id: string; edit: EditedFileSummary } => entry.edit !== null),
     [messages, agentType],
   );
 
@@ -429,12 +505,6 @@ export function ToolUseGroup({
     );
   }
 
-  // Collapsed groups with edits list the files inline in the header row; the
-  // rest of the run ("Run a command") stays as a label beside them.
-  const showInlineEdits = !expanded && editedFiles.length > 0;
-  const inlineFiles = editedFiles.slice(0, MAX_INLINE_FILE_CHIPS);
-  const overflowCount = editedFiles.length - inlineFiles.length;
-
   return (
     <div>
       <button
@@ -444,42 +514,12 @@ export function ToolUseGroup({
         className="flex w-full min-w-0 items-center gap-1.5 rounded -mx-0.5 px-0.5 py-0.5 text-left cursor-pointer hover:bg-muted/40"
       >
         <ToolIcon name={groupIconName} />
-        {showInlineEdits ? (
-          <>
-            {nonEditLabel && <span className="shrink-0 text-muted-foreground">{nonEditLabel},</span>}
-            <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
-              {inlineFiles.map(({ id, edit }, index) => {
-                // Prefix the file with its tool name ("Edit"/"Write"/…), but
-                // only when it changes — a run of same-tool files shares one
-                // label: "Edit foo.ts bar.ts", "Edit foo.ts Write baz.ts".
-                const showToolLabel = index === 0 || edit.toolName !== inlineFiles[index - 1].edit.toolName;
-                return (
-                  <span key={id} className="flex min-w-0 items-center gap-1.5">
-                    {showToolLabel && (
-                      <span className="shrink-0 text-muted-foreground">{edit.toolName}</span>
-                    )}
-                    <FileChip
-                      inline
-                      fileName={edit.fileName}
-                      fullPath={edit.fullPath}
-                      diffStat={edit.diffStat}
-                      diffContent={edit.diffContent}
-                      agentType={agentType}
-                      projectPath={projectPath}
-                    />
-                  </span>
-                );
-              })}
-            </div>
-            {overflowCount > 0 && (
-              <span className="shrink-0 text-muted-foreground/70">+{overflowCount} more</span>
-            )}
-          </>
-        ) : (
-          <span className="min-w-0 truncate text-muted-foreground" title={runLabel}>
-            <HighlightedText text={runLabel} query={findQuery} />
-          </span>
-        )}
+        <ToolRunSummary
+          items={summaryItems}
+          agentType={agentType}
+          projectPath={projectPath}
+          showFileChips={!expanded}
+        />
         <ChevronRight
           className={cn(
             'h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform',
