@@ -20,7 +20,6 @@ from pydantic import (
 )
 from shared.database.enums import (
     AgentStatus,
-    TeamRole,
     InstanceAccessLevel,
 )
 from shared.database.liveness import LiveState
@@ -468,71 +467,100 @@ class InstanceShareResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# --- Teams (collaboration §3.2) ---------------------------------------------
+#
+# Roles and statuses are plain lowercase strings on the wire, matching the
+# varchar+CHECK columns. No client shipped against the pre-P3 enum shape.
+
+TeamRoleLiteral = Literal["owner", "admin", "member"]
+TeamInviteRoleLiteral = Literal["admin", "member"]
+TeamMemberStatusLiteral = Literal["invited", "active"]
+
+
 class TeamCreateRequest(BaseModel):
-    name: str = Field(..., description="Team name")
+    name: str = Field(..., min_length=1, max_length=255, description="Team name")
 
 
 class TeamUpdateRequest(BaseModel):
-    name: str = Field(..., description="Updated team name")
+    name: str = Field(..., min_length=1, max_length=255)
 
 
-class TeamMemberAddRequest(BaseModel):
-    email: str = Field(..., description="Email address of member to add")
-    role: TeamRole | None = Field(
-        default=None,
-        description="Role for the member (defaults to MEMBER if omitted)",
-    )
+class TeamMemberInviteRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    role: TeamInviteRoleLiteral = "member"
 
 
 class TeamMemberRoleUpdateRequest(BaseModel):
-    role: TeamRole
+    role: TeamInviteRoleLiteral
+
+
+class TeamInviteCreateRequest(BaseModel):
+    role: TeamInviteRoleLiteral = "member"
+    # None ⇒ never expires. Default one week, like GitHub org invites.
+    expires_in_days: int | None = Field(default=7, ge=1, le=365)
+    max_uses: int | None = Field(default=None, ge=1, le=1000)
 
 
 class TeamSummary(BaseModel):
-    id: str
+    id: UUID
     name: str
+    # Reserved, not yet routable (D-D). Returned so a client can show it in
+    # settings; nothing resolves it.
+    slug: str
+    avatar_image_uri: str | None = None
+    role: TeamRoleLiteral
+    member_count: int
     created_at: datetime
     updated_at: datetime
-    role: TeamRole
-    member_count: int
-
-    @field_serializer("created_at", "updated_at")
-    def serialize_datetime(self, dt: datetime, _info):
-        return dt.isoformat() + "Z"
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 class TeamMemberResponse(BaseModel):
-    id: str
-    role: TeamRole
-    user_id: str | None = None
-    email: str
+    id: UUID
+    user_id: UUID | None = None
+    # Shown only to team admins/owners; members see display names only.
+    email: str | None = None
     display_name: str | None = None
-    invited: bool
+    avatar_image_uri: str | None = None
+    role: TeamRoleLiteral
+    status: TeamMemberStatusLiteral
+    joined_at: datetime | None = None
     created_at: datetime
-    updated_at: datetime
-
-    @field_serializer("created_at", "updated_at")
-    def serialize_datetime(self, dt: datetime, _info):
-        return dt.isoformat() + "Z"
-
-    model_config = ConfigDict(from_attributes=True)
 
 
-class TeamDetailResponse(BaseModel):
-    id: str
-    name: str
-    created_at: datetime
-    updated_at: datetime
-    role: TeamRole
+class TeamDetailResponse(TeamSummary):
     members: list[TeamMemberResponse]
 
-    @field_serializer("created_at", "updated_at")
-    def serialize_datetime(self, dt: datetime, _info):
-        return dt.isoformat() + "Z"
 
-    model_config = ConfigDict(from_attributes=True)
+class TeamInviteResponse(BaseModel):
+    id: UUID
+    token: str
+    role: TeamRoleLiteral
+    expires_at: datetime | None = None
+    max_uses: int | None = None
+    uses: int
+    created_at: datetime
+
+
+class TeamInvitePreviewResponse(BaseModel):
+    """What a signed-in visitor sees before redeeming a join link."""
+
+    team_id: UUID
+    name: str
+    avatar_image_uri: str | None = None
+    role: TeamRoleLiteral
+    member_count: int
+
+
+class TeamInvitationResponse(BaseModel):
+    """A pending email invite addressed to the caller."""
+
+    team_id: UUID
+    name: str
+    slug: str
+    avatar_image_uri: str | None = None
+    role: TeamRoleLiteral
+    invited_by_display_name: str | None = None
+    created_at: datetime
 
 
 # ============================================================================
@@ -643,9 +671,24 @@ class ProjectDirectoryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+ProjectRoleLiteral = Literal["viewer", "commenter", "editor", "admin", "owner"]
+GrantScopeLiteral = Literal["tasks", "sessions"]
+
+
 class ProjectResponse(BaseModel):
     id: UUID
     name: str
+    # NULL ⇒ personal; set ⇒ team-owned (collaboration §2). Read-only here —
+    # moving a project to a team is P7.
+    team_id: UUID | None = None
+    # The caller's standing on this project and which areas it covers
+    # (collaboration §4). Owners and team members cover both scopes; a grantee
+    # gets what the grant says, so a sessions-only viewer's client can hide the
+    # board without a second round trip.
+    role: ProjectRoleLiteral = "owner"
+    scopes: list[GrantScopeLiteral] = Field(
+        default_factory=lambda: ["tasks", "sessions"]
+    )
     # Task-identifier prefix; None until the project's first task allocates one.
     key: str | None = None
     git_remote_url: str | None = None
@@ -799,6 +842,8 @@ class TaskLabelResponse(BaseModel):
     id: UUID
     name: str
     color: str
+    # NULL ⇒ personal; set ⇒ the team's vocabulary (collaboration §3.3).
+    team_id: UUID | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -806,6 +851,9 @@ class TaskLabelResponse(BaseModel):
 class CreateTaskLabelRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     color: str
+    # Create in a team's vocabulary instead of the caller's own; needs an
+    # active membership of that team.
+    team_id: UUID | None = None
 
     @field_validator("color")
     @classmethod

@@ -1,4 +1,4 @@
-from .enums import AgentStatus, SenderType, InstanceAccessLevel, TeamRole
+from .enums import AgentStatus, SenderType, InstanceAccessLevel
 from .models import (
     AgentInstance,
     APIKey,
@@ -14,9 +14,18 @@ from .models import (
     User,
     AgentType,
     UserInstanceAccess,
-    Team,
-    TeamMembership,
     TeamInstanceAccess,
+)
+from .collab_models import (
+    Team,
+    TeamMember,
+    TeamInvite,
+    ProjectGrant,
+    GRANT_PRINCIPAL_TYPES,
+    GRANT_ROLES,
+    GRANT_SCOPES,
+    TEAM_MEMBER_STATUSES,
+    TEAM_ROLES,
 )
 from .task_models import (
     Project,
@@ -111,7 +120,13 @@ __all__ = [
     "ACTIVATION_NUDGE_CHANNELS",
     "ACTIVATION_NUDGE_STATUSES",
     "Team",
-    "TeamMembership",
-    "TeamRole",
+    "TeamMember",
+    "TeamInvite",
+    "ProjectGrant",
     "TeamInstanceAccess",
+    "GRANT_PRINCIPAL_TYPES",
+    "GRANT_ROLES",
+    "GRANT_SCOPES",
+    "TEAM_MEMBER_STATUSES",
+    "TEAM_ROLES",
 ]

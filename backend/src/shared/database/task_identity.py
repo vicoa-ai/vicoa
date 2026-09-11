@@ -62,29 +62,39 @@ def derive_key_base(name: str) -> str:
     return base if len(base) >= 2 else FALLBACK_KEY_BASE
 
 
-def _taken_keys(db: Session, user_id: UUID) -> set[str]:
+def _taken_keys(db: Session, user_id: UUID, team_id: UUID | None) -> set[str]:
     """Every key already spoken for by this owner, uppercased.
 
-    P3 adds `projects.team_id`; when it does, a team-owned project's namespace
-    is the team's, and this predicate grows a branch. Until then there is only
-    one kind of owner.
+    The owner is the team for a team-owned project and the user for a personal
+    one — the two namespaces are independent, matching the pair of partial
+    unique indexes on `projects`.
     """
+    owner = (
+        Project.team_id == team_id
+        if team_id is not None
+        else (Project.user_id == user_id) & Project.team_id.is_(None)
+    )
     rows = db.execute(
-        select(func.upper(Project.key)).where(
-            Project.user_id == user_id, Project.key.is_not(None)
-        )
+        select(func.upper(Project.key)).where(owner, Project.key.is_not(None))
     ).all()
     return {row[0] for row in rows if row[0]}
 
 
-def next_free_key(db: Session, user_id: UUID, name: str, *, attempt: int = 0) -> str:
+def next_free_key(
+    db: Session,
+    user_id: UUID,
+    name: str,
+    *,
+    team_id: UUID | None = None,
+    attempt: int = 0,
+) -> str:
     """A key for `name` that no other project of this owner holds.
 
     `attempt` shifts the starting suffix so a caller retrying after a lost race
     doesn't re-propose the candidate that just collided.
     """
     base = derive_key_base(name)
-    taken = _taken_keys(db, user_id)
+    taken = _taken_keys(db, user_id, team_id)
     if attempt == 0 and base not in taken:
         return base
     # BASE, BASE2, BASE3 … — the same shape Linear uses, and short enough that
@@ -162,7 +172,11 @@ def ensure_project_key_committed(db: Session, project: Project) -> str | None:
         nested = db.begin_nested()
         try:
             project.key = next_free_key(
-                db, project.user_id, project.name, attempt=attempt
+                db,
+                project.user_id,
+                project.name,
+                team_id=project.team_id,
+                attempt=attempt,
             )
             db.flush()
             nested.commit()

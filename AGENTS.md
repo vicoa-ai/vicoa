@@ -155,8 +155,17 @@ Vicoa's hosted service adds closed features — billing and payment processing �
 repository. The open code must never depend on it, so a few seams exist:
 
 - `backend/src/shared/hooks.py` — additive hook registry (user-created,
-  user-delete, app setup, lifespan). The core declares hooks; something else may
-  register into them.
+  user-delete, app setup, lifespan, capability). The core declares hooks;
+  something else may register into them. The capability registry is how seat
+  gating stays out of the open code: the core calls
+  `check_capability(db, payer_id, "collab.team_seat" | "collab.grant_write", ctx)`
+  before a metered collaboration action; an empty registry allows, so
+  self-hosting is unmetered, and a denial becomes `402`.
+- `backend/src/shared/access.py` — the one access resolver (project-anchored
+  grants, teams, session shares). Dashboard routers pass `sharing=True` into the
+  query layer; the agent-facing `servers` routers and the CLI stay owner-only —
+  that is an invariant, not a TODO. `backend/src/backend/tests/test_authz_matrix.py`
+  must be extended for any new dashboard route that carries a project/task/session id.
 - `backend/src/backend/main.py` — a guarded optional import
   (`importlib.util.find_spec("cloud")`). Absent overlay → the log line
   `Cloud overlay absent; running open-source core`, and everything else runs

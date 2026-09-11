@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Scope, Receive, Send, Message
 import sentry_sdk
 from sqlalchemy.exc import IntegrityError, OperationalError as SAOperationalError
+from shared.access_handlers import install_access_exception_handlers
 from shared.auth.user_fk import make_user_gone_exception_handler
 from shared.config import settings
 from shared.database.errors import is_db_disconnect
@@ -214,6 +215,10 @@ def _user_exists_in_db(sub: str) -> bool:
 app.exception_handler(IntegrityError)(
     make_user_gone_exception_handler(_user_exists_in_db)
 )
+# AccessDenied → 403, CapabilityDenied → 402. The agent-facing surfaces run
+# the owner-only lens and should never raise these, but the query layer they
+# share with `backend` can, and a 403 beats a 500 if one ever slips through.
+install_access_exception_handlers(app)
 
 
 @app.exception_handler(SAOperationalError)

@@ -18,6 +18,8 @@ from shared.auth import Principal, verify_user_token
 from shared.avatars import seed_user_avatar
 from shared.hooks import run_user_created_hooks
 
+from ..db.collab_queries import attach_pending_grants
+
 logger = logging.getLogger(__name__)
 
 security = HTTPBearer(auto_error=False)  # Don't auto-error so we can check cookies
@@ -161,6 +163,10 @@ async def get_current_user(
         raise AuthError("User not found")
     if created:
         _schedule_signup_side_effects(background_tasks, user)
+        # A project grant addressed to this email before the account existed
+        # (invite-before-signup) becomes a real grant now. Team invites need
+        # no such step — they are matched by email at read time.
+        attach_pending_grants(db, user)
     _maybe_seed_avatar(background_tasks, user, claims.avatar_url)
     # Attribution for anything this request's session flushes (collaboration
     # §3.5): the task-activity listener has no request context of its own, and

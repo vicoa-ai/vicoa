@@ -23,9 +23,3 @@ class SenderType(str, Enum):
 class InstanceAccessLevel(str, Enum):
     READ = "READ"
     WRITE = "WRITE"
-
-
-class TeamRole(str, Enum):
-    OWNER = "OWNER"
-    ADMIN = "ADMIN"
-    MEMBER = "MEMBER"

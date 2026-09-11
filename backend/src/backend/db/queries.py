@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from shared import access
 from shared.database import (
     AgentInstance,
     AgentStatus,
@@ -10,14 +11,13 @@ from shared.database import (
     APIKey,
     Message,
     MessageAttachment,
+    ProjectGrant,
     PushToken,
     Team,
-    TeamInstanceAccess,
-    TeamMembership,
+    TeamMember,
     User,
     AgentType,
     InstanceAccessLevel,
-    TeamRole,
     SenderType,
 )
 from shared.database.liveness import LiveState, compute_live_state, is_fresh
@@ -25,7 +25,7 @@ from shared.database.automation_models import AutomationRun
 from shared.hooks import run_user_delete_hooks
 from sqlalchemy import case, cast, desc, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Session, joinedload, subqueryload, aliased, selectinload
+from sqlalchemy.orm import Session, joinedload, subqueryload
 
 # Import Pydantic models for type-safe returns
 from backend.models import (
@@ -33,9 +33,6 @@ from backend.models import (
     AgentInstanceDetail,
     AgentTypeOverview,
     MessageResponse,
-    TeamSummary,
-    TeamDetailResponse,
-    TeamMemberResponse,
     InstanceShareResponse,
 )
 
@@ -63,22 +60,6 @@ def _message_to_response(msg: Message) -> MessageResponse:
         created_at=msg.created_at,
         requires_user_input=msg.requires_user_input,
         message_metadata=msg.message_metadata,
-    )
-
-
-def _team_member_to_response(member: TeamMembership) -> TeamMemberResponse:
-    user = member.user
-    email = user.email if user else member.invited_email or ""
-    display_name = user.display_name if user else None
-    return TeamMemberResponse(
-        id=str(member.id),
-        role=member.role,
-        user_id=str(member.user_id) if member.user_id else None,
-        email=email,
-        display_name=display_name,
-        invited=member.user_id is None,
-        created_at=member.created_at,
-        updated_at=member.updated_at,
     )
 
 
@@ -119,21 +100,6 @@ def _instance_owner_share_response(instance: AgentInstance) -> InstanceShareResp
     )
 
 
-def _get_team_membership(
-    db: Session, team_id: UUID, user_id: UUID
-) -> TeamMembership | None:
-    return (
-        db.query(TeamMembership)
-        .options(joinedload(TeamMembership.user))
-        .filter(TeamMembership.team_id == team_id, TeamMembership.user_id == user_id)
-        .first()
-    )
-
-
-def _get_team(db: Session, team_id: UUID) -> Team | None:
-    return db.query(Team).filter(Team.id == team_id).first()
-
-
 def _get_user_by_email(db: Session, email: str) -> User | None:
     normalized = _normalize_email(email)
     return db.query(User).filter(func.lower(User.email) == normalized).first()
@@ -142,39 +108,13 @@ def _get_user_by_email(db: Session, email: str) -> User | None:
 def _compute_effective_instance_access(
     db: Session, instance: AgentInstance, user_id: UUID
 ) -> InstanceAccessLevel | None:
-    if instance.user_id == user_id:
-        return InstanceAccessLevel.WRITE
+    """owner ⇒ WRITE, else max(direct share, team share, project grant).
 
-    access_levels: list[InstanceAccessLevel] = []
-
-    direct_access = (
-        db.query(UserInstanceAccess.access)
-        .filter(
-            UserInstanceAccess.agent_instance_id == instance.id,
-            UserInstanceAccess.user_id == user_id,
-        )
-        .first()
-    )
-    if direct_access and direct_access.access:
-        access_levels.append(direct_access.access)
-
-    team_access_rows = (
-        db.query(TeamInstanceAccess.access)
-        .join(TeamMembership, TeamMembership.team_id == TeamInstanceAccess.team_id)
-        .filter(
-            TeamInstanceAccess.agent_instance_id == instance.id,
-            TeamMembership.user_id == user_id,
-        )
-        .all()
-    )
-    for row in team_access_rows:
-        if row.access:
-            access_levels.append(row.access)
-
-    if not access_levels:
-        return None
-
-    return max(access_levels, key=lambda level: ACCESS_PRIORITY[level])
+    The pre-P3 body (owner + `user_instance_access` + `team_instance_access`)
+    is `shared.access.session_share_access`, kept as the inner call; the
+    project term is folded in by `shared.access.instance_access`.
+    """
+    return access.instance_access(db, user_id, instance)
 
 
 def get_instance_and_access(
@@ -626,19 +566,9 @@ def get_all_agent_instances(
     if scope == "me":
         query = query.filter(AgentInstance.user_id == user_id)
     else:
-        direct_access_select = select(UserInstanceAccess.agent_instance_id).where(
-            UserInstanceAccess.user_id == user_id
-        )
-        team_access_select = (
-            select(TeamInstanceAccess.agent_instance_id)
-            .select_from(TeamInstanceAccess)
-            .join(
-                TeamMembership,
-                TeamMembership.team_id == TeamInstanceAccess.team_id,
-            )
-            .where(TeamMembership.user_id == user_id)
-        )
-        shared_instances_select = direct_access_select.union(team_access_select)
+        # Direct share, team session share, or a project grant covering
+        # sessions — one resolver (shared.access) for every path.
+        shared_instances_select = access.shared_instance_select(user_id)
 
         if scope == "shared":
             query = query.filter(
@@ -1001,17 +931,32 @@ def _notify_terminate(db: Session, instance_id: UUID) -> None:
         )
 
 
+def _get_managed_instance(
+    db: Session, instance_id: UUID, user_id: UUID, *, load_agent_type: bool = False
+) -> AgentInstance | None:
+    """Load a session the caller may *manage* — rename, pin, archive, delete,
+    share: the owner, or a project `admin` whose grant covers sessions
+    (collaboration §4). None when invisible (→ 404); `AccessDenied` (→ 403)
+    when visible but below admin, so a viewer learns nothing new by trying."""
+    query = db.query(AgentInstance).filter(AgentInstance.id == instance_id)
+    if load_agent_type:
+        query = query.options(joinedload(AgentInstance.agent_type))
+    instance = query.first()
+    if instance is None:
+        return None
+    role = access.instance_role(db, user_id, instance)
+    if role is None:
+        return None
+    access.require(role, "admin")
+    return instance
+
+
 def update_instance_status(
     db: Session, instance_id: UUID, user_id: UUID, new_status: AgentStatus
 ) -> AgentInstanceResponse | None:
-    """Update an agent instance status for a specific user"""
+    """Update an agent instance status (archive/complete). Owner or project admin."""
 
-    # Check if instance exists and belongs to user
-    instance = (
-        db.query(AgentInstance)
-        .filter(AgentInstance.id == instance_id, AgentInstance.user_id == user_id)
-        .first()
-    )
+    instance = _get_managed_instance(db, instance_id, user_id)
     if not instance:
         return None
 
@@ -1118,6 +1063,41 @@ def delete_user_account(db: Session, user_id: UUID) -> None:
             synchronize_session=False
         )
 
+        # 6b. Collaboration rows the FKs can't reach. `project_grants.principal_id`
+        # is polymorphic (no FK), so grants *to* this user are swept by hand;
+        # grants *by* them SET NULL. Teams where this user was the only
+        # remaining member go too — a team with nobody left in it is
+        # unreachable, and its projects demote to personal via SET NULL.
+        db.query(ProjectGrant).filter(
+            ProjectGrant.principal_type == "user",
+            ProjectGrant.principal_id == user_id,
+        ).delete(synchronize_session=False)
+        others_remain = (
+            exists()
+            .where(TeamMember.team_id == Team.id)
+            .where(TeamMember.user_id != user_id)
+            .where(TeamMember.status != "removed")
+        )
+        sole_member_team_ids = [
+            row[0]
+            for row in db.query(Team.id)
+            .filter(
+                Team.id.in_(
+                    select(TeamMember.team_id).where(TeamMember.user_id == user_id)
+                ),
+                ~others_remain,
+            )
+            .all()
+        ]
+        if sole_member_team_ids:
+            db.query(ProjectGrant).filter(
+                ProjectGrant.principal_type == "team",
+                ProjectGrant.principal_id.in_(sole_member_team_ids),
+            ).delete(synchronize_session=False)
+            db.query(Team).filter(Team.id.in_(sole_member_team_ids)).delete(
+                synchronize_session=False
+            )
+
         # (Billing rows — subscriptions / billing_events — were removed above by
         # the user-delete hook when the billing overlay is present.)
 
@@ -1156,13 +1136,9 @@ def delete_user_account(db: Session, user_id: UUID) -> None:
 
 
 def delete_agent_instance(db: Session, instance_id: UUID, user_id: UUID) -> bool:
-    """Soft delete an agent instance for a specific user"""
+    """Soft delete an agent instance. Owner or project admin."""
 
-    instance = (
-        db.query(AgentInstance)
-        .filter(AgentInstance.id == instance_id, AgentInstance.user_id == user_id)
-        .first()
-    )
+    instance = _get_managed_instance(db, instance_id, user_id)
 
     if not instance:
         return False
@@ -1183,16 +1159,9 @@ def delete_agent_instance(db: Session, instance_id: UUID, user_id: UUID) -> bool
 def update_agent_instance_name(
     db: Session, instance_id: UUID, user_id: UUID, name: str
 ) -> AgentInstanceResponse | None:
-    """Update the name of an agent instance for a specific user"""
+    """Rename an agent instance. Owner or project admin."""
 
-    instance = (
-        db.query(AgentInstance)
-        .filter(AgentInstance.id == instance_id, AgentInstance.user_id == user_id)
-        .options(
-            joinedload(AgentInstance.agent_type),
-        )
-        .first()
-    )
+    instance = _get_managed_instance(db, instance_id, user_id, load_agent_type=True)
 
     if not instance:
         return None
@@ -1211,18 +1180,14 @@ def update_agent_instance_name(
 def update_agent_instance_pinned(
     db: Session, instance_id: UUID, user_id: UUID, pinned: bool
 ) -> AgentInstanceResponse | None:
-    """Pin or unpin an agent instance for a specific user.
+    """Pin or unpin an agent instance. Owner or project admin — the pin is a
+    property of the session, not of whoever is looking at it.
 
     Re-pinning an already-pinned instance preserves the original timestamp,
     so the shared pin order remains stable across redundant client requests.
     """
 
-    instance = (
-        db.query(AgentInstance)
-        .filter(AgentInstance.id == instance_id, AgentInstance.user_id == user_id)
-        .options(joinedload(AgentInstance.agent_type))
-        .first()
-    )
+    instance = _get_managed_instance(db, instance_id, user_id, load_agent_type=True)
 
     if not instance:
         return None
@@ -1251,16 +1216,16 @@ def link_instance_to_task(
     """
     from .task_queries import get_task
 
-    instance = (
-        db.query(AgentInstance)
-        .filter(AgentInstance.id == instance_id, AgentInstance.user_id == user_id)
-        .options(joinedload(AgentInstance.agent_type))
-        .first()
-    )
+    instance = _get_managed_instance(db, instance_id, user_id, load_agent_type=True)
     if instance is None:
         return None
-    if task_id is not None and get_task(db, user_id, task_id) is None:
-        return None
+    if task_id is not None:
+        task = get_task(db, user_id, task_id, sharing=True)
+        if task is None:
+            return None
+        # Linking writes to the task's board too (its status follows the
+        # session), so the caller needs editor there as well as here.
+        access.require(access.task_role(db, user_id, task), "editor")
 
     instance.task_id = task_id
     db.commit()
@@ -1276,15 +1241,20 @@ def list_task_instances(
     """Sessions (agent instances) linked to a task, most recent first.
 
     Powers the Tasks dialog's linked-sessions strip: the reverse of the §8b
-    late link that stamps ``agent_instances.task_id``. Scoped to the owning
-    user and skips soft-deleted rows; an unknown or foreign task simply yields
-    an empty list.
+    late link that stamps ``agent_instances.task_id``. Returns the caller's
+    own sessions plus any shared to them (directly or through a project grant
+    covering sessions) and skips soft-deleted rows; an unknown or foreign task
+    simply yields an empty list. The caller is expected to have resolved the
+    task itself through the task lens first.
     """
     instances = (
         db.query(AgentInstance)
         .filter(
             AgentInstance.task_id == task_id,
-            AgentInstance.user_id == user_id,
+            or_(
+                AgentInstance.user_id == user_id,
+                AgentInstance.id.in_(access.shared_instance_select(user_id)),
+            ),
             AgentInstance.status != AgentStatus.DELETED,
         )
         .options(
@@ -1530,12 +1500,12 @@ def create_user_message_with_access(
     (websocket-migration §4 Phase 3).
     """
 
-    instance, access = get_instance_and_access(db, instance_id, user_id)
-    if not instance:
+    instance, level = get_instance_and_access(db, instance_id, user_id)
+    if not instance or level is None:
         raise ValueError("Agent instance not found")
 
-    if access != InstanceAccessLevel.WRITE:
-        raise ValueError("Agent instance not found")
+    if level != InstanceAccessLevel.WRITE:
+        raise PermissionError("Read-only access to this session")
 
     message = Message(
         agent_instance_id=instance.id,
@@ -1800,21 +1770,38 @@ def bind_attachments_to_message(
 # ============================================================================
 
 
-def get_instance_shares(
+class InstanceNotFoundError(LookupError):
+    """The session doesn't exist or isn't visible to the caller (→ 404).
+    Distinct from ValueError, which the share endpoints map to 400 for
+    validation problems — the two must not share a status."""
+
+
+def _require_share_manager(
     db: Session, instance_id: UUID, user_id: UUID
-) -> list[InstanceShareResponse]:
+) -> AgentInstance:
+    """Session shares are managed by the owner or a project admin (§2's role
+    ladder: admin "+ manage grants"). Invisible ⇒ InstanceNotFoundError (404);
+    visible but below admin ⇒ PermissionError (403)."""
     instance = (
         db.query(AgentInstance)
         .options(joinedload(AgentInstance.user))
         .filter(AgentInstance.id == instance_id)
         .first()
     )
-
     if not instance:
-        raise ValueError("Agent instance not found")
+        raise InstanceNotFoundError("Agent instance not found")
+    role = access.instance_role(db, user_id, instance)
+    if role is None:
+        raise InstanceNotFoundError("Agent instance not found")
+    if not access.role_at_least(role, "admin"):
+        raise PermissionError("Only the owner or a project admin can manage access")
+    return instance
 
-    if instance.user_id != user_id:
-        raise PermissionError("Only the owner can manage access")
+
+def get_instance_shares(
+    db: Session, instance_id: UUID, user_id: UUID
+) -> list[InstanceShareResponse]:
+    instance = _require_share_manager(db, instance_id, user_id)
 
     shares = (
         db.query(UserInstanceAccess)
@@ -1840,18 +1827,7 @@ def add_instance_share(
     email: str,
     access_level: InstanceAccessLevel,
 ) -> InstanceShareResponse:
-    instance = (
-        db.query(AgentInstance)
-        .options(joinedload(AgentInstance.user))
-        .filter(AgentInstance.id == instance_id)
-        .first()
-    )
-
-    if not instance:
-        raise ValueError("Agent instance not found")
-
-    if instance.user_id != user_id:
-        raise PermissionError("Only the owner can manage access")
+    instance = _require_share_manager(db, instance_id, user_id)
 
     normalized_email = _normalize_email(email)
     owner_email = instance.user.email if instance.user else None
@@ -1890,13 +1866,7 @@ def add_instance_share(
 def remove_instance_share(
     db: Session, instance_id: UUID, user_id: UUID, access_id: UUID
 ) -> None:
-    instance = db.query(AgentInstance).filter(AgentInstance.id == instance_id).first()
-
-    if not instance:
-        raise ValueError("Agent instance not found")
-
-    if instance.user_id != user_id:
-        raise PermissionError("Only the owner can manage access")
+    _require_share_manager(db, instance_id, user_id)
 
     share = (
         db.query(UserInstanceAccess)
@@ -1911,287 +1881,3 @@ def remove_instance_share(
         raise ValueError("Share not found")
 
     db.delete(share)
-
-
-def get_user_teams(db: Session, user_id: UUID) -> list[TeamSummary]:
-    """Return summary information for teams the user belongs to."""
-
-    membership_alias = aliased(TeamMembership)
-    member_count_subq = (
-        db.query(
-            TeamMembership.team_id.label("team_id"),
-            func.count(TeamMembership.id).label("member_count"),
-        )
-        .group_by(TeamMembership.team_id)
-        .subquery()
-    )
-
-    results = (
-        db.query(
-            Team,
-            membership_alias.role.label("user_role"),
-            member_count_subq.c.member_count,
-        )
-        .join(membership_alias, membership_alias.team_id == Team.id)
-        .join(member_count_subq, member_count_subq.c.team_id == Team.id)
-        .filter(membership_alias.user_id == user_id)
-        .all()
-    )
-
-    summaries: list[TeamSummary] = []
-    for team, user_role, member_count in results:
-        summaries.append(
-            TeamSummary(
-                id=str(team.id),
-                name=team.name,
-                created_at=team.created_at,
-                updated_at=team.updated_at,
-                role=user_role,
-                member_count=member_count or 0,
-            )
-        )
-
-    return summaries
-
-
-def get_team_detail(
-    db: Session, team_id: UUID, user_id: UUID
-) -> TeamDetailResponse | None:
-    """Return detailed team info with membership list if user belongs to the team."""
-
-    membership = _get_team_membership(db, team_id, user_id)
-    if not membership:
-        return None
-
-    team = (
-        db.query(Team)
-        .options(
-            selectinload(Team.memberships).options(joinedload(TeamMembership.user))
-        )
-        .filter(Team.id == team_id)
-        .first()
-    )
-
-    if not team:
-        return None
-
-    members = sorted(team.memberships, key=lambda m: m.created_at)
-    member_responses = [_team_member_to_response(member) for member in members]
-
-    return TeamDetailResponse(
-        id=str(team.id),
-        name=team.name,
-        created_at=team.created_at,
-        updated_at=team.updated_at,
-        role=membership.role,
-        members=member_responses,
-    )
-
-
-def create_team(db: Session, owner: User, name: str) -> TeamDetailResponse:
-    """Create a new team and assign the owner membership."""
-
-    team = Team(name=name)
-    db.add(team)
-    db.flush()
-
-    owner_membership = TeamMembership(
-        team_id=team.id,
-        user_id=owner.id,
-        invited_email=owner.email,
-        role=TeamRole.OWNER,
-    )
-    db.add(owner_membership)
-    db.flush()
-
-    db.refresh(team)
-    db.refresh(owner_membership)
-
-    return get_team_detail(db, team.id, owner.id)  # type: ignore[arg-type]
-
-
-def update_team(
-    db: Session, team_id: UUID, acting_user_id: UUID, name: str
-) -> TeamSummary | None:
-    """Rename a team if the acting user is an owner or admin."""
-
-    membership = _get_team_membership(db, team_id, acting_user_id)
-    if not membership:
-        return None
-
-    if membership.role not in (TeamRole.OWNER, TeamRole.ADMIN):
-        raise PermissionError("Only owners or admins can update team details")
-
-    team = _get_team(db, team_id)
-    if not team:
-        return None
-
-    team.name = name
-    db.flush()
-
-    member_count = (
-        db.query(func.count(TeamMembership.id))
-        .filter(TeamMembership.team_id == team_id)
-        .scalar()
-        or 0
-    )
-
-    return TeamSummary(
-        id=str(team.id),
-        name=team.name,
-        created_at=team.created_at,
-        updated_at=team.updated_at,
-        role=membership.role,
-        member_count=member_count,
-    )
-
-
-def delete_team(db: Session, team_id: UUID, acting_user_id: UUID) -> bool:
-    """Delete a team when the acting user is the owner."""
-
-    membership = _get_team_membership(db, team_id, acting_user_id)
-    if not membership:
-        return False
-
-    if membership.role != TeamRole.OWNER:
-        raise PermissionError("Only the team owner can delete the team")
-
-    team = _get_team(db, team_id)
-    if not team:
-        return False
-
-    db.delete(team)
-    return True
-
-
-def add_team_member(
-    db: Session,
-    team_id: UUID,
-    acting_user_id: UUID,
-    email: str,
-    role: TeamRole | None = None,
-) -> TeamMemberResponse:
-    """Add a member to the team by email. Allows placeholder entries when the user does not exist yet."""
-
-    membership = _get_team_membership(db, team_id, acting_user_id)
-    if not membership:
-        raise PermissionError("Team not found or access denied")
-
-    if membership.role not in (TeamRole.OWNER, TeamRole.ADMIN):
-        raise PermissionError("Only owners or admins can add members")
-
-    desired_role = role or TeamRole.MEMBER
-    if desired_role == TeamRole.OWNER:
-        raise ValueError("Cannot assign OWNER role when adding a member")
-    if desired_role == TeamRole.ADMIN and membership.role != TeamRole.OWNER:
-        raise PermissionError(
-            "Only owners can assign the admin role when inviting members"
-        )
-
-    normalized_email = _normalize_email(email)
-    existing_user = _get_user_by_email(db, email)
-
-    filters = [func.lower(TeamMembership.invited_email) == normalized_email]
-    if existing_user:
-        filters.append(TeamMembership.user_id == existing_user.id)
-
-    existing_membership = (
-        db.query(TeamMembership)
-        .filter(TeamMembership.team_id == team_id)
-        .filter(or_(*filters))
-        .first()
-    )
-    if existing_membership:
-        raise ValueError("Member with this email is already part of the team")
-
-    membership_entry = TeamMembership(
-        team_id=team_id,
-        user_id=existing_user.id if existing_user else None,
-        invited_email=email.strip(),
-        role=desired_role,
-    )
-    db.add(membership_entry)
-    db.flush()
-    db.refresh(membership_entry)
-
-    if existing_user:
-        membership_entry.user = existing_user
-
-    return _team_member_to_response(membership_entry)
-
-
-def update_team_member_role(
-    db: Session,
-    team_id: UUID,
-    membership_id: UUID,
-    acting_user_id: UUID,
-    new_role: TeamRole,
-) -> TeamMemberResponse | None:
-    """Update a member's role. Restricted to team owners."""
-
-    acting_membership = _get_team_membership(db, team_id, acting_user_id)
-    if not acting_membership:
-        return None
-
-    if acting_membership.role != TeamRole.OWNER:
-        raise PermissionError("Only the team owner can change member roles")
-
-    target_membership = (
-        db.query(TeamMembership)
-        .options(joinedload(TeamMembership.user))
-        .filter(TeamMembership.id == membership_id, TeamMembership.team_id == team_id)
-        .first()
-    )
-
-    if not target_membership:
-        return None
-
-    if target_membership.role == TeamRole.OWNER:
-        raise ValueError("Cannot modify the owner role")
-
-    if new_role == TeamRole.OWNER:
-        raise ValueError("Cannot promote another member to owner through this endpoint")
-
-    target_membership.role = new_role
-    db.flush()
-    db.refresh(target_membership)
-
-    return _team_member_to_response(target_membership)
-
-
-def remove_team_member(
-    db: Session,
-    team_id: UUID,
-    membership_id: UUID,
-    acting_user_id: UUID,
-) -> bool:
-    """Remove a member from the team respecting role restrictions."""
-
-    acting_membership = _get_team_membership(db, team_id, acting_user_id)
-    if not acting_membership:
-        raise PermissionError("Team not found or access denied")
-
-    if acting_membership.role not in (TeamRole.OWNER, TeamRole.ADMIN):
-        raise PermissionError("Only owners or admins can remove members")
-
-    target_membership = (
-        db.query(TeamMembership)
-        .filter(TeamMembership.id == membership_id, TeamMembership.team_id == team_id)
-        .first()
-    )
-
-    if not target_membership:
-        return False
-
-    if target_membership.role == TeamRole.OWNER:
-        raise ValueError("Cannot remove the team owner")
-
-    if (
-        acting_membership.role == TeamRole.ADMIN
-        and target_membership.role == TeamRole.ADMIN
-        and target_membership.user_id != acting_user_id
-    ):
-        raise PermissionError("Admins can only remove members or themselves")
-
-    db.delete(target_membership)
-    return True

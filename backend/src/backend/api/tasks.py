@@ -2,6 +2,15 @@
 
 Human-authored task tracker: issue-style tasks grouped by project. Distinct
 from agent sessions — the Kanban tab is sessions; this is the human backlog.
+
+Every query call here passes ``sharing=True``: this is the human dashboard,
+the one surface that resolves project grants and team membership
+(collaboration §4). Reads need ``viewer``, comments/reactions ``commenter``,
+task writes ``editor``, project settings ``admin``, project deletion ``owner``.
+The query layer raises ``AccessDenied`` (→ 403 via the app handler) for a
+visible-but-insufficient role and returns ``None`` (→ 404 here) for an
+invisible one. The agent-facing twin, ``servers/api/tasks.py``, stays on the
+owner-only lens by design.
 """
 
 import logging
@@ -20,9 +29,10 @@ from fastapi import (
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from shared import project_icons, storage
+from shared import access, project_icons, storage
 from shared.database.models import User
 from shared.database.session import get_db
+from shared.database.task_models import Project, Task
 from shared.images import InvalidImageError, process_image
 
 from ..auth.dependencies import get_current_user
@@ -37,6 +47,7 @@ from ..db.task_queries import (
     MachineNotFoundError,
     ParentTaskError,
     ProjectNotFoundError,
+    TeamNotFoundError,
 )
 from ..models import (
     AgentInstanceResponse,
@@ -76,13 +87,18 @@ def list_projects_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[ProjectResponse]:
-    projects = task_queries.list_projects(db, current_user.id, include_archived)
+    projects = task_queries.list_projects(
+        db, current_user.id, include_archived, sharing=True
+    )
+    accesses = access.project_accesses(db, current_user.id, projects)
     # Lazy, best-effort default-icon seed (§4e): first fetch of a git-backed
     # project with no icon set kicks off a background owner-avatar seed. The
-    # task re-checks eligibility, so duplicate enqueues are harmless.
+    # task re-checks eligibility, so duplicate enqueues are harmless. Only the
+    # owner's own fetch seeds — a grantee's view never mutates the project.
     for project in projects:
         if (
             not project.is_inbox
+            and project.user_id == current_user.id
             and project.git_remote_url
             and project.icon_source is None
             and not project.icon_image_uri
@@ -90,7 +106,18 @@ def list_projects_endpoint(
             and not project.icon
         ):
             background_tasks.add_task(project_icons.seed_project_icon, project.id)
-    return [ProjectResponse.model_validate(p) for p in projects]
+    return [_project_response(p, accesses.get(p.id)) for p in projects]
+
+
+def _project_response(
+    project: Project, project_access: access.ProjectAccess | None
+) -> ProjectResponse:
+    """Serialize with the caller's standing on the project."""
+    response = ProjectResponse.model_validate(project)
+    if project_access is not None:
+        response.role = project_access.role
+        response.scopes = list(project_access.scopes)  # type: ignore[assignment]
+    return response
 
 
 @router.post(
@@ -123,7 +150,9 @@ def update_project_endpoint(
 ) -> ProjectResponse:
     fields = request.model_dump(exclude_unset=True)
     try:
-        project = task_queries.update_project(db, current_user.id, project_id, fields)
+        project = task_queries.update_project(
+            db, current_user.id, project_id, fields, sharing=True
+        )
     except InboxImmutableError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
@@ -146,7 +175,9 @@ def delete_project_endpoint(
     db: Session = Depends(get_db),
 ) -> None:
     try:
-        deleted = task_queries.delete_project(db, current_user.id, project_id)
+        deleted = task_queries.delete_project(
+            db, current_user.id, project_id, sharing=True
+        )
     except InboxImmutableError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
@@ -172,6 +203,7 @@ def set_project_directory_endpoint(
             project_id,
             machine_id=request.machine_id,
             local_path=request.local_path.strip(),
+            sharing=True,
         )
     except InboxImmutableError as exc:
         raise HTTPException(
@@ -200,7 +232,7 @@ def delete_project_directory_endpoint(
 ) -> ProjectResponse:
     """Unlink a machine. Idempotent — unlinking twice is not an error."""
     project = task_queries.delete_project_directory(
-        db, current_user.id, project_id, machine_id
+        db, current_user.id, project_id, machine_id, sharing=True
     )
     if project is None:
         raise HTTPException(
@@ -217,7 +249,9 @@ def upload_project_icon_endpoint(
     db: Session = Depends(get_db),
 ) -> ProjectResponse:
     """Set a project's image icon from an upload (§4d). 'user' beats a git seed."""
-    project = task_queries.get_accessible_project(db, current_user.id, project_id)
+    project = task_queries.get_accessible_project(
+        db, current_user.id, project_id, sharing=True, minimum="admin"
+    )
     if project is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
@@ -251,6 +285,7 @@ def upload_project_icon_endpoint(
         project_id,
         icon_image_uri=project_icons.icon_served_url(project_id),
         icon_source="user",
+        sharing=True,
     )
     assert updated is not None  # access re-checked above under the same session
     return ProjectResponse.model_validate(updated)
@@ -262,8 +297,10 @@ def get_project_icon_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Response:
-    """Serve a project's icon bytes (uploaded or git-seeded)."""
-    project = task_queries.get_accessible_project(db, current_user.id, project_id)
+    """Serve a project's icon bytes (uploaded or git-seeded). Any visible role."""
+    project = task_queries.get_accessible_project(
+        db, current_user.id, project_id, sharing=True
+    )
     if project is None or not project.icon_image_uri:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Project icon not found"
@@ -297,7 +334,9 @@ def delete_project_icon_endpoint(
 ) -> ProjectResponse:
     """Reset the icon to the generated default (drops the image AND emoji, and
     pins icon_source so the git seed does not re-add an image)."""
-    project = task_queries.get_accessible_project(db, current_user.id, project_id)
+    project = task_queries.get_accessible_project(
+        db, current_user.id, project_id, sharing=True, minimum="admin"
+    )
     if project is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
@@ -308,17 +347,29 @@ def delete_project_icon_endpoint(
         except Exception:
             # Orphaned S3 object is harmless; never fail the reset on it.
             logger.warning("project icon S3 delete failed for %s", project_id)
-    updated = task_queries.reset_project_icon(db, current_user.id, project_id)
+    updated = task_queries.reset_project_icon(
+        db, current_user.id, project_id, sharing=True
+    )
     assert updated is not None
     return ProjectResponse.model_validate(updated)
 
 
 @router.get("/task-labels", response_model=list[TaskLabelResponse])
 def list_labels_endpoint(
+    project_id: UUID | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[TaskLabelResponse]:
-    labels = task_queries.list_labels(db, current_user.id)
+    """The caller's labels (personal + their teams'), or with ``project_id``
+    that project's vocabulary — what a shared board's label picker needs."""
+    try:
+        labels = task_queries.list_labels(
+            db, current_user.id, sharing=True, project_id=project_id
+        )
+    except ProjectNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
     return [TaskLabelResponse.model_validate(label) for label in labels]
 
 
@@ -332,9 +383,18 @@ def create_label_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TaskLabelResponse:
-    label = task_queries.create_label(
-        db, current_user.id, name=request.name, color=request.color
-    )
+    try:
+        label = task_queries.create_label(
+            db,
+            current_user.id,
+            name=request.name,
+            color=request.color,
+            team_id=request.team_id,
+        )
+    except TeamNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
     return TaskLabelResponse.model_validate(label)
 
 
@@ -346,7 +406,11 @@ def update_label_endpoint(
     db: Session = Depends(get_db),
 ) -> TaskLabelResponse:
     label = task_queries.update_label(
-        db, current_user.id, label_id, request.model_dump(exclude_unset=True)
+        db,
+        current_user.id,
+        label_id,
+        request.model_dump(exclude_unset=True),
+        sharing=True,
     )
     if label is None:
         raise HTTPException(
@@ -361,7 +425,7 @@ def delete_label_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
-    if not task_queries.delete_label(db, current_user.id, label_id):
+    if not task_queries.delete_label(db, current_user.id, label_id, sharing=True):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Label not found"
         )
@@ -399,6 +463,7 @@ def list_tasks_endpoint(
         project_id=project_id,
         status=task_status,
         priority=task_priority,
+        sharing=True,
     )
     return serialize_tasks(db, tasks)
 
@@ -429,6 +494,7 @@ def create_task_endpoint(
             due_date=request.due_date,
             assignee_type=request.assignee_type,
             assignee_id=request.assignee_id,
+            sharing=True,
         )
     except (
         ProjectNotFoundError,
@@ -471,7 +537,9 @@ def update_task_endpoint(
     fields = request.model_dump(exclude_unset=True)
     existing = _require_task(db, current_user.id, task_id)
     try:
-        task = task_queries.update_task(db, current_user.id, existing.id, fields)
+        task = task_queries.update_task(
+            db, current_user.id, existing.id, fields, sharing=True
+        )
     except (
         ProjectNotFoundError,
         LabelNotFoundError,
@@ -494,7 +562,7 @@ def delete_task_endpoint(
     db: Session = Depends(get_db),
 ) -> None:
     task = _require_task(db, current_user.id, task_id)
-    if not task_queries.delete_task(db, current_user.id, task.id):
+    if not task_queries.delete_task(db, current_user.id, task.id, sharing=True):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
         )
@@ -510,21 +578,26 @@ def delete_task_endpoint(
 # ---------------------------------------------------------------------------
 
 
-def _require_task(db: Session, user_id: UUID, task_id: str):
-    """The user-scoped resolve every task route starts from.
+def _require_task(
+    db: Session, user_id: UUID, task_id: str, *, minimum: str = "viewer"
+) -> Task:
+    """The access-scoped resolve every task route starts from.
 
     Takes the reference as it arrived — a UUID *or* a "VIC-42" identifier, since
     that is the only handle a person can read off the screen and say out loud.
 
     It is also what keeps the timeline scoped: those tables carry no `user_id`
     of their own, so nothing below reaches a comment or activity row except
-    through a task this user owns.
+    through a task this user can see. `minimum` raises the floor for writes:
+    invisible → 404, visible but below the floor → 403.
     """
-    task = task_queries.resolve_task(db, user_id, task_id)
+    task = task_queries.resolve_task(db, user_id, task_id, sharing=True)
     if task is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
         )
+    if minimum != "viewer":
+        access.require(access.task_role(db, user_id, task), minimum)
     return task
 
 
@@ -558,7 +631,7 @@ def create_task_comment_endpoint(
     threads it also saves the client from having to splice a reply into the
     right place itself.
     """
-    task = _require_task(db, current_user.id, task_id)
+    task = _require_task(db, current_user.id, task_id, minimum="commenter")
     try:
         task_timeline_queries.create_comment(
             db,
@@ -584,7 +657,7 @@ def update_task_comment_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TaskTimelineResponse:
-    task = _require_task(db, current_user.id, task_id)
+    task = _require_task(db, current_user.id, task_id, minimum="commenter")
     try:
         task_timeline_queries.update_comment(
             db, task, comment_id, current_user.id, request.body
@@ -605,7 +678,7 @@ def delete_task_comment_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TaskTimelineResponse:
-    task = _require_task(db, current_user.id, task_id)
+    task = _require_task(db, current_user.id, task_id, minimum="commenter")
     try:
         task_timeline_queries.delete_comment(db, task, comment_id, current_user.id)
     except task_timeline_queries.CommentNotFoundError as exc:
@@ -624,7 +697,7 @@ def toggle_task_reaction_endpoint(
 ) -> TaskTimelineResponse:
     """Add or remove one emoji. PUT, not POST: the operation is idempotent per
     (user, target, emoji) — clicking twice lands back where it started."""
-    task = _require_task(db, current_user.id, task_id)
+    task = _require_task(db, current_user.id, task_id, minimum="commenter")
     if request.target_type == "task" and request.target_id != task.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

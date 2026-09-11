@@ -97,15 +97,26 @@ class Project(Base):
         # The task key namespace (§3.5 / D-B): "VIC" makes tasks read "VIC-42".
         # Unique within the OWNER, never globally — a global key namespace would
         # re-import the squatting/enumeration problems §3.2 avoids for team slugs.
-        # P3 adds `projects.team_id` and splits this into two partial indexes
-        # (team_id IS NULL / IS NOT NULL); until that column exists there is only
-        # one owner to scope by.
+        # The owner is the user for a personal project and the team for a
+        # team-owned one, hence two partial indexes over the same expression.
         Index(
             "uq_projects_user_key",
             "user_id",
             func.upper(text("key")),
             unique=True,
-            postgresql_where=text("key IS NOT NULL"),
+            postgresql_where=text("key IS NOT NULL AND team_id IS NULL"),
+        ),
+        Index(
+            "uq_projects_team_key",
+            "team_id",
+            func.upper(text("key")),
+            unique=True,
+            postgresql_where=text("key IS NOT NULL AND team_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_projects_team",
+            "team_id",
+            postgresql_where=text("team_id IS NOT NULL"),
         ),
     )
 
@@ -114,6 +125,17 @@ class Project(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), type_=PostgresUUID(as_uuid=True)
+    )
+    # Ownership (collaboration §2, layer 2). NULL ⇒ personal, owned by
+    # `user_id`. SET ⇒ team-owned: access derives from team membership and
+    # `user_id` degrades to "created by". ON DELETE SET NULL, so deleting a team
+    # demotes its projects back to the creator's personal space rather than
+    # destroying work. Nothing sets it before P7; the resolver honours it now.
+    team_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"),
+        type_=PostgresUUID(as_uuid=True),
+        nullable=True,
+        default=None,
     )
     name: Mapped[str] = mapped_column(String(255))
     # Soft grouping hint for future session↔project auto-match; never unique.
@@ -220,16 +242,37 @@ class ProjectDirectory(Base):
 
 
 class TaskLabel(Base):
-    """User-scoped label vocabulary (multica issue_label)."""
+    """Label vocabulary (multica issue_label).
+
+    Visibility = (team_id IS NULL AND user_id = me) OR (team_id ∈ my active
+    teams) — collaboration §3.3. Labels are the one place sharing forces an
+    ownership change: a shared board otherwise ends up with N private
+    vocabularies. Zero data migration: every existing label stays personal.
+    """
 
     __tablename__ = "task_labels"
-    __table_args__ = (Index("ix_task_labels_user", "user_id"),)
+    __table_args__ = (
+        Index("ix_task_labels_user", "user_id"),
+        Index(
+            "ix_task_labels_team",
+            "team_id",
+            postgresql_where=text("team_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PostgresUUID(as_uuid=True), primary_key=True, default=uuid4
     )
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), type_=PostgresUUID(as_uuid=True)
+    )
+    # NULL ⇒ personal (user_id's own vocabulary). SET ⇒ the team's vocabulary;
+    # user_id then records who created it. Same NULL/SET pattern as projects.
+    team_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"),
+        type_=PostgresUUID(as_uuid=True),
+        nullable=True,
+        default=None,
     )
     name: Mapped[str] = mapped_column(String(100))
     # Pinned to #rrggbb by the API layer — LabelChip injects this into an

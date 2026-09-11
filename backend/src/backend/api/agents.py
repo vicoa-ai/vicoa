@@ -253,10 +253,10 @@ def list_instance_access(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List users who have access to this agent instance"""
+    """List users who have access to this agent instance. Owner or project admin."""
     try:
         return get_instance_shares(db, instance_id, current_user.id)
-    except ValueError as e:
+    except (LookupError, ValueError) as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
@@ -272,7 +272,7 @@ def add_instance_access(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Grant access to an agent instance for another user"""
+    """Grant access to an agent instance for another user. Owner or project admin."""
     try:
         share = add_instance_share(
             db,
@@ -283,6 +283,8 @@ def add_instance_access(
         )
         db.commit()
         return share
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except PermissionError as e:
@@ -296,12 +298,12 @@ def remove_instance_access(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Revoke shared access from a user"""
+    """Revoke shared access from a user. Owner or project admin."""
     try:
         remove_instance_share(db, instance_id, current_user.id, access_id)
         db.commit()
         return {"status": "success"}
-    except ValueError as e:
+    except (LookupError, ValueError) as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
@@ -368,11 +370,20 @@ def create_user_message_endpoint(
             message_metadata=message.message_metadata,
         )
         payload = build_new_message_update(message)
+        # Rooms are keyed by the session's OWNER, not the sender: a
+        # collaborator's message has to reach the owner's open clients.
+        # (Fan-out to other watchers is P6.)
+        owner_id = (
+            db.query(AgentInstance.user_id)
+            .filter(AgentInstance.id == instance_id)
+            .scalar()
+            or user_id
+        )
         rooms = [
-            f"user:{user_id}:session:{instance_id}",
-            f"user:{user_id}:user-scoped",
+            f"user:{owner_id}:session:{instance_id}",
+            f"user:{owner_id}:user-scoped",
         ]
-        after_commit(db, lambda: post_broadcast(str(user_id), payload, rooms))
+        after_commit(db, lambda: post_broadcast(str(owner_id), payload, rooms))
         db.commit()
 
         def update_title_with_session():
@@ -417,8 +428,10 @@ def cancel_queued_message_endpoint(
     """
     user_id = current_user.id
     instance, access = get_instance_and_access(db, instance_id, user_id)
-    if not instance or access != InstanceAccessLevel.WRITE:
+    if not instance or access is None:
         raise HTTPException(status_code=404, detail="Agent instance not found")
+    if access != InstanceAccessLevel.WRITE:
+        raise HTTPException(status_code=403, detail="Read-only access to this session")
 
     message = (
         db.query(Message)
@@ -439,11 +452,12 @@ def cancel_queued_message_endpoint(
         # transaction — the `is not None` narrowing is for pyright.
         assert fresh is not None
         payload = build_message_update(fresh)
+        owner_id = instance.user_id
         rooms = [
-            f"user:{user_id}:user-scoped",
-            f"user:{user_id}:session:{instance_id}",
+            f"user:{owner_id}:user-scoped",
+            f"user:{owner_id}:session:{instance_id}",
         ]
-        after_commit(db, lambda: post_broadcast(str(user_id), payload, rooms))
+        after_commit(db, lambda: post_broadcast(str(owner_id), payload, rooms))
     db.commit()
     return {"cancelled": cancelled}
 
@@ -674,11 +688,13 @@ def _bridge_instance_update(db: Session, instance_id: UUID, user_id: UUID) -> No
     if instance is None:
         return
     payload = build_instance_update(instance)
+    # Keyed by the session's owner (a project admin may be the one acting).
+    owner_id = instance.user_id or user_id
     rooms = [
-        f"user:{user_id}:user-scoped",
-        f"user:{user_id}:session:{instance_id}",
+        f"user:{owner_id}:user-scoped",
+        f"user:{owner_id}:session:{instance_id}",
     ]
-    post_broadcast(str(user_id), payload, rooms)
+    post_broadcast(str(owner_id), payload, rooms)
 
 
 @router.put(
@@ -691,7 +707,12 @@ def update_agent_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Update an agent instance status for the current user"""
+    """Update an agent instance status (archive / complete).
+
+    Owner or project admin (collaboration §4): the query layer answers None for
+    an invisible session (→ 404) and raises AccessDenied for a visible one the
+    caller can't manage (→ 403 via the app handler).
+    """
     from ..db import update_instance_status
 
     # Validate status field is provided
@@ -724,7 +745,7 @@ def delete_agent_instance_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Delete an agent instance"""
+    """Delete an agent instance. Owner or project admin."""
     result = delete_agent_instance(db, instance_id, current_user.id)
     if not result:
         raise HTTPException(status_code=404, detail="Agent instance not found")
@@ -742,7 +763,11 @@ def update_agent_instance_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Update an agent instance. Supports `name`, `pinned` and `task_id`."""
+    """Update an agent instance. Supports `name`, `pinned` and `task_id`.
+
+    Owner or project admin — including `pinned`, which is a property of the
+    session, not of whoever is looking at it.
+    """
     unknown = set(update_data.keys()) - ALLOWED_INSTANCE_PATCH_FIELDS
     if unknown:
         raise HTTPException(

@@ -19,6 +19,7 @@ from shared.telemetry import (
 )
 from shared.pg_listener import start_hub, stop_hub
 from shared.hooks import run_app_setup, start_lifespan_hooks, stop_lifespan_hooks
+from shared.access_handlers import install_access_exception_handlers
 from .api import (
     activity,
     agent_profiles,
@@ -134,6 +135,10 @@ app.add_middleware(
 )
 
 
+# AccessDenied → 403, CapabilityDenied → 402 (collaboration §4 / §6).
+install_access_exception_handlers(app)
+
+
 @app.exception_handler(SAOperationalError)
 async def _on_db_disconnect(request: Request, exc: SAOperationalError):
     """Convert transient flycast disconnects to 503 + Retry-After.
@@ -169,6 +174,7 @@ app.include_router(user_agents.router, prefix=settings.api_v1_prefix)
 app.include_router(push_notifications.router, prefix=settings.api_v1_prefix)
 app.include_router(user_settings.router, prefix=settings.api_v1_prefix)
 app.include_router(teams.router, prefix=settings.api_v1_prefix)
+app.include_router(teams.invite_router, prefix=settings.api_v1_prefix)
 app.include_router(machines.router, prefix=settings.api_v1_prefix)
 app.include_router(slash_commands.router, prefix=settings.api_v1_prefix)
 app.include_router(file_mentions.router, prefix=settings.api_v1_prefix)

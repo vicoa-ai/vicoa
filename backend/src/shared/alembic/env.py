@@ -20,6 +20,10 @@ from shared.database import automation_models as _automation_models  # noqa: F40
 # presets the UI calls "Agents". Not to be confused with `agent_types`.
 from shared.database import agent_profile_models as _agent_profile_models  # noqa: F401
 
+# Same again for teams / team_members / team_invites / project_grants
+# (collaboration P3 — the project-anchored access core).
+from shared.database import collab_models as _collab_models  # noqa: F401
+
 # Same again for the built-in auth provider's user_credentials /
 # auth_email_codes tables (empty in a Supabase-backed deployment).
 from shared.database import auth_models as _auth_models  # noqa: F401

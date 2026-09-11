@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import ForeignKey, Index, String, Text, text
@@ -11,8 +12,11 @@ from sqlalchemy.orm import (
     validates,
 )
 
-from .enums import AgentStatus, SenderType, InstanceAccessLevel, TeamRole
+from .enums import AgentStatus, SenderType, InstanceAccessLevel
 from .utils import is_valid_git_diff
+
+if TYPE_CHECKING:
+    from .collab_models import Team, TeamMember
 
 
 class Base(DeclarativeBase):
@@ -74,10 +78,10 @@ class User(Base):
         back_populates="user",
         foreign_keys="UserInstanceAccess.user_id",
     )
-    team_memberships: Mapped[list["TeamMembership"]] = relationship(
-        "TeamMembership",
+    team_members: Mapped[list["TeamMember"]] = relationship(
+        "TeamMember",
         back_populates="user",
-        foreign_keys="TeamMembership.user_id",
+        foreign_keys="TeamMember.user_id",
     )
 
     # NOTE: ``User.subscription`` / ``User.billing_events`` are attached at
@@ -524,80 +528,9 @@ class UserInstanceAccess(Base):
     )
 
 
-class Team(Base):
-    __tablename__ = "teams"
-
-    id: Mapped[UUID] = mapped_column(
-        PostgresUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
-    name: Mapped[str] = mapped_column(String(255))
-    created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(timezone.utc)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
-    )
-
-    memberships: Mapped[list["TeamMembership"]] = relationship(
-        "TeamMembership",
-        back_populates="team",
-        cascade="all, delete-orphan",
-    )
-    instance_accesses: Mapped[list["TeamInstanceAccess"]] = relationship(
-        "TeamInstanceAccess",
-        back_populates="team",
-        cascade="all, delete-orphan",
-    )
-
-
-class TeamMembership(Base):
-    __tablename__ = "team_memberships"
-    __table_args__ = (
-        Index("ix_team_memberships_team_id", "team_id"),
-        Index(
-            "uq_team_memberships_team_user",
-            "team_id",
-            "user_id",
-            unique=True,
-            postgresql_where=text("user_id IS NOT NULL"),
-        ),
-        Index(
-            "uq_team_memberships_team_email",
-            "team_id",
-            "invited_email",
-            unique=True,
-            postgresql_where=text("invited_email IS NOT NULL"),
-        ),
-    )
-
-    id: Mapped[UUID] = mapped_column(
-        PostgresUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
-    team_id: Mapped[UUID] = mapped_column(
-        ForeignKey("teams.id", ondelete="CASCADE"), type_=PostgresUUID(as_uuid=True)
-    )
-    user_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"),
-        type_=PostgresUUID(as_uuid=True),
-        nullable=True,
-    )
-    invited_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    role: Mapped[TeamRole] = mapped_column(default=TeamRole.MEMBER)
-    created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(timezone.utc)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
-    )
-
-    team: Mapped["Team"] = relationship("Team", back_populates="memberships")
-    user: Mapped["User | None"] = relationship(
-        "User",
-        back_populates="team_memberships",
-        foreign_keys=[user_id],
-    )
+# ``Team`` / ``TeamMember`` / ``TeamInvite`` / ``ProjectGrant`` live in
+# ``collab_models.py`` (collaboration P3). ``TeamInstanceAccess`` stays here: it
+# predates the rebuild, resolves correctly, and survives unchanged.
 
 
 class TeamInstanceAccess(Base):
