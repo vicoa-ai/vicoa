@@ -192,10 +192,23 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
 
   // ---- External link handling ----------------------------------------------
   const appOrigin = new URL(options.url).origin;
-  win.webContents.setWindowOpenHandler((details) => {
-    if (/^https?:/i.test(details.url)) {
-      void shell.openExternal(details.url);
+  /** Our own renderer (`http://localhost:<port>`) must never be handed to the
+   *  OS browser: that browser has none of this app's session state, so the page
+   *  it lands on demands a sign-in it cannot finish ("Desktop bridge
+   *  unavailable"). A same-origin URL reaching here at all means a link the
+   *  renderer meant to keep in-app — drop it rather than launch a browser.
+   *  See vicoa-ai/vicoa#46. */
+  const openExternally = (url: string): void => {
+    if (!/^https?:/i.test(url)) return;
+    try {
+      if (new URL(url).origin === appOrigin) return;
+    } catch {
+      return;
     }
+    void shell.openExternal(url);
+  };
+  win.webContents.setWindowOpenHandler((details) => {
+    openExternally(details.url);
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (event, url) => {
@@ -207,9 +220,7 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
       // unparseable URL: fall through to block
     }
     event.preventDefault();
-    if (/^https?:/i.test(url)) {
-      void shell.openExternal(url);
-    }
+    openExternally(url);
   });
 
   // ---- Windows custom-title-bar maximize state ------------------------------

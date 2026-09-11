@@ -68,6 +68,8 @@ export function FileViewer({
   wrap,
   markdownSource = false,
   diffSideBySide = false,
+  revealLine,
+  onRevealed,
   onDraftChange,
   onSave,
   onScrollAnchor,
@@ -85,6 +87,14 @@ export function FileViewer({
    * remember it per tab. Wired for the editor, diff and read-only source
    * surfaces; rendered previews (no line mapping) don't participate. */
   onScrollAnchor?: (path: string, line: number, offset: number) => void;
+  /** Jump to a 1-based line and keep it centred — a file link clicked in the
+   * chat. The `nonce` re-fires it for the same line, and re-applying it on a
+   * tab that is already open is the whole point (the `initialScroll*` anchors
+   * are read once, at mount). Honoured by the two source surfaces; a rendered
+   * markdown preview has no lines to jump to. */
+  revealLine?: { line: number; nonce: number };
+  /** Fired once the jump has happened, so the panel can drop the request. */
+  onRevealed?: () => void;
   /** Publishes the diff surface's change-navigation handle to the panel (only
    * meaningful in diff mode; `null` on any other surface / teardown). */
   onDiffNav?: (nav: DiffNav | null) => void;
@@ -234,6 +244,8 @@ export function FileViewer({
         wrap={wrap}
         initialScrollLine={state.scrollLine}
         initialScrollOffset={state.scrollOffset}
+        revealLineRequest={revealLine}
+        onRevealed={onRevealed}
         onScrollAnchor={onScrollAnchor}
         onChange={onDraftChange ?? (() => {})}
         onSave={onSave ?? (() => {})}
@@ -248,6 +260,8 @@ export function FileViewer({
       wrap={wrap}
       initialScrollLine={state.scrollLine}
       initialScrollOffset={state.scrollOffset}
+      revealLine={revealLine}
+      onRevealed={onRevealed}
       onScrollAnchor={onScrollAnchor}
     />
   );
@@ -259,6 +273,8 @@ function TextFileBody({
   wrap,
   initialScrollLine,
   initialScrollOffset,
+  revealLine,
+  onRevealed,
   onScrollAnchor,
 }: {
   result: NonNullable<FileViewState['result']>;
@@ -266,6 +282,8 @@ function TextFileBody({
   wrap: boolean;
   initialScrollLine?: number;
   initialScrollOffset?: number;
+  revealLine?: { line: number; nonce: number };
+  onRevealed?: () => void;
   onScrollAnchor?: (path: string, line: number, offset: number) => void;
 }) {
   const lines = result.content.split('\n');
@@ -334,6 +352,24 @@ function TextFileBody({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
+
+  // Jump to a requested line (a file link clicked in the chat), centred so the
+  // surrounding code is visible. Keyed on the nonce so clicking the same link
+  // twice re-centres, and so it fires on mount for a freshly-opened tab too.
+  const revealNonce = revealLine?.nonce;
+  const onRevealedRef = useRef(onRevealed);
+  onRevealedRef.current = onRevealed;
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !revealLine) return;
+    const row = el.querySelector<HTMLElement>(`[data-line="${revealLine.line}"]`);
+    if (!row) return;
+    const top =
+      row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+    el.scrollTop = Math.max(0, top - el.clientHeight / 3);
+    onRevealedRef.current?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealNonce, path]);
 
   return (
     <div ref={scrollRef} className={`h-full overflow-auto font-mono text-xs ${SCROLL_STYLE}`}>

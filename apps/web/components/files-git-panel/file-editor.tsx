@@ -7,7 +7,7 @@ import { indentWithTab } from '@codemirror/commands';
 import { basicSetup } from 'codemirror';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { languageExtensionForPath } from './cm-languages';
-import { SCROLL_PERSIST_MS, scrollToAnchor, topAnchor } from './cm-scroll';
+import { SCROLL_PERSIST_MS, revealLine, scrollToAnchor, topAnchor } from './cm-scroll';
 import { CM_SCROLLBAR_FIREFOX, CM_SCROLLBAR_WEBKIT, PANEL_BG } from './styles';
 import { resolvedThemeNow, useIsDarkTheme } from '@/lib/hooks/use-resolved-theme';
 
@@ -31,6 +31,14 @@ export interface FileEditorProps {
    * where the tab was last left. Read once when the editor is created. */
   initialScrollLine?: number;
   initialScrollOffset?: number;
+  /** Jump to a 1-based line and centre it — a file link clicked in the chat.
+   * Unlike `initialScroll*` this is honoured for the whole life of the editor,
+   * so a second link into an already-open file still moves; the `nonce` is what
+   * re-fires it for a repeat click on the same line. */
+  revealLineRequest?: { line: number; nonce: number };
+  /** Fired once `revealLineRequest` has been applied, so the owner can drop it
+   * and stop it re-firing when this editor is later rebuilt for the same file. */
+  onRevealed?: () => void;
   /** Reports the top scroll anchor (debounced while scrolling, and flushed when
    * the editor is torn down) so the parent can remember it. `path` is the file
    * this editor was created for, so a scroll-then-switch attributes correctly. */
@@ -69,6 +77,8 @@ export function FileEditor({
   onSave,
   initialScrollLine,
   initialScrollOffset,
+  revealLineRequest,
+  onRevealed,
   onScrollAnchor,
 }: FileEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -78,10 +88,12 @@ export function FileEditor({
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
   const onScrollAnchorRef = useRef(onScrollAnchor);
+  const onRevealedRef = useRef(onRevealed);
   const initialAnchorRef = useRef({ line: initialScrollLine, offset: initialScrollOffset });
   onChangeRef.current = onChange;
   onSaveRef.current = onSave;
   onScrollAnchorRef.current = onScrollAnchor;
+  onRevealedRef.current = onRevealed;
   initialAnchorRef.current = { line: initialScrollLine, offset: initialScrollOffset };
 
   // The editor is built once per file and re-themed in place (effect at the
@@ -179,6 +191,18 @@ export function FileEditor({
       annotations: External.of(true),
     });
   }, [value]);
+
+  // Jump to a line asked for from outside (a file link in the chat). Keyed on
+  // the nonce so the same line can be requested again; it also fires on mount,
+  // which is what covers a link into a file that wasn't open yet.
+  const revealNonce = revealLineRequest?.nonce;
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !revealLineRequest) return;
+    revealLine(view, revealLineRequest.line);
+    onRevealedRef.current?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealNonce, path]);
 
   useEffect(() => {
     viewRef.current?.dispatch({

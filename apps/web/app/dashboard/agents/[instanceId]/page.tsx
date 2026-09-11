@@ -27,6 +27,8 @@ import { SubagentGroup } from '@/components/dashboard/subagent-group';
 import { MessageItem, resolveAgentType, DateSeparator, ThinkingIndicator, vibingMessages, getMessageVisibleText } from '@/components/dashboard/chat-message-item';
 import { ChatFindBar } from '@/components/dashboard/chat-find-bar';
 import { FindHighlightProvider } from '@/components/dashboard/chat-find-context';
+import { FileLinkProvider } from '@/components/dashboard/file-link-context';
+import type { WorkspaceFileLink } from '@/lib/message-links';
 import { groupSubagents } from '@/components/dashboard/subagent-grouping';
 import { getChatItemSearchText } from '@/lib/chat-search';
 import { buildForkTranscript, saveForkContext } from '@/lib/fork-session';
@@ -250,7 +252,7 @@ function AgentInstanceContent() {
   // through `openFileRequest`, whose bumped nonce makes the panel open it even
   // when it's already mounted / already showing another file.
   const [fileSearchOpen, setFileSearchOpen] = useState(false);
-  const [openFileRequest, setOpenFileRequest] = useState<{ path: string; nonce: number } | null>(
+  const [openFileRequest, setOpenFileRequest] = useState<{ path: string; nonce: number; line?: number } | null>(
     null,
   );
   // Focus-mode chat peek (design A): temporarily reveal the chat beneath the
@@ -1600,10 +1602,20 @@ function AgentInstanceContent() {
   // Open a file picked in the ⌘P finder: reveal the panel and hand it the path.
   // The bumped nonce makes the panel open it whether it was closed (opens on
   // mount) or already showing something else.
-  const handleOpenSearchedFile = useCallback((path: string) => {
+  const handleOpenSearchedFile = useCallback((path: string, line?: number) => {
     panel.setOpen(true);
-    setOpenFileRequest((prev) => ({ path, nonce: (prev?.nonce ?? 0) + 1 }));
+    setOpenFileRequest((prev) => ({ path, line, nonce: (prev?.nonce ?? 0) + 1 }));
   }, [panel]);
+
+  // Same, for a file path an agent cited as a link in its message. Only offered
+  // once the session has a machine to read the file from — otherwise the links
+  // render as plain text rather than as clicks that would fail (see
+  // components/dashboard/file-link-context.tsx).
+  const handleOpenLinkedFile = useCallback(
+    (file: WorkspaceFileLink) => handleOpenSearchedFile(file.path, file.line),
+    [handleOpenSearchedFile],
+  );
+  const canOpenLinkedFiles = !!instance?.machine_id && !!instance?.project;
 
   // ⌘P opens the file finder. Session-scoped and gated on a reachable machine —
   // the finder reads the live project index off the daemon, and picking a file
@@ -2359,6 +2371,11 @@ function AgentInstanceContent() {
       </div> */}
 
       {/* Messages Area - virtualized via react-virtuoso */}
+      <FileLinkProvider
+        cwd={instance?.project ?? null}
+        homeDir={instance?.home_dir ?? null}
+        openFile={canOpenLinkedFiles ? handleOpenLinkedFile : null}
+      >
       <FindHighlightProvider query={findOpen ? findNeedle : ''} activeKey={findActiveKey}>
       <div className="relative flex-1 min-h-0">
         {!hasMessageItems ? (
@@ -2611,6 +2628,7 @@ function AgentInstanceContent() {
         )}
       </div>
       </FindHighlightProvider>
+      </FileLinkProvider>
 
       {/* Git Changes Button */}
       {/* {instance.git_diff && (() => {

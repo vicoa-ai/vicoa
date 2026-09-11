@@ -5,6 +5,8 @@ import remarkGfm from 'remark-gfm';
 import 'highlight.js/styles/atom-one-dark.css';
 import { diffLineBackgroundClass, formatDiffLines, formatTaskNotifications, normalizeCommandOutput } from '@/components/ui/message-markdown-utils';
 import { makeFindHighlightPlugin } from '@/lib/find-highlight';
+import { messageUrlTransform, parseMessageLink } from '@/lib/message-links';
+import { useFileLinks } from '@/components/dashboard/file-link-context';
 
 interface MessageMarkdownProps {
   children: string;
@@ -21,7 +23,13 @@ interface MessageMarkdownProps {
 const CHAT_CODE_FONT_FAMILY =
   'var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace';
 
+/** Shared by the two clickable link presentations (web URL, workspace file). */
+const LINK_CLASS = 'text-blue-600 hover:text-blue-800 underline text-sm';
+
 function MessageMarkdownImpl({ children, agentType, highlightQuery }: MessageMarkdownProps) {
+  // Which workspace (if any) the file paths in this message refer to. Empty
+  // outside a session, which makes every local path render as plain text.
+  const fileLinks = useFileLinks();
   // Plain alphabetic sentinel: hljs's markdown highlighter parses `__x__` as
   // bold and `_x_` as italic, which fragments the placeholder across multiple
   // text nodes and breaks restoreNode's string-replacement walk. Underscores
@@ -214,6 +222,7 @@ function MessageMarkdownImpl({ children, agentType, highlightQuery }: MessageMar
   return (
     <div className="font-mono">
       <ReactMarkdown
+        urlTransform={messageUrlTransform}
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[
           [rehypeHighlight, { detect: true, ignoreMissing: true }],
@@ -379,7 +388,40 @@ function MessageMarkdownImpl({ children, agentType, highlightQuery }: MessageMar
             {children}
           </td>
         ),
-        a: ({ children, href }) => <a href={href} className="text-blue-600 hover:text-blue-800 underline text-sm" target="_blank" rel="noopener noreferrer">{children}</a>,
+        a: ({ children, href }) => {
+          // Agents cite files as markdown links; only a real web URL may leave
+          // the app. See lib/message-links.ts and vicoa-ai/vicoa#46.
+          const link = parseMessageLink(href, fileLinks);
+          if (link.kind === 'external') {
+            return <a href={link.href} className={LINK_CLASS} target="_blank" rel="noopener noreferrer">{children}</a>;
+          }
+          if (link.kind === 'file' && fileLinks.openFile) {
+            const openFile = fileLinks.openFile;
+            const file = link.file;
+            return (
+              <button
+                type="button"
+                onClick={() => openFile(file)}
+                title={file.line ? `Open ${file.path}:${file.line}` : `Open ${file.path}`}
+                className={`${LINK_CLASS} inline p-0 text-left align-baseline bg-transparent cursor-pointer`}
+              >
+                {children}
+              </button>
+            );
+          }
+          return (
+            <span
+              className="text-sm text-muted-foreground underline decoration-dotted underline-offset-2"
+              title={
+                link.kind === 'outside'
+                  ? `${link.path} is outside this session's workspace`
+                  : undefined
+              }
+            >
+              {children}
+            </span>
+          );
+        },
         hr: () => <hr className="my-3 border-0 border-t border-border" />,
         blockquote: ({ children }) => <blockquote className="border-l-4 border-border pl-3 italic text-muted-foreground text-sm leading-relaxed mb-2">{children}</blockquote>,
         input: ({ type, checked, disabled }) => {

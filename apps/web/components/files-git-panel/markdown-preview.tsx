@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/atom-one-dark.css';
+import { messageUrlTransform, parseMessageLink } from '@/lib/message-links';
 
 // The app repoints `font-mono` to a sans face, so pin the real monospace family
 // for code (same reason the chat renderer does).
@@ -18,6 +19,7 @@ export function MarkdownPreview({ content }: { content: string }) {
   return (
     <div className="px-4 py-3 text-sm leading-relaxed text-foreground/90">
       <ReactMarkdown
+        urlTransform={messageUrlTransform}
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={{
@@ -26,9 +28,19 @@ export function MarkdownPreview({ content }: { content: string }) {
           h3: ({ children }) => <h3 className="mt-3 mb-1.5 text-base font-semibold text-foreground first:mt-0">{children}</h3>,
           h4: ({ children }) => <h4 className="mt-3 mb-1 text-sm font-semibold text-foreground first:mt-0">{children}</h4>,
           p: ({ children }) => <p className="my-2">{children}</p>,
-          a: ({ href, children }) => (
-            <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300">{children}</a>
-          ),
+          a: ({ href, children }) => {
+            // Only a real web URL may leave the app. A README's relative links
+            // and `#anchor`s point inside the repo, and sending those to the
+            // browser lands the user in a sign-in flow (vicoa-ai/vicoa#46);
+            // this preview has no file context to resolve them against, so they
+            // render as plain text instead.
+            if (parseMessageLink(href, { cwd: null, homeDir: null }).kind !== 'external') {
+              return <span className="text-muted-foreground underline decoration-dotted underline-offset-2">{children}</span>;
+            }
+            return (
+              <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300">{children}</a>
+            );
+          },
           ul: ({ children }) => <ul className="my-2 list-disc pl-5 space-y-1">{children}</ul>,
           ol: ({ children }) => <ol className="my-2 list-decimal pl-5 space-y-1">{children}</ol>,
           li: ({ children }) => <li className="leading-relaxed">{children}</li>,
