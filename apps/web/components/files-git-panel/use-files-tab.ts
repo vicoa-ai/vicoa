@@ -61,7 +61,17 @@ interface UseFilesTabApi {
    * it, so a new tab defaults to `'edit'` and an already-open tab keeps its mode.
    * `opts.preview` (single click) reuses the one preview slot; omitting it (double
    * click) opens/commits a permanent tab. */
-  openFile: (path: string, opts?: { mode?: 'edit' | 'diff'; preview?: boolean }) => void;
+  openFile: (
+    path: string,
+    opts?: {
+      mode?: 'edit' | 'diff';
+      preview?: boolean;
+      /** Where a *freshly-opened* tab should start (session restore, or a file
+       *  link that named a line). An already-open tab keeps its position. */
+      scrollLine?: number;
+      scrollOffset?: number;
+    },
+  ) => void;
   activateFile: (path: string | null) => void;
   /** Remember the top scroll anchor of a tab (line + sub-line px offset), so
    * re-showing it (or reopening the session) restores the scroll position. */

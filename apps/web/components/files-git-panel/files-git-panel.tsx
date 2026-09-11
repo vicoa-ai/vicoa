@@ -109,11 +109,12 @@ interface FilesGitPanelProps {
    * handler wasn't listening) still open a fresh terminal tab: the page sets the
    * ref and opens the panel, and the freshly-mounted panel runs the action. */
   pendingAction?: { current: PanelPendingAction | null };
-  /** Open a specific project file, e.g. from the ⌘P file finder. The `nonce`
-   * bumps per request so repeat-opening the same path still fires; reactive
-   * (unlike `pendingAction`) so it works whether the panel was already open or
-   * is being opened by this same request. */
-  openFileRequest?: { path: string; nonce: number } | null;
+  /** Open a specific project file, e.g. from the ⌘P file finder or a file link
+   * in an agent message. The `nonce` bumps per request so repeat-opening the
+   * same path still fires; reactive (unlike `pendingAction`) so it works whether
+   * the panel was already open or is being opened by this same request. `line`
+   * scrolls a freshly-opened tab to that 1-based line. */
+  openFileRequest?: { path: string; nonce: number; line?: number } | null;
 }
 
 function basename(path: string): string {
@@ -1084,15 +1085,26 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
   // request that opened the panel is still the current prop. Mirrors
   // `openFromTree` (clear the visible terminal, then open in edit mode).
   const lastOpenFileNonce = useRef(0);
+  // The line to jump to once that file's surface is up, for a request that
+  // carried one (a file link in the chat). Held here rather than on the tab
+  // because it is a one-shot navigation, not remembered scroll position — the
+  // surface clears it via `onRevealed`, so re-showing the tab later restores
+  // where the user actually left off, not the line they arrived at.
+  const [revealLine, setRevealLine] = useState<
+    { path: string; line: number; nonce: number } | null
+  >(null);
   useEffect(() => {
     if (!openFileRequest || openFileRequest.nonce === lastOpenFileNonce.current) return;
     lastOpenFileNonce.current = openFileRequest.nonce;
     if (!splitActive) setActiveTerminal(instanceId, null);
-    files.openFile(openFileRequest.path, { preview: false });
+    const { path, line, nonce } = openFileRequest;
+    setRevealLine(line ? { path, line, nonce } : null);
+    files.openFile(path, { preview: false, scrollLine: line });
     // `files`/`setActiveTerminal` are stable enough; the nonce guard makes a
     // spurious re-run a no-op, so key the effect on the request identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openFileRequest, instanceId, splitActive]);
+  const clearRevealLine = useCallback(() => setRevealLine(null), []);
   // Commit the staged set; the history pane below shows the new commit, so
   // refresh it on success (the hook already refreshes the working-tree status).
   const handleCommit = () => {
@@ -1575,6 +1587,12 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
                 wrap={true}
                 markdownSource={markdownSource}
                 diffSideBySide={diffSideBySide}
+                revealLine={
+                  revealLine && revealLine.path === activeFile.path
+                    ? { line: revealLine.line, nonce: revealLine.nonce }
+                    : undefined
+                }
+                onRevealed={clearRevealLine}
                 onDraftChange={(content) => files.updateDraft(activeFile.path, content)}
                 onSave={() => files.saveFile(activeFile.path)}
                 onScrollAnchor={files.setScrollAnchor}
