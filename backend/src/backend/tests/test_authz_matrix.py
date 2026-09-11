@@ -568,6 +568,14 @@ ENDPOINTS: list[Endpoint] = [
         ),
     ),
     Endpoint(
+        "POST /agent-instances/{id}/messages/{mid}/steer",
+        "sessions",
+        "editor",
+        lambda c, w: c.post(
+            f"/api/v1/agent-instances/{w.instance.id}/messages/{w.queued_message.id}/steer"
+        ),
+    ),
+    Endpoint(
         "PATCH /agent-instances/{id} name",
         "sessions",
         "admin",
@@ -757,6 +765,7 @@ def test_every_dashboard_route_is_in_the_matrix_or_owner_only():
         "/agent-instances/{instance_id}": "/agent-instances/{id}",
         "/agent-instances/{instance_id}/messages": "/agent-instances/{id}/messages",
         "/agent-instances/{instance_id}/messages/{message_id}/cancel": "/agent-instances/{id}/messages/{mid}/cancel",
+        "/agent-instances/{instance_id}/messages/{message_id}/steer": "/agent-instances/{id}/messages/{mid}/steer",
         "/agent-instances/{instance_id}/status": "/agent-instances/{id}/status",
         "/agent-instances/{instance_id}/access": "/agent-instances/{id}/access",
         "/agent-instances/{instance_id}/access/{access_id}": "/agent-instances/{id}/access/{aid}",

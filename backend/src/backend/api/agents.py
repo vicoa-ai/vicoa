@@ -484,8 +484,10 @@ def steer_queued_message_endpoint(
     """
     user_id = current_user.id
     instance, access = get_instance_and_access(db, instance_id, user_id)
-    if not instance or access != InstanceAccessLevel.WRITE:
+    if not instance or access is None:
         raise HTTPException(status_code=404, detail="Agent instance not found")
+    if access != InstanceAccessLevel.WRITE:
+        raise HTTPException(status_code=403, detail="Read-only access to this session")
 
     message = (
         db.query(Message)
@@ -503,11 +505,12 @@ def steer_queued_message_endpoint(
         fresh = db.query(Message).filter(Message.id == message_id).first()
         assert fresh is not None
         payload = build_message_update(fresh)
+        owner_id = instance.user_id
         rooms = [
-            f"user:{user_id}:user-scoped",
-            f"user:{user_id}:session:{instance_id}",
+            f"user:{owner_id}:user-scoped",
+            f"user:{owner_id}:session:{instance_id}",
         ]
-        after_commit(db, lambda: post_broadcast(str(user_id), payload, rooms))
+        after_commit(db, lambda: post_broadcast(str(owner_id), payload, rooms))
     db.commit()
     return {"steered": steered}
 
