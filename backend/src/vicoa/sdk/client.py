@@ -652,15 +652,26 @@ class VicoaClient:
         messages = response.get("messages", [])
         return [msg for msg in messages if isinstance(msg, dict)]
 
-    def mark_message_consumed(self, message_id: Union[str, uuid.UUID]) -> None:
+    def mark_message_consumed(
+        self, message_id: Union[str, uuid.UUID], *, steered: bool = False
+    ) -> None:
         """Mark a user message as consumed (picked up by the wrapper's turn).
 
         Sync twin of ``AsyncVicoaClient.mark_message_consumed``. Clears the
         ``message_metadata.queue`` stamp the API applies when a message lands
         on an already-ACTIVE instance, so the UI's queued-messages bar stops
-        showing it once the agent actually starts the turn.
+        showing it once the agent actually starts the turn. ``steered=True``
+        records a mid-turn (Steer) delivery.
         """
-        self._make_request("PATCH", f"/api/v1/messages/{str(message_id)}/consumed")
+        self._make_request(
+            "PATCH",
+            f"/api/v1/messages/{str(message_id)}/consumed",
+            json={"steered": True} if steered else None,
+        )
+
+    def requeue_message(self, message_id: Union[str, uuid.UUID]) -> None:
+        """Sync twin of ``AsyncVicoaClient.requeue_message``."""
+        self._make_request("PATCH", f"/api/v1/messages/{str(message_id)}/requeue")
 
     def update_agent_instance_status(
         self, agent_instance_id: Union[str, uuid.UUID], status: str

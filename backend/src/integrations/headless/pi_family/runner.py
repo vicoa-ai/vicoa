@@ -142,6 +142,16 @@ class PiFamilyRunner:
         #: cancel arrives as a ``message-update`` after the row was enqueued, so
         #: it can only be honored at drain time.
         self._cancelled_message_ids: set[str] = set()
+        #: Steer support (queue bar's Steer button) — same shape as
+        #: ``codex_native``: ``_pending_by_id`` mirrors ``_turn_queue`` by id so
+        #: a steer request can find its message without draining the queue;
+        #: ``_steer_requested_ids`` holds requests that overtook their message
+        #: on the WS; ``_steer_in_flight`` carries each attempt's outcome so
+        #: the drain drops a message delivered mid-turn and keeps one that
+        #: was not.
+        self._pending_by_id: Dict[str, tuple[str, tuple[AttachmentRef, ...]]] = {}
+        self._steer_requested_ids: set[str] = set()
+        self._steer_in_flight: Dict[str, "asyncio.Future[bool]"] = {}
 
     # ------------------------------------------------------------------
     # Launch
@@ -505,6 +515,13 @@ class PiFamilyRunner:
             message_id = body.get("id")
             if status == "cancelled" and message_id:
                 self._cancelled_message_ids.add(str(message_id))
+            elif status == "steer" and message_id:
+                loop = self._loop
+                if loop is None or loop.is_closed():
+                    return
+                asyncio.run_coroutine_threadsafe(
+                    self._steer_queued_message(str(message_id)), loop
+                )
         except Exception:
             logger.exception("pi_family: message-update callback raised")
 
@@ -559,7 +576,55 @@ class PiFamilyRunner:
         if content and session.try_resolve_pending_reply(content):
             await self._mark_message_consumed(message_id)
             return
+        if message_id:
+            self._pending_by_id[message_id] = (content, attachments)
         self._turn_queue.put_nowait((content, attachments, message_id))
+        if message_id and message_id in self._steer_requested_ids:
+            # The Steer request overtook its own message on the WS.
+            self._steer_requested_ids.discard(message_id)
+            await self._steer_queued_message(message_id)
+
+    async def _steer_queued_message(self, message_id: str) -> None:
+        """Deliver a queued message into the running turn (user pressed Steer).
+
+        pi's ``steer`` RPC is the native primitive: the message lands after
+        the current tool calls, before the next model call. On success the
+        message is stamped consumed (``steered``) and the consumer drops it
+        at the next drain; with no running turn the consumer is about to run
+        it anyway, so nothing is done.
+        """
+        session = self.session
+        if session is None or message_id in self._steer_in_flight:
+            return
+        pending = self._pending_by_id.get(message_id)
+        if pending is None:
+            self._steer_requested_ids.add(message_id)
+            return
+        if not session.turn_active:
+            logger.info("pi_family: steer for %s with no running turn", message_id)
+            return
+        content, attachments = pending
+        outcome: "asyncio.Future[bool]" = asyncio.get_running_loop().create_future()
+        self._steer_in_flight[message_id] = outcome
+        steered = False
+        try:
+            steered = await session.steer_user_message(content, attachments)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("pi_family: steer failed")
+        finally:
+            outcome.set_result(steered)
+        if steered:
+            self._pending_by_id.pop(message_id, None)
+            await self._mark_message_consumed(message_id, steered=True)
+            return
+        self._steer_in_flight.pop(message_id, None)
+        if self.vicoa_client is not None:
+            try:
+                await self.vicoa_client.requeue_message(message_id)
+            except Exception:
+                logger.debug("pi_family: requeue_message failed", exc_info=True)
 
     async def _handle_control(self, parsed: Dict[str, str]) -> None:
         session = self.session
@@ -652,9 +717,19 @@ class PiFamilyRunner:
             kept = []
             for item in batch:
                 message_id = item[2]
+                if message_id:
+                    self._pending_by_id.pop(message_id, None)
                 if message_id and message_id in self._cancelled_message_ids:
                     self._cancelled_message_ids.discard(message_id)
                     logger.info("pi_family: dropping cancelled message %s", message_id)
+                    continue
+                # Steered messages were delivered mid-turn; the attempt may
+                # still be out, so wait for its outcome rather than guessing.
+                outcome = (
+                    self._steer_in_flight.pop(message_id, None) if message_id else None
+                )
+                if outcome is not None and await outcome:
+                    logger.info("pi_family: dropping steered message %s", message_id)
                     continue
                 kept.append(item)
             if not kept:
@@ -682,12 +757,14 @@ class PiFamilyRunner:
         )
         return text, attachments
 
-    async def _mark_message_consumed(self, message_id: Optional[str]) -> None:
+    async def _mark_message_consumed(
+        self, message_id: Optional[str], *, steered: bool = False
+    ) -> None:
         """Clear a message's queued badge. Best-effort; never aborts a turn."""
         if not message_id or self.vicoa_client is None:
             return
         try:
-            await self.vicoa_client.mark_message_consumed(message_id)
+            await self.vicoa_client.mark_message_consumed(message_id, steered=steered)
         except Exception:
             logger.debug("pi_family: mark_message_consumed failed", exc_info=True)
 

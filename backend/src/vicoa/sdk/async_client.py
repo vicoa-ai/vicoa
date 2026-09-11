@@ -715,11 +715,29 @@ class AsyncVicoaClient:
     async def mark_message_consumed(
         self,
         message_id: Union[str, uuid.UUID],
+        *,
+        steered: bool = False,
     ) -> None:
-        """Mark a user message as consumed (picked up by the wrapper's turn)."""
+        """Mark a user message as consumed (picked up by the wrapper's turn).
+
+        ``steered=True`` records that the message was delivered into the
+        agent's *running* turn (a user Steer request) rather than as the next
+        turn. The body is only sent in that case, so older servers that
+        ignore it keep working.
+        """
         await self._make_request(
-            "PATCH", f"/api/v1/messages/{str(message_id)}/consumed"
+            "PATCH",
+            f"/api/v1/messages/{str(message_id)}/consumed",
+            json={"steered": True} if steered else None,
         )
+
+    async def requeue_message(self, message_id: Union[str, uuid.UUID]) -> None:
+        """Put a steer-requested message back to plainly ``queued``.
+
+        Called when the wrapper could not deliver a Steer request into the
+        running turn; the message stays in its local queue and runs next.
+        """
+        await self._make_request("PATCH", f"/api/v1/messages/{str(message_id)}/requeue")
 
     async def heartbeat_instance(
         self, agent_instance_id: Union[str, uuid.UUID]

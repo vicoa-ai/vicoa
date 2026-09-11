@@ -64,6 +64,7 @@ _AUQ_TIMEOUT_SECONDS = 24 * 60 * 60
 _TURN_START_TIMEOUT = 90.0
 _MODEL_LIST_TIMEOUT = 10.0
 _INTERRUPT_TIMEOUT = 10.0
+_STEER_TIMEOUT = 10.0
 
 # Silence watchdog (``_run_status_watchdog``): if codex sends *nothing at all*
 # for this long while a turn is open — no deltas, no completion — settle the
@@ -653,6 +654,66 @@ class CodexAppServerSession:
             # No turn/completed is coming if the request never landed, so
             # settle the status here instead of leaving the row on ACTIVE.
             await self._set_status(_STATUS_AWAITING_INPUT)
+
+    async def steer(
+        self, text: str, attachments: "tuple[AttachmentRef, ...]" = ()
+    ) -> bool:
+        """Deliver a user message into the *running* turn via ``turn/steer``.
+
+        Codex takes the input at its next safe boundary (after the current
+        tool call, before the next model request) without aborting the turn —
+        the same path the Codex TUI uses for Enter-while-working. Returns
+        True once codex accepted the steer; False when there is no active
+        turn to steer or codex rejected it, so the caller can leave the
+        message in the ordinary queue instead. Never raises for a rejection:
+
+        * ``expectedTurnId`` is a server-side precondition, so a turn that
+          completed between the user's click and this call fails cleanly
+          rather than steering the *next* turn.
+        * ``activeTurnNotSteerable`` (review / compact turns) and a codex too
+          old to know the method both surface as a JSON-RPC error.
+
+        Same identification wait as :py:meth:`interrupt`: a ``turn/start``
+        still in flight has no id yet, so give it a moment to land.
+        """
+        if self.active_turn_id is None and self._turn_start_pending:
+            try:
+                await asyncio.wait_for(
+                    self._turn_identified.wait(), timeout=_INTERRUPT_IDENTIFY_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                logger.warning("codex steer: turn/start did not identify in time")
+        turn_id = self.active_turn_id
+        if turn_id is None or self.thread_id is None:
+            logger.info("codex steer: no active turn; leaving message queued")
+            return False
+        input_items = (
+            await self._build_input_items(text, attachments)
+            if attachments
+            else [{"type": "text", "text": text}]
+        )
+        if not input_items:
+            return False
+        try:
+            await self.transport.send_request(
+                "turn/steer",
+                {
+                    "threadId": self.thread_id,
+                    "expectedTurnId": turn_id,
+                    "input": input_items,
+                },
+                timeout=_STEER_TIMEOUT,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Not steerable (review/compact), turn already over, method
+            # unknown to this codex, or transport gone — all mean "run it as
+            # the next turn instead"; the caller owns that fallback.
+            logger.warning("codex turn/steer rejected: %s", exc)
+            return False
+        logger.info("codex session: steered turn %s (user_text=%r)", turn_id, text[:80])
+        return True
 
     def try_resolve_pending_reply(self, text: str) -> bool:
         """Resolve a pending permission prompt with ``text`` if one is open.

@@ -726,8 +726,14 @@ def get_queued_user_messages(
     return messages
 
 
-def mark_message_consumed(db: Session, message_id: UUID) -> Message | None:
+def mark_message_consumed(
+    db: Session, message_id: UUID, *, steered: bool = False
+) -> Message | None:
     """Stamp `message_metadata["queue"]` as consumed, unless already cancelled.
+
+    `steered=True` records that the wrapper delivered the message into the
+    agent's *running* turn (the user's Steer request) rather than as the
+    next turn — the UI badges the message accordingly.
 
     Server-side `jsonb_set` so concurrent writers never clobber each other's
     metadata keys outside `queue`. Skips the update (via the WHERE clause)
@@ -763,7 +769,50 @@ def mark_message_consumed(db: Session, message_id: UUID) -> Message | None:
                     else_=cast({}, JSONB),
                 ),
                 "{queue}",
-                cast({"status": "consumed", "consumed_at": now}, JSONB),
+                cast(
+                    {"status": "consumed", "consumed_at": now}
+                    | ({"steered": True} if steered else {}),
+                    JSONB,
+                ),
+            )
+        )
+    )
+    db.execute(stmt)
+    db.flush()
+    return db.query(Message).filter(Message.id == message_id).first()
+
+
+def requeue_user_message(db: Session, message_id: UUID) -> Message | None:
+    """Put a `queue.status=steer` message back to `queued`.
+
+    The wrapper calls this when it could not deliver a Steer request into
+    the running turn (Codex `activeTurnNotSteerable`, an older agent CLI, a
+    dead transport): the message stays in the wrapper's local queue and runs
+    as the next turn, so the UI should show it as plainly queued again. The
+    strict `== "steer"` guard means a message that was consumed or cancelled
+    in the meantime is left alone (returns the row unchanged).
+
+    Same `jsonb_typeof` guard as `mark_message_consumed`. Returns the
+    refreshed row, or None if no message has this id.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    stmt = (
+        update(Message)
+        .where(
+            Message.id == message_id,
+            Message.message_metadata[("queue", "status")].astext == "steer",
+        )
+        .values(
+            message_metadata=func.jsonb_set(
+                case(
+                    (
+                        func.jsonb_typeof(Message.message_metadata) == "object",
+                        Message.message_metadata,
+                    ),
+                    else_=cast({}, JSONB),
+                ),
+                "{queue}",
+                cast({"status": "queued", "requeued_at": now}, JSONB),
             )
         )
     )

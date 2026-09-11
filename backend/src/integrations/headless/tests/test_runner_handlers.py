@@ -1093,6 +1093,114 @@ def test_on_ws_message_update_records_cancellation(make_runner):
 
 
 # ---------------------------------------------------------------------------
+# _steer_queued_message — the queue bar's Steer button (Claude Code).
+#
+# Claude Code's streaming stdin has no separate steer primitive: a user
+# message written while a turn is open is picked up at the next tool
+# boundary inside that turn (verified on 2.1.261), so steering is "write it
+# now" instead of holding it in ``_user_message_queue`` until the result.
+# ---------------------------------------------------------------------------
+
+
+class _FakeClaudeClient:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.queries: list = []
+        self.fail = fail
+
+    async def query(self, query_input) -> None:
+        if self.fail:
+            raise RuntimeError("stdin closed")
+        self.queries.append(query_input)
+
+
+@pytest.mark.asyncio
+async def test_steer_writes_the_queued_message_into_the_open_turn(make_runner):
+    fake = FakeAsyncVicoaClient()
+    runner = make_runner(vicoa_client=fake)
+    runner.claude_client = _FakeClaudeClient()
+    runner._open_turns.append("foreground")
+    await runner._route("use bun instead", (), message_id="s-1")
+
+    await runner._steer_queued_message("s-1")
+
+    assert runner.claude_client.queries == ["use bun instead"]
+    assert fake.mark_steered_calls == ["s-1"]
+    assert fake.requeue_calls == []
+    # The run loop must not run it again as its own turn when it dequeues.
+    queued = runner._user_message_queue.get_nowait()
+    assert await runner._accept_user_message(queued) is None
+    assert runner._steer_in_flight == {}
+    assert runner._pending_by_id == {}
+
+
+@pytest.mark.asyncio
+async def test_steer_with_no_open_turn_leaves_the_message_queued(make_runner):
+    fake = FakeAsyncVicoaClient()
+    runner = make_runner(vicoa_client=fake)
+    runner.claude_client = _FakeClaudeClient()
+    await runner._route("later", (), message_id="s-2")
+
+    await runner._steer_queued_message("s-2")
+
+    assert runner.claude_client.queries == []
+    assert fake.mark_steered_calls == []
+    assert fake.requeue_calls == []
+    queued = runner._user_message_queue.get_nowait()
+    assert await runner._accept_user_message(queued) is queued
+
+
+@pytest.mark.asyncio
+async def test_failed_steer_requeues_and_keeps_the_message(make_runner):
+    fake = FakeAsyncVicoaClient()
+    runner = make_runner(vicoa_client=fake)
+    runner.claude_client = _FakeClaudeClient(fail=True)
+    runner._open_turns.append("foreground")
+    await runner._route("use bun instead", (), message_id="s-3")
+
+    await runner._steer_queued_message("s-3")
+
+    assert fake.mark_steered_calls == []
+    assert fake.requeue_calls == ["s-3"]
+    queued = runner._user_message_queue.get_nowait()
+    assert await runner._accept_user_message(queued) is queued
+
+
+@pytest.mark.asyncio
+async def test_steer_request_that_overtakes_its_message_is_honored_on_enqueue(
+    make_runner,
+):
+    fake = FakeAsyncVicoaClient()
+    runner = make_runner(vicoa_client=fake)
+    runner.claude_client = _FakeClaudeClient()
+    runner._open_turns.append("foreground")
+
+    await runner._steer_queued_message("s-4")
+    assert runner._steer_requested_ids == {"s-4"}
+
+    await runner._route("now", (), message_id="s-4")
+
+    assert runner.claude_client.queries == ["now"]
+    assert fake.mark_steered_calls == ["s-4"]
+    assert runner._steer_requested_ids == set()
+
+
+@pytest.mark.asyncio
+async def test_on_ws_message_update_schedules_a_steer(make_runner):
+    fake = FakeAsyncVicoaClient()
+    runner = make_runner(vicoa_client=fake)
+    runner.claude_client = _FakeClaudeClient()
+    runner._open_turns.append("foreground")
+    await runner._route("go", (), message_id="s-5")
+
+    runner._on_ws_message_update(
+        {"id": "s-5", "message_metadata": {"queue": {"status": "steer"}}}
+    )
+    await asyncio.sleep(0.01)
+
+    assert runner.claude_client.queries == ["go"]
+
+
+# ---------------------------------------------------------------------------
 # run_conversation_turn — reports consumption at the top of the turn.
 # ---------------------------------------------------------------------------
 

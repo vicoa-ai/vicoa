@@ -1634,6 +1634,49 @@ def cancel_user_message(db: Session, message_id: UUID) -> bool:
     return result.rowcount > 0
 
 
+def steer_user_message(db: Session, message_id: UUID) -> bool:
+    """Stamp `message_metadata["queue"]` as steer-requested, only while queued.
+
+    The user asked for a message still waiting in the queue to be delivered
+    into the agent's *running* turn instead of after it. This only flips the
+    status (`queued` -> `steer`); the daemon owns the actual delivery and
+    settles the row afterwards — `consumed` (with `steered: true`) once the
+    agent took it mid-turn, or back to `queued` via
+    `servers.shared.db.queries.requeue_user_message` when the turn could not
+    be steered. The strict `== "queued"` guard (rather than the cancel path's
+    `is distinct from "consumed"`) is deliberate: a message the daemon already
+    picked up, cancelled, or is already steering must not be re-stamped.
+
+    Same `jsonb_typeof` guard as `cancel_user_message` — see that docstring
+    for why `coalesce()` is not enough. Returns True iff a row was updated.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    stmt = (
+        update(Message)
+        .where(
+            Message.id == message_id,
+            Message.sender_type == SenderType.USER,
+            Message.message_metadata[("queue", "status")].astext == "queued",
+        )
+        .values(
+            message_metadata=func.jsonb_set(
+                case(
+                    (
+                        func.jsonb_typeof(Message.message_metadata) == "object",
+                        Message.message_metadata,
+                    ),
+                    else_=cast({}, JSONB),
+                ),
+                "{queue}",
+                cast({"status": "steer", "steer_requested_at": now}, JSONB),
+            )
+        )
+    )
+    result = db.execute(stmt)
+    db.flush()
+    return result.rowcount > 0
+
+
 # ============================================================================
 # Message attachment queries
 # ============================================================================

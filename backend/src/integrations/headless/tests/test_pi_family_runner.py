@@ -138,6 +138,11 @@ class StubSession:
         self.compacted = False
         self.autocompact = None
         self.handed_off = False
+        self.delivered: list[tuple[str, tuple]] = []
+        self.steered: list[tuple[str, tuple]] = []
+        # When set, the first deliver_user_message parks on it (a long turn).
+        self.gate: asyncio.Event | None = None
+        self._gated_once = False
 
     async def interrupt(self):
         self.interrupted = True
@@ -168,11 +173,32 @@ class StubSession:
     def try_resolve_pending_reply(self, _text):
         return False
 
+    # --- steer (queue bar's Steer button) ---
+    turn_active = False
+    accept_steer = True
+
+    async def steer_user_message(self, text, attachments=()):
+        if not self.turn_active:
+            return False
+        self.steered.append((text, attachments))
+        return self.accept_steer
+
+    async def deliver_user_message(self, text, attachments=()):
+        self.delivered.append((text, attachments))
+        gate = self.gate
+        if gate is not None and not self._gated_once:
+            self._gated_once = True
+            self.turn_active = True
+            await gate.wait()
+            self.turn_active = False
+
 
 class StubClient:
     def __init__(self):
         self.rows: list[str] = []
         self.statuses: list[str] = []
+        self.consumed: list[tuple[str, bool]] = []
+        self.requeued: list[str] = []
 
     async def send_message(self, **kwargs):
         self.rows.append(kwargs.get("content", ""))
@@ -180,8 +206,11 @@ class StubClient:
     async def update_agent_instance_status(self, _instance_id, status):
         self.statuses.append(status)
 
-    async def mark_message_consumed(self, _message_id):
-        return None
+    async def mark_message_consumed(self, message_id, *, steered=False):
+        self.consumed.append((message_id, steered))
+
+    async def requeue_message(self, message_id):
+        self.requeued.append(message_id)
 
 
 def wire(runner):
@@ -258,3 +287,90 @@ async def test_an_ordinary_message_is_enqueued_for_the_turn_consumer():
     _session, _client = wire(runner)
     await runner._route("please fix the tests", (), "m1")
     assert runner._turn_queue.get_nowait()[0] == "please fix the tests"
+
+
+async def _wait_until(predicate, *, timeout: float = 2.0) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() > deadline:
+            raise AssertionError("condition not met in time")
+        await asyncio.sleep(0.01)
+
+
+async def _with_consumer(runner, body):
+    consumer = asyncio.create_task(runner._consume_user_messages())
+    try:
+        await body()
+    finally:
+        runner.running = False
+        consumer.cancel()
+        try:
+            await consumer
+        except asyncio.CancelledError:
+            pass
+
+
+async def test_steer_delivers_a_queued_message_into_the_running_turn():
+    """The Steer button: the message rides pi's ``steer`` RPC into the open
+    turn, is stamped consumed (steered), and the consumer drops it at drain
+    instead of running it as its own turn."""
+    runner = make_runner()
+    session, client = wire(runner)
+    session.gate = asyncio.Event()
+    runner.running = True
+
+    async def body():
+        await runner._route("A", (), "mA")
+        await _wait_until(lambda: session.turn_active)
+        await runner._route("B", (), "mB")
+        await runner._steer_queued_message("mB")
+        assert session.steered == [("B", ())]
+        assert ("mB", True) in client.consumed
+        assert client.requeued == []
+        session.gate.set()
+        await asyncio.sleep(0.05)
+        assert session.delivered == [("A", ())]
+
+    await _with_consumer(runner, body)
+
+
+async def test_a_rejected_steer_requeues_and_runs_as_the_next_turn():
+    runner = make_runner()
+    session, client = wire(runner)
+    session.gate = asyncio.Event()
+    session.accept_steer = False
+    runner.running = True
+
+    async def body():
+        await runner._route("A", (), "mA")
+        await _wait_until(lambda: session.turn_active)
+        await runner._route("B", (), "mB")
+        await runner._steer_queued_message("mB")
+        assert client.requeued == ["mB"]
+        assert ("mB", True) not in client.consumed
+        session.gate.set()
+        await _wait_until(lambda: session.delivered == [("A", ()), ("B", ())])
+
+    await _with_consumer(runner, body)
+
+
+async def test_steer_with_no_running_turn_leaves_the_message_queued():
+    runner = make_runner()
+    session, client = wire(runner)
+    await runner._route("B", (), "mB")
+    await runner._steer_queued_message("mB")
+    assert session.steered == []
+    assert client.requeued == []
+    assert runner._turn_queue.get_nowait() == ("B", (), "mB")
+
+
+async def test_a_steer_request_that_overtakes_its_message_is_honored_on_enqueue():
+    runner = make_runner()
+    session, client = wire(runner)
+    session.turn_active = True
+    await runner._steer_queued_message("mB")
+    assert runner._steer_requested_ids == {"mB"}
+    await runner._route("B", (), "mB")
+    assert session.steered == [("B", ())]
+    assert ("mB", True) in client.consumed

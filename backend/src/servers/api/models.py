@@ -11,6 +11,16 @@ from servers.shared.models import (
 )
 
 
+class MarkMessageConsumedRequest(BaseModel):
+    """Optional body for `PATCH /messages/{id}/consumed`.
+
+    `steered` records that the wrapper delivered the message into the
+    agent's running turn (a user Steer request) instead of as its own turn.
+    """
+
+    steered: bool = False
+
+
 class RegisterMachineRequest(BaseModel):
     machine_id: str | None = Field(
         default=None,

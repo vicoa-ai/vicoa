@@ -67,6 +67,7 @@ from ..db.queries import (
     cancel_user_message,
     create_user_message_with_access,
     get_instance_and_access,
+    steer_user_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -445,6 +446,56 @@ def cancel_queued_message_endpoint(
         after_commit(db, lambda: post_broadcast(str(user_id), payload, rooms))
     db.commit()
     return {"cancelled": cancelled}
+
+
+@router.post("/agent-instances/{instance_id}/messages/{message_id}/steer")
+def steer_queued_message_endpoint(
+    instance_id: UUID,
+    message_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Ask for a `queue.status=queued` message to be steered into the running turn.
+
+    Only flips the row to `queue.status=steer` and broadcasts the patch; the
+    daemon's wrapper (which owns the agent's turn) sees the `message-update`
+    over its session WebSocket and delivers the message mid-turn — Codex via
+    `turn/steer`, Claude Code via its streaming stdin, pi via its `steer`
+    RPC — then settles the row to `consumed` (`steered: true`), or back to
+    `queued` if the turn could not be steered. Same access check as
+    `cancel_queued_message_endpoint`. `steer_user_message` is the atomic
+    guard: a no-op (returns False, no broadcast) unless the message is still
+    exactly `queued`, so a message the agent has already picked up, or one
+    the user cancelled, is never re-stamped.
+    """
+    user_id = current_user.id
+    instance, access = get_instance_and_access(db, instance_id, user_id)
+    if not instance or access != InstanceAccessLevel.WRITE:
+        raise HTTPException(status_code=404, detail="Agent instance not found")
+
+    message = (
+        db.query(Message)
+        .filter(
+            Message.id == message_id,
+            Message.agent_instance_id == instance_id,
+        )
+        .first()
+    )
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    steered = steer_user_message(db, message_id)
+    if steered:
+        fresh = db.query(Message).filter(Message.id == message_id).first()
+        assert fresh is not None
+        payload = build_message_update(fresh)
+        rooms = [
+            f"user:{user_id}:user-scoped",
+            f"user:{user_id}:session:{instance_id}",
+        ]
+        after_commit(db, lambda: post_broadcast(str(user_id), payload, rooms))
+    db.commit()
+    return {"steered": steered}
 
 
 @router.get("/agent-instances/{instance_id}/messages/stream")
