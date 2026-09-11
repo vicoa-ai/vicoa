@@ -60,6 +60,9 @@ def _build_runner(
     runner._seen_user_message_ids = set()
     runner._seen_user_message_order = deque(maxlen=1024)
     runner._cancelled_message_ids = set()
+    runner._pending_by_id = {}
+    runner._steer_requested_ids = set()
+    runner._steer_in_flight = {}
     # Out-of-band control-command queue: SSE listener enqueues so it doesn't
     # block on slow reconnects; ``_run_control_worker`` drains.
     runner._control_command_queue = asyncio.Queue()

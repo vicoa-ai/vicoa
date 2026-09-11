@@ -491,6 +491,18 @@ class HeadlessClaudeRunner:
         # ``_enqueue_already_queued`` can reference it now.
         self._cancelled_message_ids: set[str] = set()
 
+        # Steer support (queue bar's Steer button) — same shape as
+        # ``codex_native``: ``_pending_by_id`` mirrors ``_user_message_queue``
+        # by id so a steer request can find the message without draining the
+        # queue (added at enqueue, removed at dequeue); ``_steer_requested_ids``
+        # holds requests that overtook their own message on the WS;
+        # ``_steer_in_flight`` carries each attempt's outcome so the dequeue
+        # path drops a message that was delivered mid-turn and keeps one that
+        # was not.
+        self._pending_by_id: Dict[str, tuple[str, tuple[AttachmentRef, ...]]] = {}
+        self._steer_requested_ids: set[str] = set()
+        self._steer_in_flight: Dict[str, "asyncio.Future[bool]"] = {}
+
         # User-message transport: session-scoped /ws connection, mirroring
         # ``codex_native.py``. ``SessionMessagesWsClient`` runs a sync
         # ``websocket`` reconnect loop on a background thread; its callback
@@ -2647,6 +2659,16 @@ class HeadlessClaudeRunner:
         if status == "cancelled" and mid:
             self._cancelled_message_ids.add(mid)
             self.logger.info(f"User cancelled queued message {mid}")
+        elif status == "steer" and mid:
+            # Runs on the loop thread (``_schedule_message_update`` hopped);
+            # delivery awaits the SDK, so spin it off as a task.
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = self._loop
+            if loop is None or loop.is_closed():
+                return
+            loop.create_task(self._steer_queued_message(str(mid)))
 
     def _remember_message_id(self, message_id: Optional[str]) -> bool:
         """Return True if newly seen; False if a duplicate. Unidentified
@@ -2675,6 +2697,8 @@ class HeadlessClaudeRunner:
             attachments = tuple(extract_attachment_refs(msg.get("message_metadata")))
             if not content and not attachments:
                 continue
+            if mid:
+                self._pending_by_id[mid] = (content, attachments)
             await self._user_message_queue.put(
                 InboundUserMessage(content, attachments, mid)
             )
@@ -2719,9 +2743,75 @@ class HeadlessClaudeRunner:
                 return
         if not self._remember_message_id(message_id):
             return
+        if message_id:
+            self._pending_by_id[message_id] = (content, attachments)
         await self._user_message_queue.put(
             InboundUserMessage(content, attachments, message_id)
         )
+        if message_id and message_id in self._steer_requested_ids:
+            # The Steer request overtook its own message on the WS.
+            self._steer_requested_ids.discard(message_id)
+            await self._steer_queued_message(message_id)
+
+    async def _steer_queued_message(self, message_id: str) -> None:
+        """Deliver a queued message into the running turn (user pressed Steer).
+
+        The backend flipped the row to ``queue.status=steer``; this is the
+        delivery. Claude Code's streaming stdin has no separate steer
+        primitive: a user message written while a turn is open is picked up
+        at the next tool boundary inside that turn (verified on 2.1.261 —
+        the turn changes course and no extra ``result`` is emitted), and one
+        that lands after the last tool call runs as an automatic follow-up
+        turn, which the reader already handles as an autonomous turn. So the
+        only precondition is an open turn; with none, the run loop is about
+        to dequeue the message as the next turn anyway and nothing is done.
+        On success the message is stamped consumed (``steered``) and dropped
+        at dequeue.
+        """
+        if message_id in self._steer_in_flight:
+            return
+        pending = self._pending_by_id.get(message_id)
+        if pending is None:
+            self._steer_requested_ids.add(message_id)
+            return
+        if not self._open_turns or not self.claude_client:
+            self.logger.info(
+                "Steer requested for %s with no open turn; it runs next", message_id
+            )
+            return
+        content, attachments = pending
+        outcome: "asyncio.Future[bool]" = asyncio.get_running_loop().create_future()
+        self._steer_in_flight[message_id] = outcome
+        steered = False
+        try:
+            query_input = await self._build_query_input(
+                InboundUserMessage(content, attachments, message_id)
+            )
+            await self.claude_client.query(query_input)
+            steered = True
+            self.logger.info("Steered message %s into the open turn", message_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception("Steer delivery failed; message stays queued")
+        finally:
+            outcome.set_result(steered)
+        if steered:
+            self._pending_by_id.pop(message_id, None)
+            if self.vicoa_client:
+                try:
+                    await self.vicoa_client.mark_message_consumed(
+                        message_id, steered=True
+                    )
+                except Exception as e:
+                    self.logger.warning(f"mark_message_consumed failed: {e}")
+            return
+        self._steer_in_flight.pop(message_id, None)
+        if self.vicoa_client:
+            try:
+                await self.vicoa_client.requeue_message(message_id)
+            except Exception as e:
+                self.logger.warning(f"requeue_message failed: {e}")
 
     async def _wait_for_user_input(self) -> Optional[InboundUserMessage]:
         """Wait for the next non-control user message from the inbound queue.
@@ -2766,8 +2856,17 @@ class HeadlessClaudeRunner:
         by the blocking wait and the non-blocking coalesce drain so both apply
         identical filtering.
         """
-        if message.message_id in self._cancelled_message_ids:
-            self._cancelled_message_ids.discard(message.message_id)
+        mid = message.message_id
+        if mid:
+            self._pending_by_id.pop(mid, None)
+        if mid in self._cancelled_message_ids:
+            self._cancelled_message_ids.discard(mid)
+            return None
+        # A message the user steered was delivered mid-turn already. Its
+        # attempt may still be out (the turn ended under it), so wait for the
+        # outcome rather than guessing.
+        outcome = self._steer_in_flight.pop(mid, None) if mid else None
+        if outcome is not None and await outcome:
             return None
         if message.content and await self._handle_control_command(message.content):
             return None

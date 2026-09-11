@@ -195,6 +195,19 @@ class CodexNativeRunner:
         # so it can't grow unbounded (a cancel is only broadcast while the row is
         # still queued, i.e. still waiting in ``_turn_queue``).
         self._cancelled_message_ids: set[str] = set()
+        # Steer support (queue bar's Steer button). ``_pending_by_id`` mirrors
+        # ``_turn_queue`` keyed by message id so a steer request can find the
+        # message's content without draining the queue; entries are added at
+        # enqueue and removed at drain. ``_steer_requested_ids`` holds requests
+        # that arrived before their message was enqueued (both ride the same
+        # WS, but ``_route`` awaits before it enqueues). ``_steer_in_flight``
+        # maps an id to the outcome of its steer attempt so the consumer, on
+        # draining, drops a message that was delivered mid-turn and keeps one
+        # that was not — the future closes the window where a turn ends while
+        # the steer RPC is still out.
+        self._pending_by_id: Dict[str, tuple[str, tuple[AttachmentRef, ...]]] = {}
+        self._steer_requested_ids: set[str] = set()
+        self._steer_in_flight: Dict[str, "asyncio.Future[bool]"] = {}
 
     # ------------------------------------------------------------------
     # Setup helpers
@@ -538,6 +551,14 @@ class CodexNativeRunner:
                 logger.info(
                     "codex_native: user cancelled queued message %s", message_id
                 )
+            elif status == "steer" and message_id:
+                # Delivery touches the session, so hop onto the loop.
+                loop = self._loop
+                if loop is None or loop.is_closed():
+                    return
+                asyncio.run_coroutine_threadsafe(
+                    self._steer_queued_message(str(message_id)), loop
+                )
         except Exception:
             logger.exception("codex_native: message-update callback raised")
 
@@ -665,7 +686,68 @@ class CodexNativeRunner:
         # a single follow-up turn. put_nowait never blocks (unbounded queue), so
         # the WS reader keeps flowing.
         logger.info("codex_native: enqueuing message for the turn consumer")
+        if message_id:
+            self._pending_by_id[message_id] = (content, attachments)
         self._turn_queue.put_nowait((content, attachments, message_id))
+        if message_id and message_id in self._steer_requested_ids:
+            # The Steer request overtook its own message on the WS.
+            self._steer_requested_ids.discard(message_id)
+            await self._steer_queued_message(message_id)
+
+    async def _steer_queued_message(self, message_id: str) -> None:
+        """Deliver a queued message into the running turn (user pressed Steer).
+
+        The backend flipped the row to ``queue.status=steer``; this is the
+        delivery. On success the message is stamped consumed (``steered``) and
+        the consumer drops it at the next drain. When codex would not take it
+        (turn not steerable, or already over) the message stays queued and
+        runs as the next turn — the row goes back to ``queued`` so the UI
+        stops showing it as steering, unless there is no active turn at all,
+        in which case the consumer is about to pick it up anyway.
+        """
+        assert self.session is not None
+        if message_id in self._steer_in_flight:
+            return
+        pending = self._pending_by_id.get(message_id)
+        if pending is None:
+            # Not enqueued yet (request overtook the message) or already
+            # drained into a turn. ``_route`` honors the former on enqueue;
+            # the latter has nothing left to steer.
+            self._steer_requested_ids.add(message_id)
+            return
+        content, attachments = pending
+        outcome: "asyncio.Future[bool]" = asyncio.get_running_loop().create_future()
+        self._steer_in_flight[message_id] = outcome
+        steered = False
+        try:
+            steered = await self.session.steer(content, attachments)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("codex_native: steer failed")
+        finally:
+            outcome.set_result(steered)
+        if steered:
+            self._pending_by_id.pop(message_id, None)
+            await self._mark_message_consumed(message_id, steered=True)
+            return
+        self._steer_in_flight.pop(message_id, None)
+        if self.session.active_turn_id is None:
+            # Turn already over: the consumer runs it next; nothing to undo.
+            return
+        await self._requeue_message(message_id)
+        await self._send_feedback_message(
+            "Couldn't steer the running turn — the message stays queued and runs next."
+        )
+
+    async def _requeue_message(self, message_id: str) -> None:
+        """Put a steer-requested message back to ``queued`` in the UI."""
+        if self.vicoa_client is None:
+            return
+        try:
+            await self.vicoa_client.requeue_message(message_id)
+        except Exception:
+            logger.debug("codex_native: requeue_message failed", exc_info=True)
 
     @staticmethod
     def _coalesce_turn_batch(
@@ -683,18 +765,21 @@ class CodexNativeRunner:
         )
         return text, attachments
 
-    async def _mark_message_consumed(self, message_id: Optional[str]) -> None:
+    async def _mark_message_consumed(
+        self, message_id: Optional[str], *, steered: bool = False
+    ) -> None:
         """Clear a message's ``message_metadata.queue`` badge in the UI.
 
         The backend stamps every message that arrives while the row is ACTIVE
         as "queued"; nothing else in this wrapper clears it, so without this the
         web/app pins the message in its queued bar forever even after the agent
         has answered it. Best-effort — a failed stamp must never abort the turn.
+        ``steered`` records a mid-turn delivery (see ``_steer_queued_message``).
         """
         if not message_id or self.vicoa_client is None:
             return
         try:
-            await self.vicoa_client.mark_message_consumed(message_id)
+            await self.vicoa_client.mark_message_consumed(message_id, steered=steered)
         except Exception:
             logger.debug("codex_native: mark_message_consumed failed", exc_info=True)
 
@@ -726,10 +811,24 @@ class CodexNativeRunner:
             kept = []
             for item in batch:
                 message_id = item[2]
+                if message_id:
+                    self._pending_by_id.pop(message_id, None)
                 if message_id and message_id in self._cancelled_message_ids:
                     self._cancelled_message_ids.discard(message_id)
                     logger.info(
                         "codex_native: dropping cancelled queued message %s",
+                        message_id,
+                    )
+                    continue
+                # A message the user steered was delivered mid-turn already.
+                # Its attempt may still be out (the turn ended under it), so
+                # wait for the outcome rather than guessing.
+                outcome = (
+                    self._steer_in_flight.pop(message_id, None) if message_id else None
+                )
+                if outcome is not None and await outcome:
+                    logger.info(
+                        "codex_native: dropping steered message %s at drain",
                         message_id,
                     )
                     continue

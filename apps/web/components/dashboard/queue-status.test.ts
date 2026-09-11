@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MessageResponse } from '@/lib/backend-api';
-import { parseQueuePayload } from './queue-status';
+import { isPendingQueueStatus, parseQueuePayload } from './queue-status';
 
 function msg(message_metadata: Record<string, unknown> | null | undefined): MessageResponse {
   return {
@@ -20,6 +20,21 @@ describe('parseQueuePayload', () => {
 
   it('parses a consumed status', () => {
     expect(parseQueuePayload(msg({ queue: { status: 'consumed', consumed_at: '2026-07-10T00:01:00Z' } })))
+      .toEqual({ status: 'consumed' });
+  });
+
+  it('parses a steer status (Steer pressed, daemon delivering)', () => {
+    expect(parseQueuePayload(msg({ queue: { status: 'steer', steer_requested_at: '2026-07-10T00:01:00Z' } })))
+      .toEqual({ status: 'steer' });
+  });
+
+  it('carries the steered flag on a consumed message', () => {
+    expect(parseQueuePayload(msg({ queue: { status: 'consumed', steered: true } })))
+      .toEqual({ status: 'consumed', steered: true });
+  });
+
+  it('ignores a non-boolean steered value', () => {
+    expect(parseQueuePayload(msg({ queue: { status: 'consumed', steered: 'yes' } })))
       .toEqual({ status: 'consumed' });
   });
 
@@ -50,5 +65,18 @@ describe('parseQueuePayload', () => {
 
   it('returns null when status is missing from queue', () => {
     expect(parseQueuePayload(msg({ queue: {} }))).toBeNull();
+  });
+});
+
+describe('isPendingQueueStatus', () => {
+  it('treats queued and steer as still in the bar', () => {
+    expect(isPendingQueueStatus('queued')).toBe(true);
+    expect(isPendingQueueStatus('steer')).toBe(true);
+  });
+
+  it('treats terminal states and no status as not pending', () => {
+    expect(isPendingQueueStatus('consumed')).toBe(false);
+    expect(isPendingQueueStatus('cancelled')).toBe(false);
+    expect(isPendingQueueStatus(undefined)).toBe(false);
   });
 });

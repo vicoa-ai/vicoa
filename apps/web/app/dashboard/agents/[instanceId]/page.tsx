@@ -56,7 +56,7 @@ import {
   resumeSession,
 } from '@/lib/session-resume';
 import { AskUserQuestionSubmitPayload, buildAskUserQuestionCancelPersistMessage, buildAskUserQuestionControlMessage, buildAskUserQuestionSummaryMessage, parseAskUserQuestionPayload } from '@/components/dashboard/ask-user-question-panel';
-import { parseQueuePayload, type QueuedMessageItem } from '@/components/dashboard/queue-status';
+import { isPendingQueueStatus, parseQueuePayload, type QueuedMessageItem } from '@/components/dashboard/queue-status';
 import {
   isControlEnvelope,
   isInterruptControlMessage,
@@ -1188,11 +1188,12 @@ function AgentInstanceContent() {
     return max;
   }, [allMessages]);
 
-  // True for a `queued` message the agent has demonstrably moved past — its
-  // live status is stale and it belongs in the transcript, not the bar.
+  // True for a `queued` (or `steer`) message the agent has demonstrably moved
+  // past — its live status is stale and it belongs in the transcript, not the
+  // bar.
   const isDrainedQueued = useCallback(
     (m: MessageResponse) =>
-      parseQueuePayload(m)?.status === 'queued' &&
+      isPendingQueueStatus(parseQueuePayload(m)?.status) &&
       queueProgressAt !== null &&
       !!m.created_at &&
       m.created_at < queueProgressAt,
@@ -1211,7 +1212,9 @@ function AgentInstanceContent() {
     return allMessages
       .filter((m) => {
         if (!USER_SENDER_TYPES.has(m.sender_type)) return false;
-        if (parseQueuePayload(m)?.status !== 'queued') return false;
+        // `steer` rows stay in the bar (with a steering indicator) until the
+        // daemon settles them to `consumed` or back to `queued`.
+        if (!isPendingQueueStatus(parseQueuePayload(m)?.status)) return false;
         if (isDrainedQueued(m)) return false;
         const raw = m.content || '';
         if (raw.trim() === 'Waiting for your input...') return false;
@@ -1226,7 +1229,12 @@ function AgentInstanceContent() {
         // Optimistic rows have no backend id yet, so cancel/retrieve can't reach
         // the server until the echo swaps in the real id — flagged so the row's
         // actions stay disabled for that sub-second round-trip.
-        return { id: m.id, text, pending: m.id.startsWith('optimistic-') };
+        return {
+          id: m.id,
+          text,
+          pending: m.id.startsWith('optimistic-'),
+          steering: parseQueuePayload(m)?.status === 'steer',
+        };
       });
   }, [allMessages, isDrainedQueued]);
 
@@ -1246,7 +1254,7 @@ function AgentInstanceContent() {
       // it only appeared once the *next* message drained the queue, reading
       // as though it had been sent then.
       if (isInterruptControlMessage(m.content || '')) return true;
-      if (status === 'queued') return isDrainedQueued(m);
+      if (isPendingQueueStatus(status)) return isDrainedQueued(m);
       return true;
     });
   }, [allMessages, isDrainedQueued]);
@@ -2033,6 +2041,11 @@ function AgentInstanceContent() {
   const configuredAgentId =
     typeof instance.session_config?.agent === 'string' ? instance.session_config.agent.trim().toLowerCase() : '';
   const rawAgentId = configuredAgentId || (instance.agent_type_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Steer (deliver a queued message into the running turn) is a per-agent
+  // capability: Codex, Claude Code and pi/omp have a mid-turn primitive; ACP
+  // agents and OpenCode only queue. Read from the static catalog entry — the
+  // capability is fixed per agent, not per machine.
+  const canSteer = agentById(AGENT_CATALOG_FALLBACK, rawAgentId)?.supports_steer === true;
   const acpLive = isAcpAgent ? extractAcpControlsFromInstance(instance) : null;
   const acpCatalogAgent = isAcpAgent ? agentById(AGENT_CATALOG_FALLBACK, rawAgentId) : undefined;
   const acpStaticModes = acpCatalogAgent?.permission_modes ?? acpCatalogAgent?.modes ?? [];
@@ -2745,6 +2758,7 @@ function AgentInstanceContent() {
               singleColumnModels={singleColumnModels}
               usage={instance.instance_metadata?.usage ?? null}
               queuedItems={queuedItems}
+              canSteer={canSteer}
             />
           </div>
         </div>

@@ -64,6 +64,9 @@ def _build_runner(session: _FakeSession) -> CodexNativeRunner:
     runner._turn_queue = asyncio.Queue()
     runner._consumer_task = None
     runner._cancelled_message_ids = set()
+    runner._pending_by_id = {}
+    runner._steer_requested_ids = set()
+    runner._steer_in_flight = {}
     return runner
 
 

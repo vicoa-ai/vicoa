@@ -10,8 +10,12 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from servers.api.routers import mark_message_consumed_endpoint
-from servers.shared.db.queries import mark_message_consumed
+from servers.api.models import MarkMessageConsumedRequest
+from servers.api.routers import (
+    mark_message_consumed_endpoint,
+    requeue_message_endpoint,
+)
+from servers.shared.db.queries import mark_message_consumed, requeue_user_message
 from shared.database.enums import AgentStatus, SenderType
 from shared.database.models import AgentInstance, Message, User, AgentType
 from shared.database.session import SessionLocal
@@ -218,6 +222,149 @@ async def test_consumed_endpoint_404s_for_another_users_message(
     with SessionLocal() as db:
         with pytest.raises(HTTPException) as exc_info:
             await mark_message_consumed_endpoint(
+                message_id=message_id, user_id=str(uuid4()), db=db
+            )
+
+    assert exc_info.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Steer half of the lifecycle: `consumed` + `steered`, and `requeue`.
+# The user-facing `steer` stamp itself is covered in `test_message_steer.py`.
+# ---------------------------------------------------------------------------
+
+
+def _stored_queue(message_id: UUID) -> dict:
+    with SessionLocal() as db:
+        stored = db.query(Message).filter(Message.id == message_id).first()
+        assert stored is not None
+        return (stored.message_metadata or {}).get("queue") or {}
+
+
+def test_mark_message_consumed_records_a_steered_delivery(
+    user_instance: tuple[UUID, UUID],
+) -> None:
+    _user_id, instance_id = user_instance
+    message_id = _make_user_message(instance_id, {"queue": {"status": "steer"}})
+
+    with SessionLocal() as db:
+        updated = mark_message_consumed(db, message_id, steered=True)
+        assert updated is not None
+        db.commit()
+
+    queue = _stored_queue(message_id)
+    assert queue["status"] == "consumed"
+    assert queue["steered"] is True
+
+
+def test_mark_message_consumed_without_steered_writes_no_flag(
+    user_instance: tuple[UUID, UUID],
+) -> None:
+    _user_id, instance_id = user_instance
+    message_id = _make_user_message(instance_id, {"queue": {"status": "queued"}})
+
+    with SessionLocal() as db:
+        mark_message_consumed(db, message_id)
+        db.commit()
+
+    assert "steered" not in _stored_queue(message_id)
+
+
+def test_requeue_user_message_puts_a_steer_back_to_queued(
+    user_instance: tuple[UUID, UUID],
+) -> None:
+    _user_id, instance_id = user_instance
+    message_id = _make_user_message(instance_id, {"queue": {"status": "steer"}})
+
+    with SessionLocal() as db:
+        updated = requeue_user_message(db, message_id)
+        assert updated is not None
+        db.commit()
+
+    queue = _stored_queue(message_id)
+    assert queue["status"] == "queued"
+    assert "requeued_at" in queue
+
+
+@pytest.mark.parametrize("status", ["queued", "consumed", "cancelled"])
+def test_requeue_user_message_leaves_other_states_alone(
+    user_instance: tuple[UUID, UUID], status: str
+) -> None:
+    _user_id, instance_id = user_instance
+    message_id = _make_user_message(instance_id, {"queue": {"status": status}})
+
+    with SessionLocal() as db:
+        updated = requeue_user_message(db, message_id)
+        assert updated is not None
+        db.commit()
+
+    assert _stored_queue(message_id)["status"] == status
+
+
+def test_requeue_user_message_returns_none_for_unknown_message() -> None:
+    with SessionLocal() as db:
+        assert requeue_user_message(db, uuid4()) is None
+
+
+async def test_consumed_endpoint_accepts_the_steered_body(
+    user_instance: tuple[UUID, UUID],
+) -> None:
+    user_id, instance_id = user_instance
+    message_id = _make_user_message(instance_id, {"queue": {"status": "steer"}})
+
+    web = _user_conn(user_id)
+    connection_manager.register(web)
+    try:
+        with SessionLocal() as db:
+            await mark_message_consumed_endpoint(
+                message_id=message_id,
+                user_id=str(user_id),
+                db=db,
+                request=MarkMessageConsumedRequest(steered=True),
+            )
+        bodies = [f["payload"]["body"] for f in _drain(web)]
+        update_body = next(b for b in bodies if b.get("t") == "message-update")
+        assert update_body["message_metadata"]["queue"]["status"] == "consumed"
+        assert update_body["message_metadata"]["queue"]["steered"] is True
+    finally:
+        connection_manager.unregister(web)
+
+
+async def test_requeue_endpoint_flips_and_broadcasts(
+    user_instance: tuple[UUID, UUID],
+) -> None:
+    user_id, instance_id = user_instance
+    message_id = _make_user_message(instance_id, {"queue": {"status": "steer"}})
+
+    web = _user_conn(user_id)
+    connection_manager.register(web)
+    try:
+        with SessionLocal() as db:
+            response = await requeue_message_endpoint(
+                message_id=message_id, user_id=str(user_id), db=db
+            )
+        assert response == {"success": True, "message_id": str(message_id)}
+        bodies = [f["payload"]["body"] for f in _drain(web)]
+        update_body = next(b for b in bodies if b.get("t") == "message-update")
+        assert update_body["id"] == str(message_id)
+        assert update_body["message_metadata"]["queue"]["status"] == "queued"
+    finally:
+        connection_manager.unregister(web)
+
+    assert _stored_queue(message_id)["status"] == "queued"
+
+
+async def test_requeue_endpoint_404s_for_another_users_message(
+    user_instance: tuple[UUID, UUID],
+) -> None:
+    _user_id, instance_id = user_instance
+    message_id = _make_user_message(instance_id, {"queue": {"status": "steer"}})
+
+    from fastapi import HTTPException
+
+    with SessionLocal() as db:
+        with pytest.raises(HTTPException) as exc_info:
+            await requeue_message_endpoint(
                 message_id=message_id, user_id=str(uuid4()), db=db
             )
 

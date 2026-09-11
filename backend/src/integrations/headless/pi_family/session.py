@@ -338,16 +338,37 @@ class PiRuntimeSession:
             self._turn_active = False
             self._turn_done = None
 
-    def steer(self, text: str) -> bool:
+    def steer(self, text: str, images: Optional[List[Dict[str, Any]]] = None) -> bool:
         """Redirect the running turn without waiting for it to end.
 
-        Returns False when no turn is running, so the caller can fall back to a
-        normal prompt. ``steer`` is fire-and-forget by protocol.
+        pi delivers a ``steer`` after the current assistant turn finishes its
+        tool calls, before the next model call — the turn changes course
+        without being aborted. ``images`` take the same ``ImageContent``
+        shape as ``prompt`` (see ``_build_prompt_payload``). Returns False
+        when no turn is running, so the caller can fall back to a normal
+        prompt. ``steer`` is fire-and-forget by protocol.
         """
-        if not self._turn_active or not text.strip():
+        if not self._turn_active or (not text.strip() and not images):
             return False
-        self.transport.send("steer", {"message": text})
+        params: Dict[str, Any] = {"message": text}
+        if images:
+            params["images"] = images
+        self.transport.send("steer", params)
         return True
+
+    async def steer_user_message(
+        self, text: str, attachments: "tuple[AttachmentRef, ...]" = ()
+    ) -> bool:
+        """``steer`` with Vicoa attachments resolved the way ``prompt`` does."""
+        if not self._turn_active:
+            return False
+        body, images = await self._build_prompt_payload(text, attachments)
+        return self.steer(body, images)
+
+    @property
+    def turn_active(self) -> bool:
+        """True while a prompt turn is running (steer's precondition)."""
+        return self._turn_active
 
     def follow_up(self, text: str) -> bool:
         """Queue a message to run after the current turn finishes."""

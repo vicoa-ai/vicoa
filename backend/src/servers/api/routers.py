@@ -69,6 +69,7 @@ from servers.shared.db import (
     create_user_message,
     mark_message_consumed,
     push_recent_directory_after_spawn,
+    requeue_user_message,
     update_session_title_if_needed,
     upsert_machine_agent_models,
 )
@@ -82,6 +83,7 @@ from .models import (
     EndSessionRequest,
     EndSessionResponse,
     GetMessagesResponse,
+    MarkMessageConsumedRequest,
     MessageResponse,
     RegisterAgentInstanceRequest,
     RegisterAgentInstanceResponse,
@@ -1826,6 +1828,7 @@ async def mark_message_consumed_endpoint(
     message_id: UUID,
     user_id: Annotated[str, Depends(get_current_user_id)],
     db: Session = Depends(get_db),
+    request: MarkMessageConsumedRequest | None = None,
 ) -> dict:
     """Mark a queued message as consumed by the wrapper picking it up.
 
@@ -1834,7 +1837,10 @@ async def mark_message_consumed_endpoint(
     arrives while the agent is ACTIVE). Idempotent: calling this again on an
     already-consumed message just re-stamps `consumed_at`. Skips messages
     already `cancelled` (`mark_message_consumed`'s WHERE clause) so a
-    user-initiated cancel racing the wrapper's pickup always wins.
+    user-initiated cancel racing the wrapper's pickup always wins. The
+    optional body's `steered: true` marks a message the wrapper delivered
+    into the running turn (a user Steer request); older daemons send no
+    body.
     """
     message = (
         db.query(Message)
@@ -1844,7 +1850,38 @@ async def mark_message_consumed_endpoint(
     )
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
-    updated = mark_message_consumed(db, message_id)
+    steered = bool(request and request.steered)
+    updated = mark_message_consumed(db, message_id, steered=steered)
+    if updated is not None:
+        _broadcast_message_update(db, updated, user_id)
+    db.commit()
+    return {"success": True, "message_id": str(message_id)}
+
+
+@agent_router.patch("/messages/{message_id}/requeue")
+async def requeue_message_endpoint(
+    message_id: UUID,
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    db: Session = Depends(get_db),
+) -> dict:
+    """Put a `queue.status=steer` message back to plainly `queued`.
+
+    The wrapper calls this when it could not honour a Steer request (the
+    turn was not steerable, or the agent CLI has no steer primitive): the
+    message stays in its local queue and runs as the next turn, so the UI
+    should stop showing it as "steering". A message that is no longer in
+    `steer` state is left untouched (`requeue_user_message`'s WHERE clause);
+    the response is the same either way.
+    """
+    message = (
+        db.query(Message)
+        .join(AgentInstance, Message.agent_instance_id == AgentInstance.id)
+        .filter(Message.id == message_id, AgentInstance.user_id == user_id)
+        .first()
+    )
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    updated = requeue_user_message(db, message_id)
     if updated is not None:
         _broadcast_message_update(db, updated, user_id)
     db.commit()

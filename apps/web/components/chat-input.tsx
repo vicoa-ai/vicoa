@@ -124,6 +124,9 @@ interface ChatInputProps {
   // Not-yet-sent messages the agent will consume in order, oldest → newest.
   // Rendered as a stack attached to the top of the input; empty hides it.
   queuedItems?: QueuedMessageItem[];
+  // The session's agent can take a queued message mid-turn (catalog
+  // `supports_steer`); shows the Steer button on each queued row.
+  canSteer?: boolean;
 }
 
 export type PermissionModeValue = 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions' | 'auto';
@@ -180,6 +183,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
   singleColumnModels = false,
   usage = null,
   queuedItems = [],
+  canSteer = false,
 }: ChatInputProps, ref) {
   const { draft: message, setDraft: setMessage, clearDraft } = useMessageDraft({
     instanceId,
@@ -714,6 +718,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
         <QueuedMessagesBar
           instanceId={instanceId}
           items={queuedItems}
+          canSteer={canSteer}
           onRetrieve={(text) => {
             // Drop the queued text back into the composer (append below any
             // in-progress draft so it's never clobbered), then focus so the

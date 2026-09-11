@@ -116,6 +116,8 @@ class FakeAsyncVicoaClient:
         self.end_session_calls: List[str] = []
         self.mark_requires_input_calls: List[str] = []
         self.mark_consumed_calls: List[str] = []
+        self.mark_steered_calls: List[str] = []
+        self.requeue_calls: List[str] = []
         self.status_calls: List[Dict[str, Any]] = []
         # Single ordered log across recorders, so tests can assert *sequencing*
         # between calls that land in different lists. Ordering is load-bearing
@@ -404,8 +406,15 @@ class FakeAsyncVicoaClient:
         self.mark_requires_input_calls.append(str(message_id))
         return []
 
-    async def mark_message_consumed(self, message_id: Union[str, uuid.UUID]) -> None:
+    async def mark_message_consumed(
+        self, message_id: Union[str, uuid.UUID], *, steered: bool = False
+    ) -> None:
         self.mark_consumed_calls.append(str(message_id))
+        if steered:
+            self.mark_steered_calls.append(str(message_id))
+
+    async def requeue_message(self, message_id: Union[str, uuid.UUID]) -> None:
+        self.requeue_calls.append(str(message_id))
 
     async def download_attachment(self, attachment_id: str) -> tuple[bytes, str]:
         """Serve from ``self.attachments`` ({id: (bytes, mime)}); raise otherwise."""

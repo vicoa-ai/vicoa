@@ -24,13 +24,21 @@ from typing import Any
 
 
 AGENT_CATALOG: dict[str, Any] = {
-    "version": "2026-09-05-1",
+    "version": "2026-09-11-1",
     "min_cli_version": "1.20.0",
     "min_client_version": "0.42.0",
     "agents": [
         {
             "id": "claude",
             "label": "Claude Code",
+            # `supports_steer`: the wrapper can deliver a queued message into
+            # the *running* turn (the queue bar's Steer button). Claude Code's
+            # streaming stdin picks a mid-turn user message up at the next
+            # tool boundary (verified on claude 2.1.261); Codex has a native
+            # `turn/steer` RPC; pi/omp have a `steer` RPC. Omitted (false) for
+            # ACP agents — the protocol is one prompt turn at a time — and
+            # OpenCode, which only queues.
+            "supports_steer": True,
             "models": [
                 # Per-model `thinking_efforts` / `permission_modes` arrays list
                 # ONLY the opt-in ids this model adds beyond the common set.
@@ -143,6 +151,7 @@ AGENT_CATALOG: dict[str, Any] = {
         {
             "id": "codex",
             "label": "Codex",
+            "supports_steer": True,
             # Refresh per docs/agents/agent-catalog.md. Do NOT source from
             # ~/.codex/models_cache.json — that file is per-user / per-account
             # (filtered by entitlements) and doesn't reflect the canonical
@@ -219,6 +228,7 @@ AGENT_CATALOG: dict[str, Any] = {
         {
             "id": "omp",
             "label": "Oh My Pi",
+            "supports_steer": True,
             "models": [{"id": "default", "label": "Default", "is_default": True}],
             "thinking_efforts": [
                 {"id": "max", "label": "Max"},
@@ -244,6 +254,7 @@ AGENT_CATALOG: dict[str, Any] = {
         {
             "id": "pi",
             "label": "Pi",
+            "supports_steer": True,
             "models": [{"id": "default", "label": "Default", "is_default": True}],
             "thinking_efforts": [
                 {"id": "max", "label": "Max"},

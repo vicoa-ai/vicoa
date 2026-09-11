@@ -38,6 +38,11 @@ export interface CatalogModel {
 export interface CatalogAgent {
   id: string;
   label: string;
+  /** The wrapper can deliver a queued message into the *running* turn (the
+   *  queue bar's Steer button). Codex (`turn/steer`), Claude Code (streaming
+   *  stdin, picked up at the next tool boundary) and pi/omp (`steer` RPC);
+   *  absent for ACP agents and OpenCode, which only queue. */
+  supports_steer?: boolean;
   models: CatalogModel[] | null;
   thinking_efforts?: CatalogEnumEntry[];
   reasoning_efforts?: CatalogEnumEntry[];
@@ -410,13 +415,14 @@ export function savePersistedSelection(payload: Partial<PersistedSelection>): vo
 // ---------------------------------------------------------------------------
 
 export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
-  version: "2026-09-05-1",
+  version: "2026-09-11-1",
   min_cli_version: "1.20.0",
   min_client_version: "0.42.0",
   agents: [
     {
       id: "claude",
       label: "Claude Code",
+      supports_steer: true,
       models: [
         // Opus 4.7+ default to xhigh via `default_thinking_effort` (per-model
         // override of the agent-level `high` is_default).
@@ -459,6 +465,7 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
     {
       id: "codex",
       label: "Codex",
+      supports_steer: true,
       // Refresh per docs/agents/agent-catalog.md. Do NOT source from
       // ~/.codex/models_cache.json — that file is per-user / per-account
       // and reflects entitlements rather than the canonical slug list.
@@ -517,6 +524,7 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
     {
       id: "omp",
       label: "Oh My Pi",
+      supports_steer: true,
       models: [{ id: "default", label: "Default", is_default: true }],
       thinking_efforts: [
         { id: "max", label: "Max" },
@@ -538,6 +546,7 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
     {
       id: "pi",
       label: "Pi",
+      supports_steer: true,
       models: [{ id: "default", label: "Default", is_default: true }],
       thinking_efforts: [
         { id: "max", label: "Max" },

@@ -1132,6 +1132,20 @@ class BackendAPI {
     );
   }
 
+  /**
+   * Ask for a still-queued user message to be steered into the agent's
+   * running turn instead of waiting for it to end. Only flips the row to
+   * `queue.status = 'steer'`; the daemon delivers it and settles the row to
+   * `consumed` (with `steered: true`) or back to `queued`. Resolves to
+   * `{ steered: false }` if the message was no longer plainly queued.
+   */
+  async steerQueuedMessage(instanceId: string, messageId: string): Promise<{ steered: boolean }> {
+    return this.request<{ steered: boolean }>(
+      `/api/v1/agent-instances/${instanceId}/messages/${messageId}/steer`,
+      { method: 'POST' },
+    );
+  }
+
   // Stream messages (for real-time updates). Legacy SSE — superseded by the
   // WebSocket client (ws-client.ts); kept until the Wave A SSE retirement.
   async getMessageStreamUrl(instanceId: string): Promise<string> {
