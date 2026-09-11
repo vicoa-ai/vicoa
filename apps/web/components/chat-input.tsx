@@ -25,6 +25,7 @@ import { shouldShowStopButton } from '@/lib/chat-composer';
 import { getDesktopConfig } from '@/lib/runtime-config';
 import { comboInline, getShortcutCombo, matchesShortcut } from '@/lib/desktop-shortcuts';
 import { folderPathToMention } from '@/lib/chat-drop';
+import { collectComposerPaste, pasteTargetIsEditable } from '@/lib/chat-paste';
 import { FolderRefChip } from '@/components/folder-ref-chip';
 import { getDesktopShellBridge } from '@/lib/desktop-shell';
 
@@ -312,6 +313,36 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
     // Allow re-picking the same file later.
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [addFilesToPending]);
+
+  // Ctrl/⌘+V of a screenshot attaches it, through the same caps and the same
+  // eager upload as the picker. A clipboard carrying text still pastes text —
+  // `collectComposerPaste` owns that call; here we only honour its verdict.
+  const handlePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const { files, handled } = collectComposerPaste(event.clipboardData);
+    if (!handled) return;
+    event.preventDefault();
+    addFilesToPending(files);
+  }, [addFilesToPending]);
+
+  // The screenshot was taken in another app, so the user comes back to a window
+  // where nothing is focused and hits paste. Catch that at the document level
+  // and route it to the composer — but never over a field that takes typing
+  // (the terminal's helper textarea, a search box), and never over a paste some
+  // other handler already consumed.
+  const pasteAcceptEnabled = !disabled && canSendMessage && !isSending;
+  useEffect(() => {
+    if (!pasteAcceptEnabled) return;
+    const onDocumentPaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented || pasteTargetIsEditable(event.target)) return;
+      const { files, handled } = collectComposerPaste(event.clipboardData);
+      if (!handled) return;
+      event.preventDefault();
+      addFilesToPending(files);
+      focusTextarea();
+    };
+    document.addEventListener('paste', onDocumentPaste);
+    return () => document.removeEventListener('paste', onDocumentPaste);
+  }, [pasteAcceptEnabled, addFilesToPending, focusTextarea]);
 
   // "Add folder" / desktop folder-drop: add the folder(s) as chips (deduped by
   // absolute path). They become `@path/` text in `handleSendMessage`.
@@ -818,6 +849,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
               scrollbarColor: 'hsl(var(--border)) transparent',
             }}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             rows={1}
           />
         </div>

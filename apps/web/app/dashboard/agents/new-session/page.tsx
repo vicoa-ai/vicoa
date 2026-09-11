@@ -89,6 +89,7 @@ import { DesktopCollapsedLead, DesktopWindowControlsSpacer } from '@/components/
 import { comboInline, getShortcutCombo, matchesShortcut } from '@/lib/desktop-shortcuts';
 import { getDesktopShellBridge } from '@/lib/desktop-shell';
 import { collectComposerDrop, folderPathToMention } from '@/lib/chat-drop';
+import { collectComposerPaste, pasteTargetIsEditable } from '@/lib/chat-paste';
 import { FolderRefChip } from '@/components/folder-ref-chip';
 import { ForkContextChip } from '@/components/dashboard/fork-context-chip';
 import { postInstanceMessage } from '@/lib/agent-instance-api';
@@ -1293,6 +1294,32 @@ function NewSessionContent() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [addPickedFiles]);
 
+  // Ctrl/⌘+V of a screenshot attaches it, under the same caps as the picker.
+  // A clipboard carrying text still pastes text (see `collectComposerPaste`).
+  const handlePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const { files, handled } = collectComposerPaste(event.clipboardData);
+    if (!handled) return;
+    event.preventDefault();
+    addPickedFiles(files);
+  }, [addPickedFiles]);
+
+  // Same document-level fallback as the session composer: a screenshot is taken
+  // in another app, so the window often has nothing focused when the user
+  // pastes. Never takes a paste aimed at a field that accepts typing.
+  useEffect(() => {
+    if (isSubmitting) return;
+    const onDocumentPaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented || pasteTargetIsEditable(event.target)) return;
+      const { files, handled } = collectComposerPaste(event.clipboardData);
+      if (!handled) return;
+      event.preventDefault();
+      addPickedFiles(files);
+      textareaRef.current?.focus({ preventScroll: true });
+    };
+    document.addEventListener('paste', onDocumentPaste);
+    return () => document.removeEventListener('paste', onDocumentPaste);
+  }, [isSubmitting, addPickedFiles]);
+
   // Add desktop-resolved folder paths from a drop as chips (deduped), the same
   // shape the "Add folder" action produces — expanded to @path/ on submit.
   const addDroppedFolderRefs = useCallback((paths: string[]) => {
@@ -2059,6 +2086,7 @@ function NewSessionContent() {
                   openMentionSignal={mentionSignal}
                   onMentionOpenChange={(open) => { if (open) setShowSlashCommands(false); }}
                   onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
                   placeholder="Type messages, @files, /skills or commands"
                   rows={1}
                   disabled={isSubmitting}
