@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
 import 'highlight.js/styles/atom-one-dark.css';
-import { diffLineBackgroundClass, formatDiffLines, formatTaskNotifications, normalizeCommandOutput } from '@/components/ui/message-markdown-utils';
+import { delimitBareUrls, diffLineBackgroundClass, formatDiffLines, formatTaskNotifications, normalizeCommandOutput } from '@/components/ui/message-markdown-utils';
 import { makeFindHighlightPlugin } from '@/lib/find-highlight';
 import { messageUrlTransform, parseMessageLink } from '@/lib/message-links';
 import { useFileLinks } from '@/components/dashboard/file-link-context';
@@ -97,7 +97,9 @@ function MessageMarkdownImpl({ children, agentType, highlightQuery }: MessageMar
           continue;
         }
 
-        output.push(transformTodoLine(line));
+        // Bare URLs get an explicit `<…>` delimiter so CJK punctuation (or a
+        // bold URL's closing `**`) glued to the end isn't linked along with it.
+        output.push(transformTodoLine(delimitBareUrls(line)));
         continue;
       }
 
