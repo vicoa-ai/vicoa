@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional
 
 from integrations.headless import auq
 from integrations.headless.permission import PermissionReplyRegistry
-from integrations.headless.pi_family import commands as commands_mod
+from integrations.headless import command_index as commands_mod
 from integrations.headless.pi_family import ui_requests
 from integrations.headless.pi_family.event_mapper import EventMapper
 from integrations.headless.pi_family.host_tools import HostToolRouter

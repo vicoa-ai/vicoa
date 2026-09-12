@@ -17,6 +17,8 @@ the wire (send_request calls) and externally visible state.
 
 from __future__ import annotations
 
+import sys
+import tempfile
 import threading
 from collections import deque
 from typing import Any, Dict, Optional
@@ -26,6 +28,7 @@ import pytest
 
 from integrations.headless.acp_base import ACPWrapperBase, ACPWrapperConfig
 from integrations.headless.acp_client import ACPError, ACPMethodNotFound
+from integrations.headless.usage import UsageState
 
 
 _INSTANCE_ID = "acp-inst-001"
@@ -107,6 +110,7 @@ def _build_wrapper(
     wrapper._prompt_cancel_event = threading.Event()
     wrapper._interrupt_active = False
     wrapper._permission_request_active = False
+    wrapper._permission_lock = threading.Lock()
     wrapper._suspend_vicoa_polling = False
     wrapper.message_queue = []
     wrapper._cancelled_message_ids = set()
@@ -123,6 +127,11 @@ def _build_wrapper(
     wrapper._assistant_chunk_last_update_at = 0.0
     wrapper._show_tool_updates = False
     wrapper._last_tool_change_signature = None
+    wrapper._announced_tool_calls = {}
+    wrapper._last_plan_signature = None
+    wrapper._last_synced_commands = {}
+    wrapper._usage = UsageState()
+    wrapper._usage_last_core = None
     wrapper._tool_output_max_lines = 80
     wrapper._tool_output_max_chars = 4000
     wrapper._tool_output_preview_lines = 24
@@ -163,7 +172,7 @@ def test_initialize_sends_spec_payload_and_stores_capabilities() -> None:
     assert payload["protocolVersion"] == 1
     assert payload["clientCapabilities"] == {
         "fs": {"readTextFile": False, "writeTextFile": False},
-        "terminal": False,
+        "terminal": True,
     }
     assert payload["clientInfo"]["name"] == "vicoa"
     assert wrapper.agent_capabilities == {"loadSession": True}
@@ -1164,3 +1173,359 @@ def test_acp_client_replies_method_not_found_for_rejected_requests() -> None:
             "error": {"code": -32601, "message": "Method not found"},
         }
     ]
+
+
+# ---------------------------------------------------------------------------
+# permission flow → unattended prompts fail closed
+# ---------------------------------------------------------------------------
+
+
+def test_permission_timeout_denies_instead_of_allowing() -> None:
+    """A prompt nobody answers must be DENIED, not auto-approved.
+
+    The wait used to fall back to the first allow-shaped option, so an ACP
+    session left alone auto-approved every edit and shell command once the
+    timeout elapsed. Mirrors the Claude runner, which denies on timeout.
+    """
+    vc = MagicMock()
+    reply = MagicMock()
+    reply.message_id = "msg-1"
+    reply.queued_user_messages = []  # user never answered
+    vc.send_message.return_value = reply
+
+    wrapper = _build_wrapper(vicoa_client=vc)
+    wrapper.session_id = _SESSION_ID
+
+    selected = wrapper._wait_for_permission_decision(
+        "Permission required: execute",
+        [
+            {"option_id": "allow", "name": "Allow", "kind": "allow_once"},
+            {"option_id": "no", "name": "Reject", "kind": "reject_once"},
+        ],
+    )
+
+    assert selected == "no"
+
+
+def test_permission_error_denies_instead_of_allowing() -> None:
+    """An exception on the way to asking must also deny, not allow."""
+    vc = MagicMock()
+    vc.send_message.side_effect = RuntimeError("backend unreachable")
+
+    wrapper = _build_wrapper(vicoa_client=vc)
+    wrapper.session_id = _SESSION_ID
+
+    selected = wrapper._wait_for_permission_decision(
+        "Permission required: execute",
+        [
+            {"option_id": "yes", "name": "Allow", "kind": "allow_once"},
+            {"option_id": "never", "name": "Always reject", "kind": "reject_always"},
+        ],
+    )
+
+    assert selected == "never"
+
+
+def test_permission_timeout_cancels_when_agent_offers_no_reject() -> None:
+    """With only allow-shaped options on offer, an unanswered prompt resolves
+    as `cancelled` rather than picking one of them."""
+    vc = MagicMock()
+    reply = MagicMock()
+    reply.message_id = "msg-1"
+    reply.queued_user_messages = []
+    vc.send_message.return_value = reply
+
+    wrapper = _build_wrapper(vicoa_client=vc)
+    wrapper.session_id = _SESSION_ID
+
+    selected = wrapper._wait_for_permission_decision(
+        "Permission required: execute",
+        [
+            {"option_id": "once", "name": "Allow once", "kind": "allow_once"},
+            {"option_id": "always", "name": "Always allow", "kind": "allow_always"},
+        ],
+    )
+
+    assert selected == wrapper._permission_cancelled_option_id
+    assert wrapper.handle_request(
+        "session/request_permission",
+        {
+            "sessionId": _SESSION_ID,
+            "toolCall": {},
+            "options": [
+                {"optionId": "once", "name": "Allow once", "kind": "allow_once"}
+            ],
+        },
+    ) == {"outcome": {"outcome": "cancelled"}}
+
+
+def test_permission_wait_without_vicoa_client_denies() -> None:
+    """No backend client means nobody can be asked — deny."""
+    wrapper = _build_wrapper()
+    wrapper.vicoa_client = None
+
+    selected = wrapper._wait_for_permission_decision(
+        "Permission required: execute",
+        [
+            {"option_id": "ok", "name": "Allow", "kind": "allow_once"},
+            {"option_id": "nope", "name": "Reject", "kind": "reject_once"},
+        ],
+    )
+
+    assert selected == "nope"
+
+
+# ---------------------------------------------------------------------------
+# session/update — tool calls, plans, usage, commands
+# ---------------------------------------------------------------------------
+
+
+def _sent_contents(vc: MagicMock) -> list[str]:
+    return [c.kwargs.get("content", "") for c in vc.send_message.call_args_list]
+
+
+def test_tool_call_is_announced_when_it_starts() -> None:
+    """A tool must be carded the moment it starts, not when it finishes —
+    otherwise a long shell run shows nothing and the session looks hung."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+
+    wrapper._handle_session_update(
+        {
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tc-1",
+                "kind": "execute",
+                "title": "npm test",
+                "status": "pending",
+            }
+        }
+    )
+
+    assert _sent_contents(vc) == ["🔧 Using tool: Execute - `npm test`"]
+    assert wrapper._turn_produced_output is True
+
+
+def test_tool_call_start_diff_is_not_repeated_on_completion() -> None:
+    """Agents resend the same diff on the completion frame; the start card
+    already showed it, so the completion must not post a second copy."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+
+    diff_content = [
+        {
+            "type": "diff",
+            "path": "/repo/app.py",
+            "oldText": "a = 1\n",
+            "newText": "a = 2\n",
+        }
+    ]
+    start = {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "tc-2",
+        "kind": "edit",
+        "title": "Edit app.py",
+        "content": diff_content,
+    }
+    wrapper._handle_session_update({"update": start})
+    first_count = len(vc.send_message.call_args_list)
+    assert first_count == 1
+
+    wrapper._handle_session_update(
+        {
+            "update": {
+                **start,
+                "sessionUpdate": "tool_call_update",
+                "status": "completed",
+            }
+        }
+    )
+
+    assert len(vc.send_message.call_args_list) == first_count
+
+
+def test_tool_call_completion_still_posts_new_output() -> None:
+    """Output that was NOT on the start frame must still reach the user."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+
+    wrapper._handle_session_update(
+        {
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "tc-3",
+                "kind": "execute",
+                "title": "ls",
+            }
+        }
+    )
+    wrapper._handle_session_update(
+        {
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "tc-3",
+                "kind": "execute",
+                "title": "ls",
+                "status": "completed",
+                "content": [
+                    {
+                        "type": "content",
+                        "content": {"type": "text", "text": "README.md"},
+                    }
+                ],
+            }
+        }
+    )
+
+    contents = _sent_contents(vc)
+    assert len(contents) == 2
+    assert "README.md" in contents[1]
+
+
+def test_plan_update_renders_a_checklist_once() -> None:
+    """ACP plan entries become a markdown checklist; an unchanged plan resent
+    on the next step is dropped."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+
+    plan = {
+        "sessionUpdate": "plan",
+        "entries": [
+            {"content": "Read the config", "status": "completed", "priority": "high"},
+            {"content": "Patch the parser", "status": "in_progress"},
+            {"content": "Run the tests", "status": "pending"},
+        ],
+    }
+    wrapper._handle_session_update({"update": plan})
+    wrapper._handle_session_update({"update": plan})
+
+    contents = _sent_contents(vc)
+    assert len(contents) == 1
+    assert contents[0] == (
+        "📋 Plan\n- [x] Read the config\n- [~] Patch the parser\n- [ ] Run the tests"
+    )
+
+
+def test_usage_update_patches_the_context_meter() -> None:
+    """usage_update must feed instance_metadata.usage so ACP agents get the
+    same context ring Claude and Codex have."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+
+    wrapper._handle_session_update(
+        {
+            "update": {
+                "sessionUpdate": "usage_update",
+                "usage": {
+                    "inputTokens": 12_000,
+                    "cachedReadTokens": 3_000,
+                    "outputTokens": 1_000,
+                    "contextWindow": 200_000,
+                },
+            }
+        }
+    )
+
+    vc.patch_agent_instance.assert_called_once()
+    blob = vc.patch_agent_instance.call_args.kwargs["instance_metadata"]["usage"]
+    assert blob["context"]["used_tokens"] == 16_000
+    assert blob["context"]["max_tokens"] == 200_000
+
+
+def test_available_commands_update_syncs_the_slash_menu() -> None:
+    """The agent's own commands must reach Vicoa's command index — the '/'
+    menu otherwise only ever shows Claude's filesystem-scanned commands."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+
+    update = {
+        "sessionUpdate": "available_commands_update",
+        "availableCommands": [
+            {"name": "/review", "description": "Review a PR", "input": {"hint": "<n>"}},
+            {"name": "compact", "description": "Compact the context"},
+        ],
+    }
+    wrapper._handle_session_update({"update": update})
+    wrapper._handle_session_update({"update": update})  # unchanged → no resync
+
+    vc.sync_commands.assert_called_once_with(
+        agent_type="testagent",
+        commands={
+            "review": {"description": "Review a PR <n>"},
+            "compact": {"description": "Compact the context"},
+        },
+    )
+
+
+def test_control_updates_survive_session_load_replay() -> None:
+    """Replay must not swallow the agent's modes/commands: a resumed session
+    otherwise comes back with no slash menu and a stale mode."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+    wrapper._replaying_session = True
+
+    wrapper._handle_session_update(
+        {
+            "update": {
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": [{"name": "plan", "description": "Plan it"}],
+            }
+        }
+    )
+    # ...while replayed transcript content stays suppressed.
+    wrapper._handle_session_update(
+        {
+            "update": {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": "old reply"},
+            }
+        }
+    )
+
+    vc.sync_commands.assert_called_once()
+    assert wrapper._assistant_chunk_buffer == ""
+
+
+# ---------------------------------------------------------------------------
+# terminal/* routing
+# ---------------------------------------------------------------------------
+
+
+def test_terminal_requests_are_routed_to_the_manager() -> None:
+    """We advertise clientCapabilities.terminal, so the five terminal methods
+    must be answered rather than rejected as method-not-found."""
+    wrapper = _build_wrapper()
+    wrapper._terminals = None
+
+    created = wrapper.handle_request(
+        "terminal/create",
+        {
+            "sessionId": _SESSION_ID,
+            "command": sys.executable,
+            "args": ["-c", "pass"],
+            # The test config's project_path does not exist on disk; the agent
+            # may name its own cwd and that is what a real one does.
+            "cwd": tempfile.gettempdir(),
+        },
+    )
+    terminal_id = created["terminalId"]
+    try:
+        exit_status = wrapper.handle_request(
+            "terminal/wait_for_exit",
+            {"sessionId": _SESSION_ID, "terminalId": terminal_id},
+        )
+        assert exit_status == {"exitCode": 0, "signal": None}
+        assert "output" in wrapper.handle_request(
+            "terminal/output", {"sessionId": _SESSION_ID, "terminalId": terminal_id}
+        )
+    finally:
+        assert wrapper._terminals is not None
+        wrapper._terminals.close_all()
+
+
+def test_unknown_terminal_method_is_still_method_not_found() -> None:
+    wrapper = _build_wrapper()
+    wrapper._terminals = None
+
+    with pytest.raises(ACPMethodNotFound):
+        wrapper.handle_request("terminal/resize", {"sessionId": _SESSION_ID})

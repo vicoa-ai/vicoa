@@ -251,6 +251,47 @@ def claude_context_window_for_model(model: Optional[str]) -> Optional[int]:
     return _CLAUDE_DEFAULT_CONTEXT_WINDOW if "claude" in needle else None
 
 
+def acp_context(usage: Optional[Mapping[str, Any]]) -> Optional[dict]:
+    """Build ``context`` from an ACP ``Usage`` object.
+
+    ACP carries usage on the ``session/prompt`` *response* (and, on agents that
+    send it, the ``usage_update`` notification). The spec names the token
+    counters ``inputTokens`` / ``outputTokens`` / ``cachedReadTokens``; the
+    context-window size is not in the core schema, so the common vendor
+    spellings are all accepted and the first present one wins.
+
+    Context fill is a point-in-time reading, not a running total: the current
+    context is the input side of the last request (prompt + history + cache
+    reads) plus what the model just produced. Output tokens are counted because
+    they are part of the transcript the next request replays.
+    """
+    if not isinstance(usage, Mapping):
+        return None
+
+    used: Optional[int] = None
+    for key in ("contextTokens", "totalTokens", "usedTokens"):
+        used = _coerce_int(usage.get(key))
+        if used is not None:
+            break
+    if used is None:
+        parts = [
+            _coerce_int(usage.get("inputTokens")),
+            _coerce_int(usage.get("cachedReadTokens")),
+            _coerce_int(usage.get("outputTokens")),
+        ]
+        if any(part is not None for part in parts):
+            used = sum(part or 0 for part in parts)
+
+    max_tokens: Optional[int] = None
+    for key in ("contextWindow", "maxTokens", "contextWindowTokens", "contextLimit"):
+        max_tokens = _coerce_int(usage.get(key))
+        if max_tokens is not None:
+            break
+
+    cost = _coerce_float(usage.get("costUsd") or usage.get("totalCostUsd"))
+    return _context_blob(used, max_tokens, cost)
+
+
 def codex_context(token_usage: Optional[Dict[str, Any]]) -> Optional[dict]:
     """Build ``context`` from a Codex ``thread/tokenUsage/updated`` payload.
 

@@ -407,6 +407,35 @@ class ACPClient:
             if self.running:
                 self.log(f"[ACP] Error reading stderr: {e}")
 
+    def _answer_request(self, msg_id: Any, method: str, params: Dict[str, Any]) -> None:
+        """Run one agent->client request and write its JSON-RPC response."""
+        try:
+            result: Dict[str, Any] | None = {}
+            if self.on_request:
+                result = self.on_request(method, params)
+
+            self._write_message(
+                {"jsonrpc": "2.0", "id": msg_id, "result": result or {}}
+            )
+        except ACPMethodNotFound as e:
+            self.log(f"[ACP] Rejecting unknown request {method}: {e}")
+            self._write_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "error": {"code": -32601, "message": "Method not found"},
+                }
+            )
+        except Exception as e:
+            self.log(f"[ACP] Error handling request {method}: {e}")
+            self._write_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "error": {"code": -32000, "message": str(e)},
+                }
+            )
+
     def _handle_message(self, msg: Dict[str, Any]):
         """Handle incoming JSON-RPC message from agent."""
         # Notifications/requests both include "method". Requests additionally include "id".
@@ -418,33 +447,20 @@ class ACPClient:
             if "id" in msg:
                 msg_id = msg["id"]
                 self.log(f"[ACP] Request received: {method} (id={msg_id})")
-
-                try:
-                    result: Dict[str, Any] | None = {}
-                    if self.on_request:
-                        result = self.on_request(method, params)
-
-                    self._write_message(
-                        {"jsonrpc": "2.0", "id": msg_id, "result": result or {}}
-                    )
-                except ACPMethodNotFound as e:
-                    self.log(f"[ACP] Rejecting unknown request {method}: {e}")
-                    self._write_message(
-                        {
-                            "jsonrpc": "2.0",
-                            "id": msg_id,
-                            "error": {"code": -32601, "message": "Method not found"},
-                        }
-                    )
-                except Exception as e:
-                    self.log(f"[ACP] Error handling request {method}: {e}")
-                    self._write_message(
-                        {
-                            "jsonrpc": "2.0",
-                            "id": msg_id,
-                            "error": {"code": -32000, "message": str(e)},
-                        }
-                    )
+                # Answered on its own thread, never inline. Two client-bound
+                # requests block by design — a permission prompt waits on the
+                # user, and terminal/wait_for_exit waits on a process — and this
+                # is the stdout reader: handling them here would stall every
+                # session/update behind them, and would deadlock an agent that
+                # polls terminal/output while waiting for the same terminal to
+                # exit. Responses may be written out of order; JSON-RPC
+                # correlates them by id, and _write_message holds a lock.
+                threading.Thread(
+                    target=self._answer_request,
+                    args=(msg_id, method, params),
+                    daemon=True,
+                    name=f"acp-request-{method}",
+                ).start()
                 return
 
             # JSON-RPC notification from agent -> client (no response)
