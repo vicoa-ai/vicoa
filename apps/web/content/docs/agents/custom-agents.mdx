@@ -1,13 +1,14 @@
 ---
 title: Custom agents
-description: Add any ACP-speaking coding agent to Vicoa, run a second profile of an agent you already use, point one at a different API, or hide one — all from ~/.vicoa/config.json.
+description: Add any ACP-speaking coding agent to Vicoa — from the catalog in Settings → Providers, with `vicoa provider add`, or by hand in ~/.vicoa/config.json — then check that it works.
 ---
 
 # Custom agents
 
 The agents on the [previous page](/docs/agents/more-coding-agents) ship with
-Vicoa. Anything else goes in `~/.vicoa/config.json` under `agents.providers`,
-and the daemon picks it up on its next start. You can:
+Vicoa. Anything else is a **provider**: an entry in `~/.vicoa/config.json`
+under `agents.providers` that tells the daemon on that machine how to launch
+one more agent. You can:
 
 - **Add any ACP agent** — anything that speaks the
   [Agent Client Protocol](https://agentclientprotocol.com) over stdio.
@@ -17,18 +18,67 @@ and the daemon picks it up on its next start. You can:
 - **Hide an agent** you never use.
 
 Nothing here needs a Vicoa update. A provider you add is yours alone: it lives
-on your machine, in your config file, and is never sent anywhere.
-
-After editing the file, restart the daemon so it re-reads it:
-
-```bash
-vicoa stop
-vicoa daemon
-```
+on your machine, in your config file, and is never sent anywhere. The daemon
+notices the file change on its own — no restart, and your running sessions
+are untouched.
 
 Provider ids must be lowercase and start with a letter (`^[a-z][a-z0-9-]*$`).
 
-## Add an ACP agent
+## From the catalog
+
+**Settings → Providers → More agents** lists ACP agents Vicoa knows how to
+launch — Cline, goose, Gemini-style `npx` packages, Factory Droid, Qwen Code,
+Kilo, Kiro, TRAE and more. **Add** writes the launch command into the chosen
+machine's config; nothing is downloaded or installed by Vicoa itself.
+
+- Entries launched through `npx -y …` or `uvx --from …` work as soon as Node.js
+  or uv is on that machine: the package downloads on the first session.
+- Entries with a bare binary (`goose acp`) need the agent's CLI installed
+  first — the row links to its install guide and stays under *Added, not
+  detected yet* until the daemon finds it.
+
+The same catalog is on the command line:
+
+```bash
+vicoa provider catalog          # what can be added by name
+vicoa provider add cline        # write it to ~/.vicoa/config.json
+vicoa provider ls               # every provider on this machine + install state
+```
+
+## Check that it works
+
+An entry in a file proves nothing. **Check** (the button next to a provider,
+or `vicoa provider check <id>`) starts the agent once and runs the exact
+handshake a session would — `initialize`, then `session/new` — and tells you
+where it stopped:
+
+| Result | Meaning |
+| --- | --- |
+| Not installed | the launcher isn't on the daemon's `PATH` — install it, or use an absolute path in `command` |
+| Couldn't start | the binary exists but wouldn't run (permissions, wrong architecture) |
+| Didn't answer the ACP handshake | it ran, but isn't an ACP server with those arguments — the last lines of its stderr are shown |
+| Couldn't open a session | handshake fine, but no session — almost always "log in with the agent's own CLI first" |
+| Works | the models and modes it reported are what a session will get |
+
+```bash
+vicoa provider check copilot
+# Copilot CLI (copilot): copilot --acp --stdio
+#   OK — handshake and session/new succeeded in 5037 ms (Copilot 1.0.71)
+#   models: (agent reports none before a prompt)
+#   modes:  …#agent, …#plan, …#autopilot
+
+vicoa provider check qwen-code
+# Qwen Code (qwen-code): npx -y @qwen-code/qwen-code@0.20.1 --acp --experimental-skills
+#   FAILED at session_new: needs authentication (openai); log in with the
+#   agent's own CLI on this machine first. … Missing API key for openai auth …
+#   set the environment variable 'OPENAI_API_KEY'.
+```
+
+The second one is the common case for a freshly added agent: the launch is
+fine, the agent just has no credentials yet. Log in with its own CLI (or put
+the key in the provider's `env`, see below) and check again.
+
+## Add an ACP agent by hand
 
 `extends: "acp"` means "here is the whole launch command". The first element is
 the binary, the rest are the arguments that put it into ACP mode.
@@ -128,6 +178,10 @@ replaced; everything else stays.
 }
 ```
 
+Or `vicoa provider disable hermes` / `vicoa provider enable hermes`. A provider
+you added can be deleted outright with `vicoa provider rm <id>` or the trash
+icon on its row.
+
 ## Field reference
 
 | Field | Applies to | Meaning |
@@ -150,4 +204,6 @@ grep "agents.providers" ~/.vicoa/daemon.log
 ```
 
 A custom agent that starts but immediately fails is almost always a binary that
-is not on the daemon's `PATH`. Use an absolute path in `command` to rule it out.
+is not on the daemon's `PATH`. Run `vicoa provider check <id>` — it names the
+step that failed and shows the agent's stderr — and use an absolute path in
+`command` to rule PATH out.

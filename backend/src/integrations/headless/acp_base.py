@@ -34,6 +34,11 @@ from integrations.headless.acp_client import (
     ACPMethodNotFound,
     ACPResponse,
 )
+from integrations.headless.acp_handshake import (
+    initialize_payloads,
+    is_auth_required_error,
+    normalize_models,
+)
 from integrations.headless.acp_terminal import TerminalManager
 from integrations.headless.command_index import build_command_index
 from integrations.headless.thinking import build_thinking_metadata
@@ -633,34 +638,7 @@ class ACPWrapperBase(ABC):
             getattr(self.config, "initialize_timeout_seconds", 60.0) or 60.0
         )
 
-        init_payloads: list[Dict[str, Any]] = [
-            {
-                "protocolVersion": 1,
-                "clientCapabilities": {
-                    "fs": {"readTextFile": False, "writeTextFile": False},
-                    # Terminal on, fs off. Terminal is what makes the agent's
-                    # shell commands *ours*: run in a process group we own, so
-                    # they die with the session, their output is bounded, and a
-                    # stuck one can be killed from here. fs stays off — the
-                    # agent's own file tools are better than anything we would
-                    # proxy, and turning them on would only add a hop.
-                    "terminal": True,
-                },
-                "clientInfo": {"name": "vicoa", "title": "Vicoa", "version": "1.0.0"},
-            },
-            {
-                # Legacy pre-v1 shape (older OpenCode builds).
-                "protocolVersion": 1,
-                "capabilities": {"supports": ["streaming", "tools", "permissions"]},
-                "clientInfo": {"name": "vicoa", "version": "1.0.0"},
-            },
-            {
-                # Backward-compatible fallback for agents that accept date-style versions.
-                "protocolVersion": "2024-11-01",
-                "capabilities": {"supports": ["streaming", "tools", "permissions"]},
-                "clientInfo": {"name": "vicoa", "version": "1.0.0"},
-            },
-        ]
+        init_payloads = initialize_payloads()
 
         last_error: ACPError | None = None
         for payload in init_payloads:
@@ -905,9 +883,7 @@ class ACPWrapperBase(ABC):
 
     @staticmethod
     def _is_auth_required_error(error: Exception) -> bool:
-        """Spec error code -32000 = Authentication required."""
-        text = str(error)
-        return "-32000" in text or "authentication required" in text.lower()
+        return is_auth_required_error(error)
 
     def _authenticate(self) -> None:
         """Run the ACP ``authenticate`` flow with an advertised auth method."""
@@ -982,35 +958,7 @@ class ACPWrapperBase(ABC):
         Prefers the dedicated ``models.availableModels`` block; falls back to
         the ``model`` configOption's ``options`` list.
         """
-        if self.available_models:
-            return [
-                {
-                    "id": str(m.get("modelId")),
-                    "label": str(m.get("name") or m.get("modelId")),
-                }
-                for m in self.available_models
-                if m.get("modelId")
-            ]
-        option = next(
-            (
-                o
-                for o in self.session_config_options
-                if str(o.get("category") or "") == "model"
-            ),
-            None,
-        )
-        if option:
-            out: list[Dict[str, str]] = []
-            for o in option.get("options") or []:
-                if isinstance(o, dict) and o.get("value") is not None:
-                    out.append(
-                        {
-                            "id": str(o.get("value")),
-                            "label": str(o.get("name") or o.get("value")),
-                        }
-                    )
-            return out
-        return []
+        return normalize_models(self.available_models, self.session_config_options)
 
     def _live_session_state_config(self) -> Dict[str, Any]:
         """session_config additions describing the agent's live ACP pickers.

@@ -22,9 +22,11 @@ import hashlib
 import json
 from typing import Any
 
+from protocol.acp_catalog import ACP_CATALOG
+
 
 AGENT_CATALOG: dict[str, Any] = {
-    "version": "2026-09-11-1",
+    "version": "2026-09-12-1",
     "min_cli_version": "1.20.0",
     "min_client_version": "0.42.0",
     "agents": [
@@ -364,6 +366,11 @@ AGENT_CATALOG: dict[str, Any] = {
             ],
         },
     ],
+    # Agents a user can add with one click (Settings → Providers, or
+    # `vicoa provider add`). Not in `agents`: the daemon does not know them
+    # until they are installed into the machine's config, and they carry no
+    # model/mode lists — an ACP agent reports those at session/new.
+    "acp_catalog": ACP_CATALOG,
 }
 
 

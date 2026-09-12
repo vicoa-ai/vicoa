@@ -36,6 +36,7 @@ from .file_sync import sync_project_files
 from .utils import get_project_path
 from .commands.automation import add_automation_subparser, run_automation_command
 from .commands.plugin import add_plugin_subparser, run_plugin_command
+from .commands.provider import add_provider_subparser, run_provider_command
 from .commands.instance import run_session_command
 from .commands.ls import cmd_ls as _cmd_ls
 from .commands.stop import cmd_stop
@@ -1903,6 +1904,10 @@ Examples:
     # operate on ~/.vicoa/plugins directly, not over the network.
     add_plugin_subparser(subparsers)
 
+    # 'provider' subcommand — add / check / manage the ACP agents this machine
+    # can run (commands/provider.py). Edits ~/.vicoa/config.json directly.
+    add_provider_subparser(subparsers)
+
     # 'session' subcommand — inspect the user's agent sessions from the backend.
     # Distinct from `vicoa ls` (local processes only): this spans every machine
     # and finished sessions, and can print a session's message transcript.
@@ -2288,6 +2293,8 @@ Examples:
         sys.exit(run_session_command(args))
     elif args.command == "plugin":
         sys.exit(run_plugin_command(args))
+    elif args.command == "provider":
+        sys.exit(run_provider_command(args))
     elif args.command in {"claude", "codex", "opencode"}:
         run_agent_default(args, unknown_args)
     else:

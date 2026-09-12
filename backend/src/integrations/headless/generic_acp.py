@@ -129,11 +129,24 @@ GENERIC_ACP_AGENTS: Dict[str, GenericAgentSpec] = {
 }
 
 
-#: Cache for :func:`effective_acp_agents`. The config is read once per process:
-#: the daemon consults the table on every spawn and every install probe, and a
-#: hand-edited file does not change under a running daemon (``vicoa reload``
-#: restarts it).
+#: Cache for :func:`effective_acp_agents`, keyed on the config file's mtime.
+#: The daemon consults the table on every spawn and every install probe, so
+#: the file is not re-parsed each time — but `vicoa provider add` and a hand
+#: edit both change it under a running daemon, and the user should not have to
+#: restart (which kills live sessions) for the new agent to be spawnable. One
+#: ``stat`` per call is the price.
 _EFFECTIVE_CACHE: Optional[Dict[str, GenericAgentSpec]] = None
+_EFFECTIVE_CACHE_STAMP: Optional[float] = None
+
+
+def _config_stamp() -> Optional[float]:
+    """mtime of ``~/.vicoa/config.json``; None when it is absent/unreadable."""
+    try:
+        from vicoa.cli import get_user_config_path
+
+        return os.stat(get_user_config_path()).st_mtime
+    except Exception:
+        return None
 
 
 def spec_from_override(
@@ -236,8 +249,9 @@ def effective_acp_agents(*, refresh: bool = False) -> Dict[str, GenericAgentSpec
     built-ins on any config problem: an unreadable or malformed file must cost
     the user their *custom* agents, never the ones Vicoa ships.
     """
-    global _EFFECTIVE_CACHE
-    if _EFFECTIVE_CACHE is not None and not refresh:
+    global _EFFECTIVE_CACHE, _EFFECTIVE_CACHE_STAMP
+    stamp = _config_stamp()
+    if _EFFECTIVE_CACHE is not None and not refresh and stamp == _EFFECTIVE_CACHE_STAMP:
         return _EFFECTIVE_CACHE
 
     try:
@@ -253,6 +267,7 @@ def effective_acp_agents(*, refresh: bool = False) -> Dict[str, GenericAgentSpec
     except Exception:
         logger.warning("agents.providers: config unreadable; using built-ins only")
         _EFFECTIVE_CACHE = dict(GENERIC_ACP_AGENTS)
+    _EFFECTIVE_CACHE_STAMP = stamp
     return _EFFECTIVE_CACHE
 
 

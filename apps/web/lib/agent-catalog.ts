@@ -50,11 +50,33 @@ export interface CatalogAgent {
   modes?: CatalogEnumEntry[];
 }
 
+/**
+ * One ACP agent a machine can add with one click (backend
+ * `protocol/acp_catalog.py`). `command` is the whole launch argv; it goes
+ * into the machine's `~/.vicoa/config.json` verbatim.
+ */
+export interface AcpCatalogEntry {
+  id: string;
+  label: string;
+  description: string;
+  command: string[];
+  env?: Record<string, string>;
+  install_url: string;
+  version?: string;
+}
+
 export interface AgentCatalog {
   version: string;
   min_cli_version: string;
   min_client_version: string;
   agents: CatalogAgent[];
+  /**
+   * Agents a machine can add from Settings → Providers. Not in `agents`: a
+   * daemon only knows them once they are in its config, and they carry no
+   * model/mode lists — an ACP agent reports those at session/new. Absent
+   * from the baked-in fallback; the server fills it.
+   */
+  acp_catalog?: AcpCatalogEntry[];
 }
 
 export function agentById(catalog: AgentCatalog, id: string): CatalogAgent | undefined {
