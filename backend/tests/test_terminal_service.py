@@ -153,6 +153,66 @@ def test_kill_reaps_sighup_ignoring_child(
         pytest.fail(f"SIGHUP-ignoring child {child_pid} survived the terminal kill")
 
 
+def test_kill_interactive_shell_is_fast(
+    service: TerminalService, collector: _Collector, tmp_path: Path
+) -> None:
+    """The desktop tab runs an interactive login shell, and interactive zsh/bash
+    IGNORE SIGTERM — a TERM-only close sat out the full 3s grace before SIGKILL
+    on every tab at app quit. close(kill_group=True) now leads with SIGHUP (what
+    a terminal emulator sends when its window closes), so the shell exits at
+    once. Modelled with a child that ignores TERM but takes the default HUP."""
+    pty_id = service.spawn(
+        str(tmp_path),
+        80,
+        24,
+        command=[
+            "/bin/sh",
+            "-c",
+            "trap '' TERM; echo READY; while :; do sleep 1; done",
+        ],
+    )
+    assert collector.wait_for_output(b"READY")
+
+    started = time.monotonic()
+    service.kill(pty_id)
+    assert collector.exit_event.wait(timeout=10.0)
+    elapsed = time.monotonic() - started
+    assert elapsed < 2.0, (
+        f"TERM-ignoring shell took {elapsed:.1f}s to die (SIGHUP not sent first?)"
+    )
+
+
+def test_shutdown_closes_tabs_concurrently(
+    collector: _Collector, tmp_path: Path
+) -> None:
+    """Tabs whose job shrugs off HUP+TERM each need the 3s grace before SIGKILL;
+    shutdown() must overlap those waits, not stack them per tab."""
+    svc = TerminalService(on_output=collector.on_output, on_exit=collector.on_exit)
+    try:
+        for _ in range(3):
+            svc.spawn(
+                str(tmp_path),
+                80,
+                24,
+                command=[
+                    "/bin/sh",
+                    "-c",
+                    "trap '' HUP TERM; echo UP; while :; do sleep 1; done",
+                ],
+            )
+        assert collector.wait_for_output(b"UP")
+        started = time.monotonic()
+        svc.shutdown()
+        elapsed = time.monotonic() - started
+        # One grace period (3s) + slack, not three of them (9s+).
+        assert elapsed < 6.0, (
+            f"shutdown of 3 stubborn tabs took {elapsed:.1f}s (serial closes?)"
+        )
+        assert svc.live_session_ids() == []
+    finally:
+        svc.shutdown()
+
+
 def test_unleased_session_is_never_reaped(
     service: TerminalService, tmp_path: Path
 ) -> None:

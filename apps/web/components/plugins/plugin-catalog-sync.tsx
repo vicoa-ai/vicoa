@@ -10,6 +10,12 @@
  * on desktop, the cloud relay for a remote machine — so Tier 1 plugins light up
  * on plain web too, for any machine whose daemon is connected.
  *
+ * Desktop cold start: the window now opens before the local daemon has booted
+ * and registered, so the first tick usually cannot learn this machine's id yet.
+ * Rather than leaving the local plugins dark until the next 60s tick, a short
+ * backoff (1s → 16s) retries just the local lookup and syncs that one machine
+ * as soon as the daemon answers.
+ *
  * Renders nothing.
  */
 
@@ -23,6 +29,8 @@ import { pluginRegistry } from '@/lib/plugins/registry';
 import { mapCatalog, type CatalogWire } from '@/lib/plugins/catalog';
 
 const POLL_MS = 60_000;
+/** Local-daemon boot retry schedule (ms); cumulative reach ≈ 32s, past any sane cold start. */
+const LOCAL_BOOT_RETRY_MS = [1_000, 1_000, 2_000, 4_000, 8_000, 16_000];
 
 export function PluginCatalogSync() {
   const { api } = useAgentDashboard();
@@ -30,6 +38,38 @@ export function PluginCatalogSync() {
 
   useEffect(() => {
     let cancelled = false;
+    let localRetryTimer: number | null = null;
+
+    const syncMachine = async (machineId: string) => {
+      try {
+        const res = (await getRpcClient(machineId).callRpc(machineId, 'plugin-catalog', {
+          etag: etags.current[machineId],
+        })) as CatalogWire;
+        if (cancelled) return;
+        if (res.not_modified) return;
+        if (res.etag) etags.current[machineId] = res.etag;
+        pluginRegistry.setMachinePlugins(machineId, mapCatalog(machineId, res));
+      } catch {
+        // Machine unreachable or daemon too old to know the RPC; keep prior
+        // state rather than dropping the plugins mid-session.
+      }
+    };
+
+    // The local daemon wasn't up for the main tick: poll for its id on a short
+    // backoff and sync this machine alone the moment it appears.
+    const scheduleLocalRetry = (attempt: number) => {
+      if (cancelled || attempt >= LOCAL_BOOT_RETRY_MS.length) return;
+      localRetryTimer = window.setTimeout(async () => {
+        localRetryTimer = null;
+        const localId = await ensureLocalMachineId();
+        if (cancelled) return;
+        if (!localId) {
+          scheduleLocalRetry(attempt + 1);
+          return;
+        }
+        await syncMachine(localId);
+      }, LOCAL_BOOT_RETRY_MS[attempt]);
+    };
 
     const tick = async () => {
       // Target set = online cloud machines + this desktop's local machine. The
@@ -50,6 +90,7 @@ export function PluginCatalogSync() {
       if (getDesktopConfig()) {
         const localId = await ensureLocalMachineId();
         if (localId) targets.add(localId);
+        else if (localRetryTimer === null) scheduleLocalRetry(0);
       }
       if (cancelled) return;
 
@@ -61,22 +102,7 @@ export function PluginCatalogSync() {
         }
       }
 
-      await Promise.all(
-        [...targets].map(async (machineId) => {
-          try {
-            const res = (await getRpcClient(machineId).callRpc(machineId, 'plugin-catalog', {
-              etag: etags.current[machineId],
-            })) as CatalogWire;
-            if (cancelled) return;
-            if (res.not_modified) return;
-            if (res.etag) etags.current[machineId] = res.etag;
-            pluginRegistry.setMachinePlugins(machineId, mapCatalog(machineId, res));
-          } catch {
-            // Machine unreachable or daemon too old to know the RPC; keep prior
-            // state rather than dropping the plugins mid-session.
-          }
-        }),
-      );
+      await Promise.all([...targets].map(syncMachine));
     };
 
     void tick();
@@ -84,6 +110,7 @@ export function PluginCatalogSync() {
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      if (localRetryTimer !== null) window.clearTimeout(localRetryTimer);
     };
   }, [api]);
 
