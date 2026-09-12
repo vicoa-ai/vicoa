@@ -53,6 +53,42 @@ _AgentLogo? _getLogo(String? agentTypeName) {
   return null;
 }
 
+// Generated fallback for a user-defined provider (`agents.providers` in
+// ~/.vicoa/config.json). Those agents have no brand mark and never will — the
+// point of the feature is that adding one costs no client release. Palette and
+// hash mirror `apps/web/lib/project-icons.ts` exactly, so the same custom agent
+// gets the same colour on web and mobile.
+const List<Color> _generatedAvatarPalette = <Color>[
+  Color(0xFF7A6AA8), // violet
+  Color(0xFF3D7EA6), // sky
+  Color(0xFF388068), // emerald
+  Color(0xFFA4673A), // orange
+  Color(0xFFB05C80), // pink
+  Color(0xFF6A70B8), // indigo
+  Color(0xFF368080), // teal
+  Color(0xFFB06260), // red
+  Color(0xFF8F7838), // amber
+  Color(0xFF5179B0), // blue
+];
+
+// paseo's hashIdentityKey (hash*31 + charCode), masked to 32 bits unsigned to
+// match JavaScript's `>>> 0`.
+int _hashIdentity(String seed) {
+  var hash = 0;
+  for (final unit in seed.runes) {
+    hash = (hash * 31 + unit) & 0xFFFFFFFF;
+  }
+  return hash;
+}
+
+Color _generatedAvatarColor(String seed) =>
+    _generatedAvatarPalette[_hashIdentity(seed) % _generatedAvatarPalette.length];
+
+String _generatedInitial(String name) {
+  final trimmed = name.trim();
+  return trimmed.isEmpty ? '\u00B7' : String.fromCharCode(trimmed.runes.first).toUpperCase();
+}
+
 /// Whether [AgentTypeIconWidget] has an actual rounded logo for
 /// [agentTypeName] — i.e. whether it would render something rather than
 /// [SizedBox.shrink]. Lets callers fall back to a generic icon instead of
@@ -87,7 +123,31 @@ class AgentTypeIconWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final logo = _getLogo(agentTypeName);
-    if (logo == null) return const SizedBox.shrink();
+    if (logo == null) {
+      final name = agentTypeName;
+      if (name == null || name.trim().isEmpty) return const SizedBox.shrink();
+      return _buildWrapped(
+        context,
+        Container(
+          width: size,
+          height: size,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: _generatedAvatarColor(name.toLowerCase()),
+            borderRadius: BorderRadius.circular(size * 0.24),
+          ),
+          child: Text(
+            _generatedInitial(name),
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+              fontSize: size * 0.56,
+              height: 1,
+            ),
+          ),
+        ),
+      );
+    }
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final needsInvert = logo.invertInDark && isDark;
@@ -125,15 +185,23 @@ class AgentTypeIconWidget extends StatelessWidget {
           )
         : rawSvg;
 
+    return _buildWrapped(context, baseSvg);
+  }
+
+  /// Applies the shared presentation — muted grayscale, the avatar circle and
+  /// the spinning ring — to [glyph]. Shared by the real logos and by the
+  /// generated initial-square a user-defined provider falls back to, so the two
+  /// can never drift apart.
+  Widget _buildWrapped(BuildContext context, Widget glyph) {
     final svg = muted
         ? Opacity(
             opacity: 0.5,
             child: ColorFiltered(
               colorFilter: const ColorFilter.matrix(_grayscaleMatrix),
-              child: baseSvg,
+              child: glyph,
             ),
           )
-        : baseSvg;
+        : glyph;
 
     if (withBackground) {
       final circleSize = size + ringPadding * 2;

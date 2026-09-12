@@ -1,6 +1,7 @@
 import Image from 'next/image';
 import { MessageCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { projectAvatarColor, projectInitial } from '@/lib/project-icons';
 import { CLOSED_STATUSES } from '@/components/dashboard/session-grouping';
 
 // Brand-mark treatment, per logo. The marks were authored for the old
@@ -61,7 +62,37 @@ export function AgentTypeIcon({
   whiteForOpenAI = false,
 }: AgentTypeIconProps) {
   const logo = getAgentLogoSrc(agentTypeName);
-  if (!logo) return null;
+
+  // A user-defined provider (~/.vicoa/config.json `agents.providers`) has no
+  // brand mark here and never will — the whole point is that adding one costs
+  // no client release. Returning null rendered nothing at all, which read as a
+  // broken row rather than an agent we simply have no logo for. Fall back to a
+  // deterministic initial-square, the same treatment generated project icons
+  // get, so a custom agent is visually stable and distinguishable.
+  if (!logo) {
+    if (!agentTypeName) return null;
+    return (
+      <span
+        aria-label={agentTypeName}
+        title={agentTypeName}
+        className={cn(
+          'flex-shrink-0 inline-flex items-center justify-center font-semibold text-white select-none',
+          spinning && 'animate-logo-fade',
+          className,
+        )}
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size * 0.24,
+          backgroundColor: projectAvatarColor(agentTypeName.toLowerCase()),
+          fontSize: Math.max(8, Math.round(size * 0.56)),
+          lineHeight: 1,
+        }}
+      >
+        {projectInitial(agentTypeName)}
+      </span>
+    );
+  }
 
   // Hermes (and any boxedWhite glyph) on a dark surface: render the dark glyph
   // centered on a white rounded square instead of inverting it to a bare white

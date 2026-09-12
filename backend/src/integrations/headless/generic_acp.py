@@ -129,6 +129,133 @@ GENERIC_ACP_AGENTS: Dict[str, GenericAgentSpec] = {
 }
 
 
+#: Cache for :func:`effective_acp_agents`. The config is read once per process:
+#: the daemon consults the table on every spawn and every install probe, and a
+#: hand-edited file does not change under a running daemon (``vicoa reload``
+#: restarts it).
+_EFFECTIVE_CACHE: Optional[Dict[str, GenericAgentSpec]] = None
+
+
+def spec_from_override(
+    provider_id: str,
+    override: Dict[str, object],
+    base_specs: Dict[str, GenericAgentSpec],
+) -> Optional[GenericAgentSpec]:
+    """Build one :class:`GenericAgentSpec` from a validated config entry.
+
+    ``command`` replaces the launch argv wholesale (paseo's semantics): its
+    first element is the binary and the rest are the args that put it in ACP
+    mode. Everything not named is inherited from ``extends``, so a profile that
+    only swaps ``env`` keeps the base agent's binary names, timeouts and
+    model-flag ordering.
+    """
+    extends = str(override.get("extends") or "")
+    if extends and extends != "acp":
+        base = base_specs.get(extends)
+    else:
+        base = base_specs.get(provider_id)
+
+    command = override.get("command")
+    command_parts = [str(part) for part in command] if isinstance(command, list) else []
+
+    if base is None:
+        # extends: "acp" — nothing to inherit, so the command is the whole
+        # definition. The validator guarantees it is present.
+        if not command_parts:
+            return None
+        binaries: tuple[str, ...] = (command_parts[0],)
+        acp_args: tuple[str, ...] = tuple(command_parts[1:])
+        display_name = str(override.get("label") or provider_id)
+        env: Dict[str, str] = {}
+        initialize_timeout = 60.0
+        install_hint = ""
+        model_arg = None
+        model_arg_first = False
+        extra_dirs: tuple[str, ...] = ()
+    else:
+        binaries = (command_parts[0],) if command_parts else base.binaries
+        acp_args = tuple(command_parts[1:]) if command_parts else base.acp_args
+        display_name = str(override.get("label") or base.display_name)
+        env = dict(base.env)
+        initialize_timeout = base.initialize_timeout_seconds
+        install_hint = base.install_hint
+        model_arg = base.model_arg
+        model_arg_first = base.model_arg_first
+        extra_dirs = base.extra_dirs
+
+    override_env = override.get("env")
+    if isinstance(override_env, dict):
+        env.update({str(k): str(v) for k, v in override_env.items()})
+
+    timeout = override.get("initialize_timeout_seconds")
+    if isinstance(timeout, (int, float)) and not isinstance(timeout, bool):
+        initialize_timeout = float(timeout)
+
+    hint = override.get("install_hint")
+    if isinstance(hint, str) and hint:
+        install_hint = hint
+
+    return GenericAgentSpec(
+        catalog_id=provider_id,
+        display_name=display_name,
+        binaries=binaries,
+        acp_args=acp_args,
+        env=env,
+        initialize_timeout_seconds=initialize_timeout,
+        install_hint=install_hint,
+        model_arg=model_arg,
+        model_arg_first=model_arg_first,
+        extra_dirs=extra_dirs,
+    )
+
+
+def build_effective_acp_agents(
+    overrides: Dict[str, Dict[str, object]],
+) -> Dict[str, GenericAgentSpec]:
+    """Merge validated config overrides over the built-in spec table.
+
+    Pure, so the daemon and the wrapper subprocess derive the same table from
+    the same config, and tests do not have to touch the filesystem.
+    """
+    effective = dict(GENERIC_ACP_AGENTS)
+    for provider_id, override in overrides.items():
+        if override.get("enabled") is False:
+            effective.pop(provider_id, None)
+            continue
+        spec = spec_from_override(provider_id, override, GENERIC_ACP_AGENTS)
+        if spec is not None:
+            effective[provider_id] = spec
+    return effective
+
+
+def effective_acp_agents(*, refresh: bool = False) -> Dict[str, GenericAgentSpec]:
+    """The built-in ACP agents plus whatever ``~/.vicoa/config.json`` adds.
+
+    This is the table every caller should use — the built-in
+    :data:`GENERIC_ACP_AGENTS` is only the starting point. Falls back to the
+    built-ins on any config problem: an unreadable or malformed file must cost
+    the user their *custom* agents, never the ones Vicoa ships.
+    """
+    global _EFFECTIVE_CACHE
+    if _EFFECTIVE_CACHE is not None and not refresh:
+        return _EFFECTIVE_CACHE
+
+    try:
+        from protocol.provider_overrides import read_provider_overrides
+        from vicoa.cli import load_user_config
+
+        overrides, errors = read_provider_overrides(
+            load_user_config(), builtin_ids=frozenset(GENERIC_ACP_AGENTS)
+        )
+        for error in errors:
+            logger.warning("agents.providers: %s", error)
+        _EFFECTIVE_CACHE = build_effective_acp_agents(overrides)
+    except Exception:
+        logger.warning("agents.providers: config unreadable; using built-ins only")
+        _EFFECTIVE_CACHE = dict(GENERIC_ACP_AGENTS)
+    return _EFFECTIVE_CACHE
+
+
 def resolve_agent_binary(
     spec: GenericAgentSpec,
     which: Optional[Callable[[str], Optional[str]]] = None,
@@ -309,10 +436,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Generic headless ACP agent integration for Vicoa"
     )
+    agents = effective_acp_agents()
     parser.add_argument(
         "--agent",
         required=True,
-        choices=sorted(GENERIC_ACP_AGENTS),
+        # The effective table, not the built-ins: the daemon spawns us with a
+        # user-defined provider id whenever ~/.vicoa/config.json declares one.
+        choices=sorted(agents),
         help="Which ACP agent to run",
     )
     parser.add_argument("--api-key", help="Vicoa API key")
@@ -358,7 +488,7 @@ def main() -> int:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    spec = GENERIC_ACP_AGENTS[args.agent]
+    spec = agents[args.agent]
     agent_instance_id = args.resume or args.session_id
 
     try:

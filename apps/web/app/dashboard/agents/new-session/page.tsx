@@ -54,6 +54,7 @@ import {
   AGENT_CATALOG_FALLBACK,
   agentById,
   agentPickerLabel,
+  customAgentLabel,
   catalogWithCachedModels,
   defaultsFor,
   loadPersistedSelection,
@@ -66,6 +67,7 @@ import {
   type PersistedWorktree,
   type SessionConfig,
 } from '@/lib/agent-catalog';
+import { readAvailableAgents } from '@/lib/desktop-agent-scan';
 import { DirectoryPickerPopover } from '@/components/dashboard/directory-picker-popover';
 import { AddToChatMenu } from '@/components/dashboard/add-to-chat-menu';
 import { ChatUsageIndicator } from '@/components/chat-usage-indicator';
@@ -1706,7 +1708,18 @@ function NewSessionContent() {
   }, [selectedMachineId, directory, isOnline]);
 
   const modelEntries = activeAgentDef?.models ?? null;
-  const agentEntries = catalog.agents.map((a) => ({ id: a.id, label: agentPickerLabel(a.id, a.label) }));
+  // Catalog agents, plus any the selected machine reports that this client has
+  // never heard of. Those are user-defined providers from that machine's
+  // ~/.vicoa/config.json — the catalog compiled into this build cannot list
+  // them, and waiting for a client release before they are selectable would
+  // defeat the whole point of letting a user add an agent by editing a file.
+  const agentEntries = [
+    ...catalog.agents.map((a) => ({ id: a.id, label: agentPickerLabel(a.id, a.label) })),
+    ...Object.keys(readAvailableAgents(currentMachine ?? { metadata: null }) ?? {})
+      .filter((id) => !catalog.agents.some((a) => a.id === id))
+      .sort()
+      .map((id) => ({ id, label: customAgentLabel(id) })),
+  ];
 
   // Drag-drop is offered only while a session can actually be started (a
   // machine picked, online, a working directory set) — same gate as the "Add

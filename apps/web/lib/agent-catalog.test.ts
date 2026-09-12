@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { agentPickerLabel, catalogWithCachedModels, AGENT_CATALOG_FALLBACK } from './agent-catalog';
+import { agentPickerLabel, catalogWithCachedModels, customAgentLabel, AGENT_CATALOG_FALLBACK } from './agent-catalog';
 
 describe('agentPickerLabel', () => {
   test('every agent renders with its plain label (no "(Beta)" suffix)', () => {
@@ -73,5 +73,18 @@ describe('catalogWithCachedModels', () => {
 
   test('empty cache returns the base catalog unchanged', () => {
     expect(catalogWithCachedModels(AGENT_CATALOG_FALLBACK, {})).toBe(AGENT_CATALOG_FALLBACK);
+  });
+});
+
+describe('customAgentLabel', () => {
+  test('makes a readable name out of a provider id', () => {
+    expect(customAgentLabel('kimi-work')).toBe('Kimi Work');
+    expect(customAgentLabel('goose')).toBe('Goose');
+    expect(customAgentLabel('gemini-nightly-2')).toBe('Gemini Nightly 2');
+  });
+
+  test('survives ids with stray separators', () => {
+    expect(customAgentLabel('a--b')).toBe('A B');
+    expect(customAgentLabel('')).toBe('');
   });
 });

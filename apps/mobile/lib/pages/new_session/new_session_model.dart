@@ -106,12 +106,29 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
     FFAppState().clearChatDraft(_draftPromptKey);
   }
 
-  /// Agents offered by the new-session UI — derived from the catalog so a
-  /// new agent ships via a catalog bump instead of a hardcoded list here.
-  List<Map<String, dynamic>> get agentTypes => [
-        for (final a in (agentCatalog?.agents ?? const <CatalogAgent>[]))
-          {'id': a.id, 'name': a.label, 'isComingSoon': false},
-      ];
+  /// Agents offered by the new-session UI — the catalog, so a new built-in
+  /// agent ships via a catalog bump instead of a hardcoded list, plus any the
+  /// selected machine reports that this build has never heard of.
+  ///
+  /// Those extras are user-defined providers from that machine's
+  /// ~/.vicoa/config.json. The catalog compiled into this app cannot list them,
+  /// and making the user wait for an App Store release before a provider they
+  /// added by editing a file becomes selectable would defeat the point.
+  List<Map<String, dynamic>> get agentTypes {
+    final catalogAgents = agentCatalog?.agents ?? const <CatalogAgent>[];
+    final known = {for (final a in catalogAgents) a.id};
+    final custom = (selectedMachineAvailableAgents ?? const <String, bool>{})
+        .keys
+        .where((id) => !known.contains(id))
+        .toList()
+      ..sort();
+    return [
+      for (final a in catalogAgents)
+        {'id': a.id, 'name': a.label, 'isComingSoon': false},
+      for (final id in custom)
+        {'id': id, 'name': customAgentLabel(id), 'isComingSoon': false},
+    ];
+  }
 
   // Per-agent catalog + selection state (plan §7.3). Loaded SWR-style on
   // sheet open; the baked-in fallback keeps the sheet renderable offline.

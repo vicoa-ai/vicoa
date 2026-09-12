@@ -34,7 +34,7 @@ from protocol.agent_catalog import (
     REASONING_EFFORTS,
     THINKING_EFFORTS,
 )
-from integrations.headless.generic_acp import GENERIC_ACP_AGENTS
+from integrations.headless.generic_acp import effective_acp_agents
 from integrations.headless.pi_family.spec import PI_FAMILY_AGENTS
 from vicoa.utils import derive_ws_url, get_project_path
 from vicoa.machine_identity import (
@@ -712,7 +712,7 @@ class MachineDaemon:
                 "claude",
                 "codex",
                 "opencode",
-                *GENERIC_ACP_AGENTS,
+                *effective_acp_agents(),
                 *PI_FAMILY_AGENTS,
             )
         }
@@ -1067,7 +1067,8 @@ class MachineDaemon:
         args = ["--resume", session_id]
         if agent_session_id:
             flag = self._AGENT_SESSION_FLAG.get(
-                agent, "--acp-session-id" if agent in GENERIC_ACP_AGENTS else ""
+                agent,
+                "--acp-session-id" if agent in effective_acp_agents() else "",
             )
             if flag:
                 args.extend([flag, agent_session_id])
@@ -1173,7 +1174,7 @@ class MachineDaemon:
                 prompt = self._extract_prompt(metadata)
                 if prompt:
                     cmd.extend(["--prompt", prompt])
-            elif normalized_agent in GENERIC_ACP_AGENTS:
+            elif normalized_agent in effective_acp_agents():
                 model = self._extract_generic_model(metadata)
                 if model:
                     cmd.extend(["--model", model])
@@ -1313,8 +1314,8 @@ class MachineDaemon:
                 cmd.extend(["--prompt", prompt])
             return cmd
 
-        if normalized_agent in GENERIC_ACP_AGENTS:
-            spec = GENERIC_ACP_AGENTS[normalized_agent]
+        if normalized_agent in effective_acp_agents():
+            spec = effective_acp_agents()[normalized_agent]
             cmd = [
                 sys.executable,
                 "-m",
@@ -1397,7 +1398,7 @@ class MachineDaemon:
             "claude code": "claude",
             "codex": "codex",
             "opencode": "opencode",
-            **{agent_id: agent_id for agent_id in GENERIC_ACP_AGENTS},
+            **{agent_id: agent_id for agent_id in effective_acp_agents()},
             **{agent_id: agent_id for agent_id in PI_FAMILY_AGENTS},
             # Display-name spellings clients may send instead of the id.
             "oh my pi": "omp",
@@ -1411,7 +1412,7 @@ class MachineDaemon:
                     "claude",
                     "codex",
                     "opencode",
-                    *GENERIC_ACP_AGENTS,
+                    *effective_acp_agents(),
                     *PI_FAMILY_AGENTS,
                 ]
             )
@@ -1461,7 +1462,7 @@ class MachineDaemon:
                 pi_spec, which=_find_cli_in_common_locations
             )
 
-        spec = GENERIC_ACP_AGENTS.get(agent)
+        spec = effective_acp_agents().get(agent)
         if spec is not None:
             from integrations.headless.generic_acp import resolve_agent_binary
 
@@ -1482,7 +1483,7 @@ class MachineDaemon:
             return "Codex"
         if agent == "opencode":
             return "OpenCode"
-        spec = GENERIC_ACP_AGENTS.get(agent)
+        spec = effective_acp_agents().get(agent)
         if spec is not None:
             return spec.display_name
         pi_spec = PI_FAMILY_AGENTS.get(agent)

@@ -14,6 +14,20 @@ import '/flutter_flow/app_locale.dart';
 /// don't fight camelCase-vs-hyphenation edge cases ("acceptEdits" → "AcceptEdits").
 String _labelFallback(String id) => id.isEmpty ? id : '${id[0].toUpperCase()}${id.substring(1)}';
 
+/// A display label for an agent id the catalog has never heard of.
+///
+/// User-defined providers (`agents.providers` in `~/.vicoa/config.json`) exist
+/// only on the user's own machine, so the catalog shipped with this build
+/// cannot describe them — that is the point of the feature. The daemon reports
+/// them in `available_agents`; this makes a readable label out of the id, which
+/// is all we have. `kimi-work` -> `Kimi Work`. Mirrors `customAgentLabel` in
+/// `apps/web/lib/agent-catalog.ts`.
+String customAgentLabel(String agentId) => agentId
+    .split('-')
+    .where((part) => part.isNotEmpty)
+    .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+    .join(' ');
+
 /// Per-agent permission_mode / thinking_effort / reasoning_effort / opencode mode entries.
 ///
 /// `optIn: true` marks an entry as model-specific — only visible when the

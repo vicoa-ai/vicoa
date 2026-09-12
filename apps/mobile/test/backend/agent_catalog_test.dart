@@ -139,4 +139,20 @@ void main() {
       expect(SessionConfig.defaultsFor(catalog, 'opencode').model, 'default');
     });
   });
+
+  group('customAgentLabel', () {
+    // Mirrors apps/web/lib/agent-catalog.test.ts so a user-defined provider
+    // reads the same on both platforms.
+    test('makes a readable name out of a provider id', () {
+      expect(customAgentLabel('kimi-work'), 'Kimi Work');
+      expect(customAgentLabel('goose'), 'Goose');
+      expect(customAgentLabel('gemini-nightly-2'), 'Gemini Nightly 2');
+    });
+
+    test('survives ids with stray separators', () {
+      expect(customAgentLabel('a--b'), 'A B');
+      expect(customAgentLabel(''), '');
+    });
+  });
+
 }

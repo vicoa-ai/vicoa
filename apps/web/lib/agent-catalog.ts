@@ -67,6 +67,23 @@ export function agentPickerLabel(_agentId: string, label: string): string {
 }
 
 /**
+ * A display label for an agent id the catalog has never heard of.
+ *
+ * User-defined providers (`agents.providers` in `~/.vicoa/config.json`) exist
+ * only on the user's own machine, so the catalog shipped with this client
+ * cannot describe them — that is the point of the feature. The daemon reports
+ * them in `available_agents`; this makes a readable label out of the id, which
+ * is all we have. `kimi-work` -> `Kimi Work`.
+ */
+export function customAgentLabel(agentId: string): string {
+  return agentId
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+/**
  * Drop a trailing `(provider)` that an older daemon baked into a model label.
  *
  * Daemons up to and including the 1.7.x line labelled Pi/Oh My Pi models

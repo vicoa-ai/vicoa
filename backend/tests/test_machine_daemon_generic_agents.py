@@ -167,11 +167,37 @@ class TestSpawnRequestModelValidation:
         req = SpawnSessionRequest(directory="/tmp/x", agent=agent)
         assert req.agent == agent
 
-    def test_unknown_agent_rejected(self):
+    def test_unknown_but_well_formed_agent_is_accepted(self):
+        """A user-defined provider lives in that user's ~/.vicoa/config.json on
+        their own machine, so the backend cannot hold a list of them. Rejecting
+        an id it does not recognise would 422 a custom agent before the machine
+        that owns it ever saw the request; the daemon is the authority."""
+        from servers.api.models import SpawnSessionRequest
+
+        assert (
+            SpawnSessionRequest(directory="/tmp/x", agent="windsurf").agent
+            == "windsurf"
+        )
+
+    @pytest.mark.parametrize(
+        "agent",
+        [
+            "",
+            "   ",
+            "Bad Id",
+            "../../etc/passwd",
+            "9lives",
+            "under_score",
+            "trailing/slash",
+        ],
+    )
+    def test_malformed_agent_id_rejected(self, agent):
+        """Shape is still checked: the id reaches log directory names and spawn
+        argv, so anything that is not a lowercase slug is refused."""
         from servers.api.models import SpawnSessionRequest
 
         with pytest.raises(ValueError):
-            SpawnSessionRequest(directory="/tmp/x", agent="windsurf")
+            SpawnSessionRequest(directory="/tmp/x", agent=agent)
 
     def test_legacy_claude_code_alias(self):
         from servers.api.models import SpawnSessionRequest
