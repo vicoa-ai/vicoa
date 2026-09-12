@@ -5,6 +5,17 @@ description: Release notes for the Vicoa desktop app (macOS, Windows) — new fe
 
 # Desktop App
 
+### v0.1.25
+12 September, 2026
+- Bundle Vicoa CLI daemon [v1.8.1](/docs/changelog/vicoa-cli#v181)
+- Steer a queued message into the running turn — each row in the queued-messages bar gets a Steer button that delivers it at the agent's next safe boundary instead of after the turn (Claude Code, Codex, Pi and Oh My Pi)
+- Paste a screenshot straight into the composer — ⌘/Ctrl+V attaches a clipboard image in the session composer and the new-session prompt, with the same preview chip and upload as the file picker
+- Click a file an agent mentions to open it in the Files panel at the referenced line, instead of the OS browser
+- See what a sub-agent did — a collapsed sub-agent group names the work and lists each edited file with its diff, the assignment rides the Agent row, and backgrounded shell commands no longer masquerade as sub-agents
+- Updates download in the background — the sidebar callout appears once the update is ready, with a single Install & Restart
+- Open the window about 3 seconds sooner on launch and quit instantly, even with several terminal tabs open
+- Fix bare URLs in chat swallowing trailing punctuation and bold closers
+
 ### v0.1.24
 10 September, 2026
 - Bundle Vicoa CLI daemon [v1.8.0](/docs/changelog/vicoa-cli#v180)
