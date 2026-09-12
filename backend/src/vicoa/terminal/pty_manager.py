@@ -307,8 +307,22 @@ class PTYManager:
         # Terminate child process first
         if self.child_pid is not None:
             try:
+                if kill_group:
+                    # The desktop tab's child is an interactive login shell, and
+                    # interactive zsh/bash IGNORE SIGTERM — alone it would sit
+                    # out the whole grace period below before SIGKILL lands, per
+                    # tab, on every app quit. SIGHUP is what a terminal emulator
+                    # sends when its window closes: the shell exits at once and
+                    # re-sends HUP to its jobs. (Closing the master fd below
+                    # would HUP the foreground group anyway — this just does it
+                    # first.) SIGTERM still follows for a non-shell command that
+                    # only handles TERM.
+                    self._signal_child(signal.SIGHUP, kill_group)
                 self._signal_child(signal.SIGTERM, kill_group)
-                self.log_func(f"[INFO] Sent SIGTERM to child process {self.child_pid}")
+                self.log_func(
+                    f"[INFO] Sent {'SIGHUP+' if kill_group else ''}SIGTERM to "
+                    f"child process {self.child_pid}"
+                )
             except Exception as e:
                 self.log_func(f"[WARNING] Error terminating child: {e}")
 

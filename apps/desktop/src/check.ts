@@ -3,6 +3,9 @@
  * No test framework — plain assertions; exits non-zero on failure.
  */
 import * as assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {
   backoffDelayMs,
   buildDaemonArgs,
@@ -10,7 +13,7 @@ import {
   parseCloudStatus,
   resolveDaemonCommand,
 } from './daemon-manager';
-import { mergePathEntries } from './resolve-path';
+import { mergeDaemonPath, mergePathEntries, readLoginShellPath } from './resolve-path';
 
 // --- resolveDaemonCommand ---------------------------------------------------
 assert.deepEqual(resolveDaemonCommand({}), ['vicoa'], 'default command is vicoa on PATH');
@@ -181,4 +184,67 @@ assert.equal(
   }
 }
 
-console.log('vicoa-desktop check: all assertions passed');
+// --- mergeDaemonPath ----------------------------------------------------------
+{
+  const env = { PATH: '/usr/bin:/bin', HOME: '/nonexistent-home' };
+  const merged = mergeDaemonPath('/opt/tools/bin:/usr/bin', env);
+  assert.ok(merged.path !== null, 'a shell dir the inherited PATH lacks -> override');
+  assert.ok(
+    merged.path?.startsWith('/opt/tools/bin:/usr/bin:/bin'),
+    'shell PATH first, then inherited, then fallbacks',
+  );
+  const noShell = mergeDaemonPath(null, {
+    PATH: '/opt/homebrew/bin:/usr/local/bin:/nonexistent-home/.local/bin:/nonexistent-home/.npm-global/bin:/usr/bin:/bin',
+    HOME: '/nonexistent-home',
+  });
+  assert.equal(noShell.path, null, 'nothing new over the inherited PATH -> leave PATH alone');
+}
+
+// --- readLoginShellPath (async; the probe must never block or reject) ------------
+async function checkLoginShellProbe(): Promise<void> {
+  if (process.platform === 'win32') {
+    return; // POSIX shells only
+  }
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vicoa-check-'));
+  try {
+    // A stand-in "shell" that ignores its -lic flags and prints a PATH: the
+    // probe must hand it back verbatim, trimmed.
+    const fakeShell = path.join(tmp, 'fake-shell');
+    fs.writeFileSync(fakeShell, '#!/bin/sh\nprintf "%s\\n" "/fake/one:/fake/two"\n', { mode: 0o755 });
+    assert.equal(
+      await readLoginShellPath({ SHELL: fakeShell, PATH: '/usr/bin:/bin' }),
+      '/fake/one:/fake/two',
+      'probe returns the shell-printed PATH',
+    );
+
+    // A shell that never answers must resolve null at the 2s deadline, not hang
+    // the boot (this used to be a synchronous spawn on the main thread).
+    const hungShell = path.join(tmp, 'hung-shell');
+    fs.writeFileSync(hungShell, '#!/bin/sh\nsleep 10\n', { mode: 0o755 });
+    const started = Date.now();
+    assert.equal(
+      await readLoginShellPath({ SHELL: hungShell, PATH: '/usr/bin:/bin' }),
+      null,
+      'hung shell -> null',
+    );
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed >= 1_500 && elapsed < 4_000, `hung shell cut off at the deadline (${elapsed}ms)`);
+
+    // A missing shell binary resolves null (spawn ENOENT), never throws.
+    assert.equal(
+      await readLoginShellPath({ SHELL: path.join(tmp, 'nonexistent'), PATH: '/usr/bin:/bin' }),
+      null,
+      'missing shell -> null',
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+void checkLoginShellProbe().then(
+  () => console.log('vicoa-desktop check: all assertions passed'),
+  (err: unknown) => {
+    console.error(err);
+    process.exitCode = 1;
+  },
+);
