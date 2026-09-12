@@ -5,6 +5,13 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.8.1
+12 September, 2026
+- Steer a queued message into the running turn — Claude Code, Codex, Pi and Oh My Pi pick it up at the agent's next safe boundary instead of after the turn ends; a message the agent can't take mid-turn goes back to the queue (#44)
+- Fix backgrounded shell commands showing up as sub-agents — a slow `git push` no longer renders as a "Sub-agent: agent" card, it's an ordinary tool row (#49)
+- Sub-agent runs now carry the prompt they were given, the files they edited and whether the run failed
+- Fix quitting the daemon waiting 3 seconds per open terminal tab — interactive shells are now hung up the way a closing terminal window does, and tabs close concurrently (#56)
+
 ### v1.8.0
 10 September, 2026
 - Save named agent presets — a provider, model, config and system prompt under one name — and start a session or an automation from one, with `vicoa agent ls|add|rm` and `vicoa session start --agent-profile <name>`
