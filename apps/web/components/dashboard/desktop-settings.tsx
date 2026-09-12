@@ -27,7 +27,6 @@ import { getDesktopConfig, type DesktopRuntimeConfig } from '@/lib/runtime-confi
 import { ThemeSelect } from '@/components/plugins/theme-select';
 import {
   checkForUpdates,
-  downloadUpdate,
   getAppVersion,
   getDesktopUpdatesBridge,
   quitAndInstallUpdate,
@@ -678,7 +677,7 @@ function updateStatusLabel(status: UpdateStatus): string {
     case 'checking':
       return 'Checking for updates…';
     case 'available':
-      return `Version ${status.version} available`;
+      return `Version ${status.version} available — downloading…`;
     case 'downloading':
       return `Downloading… ${status.percent}%`;
     case 'downloaded':
@@ -694,8 +693,9 @@ function updateStatusLabel(status: UpdateStatus): string {
 
 /**
  * Version readout + updater controls. Hidden on plain web (no bridge). The
- * button follows the status: Check → Download → Restart to update; the same
- * flow the sidebar SidebarUpdateCallout offers, surfaced in Settings.
+ * button follows the status: Check → (auto-download, progress shown here) →
+ * Restart to update; the same one-click flow the sidebar SidebarUpdateCallout
+ * offers, surfaced in Settings.
  */
 function UpdatesCard() {
   const status = useDesktopUpdateStatus();
@@ -719,16 +719,7 @@ function UpdatesCard() {
           <span className="text-xs text-muted-foreground">{version ?? '—'}</span>
         </SettingsRow>
         <SettingsRow title="Updates" description={updateStatusLabel(status)}>
-          {status.state === 'available' ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs"
-              onClick={() => void downloadUpdate()}
-            >
-              Download
-            </Button>
-          ) : status.state === 'downloaded' ? (
+          {status.state === 'downloaded' ? (
             <Button
               variant="outline"
               size="sm"
@@ -739,7 +730,7 @@ function UpdatesCard() {
             </Button>
           ) : status.state === 'downloading' ? (
             <span className="text-xs text-muted-foreground">{status.percent}%</span>
-          ) : (
+          ) : status.state === 'available' ? null : (
             <Button
               variant="outline"
               size="sm"

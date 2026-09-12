@@ -1,11 +1,17 @@
 /**
  * Auto-update — electron-updater against GitHub Releases at vicoa-ai/vicoa.
  *
- * Manual download, install-on-restart (the renderer drives the flow):
+ * Auto-download, install-on-restart (one click for the user):
  *   check()          -> 'checking' -> 'available' | 'not-available'
- *   download()       -> 'downloading'(percent) -> 'downloaded'
+ *   (auto)           -> 'downloading'(percent) -> 'downloaded'
  *   quitAndInstall() -> onBeforeInstall() cleanup, then Squirrel.Mac swaps the
  *                       bundle and relaunches.
+ *
+ * electron-updater starts the download itself the moment a check finds a newer
+ * version (autoDownload), so 'available' is transient and the sidebar callout
+ * only appears once the update is ready — the user's single action is
+ * "Install & Restart". autoInstallOnAppQuit means a normal quit after the
+ * download also applies it.
  *
  * Detection is what makes the sidebar callout appear, so checks are triggered
  * from several angles, all rate-limited through maybeCheck(): startup, a 30min
@@ -127,9 +133,9 @@ async function runCheck(): Promise<UpdateStatus> {
 
 /**
  * A fresh check would walk back over work already in flight: it pushes
- * 'checking' (which hides the callout) and then 'available', so an update the
- * user has already downloaded loses its "Restart" state and drops back to
- * "Install & Restart". Ambient checks skip these states entirely.
+ * 'checking' (which hides the callout) and then 'available', so an update that
+ * has already been downloaded loses its ready state and re-downloads before
+ * the callout comes back. Ambient checks skip these states entirely.
  */
 function checkWouldStompProgress(): boolean {
   return (
@@ -166,7 +172,9 @@ export function setupAutoUpdater(options: UpdaterOptions): void {
     return; // dev checkout: bridge is inert (no app-update.yml to check)
   }
 
-  autoUpdater.autoDownload = false;
+  // Download as soon as a check finds a newer version; the renderer never has
+  // to ask (the 'vicoa:update-download' IPC below is kept for the bridge only).
+  autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.on('checking-for-update', () => setStatus({ state: 'checking' }));
