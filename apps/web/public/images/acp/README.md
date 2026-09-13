@@ -6,9 +6,12 @@ listed. Mirrored byte-for-byte in `apps/mobile/assets/images/acp/`.
 
 Each name, logo and trademark belongs to its respective owner. They appear here
 only to identify the agent a user is choosing to run — Vicoa is not affiliated
-with, endorsed by, or distributing any of them. Sourced from
-[paseo](https://github.com/getpaseo/paseo)'s ACP provider catalog, which
-collected them from each project's own site. Ask us to drop yours and we will.
+with, endorsed by, or distributing any of them. Ask us to drop yours and we
+will. Sources: [paseo](https://github.com/getpaseo/paseo)'s ACP provider
+catalog, which collected them from each project's own site, plus
+`traecli` and `minimax-code` from
+[simple-icons](https://github.com/simple-icons/simple-icons) (CC0-1.0),
+normalised to `fill="currentColor"`.
 
 ## Adding one
 
@@ -33,5 +36,6 @@ the generator:
 - A file with no matching catalog entry is an error, not a silent orphan.
 
 A catalog entry with no mark here is fine — it falls back to a generated
-initial-square, the same treatment a user's own provider gets. Five currently
-do: `devin`, `grok`, `kiro`, `minimax-code`, `traecli`.
+initial-square, the same treatment a user's own provider gets. Three currently
+do: `devin`, `grok` and `kiro`, none of which publishes a monochrome mark we
+could use. Tracing one by hand would be a worse answer than the square.
