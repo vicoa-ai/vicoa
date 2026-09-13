@@ -20,10 +20,11 @@ describe('acpIconSrc', () => {
   });
 
   it('returns null for anything with no mark, rather than a broken path', () => {
-    // Catalog entries we ship no logo for, and ids nobody has ever heard of.
-    expect(acpIconSrc('devin')).toBeNull();
-    expect(acpIconSrc('kiro')).toBeNull();
+    // A provider the user defined in their own config can never be in here —
+    // that is the point of the feature — so the caller must get a clean miss
+    // and fall back to the generated initial-square.
     expect(acpIconSrc('my-private-agent')).toBeNull();
+    expect(acpIconSrc('kimi-work')).toBeNull();
     expect(acpIconSrc('')).toBeNull();
     expect(acpIconSrc(null)).toBeNull();
     expect(acpIconSrc(undefined)).toBeNull();
@@ -51,6 +52,20 @@ describe('the generated index and the files on disk agree', () => {
     const reachable = new Set(ACP_ICON_KEYS.map((key) => acpIconSrc(key)!.replace('/images/acp/', '')));
     expect(iconFiles.filter((file) => !reachable.has(file))).toEqual([]);
     expect(iconFiles.length).toBeGreaterThan(20);
+  });
+
+  it('covers every catalog entry, so no row falls back to a letter square', () => {
+    // Not a hard requirement — a missing mark degrades gracefully — but the
+    // catalog is fully covered today and a new entry should arrive with one.
+    const ids = JSON.parse(
+      readFileSync(join(process.cwd(), '../../backend/src/protocol/acp_catalog.py'), 'utf8')
+        .match(/"id":\s*"([a-z0-9-]+)"/g)!
+        .map((m) => m.replace(/"id":\s*/, ''))
+        .join(',')
+        .replace(/^/, '[')
+        .replace(/$/, ']'),
+    ) as string[];
+    expect(ids.filter((id) => acpIconSrc(id) === null)).toEqual([]);
   });
 });
 

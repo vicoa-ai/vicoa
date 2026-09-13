@@ -7,11 +7,13 @@ listed. Mirrored byte-for-byte in `apps/mobile/assets/images/acp/`.
 Each name, logo and trademark belongs to its respective owner. They appear here
 only to identify the agent a user is choosing to run — Vicoa is not affiliated
 with, endorsed by, or distributing any of them. Ask us to drop yours and we
-will. Sources: [paseo](https://github.com/getpaseo/paseo)'s ACP provider
-catalog, which collected them from each project's own site, plus
-`traecli` and `minimax-code` from
-[simple-icons](https://github.com/simple-icons/simple-icons) (CC0-1.0),
-normalised to `fill="currentColor"`.
+will. Sources, all normalised to `fill="currentColor"`:
+
+| Icons | From | Licence |
+| --- | --- | --- |
+| 28 | [paseo](https://github.com/getpaseo/paseo)'s ACP provider catalog, collected from each project's own site | — |
+| `traecli`, `minimax-code` | [simple-icons](https://github.com/simple-icons/simple-icons) | CC0-1.0 |
+| `grok`, `devin`, `kiro` | [@lobehub/icons-static-svg](https://github.com/lobehub/lobe-icons) | MIT |
 
 ## Adding one
 
@@ -36,6 +38,6 @@ the generator:
 - A file with no matching catalog entry is an error, not a silent orphan.
 
 A catalog entry with no mark here is fine — it falls back to a generated
-initial-square, the same treatment a user's own provider gets. Three currently
-do: `devin`, `grok` and `kiro`, none of which publishes a monochrome mark we
-could use. Tracing one by hand would be a worse answer than the square.
+initial-square, the same treatment a user's own provider gets. Every entry is
+covered today, and a test keeps it that way, so a new one should arrive with
+its mark.
