@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { createPortal } from "react-dom"
 import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -28,7 +29,7 @@ const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
 
   if (!open) return null
 
-  return (
+  const layer = (
     <div className="fixed inset-0 z-50">
       <div
         className="fixed inset-0 bg-background/80 backdrop-blur-sm"
@@ -37,6 +38,14 @@ const Dialog = ({ open, onOpenChange, children }: DialogProps) => {
       {children}
     </div>
   )
+  // `position: fixed` is laid out against the nearest *transformed* ancestor,
+  // not the viewport. The web sidebar slides in with a CSS transform, so a
+  // dialog rendered from inside it (rename / delete session / delete worktree)
+  // was centred in — and clipped to — the sidebar. Render into <body> so a
+  // modal is viewport-centred no matter where it is mounted from. React
+  // context and synthetic-event bubbling follow the React tree, not the DOM,
+  // so callers see no difference.
+  return typeof document === "undefined" ? layer : createPortal(layer, document.body)
 }
 
 const DialogContent = React.forwardRef<
