@@ -179,17 +179,47 @@ export interface SessionGroup {
 
 /** One worktree of a project, with the sessions running in it (possibly none). */
 export interface WorktreeSessionGroup {
-  branch: string;
+  /** The worktree's folder — its identity. A session's registered `project`
+   *  (home-collapsed `~/…`) when it has sessions, else git's path. */
   path: string;
+  /** Display label: the live branch when git reported one, else the branch
+   *  the sessions were started on. Empty for a detached HEAD. */
+  branch: string;
   /** Daemon-managed (under ~/vicoa/workspaces) → removable from the sidebar. */
   managed: boolean;
+  /** Git no longer has a checkout at this folder (removed outside the app, or
+   *  only a prunable registration is left). Always false without a git list. */
+  missing: boolean;
   instances: AgentInstanceResponse[];
 }
 
 export interface ProjectWorktreeSplit {
-  /** Main-checkout sessions plus any whose worktree no longer exists (orphans). */
+  /** Sessions started in the repo's main checkout (no `worktree_name`). */
   mainInstances: AgentInstanceResponse[];
   worktrees: WorktreeSessionGroup[];
+}
+
+/** One entry of the daemon's `git-worktree-list`, as the split consumes it.
+ *  `display_path` (home-collapsed like a session's `project`) and `prunable`
+ *  are absent from an older daemon; both degrade to "unknown". */
+export interface LiveWorktree {
+  path: string;
+  display_path?: string;
+  branch: string;
+  managed: boolean;
+  prunable?: boolean;
+}
+
+/** Folder-path identity: trailing slashes never make two paths differ. */
+function normalizeWorktreePath(path: string): string {
+  const trimmed = path.replace(/\/+$/, '');
+  return trimmed || path;
+}
+
+/** Claude Code's own scratch worktrees (`EnterWorktree`) — agent-internal, so
+ *  one with no Vicoa session in it is noise in a sidebar, not a workspace. */
+function isAgentScratchWorktree(path: string): boolean {
+  return path.includes('/.claude/worktrees/');
 }
 
 /** Order worktrees by their most-recent session (empty ones last, then by name). */
@@ -209,59 +239,78 @@ function sortWorktrees(worktrees: WorktreeSessionGroup[]): WorktreeSessionGroup[
 /**
  * Split one project's sessions into its main checkout plus a group per worktree.
  *
- * Membership is keyed on each session's OWN stored worktree (`worktree_name`,
- * captured once at registration and immutable), NOT on a live `git worktree
- * list`. This is deliberate: a session started in a worktree stays under that
- * worktree even if the worktree's branch is later switched or the worktree is
- * removed — it never silently "jumps" into the main checkout (the old
- * live-branch cross-check did exactly that). Sessions with no `worktree_name`
- * are the main checkout.
+ * A worktree's identity is its FOLDER (the session's registered `project`,
+ * immutable), never its branch — the same model orca uses (`repoId::path`).
+ * Switching branches inside a worktree therefore keeps every session in the
+ * same group and only changes the label; the old branch-keyed split turned
+ * one folder into two groups as soon as a session was started after a
+ * `git checkout -b`. Sessions with no `worktree_name` are the main checkout.
+ * A session always keeps its own node: a removed worktree never folds its
+ * sessions into main, it is shown as `missing` instead.
  *
- * `gitWorktrees` (the live `git worktree list`, desktop-only) is an ENRICHMENT,
- * not the source of membership: it supplies the authoritative path/managed flag
- * for a worktree and surfaces worktrees that currently have no session (#4).
- * Pass `null` on web / before it resolves — grouping then runs purely off the
- * sessions' stored fields, so the same split renders with or without git.
+ * `gitWorktrees` (the live `git worktree list`) is an ENRICHMENT, not the
+ * source of membership: it supplies the current branch for the label, the
+ * authoritative managed flag, the `missing` verdict, and surfaces worktrees
+ * that currently have no session (#4). Pass `null` on web / before it resolves
+ * — grouping then runs purely off the sessions' stored fields (label =
+ * `worktree_name`, the branch at session start), so the same folders render
+ * with or without git.
  *
  * `instances` is expected newest-first (as `groupSessions` returns), so each
  * worktree's most recent session leads and drives the group ordering.
  */
 export function splitProjectByWorktree(
   instances: AgentInstanceResponse[],
-  gitWorktrees: ReadonlyArray<{ path: string; branch: string; managed: boolean }> | null,
+  gitWorktrees: ReadonlyArray<LiveWorktree> | null,
 ): ProjectWorktreeSplit {
   const mainInstances: AgentInstanceResponse[] = [];
-  const byBranch = new Map<string, AgentInstanceResponse[]>();
+  const byPath = new Map<string, AgentInstanceResponse[]>();
   for (const inst of instances) {
     if (inst.worktree_name) {
-      const arr = byBranch.get(inst.worktree_name);
+      const key = normalizeWorktreePath(inst.project ?? '');
+      const arr = byPath.get(key);
       if (arr) arr.push(inst);
-      else byBranch.set(inst.worktree_name, [inst]);
+      else byPath.set(key, [inst]);
     } else {
       mainInstances.push(inst); // main checkout
     }
   }
 
-  // Each session's own worktree node always exists (derived from the session,
-  // so a removed/renamed worktree never drops it into main). Live git only
-  // overrides the node's path/managed and adds worktrees that have no session.
-  const live = new Map((gitWorktrees ?? []).map((w) => [w.branch, w] as const));
+  // Index live worktrees under both spellings of their folder: git's absolute
+  // path, and the daemon's home-collapsed `display_path` — which is how a
+  // session registers its `project`, so the two match by plain equality.
+  const live = new Map<string, LiveWorktree>();
+  for (const w of gitWorktrees ?? []) {
+    live.set(normalizeWorktreePath(w.path), w);
+    if (w.display_path) live.set(normalizeWorktreePath(w.display_path), w);
+  }
+  const claimed = new Set<LiveWorktree>();
+
   const worktrees: WorktreeSessionGroup[] = [];
-  for (const [branch, group] of byBranch) {
-    const liveInfo = live.get(branch);
-    const path = liveInfo?.path ?? group[0]?.project ?? '';
+  for (const [path, group] of byPath) {
+    const liveInfo = live.get(path);
+    if (liveInfo) claimed.add(liveInfo);
+    const present = liveInfo !== undefined && !liveInfo.prunable;
     worktrees.push({
-      branch,
       path,
+      // Live branch wins (it may have changed since the session started); the
+      // stored name is the label when git is unavailable or the folder is gone.
+      branch: present ? liveInfo.branch : group[0]?.worktree_name ?? '',
       managed: liveInfo ? liveInfo.managed : isManagedWorktreePath(path),
+      missing: gitWorktrees !== null && !present,
       instances: group,
     });
   }
   if (gitWorktrees) {
     for (const w of gitWorktrees) {
-      if (!byBranch.has(w.branch)) {
-        worktrees.push({ branch: w.branch, path: w.path, managed: w.managed, instances: [] });
-      }
+      if (claimed.has(w) || w.prunable || isAgentScratchWorktree(w.path)) continue;
+      worktrees.push({
+        path: normalizeWorktreePath(w.display_path ?? w.path),
+        branch: w.branch,
+        managed: w.managed,
+        missing: false,
+        instances: [],
+      });
     }
   }
   return { mainInstances, worktrees: sortWorktrees(worktrees) };

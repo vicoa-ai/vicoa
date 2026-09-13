@@ -31,6 +31,10 @@ export interface WorktreeSubGroupHeaderProps {
   newSessionDirectory: string | null;
   /** Preselect this worktree on the new-session page; absent for main. */
   worktreeBranch?: string;
+  /** Git no longer has a checkout at this folder: the row reads as deleted.
+      Its actions are unchanged — "Delete" still archives the sessions that
+      were started in it, and the (already gone) folder counts as removed. */
+  missing?: boolean;
   onNavigate: (href: string) => void;
   /** When set, the row is removable: it gets both a right-click menu and a
       hover three-dot menu wired to this *same* action. Omitted for the main
@@ -51,6 +55,7 @@ export function WorktreeSubGroupHeader({
   onToggleCollapsed,
   newSessionDirectory,
   worktreeBranch,
+  missing = false,
   onNavigate,
   onRequestDelete,
 }: WorktreeSubGroupHeaderProps) {
@@ -69,9 +74,22 @@ export function WorktreeSubGroupHeader({
         className="flex min-w-0 flex-1 items-center gap-1 text-left"
       >
         <GitBranch className="h-2.5 w-2.5 shrink-0 text-muted-foreground/50" />
-        <span className="truncate text-[11px] font-light text-muted-foreground/60">
+        <span
+          className={cn(
+            'truncate text-[11px] font-light text-muted-foreground/60',
+            missing && 'line-through text-muted-foreground/40',
+          )}
+        >
           {label}
         </span>
+        {missing && (
+          <span
+            title="This worktree's folder no longer exists"
+            className="shrink-0 rounded border border-border/60 px-1 text-[9px] leading-4 text-muted-foreground/50"
+          >
+            deleted
+          </span>
+        )}
         <ChevronRight
           className={cn(
             'h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform group-hover/label:text-muted-foreground',

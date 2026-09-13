@@ -419,12 +419,17 @@ export async function rpcGitCommit(
 }
 
 /** One git worktree of a repo (`git-worktree-list`). `managed` means the daemon
- * created it under `~/vicoa/workspaces/` — only those are removable. */
+ * created it under `~/vicoa/workspaces/` — only those are removable.
+ * `display_path` is the home-collapsed `~/…` form a session registers as its
+ * `project`; `prunable` is git's verdict that the folder is gone while the
+ * registration lingers. Both are absent from an older daemon. */
 export interface WorktreeInfo {
   path: string;
+  display_path?: string;
   branch: string;
   head: string;
   managed: boolean;
+  prunable?: boolean;
 }
 
 export async function rpcGitWorktreeList(
@@ -438,6 +443,13 @@ export async function rpcGitWorktreeList(
   return (result.worktrees as WorktreeInfo[]) ?? [];
 }
 
+/**
+ * `git-worktree-remove`. `cwd` must be the repo's MAIN checkout, not the
+ * worktree: a worktree whose folder is already gone can't host the git call
+ * (the daemon answers `not_a_repo`), whereas from the main checkout git also
+ * clears a stale registration, and a path that is gone on both counts comes
+ * back `{ok, already_removed}` rather than as an error.
+ */
 export async function rpcGitWorktreeRemove(
   machineId: string,
   cwd: string,

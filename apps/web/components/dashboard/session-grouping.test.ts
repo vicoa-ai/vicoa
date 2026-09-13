@@ -8,6 +8,7 @@ import {
   groupSessions,
   projectGroupKey,
   splitProjectByWorktree,
+  type LiveWorktree,
 } from './session-grouping';
 
 const base: AgentInstanceResponse = {
@@ -175,21 +176,26 @@ describe('groupSessions archived projects', () => {
 
 describe('splitProjectByWorktree (git-driven)', () => {
   const at = (iso: string) => ({ latest_message_at: iso });
-  const wt = (path: string, branch: string, managed = true) => ({ path, branch, managed });
+  const wt = (path: string, branch: string, managed = true, extra: Partial<LiveWorktree> = {}) =>
+    ({ path, branch, managed, ...extra });
 
-  it('separates main-checkout sessions from worktree sessions by branch', () => {
+  it('separates main-checkout sessions from worktree sessions by folder', () => {
     const main = make({ id: 'main', project: '~/app', ...at('2026-01-04T00:00:00.000Z') });
     const a = make({ id: 'a', project: '~/vicoa/workspaces/app-worktrees/brave/app', worktree_name: 'brave', ...at('2026-01-03T00:00:00.000Z') });
     const b = make({ id: 'b', project: '~/vicoa/workspaces/app-worktrees/calm/app', worktree_name: 'calm', ...at('2026-01-02T00:00:00.000Z') });
 
     const { mainInstances, worktrees } = splitProjectByWorktree(
       [main, a, b],
-      [wt('/abs/brave/app', 'brave'), wt('/abs/calm/app', 'calm')],
+      [
+        wt('/home/u/vicoa/workspaces/app-worktrees/brave/app', 'brave', true, { display_path: '~/vicoa/workspaces/app-worktrees/brave/app' }),
+        wt('/home/u/vicoa/workspaces/app-worktrees/calm/app', 'calm', true, { display_path: '~/vicoa/workspaces/app-worktrees/calm/app' }),
+      ],
     );
 
     expect(mainInstances.map((i) => i.id)).toEqual(['main']);
     expect(worktrees.map((w) => w.branch)).toEqual(['brave', 'calm']);
     expect(worktrees.map((w) => w.instances.map((i) => i.id))).toEqual([['a'], ['b']]);
+    expect(worktrees.every((w) => !w.missing)).toBe(true);
   });
 
   it('shows a worktree with no sessions (#4)', () => {
@@ -203,16 +209,28 @@ describe('splitProjectByWorktree (git-driven)', () => {
     expect(worktrees.map((w) => w.branch)).toEqual(['empty']);
     expect(worktrees[0].instances).toEqual([]);
     expect(worktrees[0].path).toBe('/abs/empty/app');
+    expect(worktrees[0].missing).toBe(false);
   });
 
-  it('keeps a removed worktree session under its own node — never jumps to main', () => {
+  it('prefers the home-collapsed display_path for a session-less worktree', () => {
+    const { worktrees } = splitProjectByWorktree(
+      [],
+      [wt('/home/u/wt/app', 'empty', true, { display_path: '~/wt/app' })],
+    );
+
+    // The daemon expands `~` in every path RPC, and this is the form a session
+    // started there will register — so the node's identity is stable over time.
+    expect(worktrees[0].path).toBe('~/wt/app');
+  });
+
+  it('keeps a removed worktree session under its own node, flagged missing — never jumps to main', () => {
     const main = make({ id: 'main', project: '~/app', ...at('2026-01-05T00:00:00.000Z') });
     const orphan = make({ id: 'orphan', project: '~/gone/app', worktree_name: 'deleted', ...at('2026-01-04T00:00:00.000Z') });
     const live = make({ id: 'live', project: '~/live/app', worktree_name: 'brave', ...at('2026-01-03T00:00:00.000Z') });
 
     const { mainInstances, worktrees } = splitProjectByWorktree(
       [main, orphan, live],
-      [wt('/abs/brave/app', 'brave')], // git no longer lists `deleted`
+      [wt('/home/u/live/app', 'brave', true, { display_path: '~/live/app' })], // git no longer lists `~/gone/app`
     );
 
     // The orphan does NOT fold into main; it keeps its own worktree node,
@@ -222,25 +240,85 @@ describe('splitProjectByWorktree (git-driven)', () => {
     const deleted = worktrees.find((w) => w.branch === 'deleted');
     expect(deleted?.instances.map((i) => i.id)).toEqual(['orphan']);
     expect(deleted?.path).toBe('~/gone/app'); // path derived from the session cwd
+    expect(deleted?.missing).toBe(true);
+    expect(worktrees.find((w) => w.branch === 'brave')?.missing).toBe(false);
   });
 
-  it('does not move a session when its worktree switched branches', () => {
+  it('treats a prunable registration (folder gone, git entry left) as missing', () => {
+    const s = make({ id: 's', project: '~/wt/app', worktree_name: 'featX' });
+
+    const { worktrees } = splitProjectByWorktree(
+      [s],
+      [wt('/home/u/wt/app', 'featX', true, { display_path: '~/wt/app', prunable: true })],
+    );
+
+    expect(worktrees).toHaveLength(1);
+    expect(worktrees[0].missing).toBe(true);
+    expect(worktrees[0].instances.map((i) => i.id)).toEqual(['s']);
+  });
+
+  it('never flags missing without a git list', () => {
+    const s = make({ id: 's', project: '~/gone/app', worktree_name: 'deleted' });
+
+    const { worktrees } = splitProjectByWorktree([s], null);
+
+    expect(worktrees[0].missing).toBe(false);
+  });
+
+  it('keeps a session in its folder when the worktree switched branches, relabelled live', () => {
     const s = make({ id: 's', project: '/abs/wt/app', worktree_name: 'featX', ...at('2026-01-02T00:00:00.000Z') });
 
     const { mainInstances, worktrees } = splitProjectByWorktree(
       [s],
-      [wt('/abs/wt/app', 'featY')], // same path, git now reports branch featY
+      [wt('/abs/wt/app', 'featY')], // same folder, git now reports branch featY
     );
 
     expect(mainInstances).toEqual([]);
-    // Session stays under its stored featX; featY surfaces as an empty node.
-    expect(worktrees.map((w) => w.branch)).toEqual(['featX', 'featY']);
-    expect(worktrees.find((w) => w.branch === 'featX')?.instances.map((i) => i.id)).toEqual(['s']);
+    // One node for the folder — the live branch is the label; no phantom
+    // empty `featY` node alongside a `featX` one.
+    expect(worktrees.map((w) => w.branch)).toEqual(['featY']);
+    expect(worktrees[0].instances.map((i) => i.id)).toEqual(['s']);
+    expect(worktrees[0].missing).toBe(false);
+  });
+
+  it('groups sessions started on different branches of one folder together', () => {
+    // Session `old` started on the worktree's original branch; `new` after a
+    // `git checkout -b` inside the same folder. Same folder → same group.
+    const old = make({ id: 'old', project: '~/vicoa/workspaces/app-worktrees/mellow/app', worktree_name: 'mellow', ...at('2026-01-01T00:00:00.000Z') });
+    const fresh = make({ id: 'new', project: '~/vicoa/workspaces/app-worktrees/mellow/app/', worktree_name: 'feat/steer', ...at('2026-01-02T00:00:00.000Z') });
+
+    const withGit = splitProjectByWorktree(
+      [fresh, old],
+      [wt('/home/u/vicoa/workspaces/app-worktrees/mellow/app', 'feat/steer', true, { display_path: '~/vicoa/workspaces/app-worktrees/mellow/app' })],
+    );
+    expect(withGit.worktrees).toHaveLength(1);
+    expect(withGit.worktrees[0].branch).toBe('feat/steer');
+    expect(withGit.worktrees[0].instances.map((i) => i.id)).toEqual(['new', 'old']);
+
+    // Without git the newest session's stored branch labels the folder.
+    const withoutGit = splitProjectByWorktree([fresh, old], null);
+    expect(withoutGit.worktrees).toHaveLength(1);
+    expect(withoutGit.worktrees[0].branch).toBe('feat/steer');
+    expect(withoutGit.worktrees[0].instances.map((i) => i.id)).toEqual(['new', 'old']);
+  });
+
+  it("hides an agent's own scratch worktree unless a session runs in it", () => {
+    const inScratch = make({ id: 's', project: '~/app/.claude/worktrees/used', worktree_name: 'worktree-used' });
+
+    const { worktrees } = splitProjectByWorktree(
+      [inScratch],
+      [
+        wt('/home/u/app/.claude/worktrees/used', 'worktree-used', false, { display_path: '~/app/.claude/worktrees/used' }),
+        wt('/home/u/app/.claude/worktrees/idle', 'worktree-idle', false, { display_path: '~/app/.claude/worktrees/idle' }),
+      ],
+    );
+
+    expect(worktrees.map((w) => w.branch)).toEqual(['worktree-used']);
   });
 
   it('orders worktrees by most-recent session, empty ones last', () => {
-    const stale = make({ id: 'stale', worktree_name: 'aardvark', project: '~/a', ...at('2026-01-01T00:00:00.000Z') });
-    const fresh = make({ id: 'fresh', worktree_name: 'zebra', project: '~/z', ...at('2026-01-09T00:00:00.000Z') });
+    const stale = make({ id: 'stale', worktree_name: 'aardvark', project: '/abs/a', ...at('2026-01-01T00:00:00.000Z') });
+    const fresh = make({ id: 'fresh', worktree_name: 'zebra', project: '/abs/z', ...at('2026-01-09T00:00:00.000Z') });
 
     const { worktrees } = splitProjectByWorktree(
       [stale, fresh],
@@ -261,7 +339,7 @@ describe('splitProjectByWorktree (git-driven)', () => {
   });
 
   describe('baseline (git list not loaded → null)', () => {
-    it('groups by the sessions own worktree_name, main-checkout sessions to main', () => {
+    it('groups by the sessions own folder, labelled by worktree_name; main-checkout sessions to main', () => {
       const main = make({ id: 'main', project: '~/app' });
       const w = make({ id: 'w', project: '~/vicoa/workspaces/app-worktrees/brave/app', worktree_name: 'brave' });
 
@@ -269,6 +347,7 @@ describe('splitProjectByWorktree (git-driven)', () => {
 
       expect(mainInstances.map((i) => i.id)).toEqual(['main']);
       expect(worktrees.map((x) => x.branch)).toEqual(['brave']);
+      expect(worktrees[0].path).toBe('~/vicoa/workspaces/app-worktrees/brave/app');
       expect(worktrees[0].managed).toBe(true); // path under ~/vicoa/workspaces
       expect(worktrees[0].instances.map((i) => i.id)).toEqual(['w']);
     });

@@ -143,6 +143,8 @@ export interface AgentInstanceResponse {
    * under their project rather than in a synthetic "main" bucket.
    */
   worktree_name?: string | null;
+  /** Registration-time stamps (`source`, `repo_root`, usage…); see the type. */
+  instance_metadata?: SessionInstanceMetadata | null;
   /**
    * Server-derived liveness at fetch time. Prefer `useSessionLiveness`, which
    * recomputes this on a timer — see lib/session-liveness.ts for why a
@@ -246,6 +248,14 @@ export interface SessionInstanceMetadata {
    * for the interactive CLI wrapper. Absent on pre-stamping sessions.
    */
   source?: string | null;
+  /**
+   * The repo's MAIN checkout (home-collapsed), stamped at registration. For a
+   * session in a linked worktree this differs from its own `project` — it is
+   * where worktree-level git RPCs must run, since the worktree folder itself
+   * may be gone by the time the sidebar acts on it. Absent on non-git dirs and
+   * pre-stamping sessions.
+   */
+  repo_root?: string | null;
   [key: string]: unknown;
 }
 
