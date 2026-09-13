@@ -593,8 +593,13 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
         // Ctrl+Tab / Ctrl+Shift+Tab cycle the panel tabs (VSCode/browser
         // convention). Tab has no text-editing meaning, so — unlike the old
         // ⌘←/→ binding — this fires even while editing a file or in a terminal.
-        // Capture phase (below) means we win before CodeMirror/xterm see it.
+        // Capture phase (below) only means we run *first*: the event still
+        // reaches the focused xterm textarea, and xterm would encode Ctrl+Tab
+        // as a plain `\t` for the shell (zsh: list every command). The terminal
+        // pane yields prevented keydowns; stopping propagation keeps CodeMirror
+        // out of it too.
         event.preventDefault();
+        event.stopPropagation();
         cycleTab(event.shiftKey ? -1 : 1);
       } else if (canUseTerminal && matchesShortcut(event, 'terminal-focus')) {
         // Jump to the terminal from anywhere: open the panel, surface the

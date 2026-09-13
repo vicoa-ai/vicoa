@@ -207,6 +207,16 @@ export function TerminalPane({
       if (disposed) return;
 
       const term = new Terminal(buildTerminalOptions());
+      // App chords (Ctrl+Tab tab cycling, ⌘/Ctrl+W close, ⌘/Ctrl+K search, …)
+      // are capture-phase window listeners, so they run before this textarea's
+      // own keydown — but xterm ignores `defaultPrevented` and still encodes
+      // the key: Ctrl+Tab as a plain `\t` (zsh then lists every command),
+      // and on Linux Ctrl+W as ^W, Ctrl+[ as ESC, Ctrl+P as ^P… so a chord
+      // used to fire in the app *and* land in the shell. A keydown the app has
+      // already claimed is not the shell's; yield it. Everything else (plain
+      // Tab, Shift+Tab, a Mac's Ctrl+W, the peek-chat backtick, IME, keyup) is
+      // untouched. The prevented keydown also suppresses the browser's keypress.
+      term.attachCustomKeyEventHandler((event) => !event.defaultPrevented);
       const fitAddon = new FitAddon();
       term.open(container);
       term.loadAddon(fitAddon);
