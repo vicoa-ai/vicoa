@@ -86,13 +86,17 @@ def build_index() -> dict[str, str]:
             continue
         svg = (WEB_ICONS / f"{icon}.svg").read_text(encoding="utf-8")
         if BANNED.search(svg):
-            raise SystemExit(f"{icon}.svg contains script, a handler or a remote reference")
+            raise SystemExit(
+                f"{icon}.svg contains script, a handler or a remote reference"
+            )
         # The id, plus what a running session is labelled with. Both land here.
         for key in {entry["id"], entry["label"].lower(), slug(entry["label"])}:
             if not key or key in RESERVED:
                 continue
             if index.get(key, icon) != icon:
-                raise SystemExit(f"icon key {key!r} claimed by both {index[key]} and {icon}")
+                raise SystemExit(
+                    f"icon key {key!r} claimed by both {index[key]} and {icon}"
+                )
             index[key] = icon
 
     orphans = available - {e["id"] for e in ACP_CATALOG}
@@ -160,7 +164,9 @@ def main() -> int:
     index = build_index()
     outputs = {WEB_OUT: render_ts(index), MOBILE_OUT: render_dart(index)}
 
-    stale = [p for p, text in outputs.items() if not p.exists() or p.read_text() != text]
+    stale = [
+        p for p, text in outputs.items() if not p.exists() or p.read_text() != text
+    ]
     if args.check:
         for path in stale:
             print(f"stale: {path.relative_to(REPO)}", file=sys.stderr)

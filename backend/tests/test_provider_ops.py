@@ -82,15 +82,9 @@ FAKE_AGENT = textwrap.dedent(
 
 
 @pytest.fixture
-def config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point ~/.vicoa/config.json at a scratch file and drop the spec cache."""
-    path = tmp_path / "config.json"
-    import vicoa.cli as cli
-
-    monkeypatch.setattr(cli, "get_user_config_path", lambda: path)
-    monkeypatch.setattr(generic_acp, "_EFFECTIVE_CACHE", None)
-    monkeypatch.setattr(generic_acp, "_EFFECTIVE_CACHE_STAMP", None)
-    return path
+def config_path(isolate_user_config: Path) -> Path:
+    """The scratch ~/.vicoa/config.json; the rootdir conftest does the patching."""
+    return isolate_user_config
 
 
 @pytest.fixture
