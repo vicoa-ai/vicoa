@@ -226,6 +226,7 @@ flutter:
     - assets/fonts/
     - assets/images/
     - assets/images/integrations/
+    - assets/images/acp/
     - assets/videos/
     - assets/audios/
     - assets/rive_animations/

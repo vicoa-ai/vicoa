@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '/backend/acp_provider_icons.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 
 // Luminance-weighted grayscale; paired with 50% opacity to gray out the logo of
@@ -93,7 +94,8 @@ String _generatedInitial(String name) {
 /// [agentTypeName] — i.e. whether it would render something rather than
 /// [SizedBox.shrink]. Lets callers fall back to a generic icon instead of
 /// rendering nothing when the agent type is unknown.
-bool agentTypeHasLogo(String? agentTypeName) => _getLogo(agentTypeName) != null;
+bool agentTypeHasLogo(String? agentTypeName) =>
+    _getLogo(agentTypeName) != null || acpIconAsset(agentTypeName) != null;
 
 /// Displays an agent type logo (Claude, Codex, OpenCode).
 /// Pass [spinning] = true for active sessions to render a thin rotating arc
@@ -122,6 +124,29 @@ class AgentTypeIconWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Catalog agents first, and by EXACT key: `_agentLogos` matches on
+    // `name.contains`, which is fine for ten hand-picked marks and would not be
+    // for another thirty — `kilo`/`kiro`, `nova` and `grok` are all substrings
+    // waiting to collide.
+    final acpAsset = acpIconAsset(agentTypeName);
+    if (acpAsset != null) {
+      // Single-colour glyphs authored with `fill="currentColor"`, which
+      // flutter_svg renders black; tint them with the body text colour so they
+      // read on both themes, matching the web's CSS-mask treatment.
+      return _buildWrapped(
+        context,
+        SvgPicture.asset(
+          acpAsset,
+          width: size,
+          height: size,
+          colorFilter: ColorFilter.mode(
+            FlutterFlowTheme.of(context).primaryText,
+            BlendMode.srcIn,
+          ),
+        ),
+      );
+    }
+
     final logo = _getLogo(agentTypeName);
     if (logo == null) {
       final name = agentTypeName;
