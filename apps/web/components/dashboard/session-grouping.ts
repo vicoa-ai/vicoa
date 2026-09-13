@@ -216,6 +216,20 @@ function normalizeWorktreePath(path: string): string {
   return trimmed || path;
 }
 
+/**
+ * The distinct worktree folders a project's sessions run in (sorted, in the
+ * same normalized form `splitProjectByWorktree` keys on). The sidebar fetches
+ * a fresh `git worktree list` whenever this set changes, and records it as the
+ * set the fetch can vouch for — see the `judgeable` argument below.
+ */
+export function worktreeSessionPaths(instances: AgentInstanceResponse[]): string[] {
+  const paths = new Set<string>();
+  for (const inst of instances) {
+    if (inst.worktree_name) paths.add(normalizeWorktreePath(inst.project ?? ''));
+  }
+  return Array.from(paths).sort();
+}
+
 /** Claude Code's own scratch worktrees (`EnterWorktree`) — agent-internal, so
  *  one with no Vicoa session in it is noise in a sidebar, not a workspace. */
 function isAgentScratchWorktree(path: string): boolean {
@@ -256,12 +270,20 @@ function sortWorktrees(worktrees: WorktreeSessionGroup[]): WorktreeSessionGroup[
  * `worktree_name`, the branch at session start), so the same folders render
  * with or without git.
  *
+ * `judgeable` is the set of session folders that existed when `gitWorktrees`
+ * was fetched. Only those can be called `missing`: a session that appeared
+ * after the fetch (a just-started "new worktree" session) is not in it, and a
+ * list older than the session has no standing to say its folder is gone — it
+ * was simply fetched before the folder was created. Omit it to judge every
+ * folder (the list is known to be current).
+ *
  * `instances` is expected newest-first (as `groupSessions` returns), so each
  * worktree's most recent session leads and drives the group ordering.
  */
 export function splitProjectByWorktree(
   instances: AgentInstanceResponse[],
   gitWorktrees: ReadonlyArray<LiveWorktree> | null,
+  judgeable?: ReadonlySet<string>,
 ): ProjectWorktreeSplit {
   const mainInstances: AgentInstanceResponse[] = [];
   const byPath = new Map<string, AgentInstanceResponse[]>();
@@ -297,7 +319,8 @@ export function splitProjectByWorktree(
       // stored name is the label when git is unavailable or the folder is gone.
       branch: present ? liveInfo.branch : group[0]?.worktree_name ?? '',
       managed: liveInfo ? liveInfo.managed : isManagedWorktreePath(path),
-      missing: gitWorktrees !== null && !present,
+      missing:
+        gitWorktrees !== null && !present && (judgeable === undefined || judgeable.has(path)),
       instances: group,
     });
   }

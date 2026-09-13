@@ -59,6 +59,7 @@ import {
   filterWantsActiveOnly,
   groupSessions,
   splitProjectByWorktree,
+  worktreeSessionPaths,
   GROUP_BY_STORAGE_KEY,
   PROJECT_ORDER_STORAGE_KEY,
   STATUS_FILTER_OPTIONS,
@@ -108,6 +109,9 @@ const GROUP_BY_OPTIONS: { value: GroupBy; label: string }[] = [
 interface ProjectGitView {
   branch: string | null;
   worktrees: WorktreeInfo[] | null;
+  /** Session folders that existed when `worktrees` was fetched — the only ones
+      the list can vouch for (see `splitProjectByWorktree`'s `judgeable`). */
+  judgeable: ReadonlySet<string>;
 }
 
 /** One rendered row-group under a project: the main folder or a worktree. */
@@ -135,9 +139,15 @@ interface RenderedSubGroup {
  * that worktree's branch, not the repo's.
  *
  * Refetched on window focus since worktrees can be created/removed and branches
- * switched outside the app. A failed list resolves to `null` ("unknown") rather
- * than an error — the sidebar falls back to its session-derived baseline and
- * makes no claim about which worktrees still exist.
+ * switched outside the app, and whenever a session shows up in a folder the
+ * last fetch didn't know (`worktreePaths` changes) — a "new worktree" session
+ * arrives over the WebSocket right after the daemon created its folder, so
+ * the list on hand predates the folder. Each view remembers the folders it was
+ * fetched against; only those may be judged missing, which is what keeps that
+ * new session from flashing `deleted` until the refetch lands. A failed list
+ * resolves to `null` ("unknown") rather than an error — the sidebar falls back
+ * to its session-derived baseline and makes no claim about which worktrees
+ * still exist.
  */
 function useProjectWorktrees(
   targets: ReadonlyArray<{
@@ -145,13 +155,20 @@ function useProjectWorktrees(
     machineId: string | null;
     listPath: string;
     mainPath: string | null;
+    worktreePaths: string[];
   }>,
   refreshNonce: number,
 ): Map<string, ProjectGitView> {
   const [views, setViews] = useState<Map<string, ProjectGitView>>(new Map());
   // Primitive dep: only re-run when the target set changes, not every render.
   const signature = JSON.stringify(
-    targets.map((t) => [t.key, t.machineId ?? '', t.listPath, t.mainPath ?? '']),
+    targets.map((t) => [
+      t.key,
+      t.machineId ?? '',
+      t.listPath,
+      t.mainPath ?? '',
+      t.worktreePaths,
+    ]),
   );
 
   useEffect(() => {
@@ -161,6 +178,9 @@ function useProjectWorktrees(
         targets.map(async (t): Promise<readonly [string, ProjectGitView] | null> => {
           if (!t.machineId || !t.listPath) return null;
           const machineId = t.machineId;
+          // Captured before the RPCs go out: a folder that appears while they
+          // are in flight is not something this list can speak for either.
+          const judgeable = new Set(t.worktreePaths);
           const [worktrees, branch] = await Promise.all([
             rpcGitWorktreeList(machineId, t.listPath).catch(() => null),
             t.mainPath
@@ -169,7 +189,7 @@ function useProjectWorktrees(
                   .catch(() => null)
               : Promise.resolve<string | null>(null),
           ]);
-          return [t.key, { branch, worktrees }] as const;
+          return [t.key, { branch, worktrees, judgeable }] as const;
         }),
       );
       if (cancelled) return;
@@ -465,6 +485,7 @@ export function SidebarSessions({
                 machineId: g.instances[0]?.machine_id ?? null,
                 listPath: mainPath ?? repoRoot ?? g.instances[0]?.project ?? '',
                 mainPath,
+                worktreePaths: worktreeSessionPaths(g.instances),
               };
             }),
     [sidebarGroups, worktreesOn, groupBy],
@@ -696,7 +717,11 @@ export function SidebarSessions({
 
         const view = projectGitViews.get(key);
         const gitWorktrees = view?.worktrees ?? null;
-        const { mainInstances, worktrees } = splitProjectByWorktree(instances, gitWorktrees);
+        const { mainInstances, worktrees } = splitProjectByWorktree(
+          instances,
+          gitWorktrees,
+          view?.judgeable,
+        );
 
         // No worktrees → nothing to sub-group: render the project flat rather
         // than a lone "main" bucket. This also stops a non-git folder (whose

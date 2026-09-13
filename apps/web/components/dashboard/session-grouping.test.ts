@@ -8,6 +8,7 @@ import {
   groupSessions,
   projectGroupKey,
   splitProjectByWorktree,
+  worktreeSessionPaths,
   type LiveWorktree,
 } from './session-grouping';
 
@@ -265,6 +266,23 @@ describe('splitProjectByWorktree (git-driven)', () => {
     expect(worktrees[0].missing).toBe(false);
   });
 
+  it('only calls a folder missing when the list was fetched knowing it', () => {
+    // A "new worktree" session arrives right after the daemon created its
+    // folder — the list on hand predates it, so it must not read as deleted.
+    const fresh = make({ id: 'fresh', project: '~/wt/new/app', worktree_name: 'new' });
+    const gone = make({ id: 'gone', project: '~/wt/old/app', worktree_name: 'old' });
+    const judgeable = new Set(['~/wt/old/app']); // what the fetch was issued against
+
+    const { worktrees } = splitProjectByWorktree([fresh, gone], [], judgeable);
+
+    expect(worktrees.find((w) => w.branch === 'new')?.missing).toBe(false);
+    expect(worktrees.find((w) => w.branch === 'old')?.missing).toBe(true);
+
+    // Once refetched with the folder known (and still absent), it is judged.
+    const later = splitProjectByWorktree([fresh, gone], [], new Set(['~/wt/new/app', '~/wt/old/app']));
+    expect(later.worktrees.every((w) => w.missing)).toBe(true);
+  });
+
   it('keeps a session in its folder when the worktree switched branches, relabelled live', () => {
     const s = make({ id: 's', project: '/abs/wt/app', worktree_name: 'featX', ...at('2026-01-02T00:00:00.000Z') });
 
@@ -351,6 +369,19 @@ describe('splitProjectByWorktree (git-driven)', () => {
       expect(worktrees[0].managed).toBe(true); // path under ~/vicoa/workspaces
       expect(worktrees[0].instances.map((i) => i.id)).toEqual(['w']);
     });
+  });
+});
+
+describe('worktreeSessionPaths', () => {
+  it('lists the distinct worktree folders, normalized and sorted; main sessions excluded', () => {
+    const instances = [
+      make({ id: 'b', project: '~/wt/b/app/', worktree_name: 'b' }),
+      make({ id: 'a1', project: '~/wt/a/app', worktree_name: 'a' }),
+      make({ id: 'a2', project: '~/wt/a/app', worktree_name: 'feat/a2' }), // same folder
+      make({ id: 'main', project: '~/app' }),
+    ];
+
+    expect(worktreeSessionPaths(instances)).toEqual(['~/wt/a/app', '~/wt/b/app']);
   });
 });
 
