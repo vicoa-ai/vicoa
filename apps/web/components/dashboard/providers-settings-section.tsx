@@ -7,15 +7,21 @@
  *
  * Vicoa has no AI of its own — each machine's daemon probes for agent CLIs and
  * reports `metadata.available_agents` (see lib/desktop-agent-scan.ts). An
- * agent is "connected" when at least one machine reports it installed. The
- * built-in agents it has not found sit under "Add an agent" with a copyable
- * install command; anything else that speaks ACP can be added from the
- * catalog the backend serves (`acp_catalog`) — one click writes the launch
- * command into the chosen machine's `~/.vicoa/config.json` through the
- * daemon's `provider-add` RPC (lib/desktop-provider-config.ts). Vicoa never
- * installs an agent's binary itself — same posture as onboarding's
- * AgentScanStep; for npx/uvx-launched entries the package downloads on the
- * first session, for the rest the row links to the install docs.
+ * agent is "connected" when at least one machine reports it installed.
+ *
+ * "Add an agent" is the catalog the backend serves (`acp_catalog`): one click
+ * writes the launch command into the chosen machine's `~/.vicoa/config.json`
+ * through the daemon's `provider-add` RPC (lib/desktop-provider-config.ts).
+ * It sits directly under the connected list, ahead of the built-ins Vicoa
+ * ships but hasn't found — those are install *instructions*, and when they
+ * came first under a heading that also said "Add an agent" the real one read
+ * as absent. Vicoa never installs a binary itself (same posture as
+ * onboarding's AgentScanStep): npx/uvx entries download on the first session,
+ * the rest link to their install docs.
+ *
+ * The catalog section renders whenever a machine exists, even with nothing to
+ * offer — an empty `acp_catalog` used to hide it outright, which is
+ * indistinguishable from the feature not being deployed.
  *
  * "Check" is what makes an added agent trustworthy: the daemon spawns it once
  * and runs the real `initialize` → `session/new` handshake, and the row shows
@@ -754,29 +760,10 @@ export function ProvidersSettingsSection() {
         </div>
       )}
 
-      {rows.others.length > 0 && (
-        <div className="mt-8">
-          <h2 className="mb-3 text-sm text-foreground/90">Add an agent</h2>
-          <SectionCard>
-            {rows.others.map((row) => (
-              <InstallableAgentRow
-                key={row.id}
-                row={row}
-                expanded={expandedId === row.id}
-                onToggle={() => setExpandedId((cur) => (cur === row.id ? null : row.id))}
-              />
-            ))}
-          </SectionCard>
-          <p className="mt-2 text-xs text-muted-foreground/70">
-            Run the install command in a terminal on a connected machine, then press Refresh.
-          </p>
-        </div>
-      )}
-
-      {hasMachines && acpCatalog.length > 0 && (
+      {hasMachines && (
         <div className="mt-8">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-sm text-foreground/90">More agents</h2>
+            <h2 className="text-sm text-foreground/90">Add an agent</h2>
             {target && configurable.length > 1 && (
               <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 Add to
@@ -797,12 +784,30 @@ export function ProvidersSettingsSection() {
               <span className="text-xs text-muted-foreground">Add to {machineDisplayName(target)}</span>
             )}
           </div>
-          {!target ? (
+          {acpCatalog.length === 0 ? (
             <SectionCard>
               <div className="px-4 py-4 text-xs text-muted-foreground">
-                Any agent that speaks the Agent Client Protocol can be added here once a machine is online
-                with a Vicoa daemon that supports it. Update the Vicoa CLI or desktop app on a machine, or
-                add agents by hand in{' '}
+                This server doesn’t publish an agent catalog yet, so there’s nothing to install from here.
+                You can still add any ACP agent by hand in{' '}
+                <code className="rounded bg-muted/60 px-1 py-px font-mono text-[11px]">~/.vicoa/config.json</code>{' '}
+                — see the{' '}
+                <button
+                  type="button"
+                  onClick={() => openExternalUrl('https://vicoa.ai/docs/agents/custom-agents')}
+                  className="cursor-pointer underline underline-offset-4 transition-colors hover:text-foreground"
+                >
+                  custom agents guide
+                </button>
+                .
+              </div>
+            </SectionCard>
+          ) : !target ? (
+            <SectionCard>
+              <div className="px-4 py-4 text-xs text-muted-foreground">
+                {configurable.length === 0 && (machines?.length ?? 0) > 0
+                  ? 'None of your machines is online with a daemon new enough to edit its own agent config. Update the Vicoa CLI or desktop app on one, then reopen this page.'
+                  : 'Connect a machine to add an agent to it.'}{' '}
+                You can also add agents by hand in{' '}
                 <code className="rounded bg-muted/60 px-1 py-px font-mono text-[11px]">~/.vicoa/config.json</code>.
               </div>
             </SectionCard>
@@ -848,6 +853,26 @@ export function ProvidersSettingsSection() {
           )}
         </div>
       )}
+      {rows.others.length > 0 && (
+        <div className="mt-8">
+          <h2 className="mb-3 text-sm text-foreground/90">Install on a machine yourself</h2>
+          <SectionCard>
+            {rows.others.map((row) => (
+              <InstallableAgentRow
+                key={row.id}
+                row={row}
+                expanded={expandedId === row.id}
+                onToggle={() => setExpandedId((cur) => (cur === row.id ? null : row.id))}
+              />
+            ))}
+          </SectionCard>
+          <p className="mt-2 text-xs text-muted-foreground/70">
+            Vicoa ships support for these but hasn’t found them on any of your machines. Run the install
+            command in a terminal there, then press Refresh.
+          </p>
+        </div>
+      )}
+
     </section>
   );
 }
