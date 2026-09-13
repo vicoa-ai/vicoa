@@ -964,6 +964,7 @@ def get_agent_instance_detail(
         instance_metadata=metadata,
         session_config=session_config,
         project=instance.project,
+        project_id=str(instance.project_id) if instance.project_id else None,
         home_dir=instance.home_dir,
         machine_id=str(instance.machine_id) if instance.machine_id else None,
         live_state=_live_state_for(instance),

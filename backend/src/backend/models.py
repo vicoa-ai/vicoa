@@ -263,6 +263,11 @@ class AgentInstanceDetail(BaseModel):
     session_config: dict | None = None
     agent_profile_id: str | None = None
     project: str | None = None
+    # See AgentInstanceResponse.project_id. The web sidebar composes a
+    # just-created session's row from this detail (the WS `instance-created`
+    # body is the bare column set), so without it the new session groups by
+    # path basename and shows as a second "project" until the next list load.
+    project_id: str | None = None
     home_dir: str | None = None
     machine_id: str | None = None
     # See AgentInstanceResponse.worktree_name.

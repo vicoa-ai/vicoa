@@ -281,6 +281,8 @@ export interface AgentInstanceDetail {
    * and avatar from the profile list the picker already holds.
    */
   agent_profile_id?: string | null;
+  /** See AgentInstanceResponse.project_id. */
+  project_id?: string | null;
   instance_metadata?: SessionInstanceMetadata | null;
   machine_id?: string | null;
   last_heartbeat_at?: string | null;
