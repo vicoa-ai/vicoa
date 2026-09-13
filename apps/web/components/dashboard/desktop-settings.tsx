@@ -86,7 +86,10 @@ export function DesktopSettings() {
   const tab = activeSettingsTab(searchParams.get('tab'));
 
   return (
-    <div className="flex h-full flex-1 flex-col font-mono">
+    // min-w-0: this is a flex item beside the settings sidebar, and without it
+    // `min-width: auto` keeps the column at its content's min-content width —
+    // a narrow window then scrolls the whole app sideways.
+    <div className="flex h-full min-w-0 flex-1 flex-col font-mono">
       {/* No header on settings routes, so the top strip is the drag region. */}
       <div style={DRAG_REGION} className="h-11 shrink-0" />
       <div className="flex-1 overflow-y-auto custom-scrollbar">

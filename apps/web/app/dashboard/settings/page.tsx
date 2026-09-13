@@ -231,7 +231,11 @@ function SettingsContent() {
               </div>
             )}
           </nav>
-          <div className="flex-1 space-y-8">
+          {/* min-w-0: a flex item's `min-width: auto` refuses to shrink below
+              its content's min-content width, and a `truncate` row inside a
+              scroll container reports the full untruncated line there — so
+              without this one long label pushes the whole page sideways. */}
+          <div className="min-w-0 flex-1 space-y-8">
             {activeTab === 'profile' && (
               <Card>
                 <CardHeader>
