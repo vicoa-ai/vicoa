@@ -222,6 +222,12 @@ export interface SessionUsageWindow {
   resets_at?: string | null;
 }
 
+/** GET /machines/{id}/agent-models — see `getMachineAgentModels`. */
+export interface MachineAgentModelsCache {
+  models: Record<string, { id: string; label: string }[]>;
+  modes: Record<string, { id: string; label: string }[]>;
+}
+
 /**
  * Live usage stamped by the headless runner onto `instance_metadata.usage`
  * (Claude + Codex). `context` is the per-conversation token fill; `limits` is
@@ -1290,13 +1296,17 @@ class BackendAPI {
    * populated once an ACP agent has run there. Lets the new-session picker show
    * real models before a session starts; empty until something is cached.
    */
-  async getMachineAgentModels(
-    machineId: string,
-  ): Promise<Record<string, { id: string; label: string }[]>> {
+  /**
+   * The machine's cached per-agent model lists (and, for ACP agents whose
+   * source reported them, session modes), keyed by catalog agent id. Filled
+   * by the wrappers' session/new report and by daemon provider probes.
+   */
+  async getMachineAgentModels(machineId: string): Promise<MachineAgentModelsCache> {
     const resp = await this.request<{
       agent_models?: Record<string, { id: string; label: string }[]>;
+      agent_modes?: Record<string, { id: string; label: string }[]>;
     }>(`/api/v1/machines/${machineId}/agent-models`);
-    return resp.agent_models ?? {};
+    return { models: resp.agent_models ?? {}, modes: resp.agent_modes ?? {} };
   }
 
   async spawnRemoteSession(

@@ -1,0 +1,30 @@
+{
+  "user_id": "user-REDACTED",
+  "account_id": "acct-REDACTED",
+  "email": "redacted@example.com",
+  "plan_type": "plus",
+  "rate_limit": {
+    "allowed": true,
+    "limit_reached": false,
+    "primary_window": {
+      "used_percent": 63.4,
+      "limit_window_seconds": 18000,
+      "reset_after_seconds": 7200,
+      "reset_at": 1789000000
+    },
+    "secondary_window": {
+      "used_percent": 41,
+      "limit_window_seconds": 604800,
+      "reset_after_seconds": 400000,
+      "reset_at": 1789400000
+    }
+  },
+  "credits": {
+    "has_credits": true,
+    "unlimited": false,
+    "overage_limit_reached": false,
+    "balance": "12.5",
+    "approx_local_messages": null,
+    "approx_cloud_messages": null
+  }
+}

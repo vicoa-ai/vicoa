@@ -10,7 +10,7 @@
     "src/backend/api/teams.py": 6,
     "src/backend/api/user_settings.py": 1,
     "src/servers/api/auth_keys.py": 1,
-    "src/servers/api/routers.py": 24
+    "src/servers/api/routers.py": 25
   },
   "grandfathered_trigger_migrations": [
     "40d4252deb5b_add_messages_table.py",

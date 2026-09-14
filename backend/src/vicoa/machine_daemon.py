@@ -787,6 +787,13 @@ class MachineDaemon:
         "Open in…" menu. An old daemon omits it and the menu stays hidden
         rather than rendering an empty dropdown while `no_handler` resolves.
 
+        `provider-usage` tells the client the `fetch-provider-usage` RPC is
+        routable here — the account's rate-limit windows for any provider in
+        `rpc/provider_usage.py`'s registry (Claude, Codex, Copilot), with no
+        session running. An old daemon only knows `fetch-claude-usage`; the
+        clients keep using that name for Claude and simply don't ask about
+        the others, rather than paying the router's `no_handler` grace window.
+
         `system-prompt` tells the client this daemon forwards the spawn-metadata
         `system_prompt` to the agent, so an agent profile carrying custom
         instructions can be offered for this machine. This one matters more than
@@ -807,6 +814,7 @@ class MachineDaemon:
             "git-write",
             "skill-manage",
             "open-in",
+            "provider-usage",
             SYSTEM_PROMPT_CAPABILITY,
         ]
 
@@ -1360,7 +1368,7 @@ class MachineDaemon:
             model = self._extract_generic_model(metadata)
             if model:
                 cmd.extend(["--model", model])
-            permission_mode = self._extract_permission_mode(
+            permission_mode = self._extract_acp_session_mode(
                 metadata, agent=normalized_agent
             )
             if permission_mode:
@@ -1565,6 +1573,31 @@ class MachineDaemon:
         if isinstance(value, str) and value.strip():
             return value.strip()
         return None
+
+    def _extract_acp_session_mode(
+        self, metadata: dict[str, Any] | None, *, agent: str
+    ) -> str | None:
+        """Initial ACP session mode for a generic ACP agent.
+
+        Agents the catalog describes (cursor, gemini) keep the enum validation
+        of `_extract_permission_mode`. Agents it cannot describe — a
+        machine-local provider from `~/.vicoa/config.json`, or a built-in with
+        no static mode list (copilot, kimi, hermes) — only advertise their
+        modes at session/new, so the id is passed through and the wrapper
+        validates it against the live `availableModes`
+        (`acp_base._apply_initial_mode`), logging rather than failing on a
+        miss. Without this, a mode picked from the machine's cached list
+        (`machine_agent_models.modes`) would be dropped here silently.
+        """
+        if agent in PERMISSION_MODES:
+            return self._extract_permission_mode(metadata, agent=agent)
+        if not metadata:
+            return None
+        value = metadata.get("permission_mode")
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        return normalized or None
 
     def _extract_permission_mode(
         self, metadata: dict[str, Any] | None, *, agent: str
@@ -2064,9 +2097,16 @@ class MachineDaemon:
         if method == "provider-add":
             from vicoa.rpc import provider_ops
 
-            return self._after_provider_change(
+            result = self._after_provider_change(
                 provider_ops.provider_add(**(frame.get("params") or {}))
             )
+            if "error" not in result:
+                # Warm the picker's model/mode cache for the agent just added.
+                # Add is an explicit click, so paying the agent's cold start
+                # here is fine — but in the background: the row comes back
+                # first, the picker fills in once the probe answers.
+                self._probe_and_cache_agent_models_background(str(result.get("id")))
+            return result
         if method == "provider-remove":
             from vicoa.rpc import provider_ops
 
@@ -2082,11 +2122,18 @@ class MachineDaemon:
         if method == "provider-probe":
             from vicoa.rpc import provider_ops
 
-            return provider_ops.provider_probe(**(frame.get("params") or {}))
-        if method == "fetch-claude-usage":
-            from vicoa.rpc import claude_usage
+            result = provider_ops.provider_probe(**(frame.get("params") or {}))
+            self._cache_agent_models_from_probe(result)
+            return result
+        if method == "fetch-provider-usage":
+            from vicoa.rpc import provider_usage
 
-            return claude_usage.fetch_claude_usage(**(frame.get("params") or {}))
+            return provider_usage.fetch_provider_usage(**(frame.get("params") or {}))
+        if method == "fetch-claude-usage":
+            # Pre-registry name; same code path (see rpc/provider_usage.py).
+            from vicoa.rpc import provider_usage
+
+            return provider_usage.fetch_claude_usage(**(frame.get("params") or {}))
         return {"error": f"unknown RPC method: {method}"}
 
     def _supported_rpc_methods(self) -> list[str]:
@@ -2133,6 +2180,7 @@ class MachineDaemon:
             "provider-remove",
             "provider-set-enabled",
             "provider-probe",
+            "fetch-provider-usage",
             "fetch-claude-usage",
             *PTY_RPC_METHODS,
         ]
@@ -2169,6 +2217,61 @@ class MachineDaemon:
         if "error" not in result:
             result["available_agents"] = self.scan_agents_rpc()["available_agents"]
         return result
+
+    def _cache_agent_models_from_probe(self, probe: dict[str, Any]) -> None:
+        """Persist a successful probe's model/mode lists as the machine's
+        `machine_agent_models` row, so the new-session picker can offer them
+        before a session has ever run (plans/todos/agent-integration-followups.md
+        §2b). The daemon cannot write that table itself; the agent-facing
+        `PUT /machines/{id}/agent-models/{agent}` in the servers process does,
+        with the same write-on-change upsert the session PATCH uses.
+
+        Best-effort and silent: a cache miss only means the picker keeps its
+        catalog placeholders, which is where it was before the probe.
+        """
+        if not probe.get("ok") or not self.machine_id:
+            return
+        agent_id = str(probe.get("id") or "").strip()
+        models = probe.get("models") or []
+        if not agent_id or not models:
+            return
+        payload: dict[str, Any] = {"models": models}
+        modes = probe.get("modes") or []
+        if modes:
+            payload["modes"] = modes
+        try:
+            self._put(
+                f"/api/v1/machines/{self.machine_id}/agent-models/{agent_id}",
+                payload,
+            ).raise_for_status()
+        except Exception as exc:
+            # Includes a 401: the probe itself succeeded, and a dead credential
+            # is the heartbeat loop's to act on, not this side effect's.
+            logger.debug(
+                "[daemon] agent-models cache for %s not written: %s", agent_id, exc
+            )
+
+    def _probe_and_cache_agent_models_background(self, agent_id: str) -> None:
+        """Probe `agent_id` on a worker thread and cache the result (see
+        `_cache_agent_models_from_probe`). Fire-and-forget: nothing waits on
+        it, and a failed probe is the Providers page's Check button's job to
+        explain."""
+        if not agent_id or not self.machine_id:
+            return
+
+        def _run() -> None:
+            from vicoa.rpc import provider_ops
+
+            try:
+                self._cache_agent_models_from_probe(
+                    provider_ops.provider_probe(agent_id)
+                )
+            except Exception:
+                logger.debug(
+                    "[daemon] background probe for %s failed", agent_id, exc_info=True
+                )
+
+        Thread(target=_run, name=f"vicoa-probe-{agent_id}", daemon=True).start()
 
     def push_available_agents(self, agents: dict[str, bool]) -> None:
         """Refresh `available_agents` in the cloud machine row.

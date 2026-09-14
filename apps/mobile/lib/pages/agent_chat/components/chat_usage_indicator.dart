@@ -17,7 +17,7 @@ class UsageWindow {
   final DateTime? resetsAt;
 
   /// Parse a single window map — `{id, label, used_pct, resets_at}` — from
-  /// either in-band `instance_metadata.usage` or the `fetch-claude-usage` RPC
+  /// either in-band `instance_metadata.usage` or the `fetch-provider-usage` RPC
   /// result, so both paths share one mapping and can't drift. Returns null for
   /// a malformed entry (no map, or no numeric `used_pct`).
   static UsageWindow? fromRaw(dynamic v) {
@@ -106,37 +106,73 @@ class SessionUsage {
 typedef UsageRpcCaller = Future<Map<String, dynamic>> Function(
     String machineId, String method, Map<String, dynamic> params);
 
-/// Fetch the Claude account's live Session/Weekly rate-limit windows from the
-/// machine's daemon (`fetch-claude-usage` RPC). The daemon reads the local
-/// Claude Code OAuth credential and calls Anthropic's usage endpoint, so this
-/// returns fresher data than the last end-of-turn stamp on
-/// `instance_metadata.usage` and works even with no turn having completed yet.
+/// Providers the daemon can fetch account rate-limit windows for out-of-band
+/// (`fetch-provider-usage` RPC → backend `vicoa/rpc/provider_usage.py`
+/// registry): Claude via the Claude Code OAuth credential, Codex via the Codex
+/// CLI's `auth.json`, Copilot via the `gh` token. Anything else has no
+/// on-demand source, so the indicator stays on whatever the wrapper stamped
+/// in-band (or hidden). Keep in sync with the backend registry and the web's
+/// `lib/provider-usage.ts`.
+const Set<String> providersWithUsageFetcher = {'claude', 'codex', 'copilot'};
+
+bool providerHasUsageFetcher(String? provider) =>
+    provider != null && providersWithUsageFetcher.contains(provider);
+
+List<UsageWindow>? _windowsFrom(Map<String, dynamic> result) {
+  final limits = _asMap(result['limits']);
+  final raw = limits?['windows'];
+  if (raw is! List) return null;
+  final windows = <UsageWindow>[];
+  for (final w in raw) {
+    final parsed = UsageWindow.fromRaw(w);
+    if (parsed != null) windows.add(parsed);
+  }
+  // A daemon that routed the call but had no usable data (no_oauth_token,
+  // http_401, ...) reports an `error` instead — treated the same as stale.
+  return windows.isEmpty ? null : windows;
+}
+
+/// Fetch a provider account's live rate-limit windows from the machine's
+/// daemon. Works with no turn having completed yet and returns fresher data
+/// than the last end-of-turn stamp on `instance_metadata.usage`.
 ///
-/// Best-effort by design: an old daemon (`no_handler`), an offline machine, an
-/// API-key-only Claude setup, or any transport/parse failure all resolve to
+/// Best-effort by design: an old daemon (`no_handler`), an offline machine, a
+/// CLI that isn't logged in, or any transport/parse failure all resolve to
 /// `null` so callers silently keep whatever stale windows they already show.
-Future<List<UsageWindow>?> fetchClaudeUsageWindows(
-    {required UsageRpcCaller call, required String machineId}) async {
+///
+/// Claude falls back to the pre-registry `fetch-claude-usage` name when the
+/// daemon doesn't route `fetch-provider-usage` yet, so a CLI update pending
+/// on one machine never costs the Claude limits that already worked there.
+Future<List<UsageWindow>?> fetchProviderUsageWindows({
+  required UsageRpcCaller call,
+  required String machineId,
+  required String provider,
+}) async {
+  if (!providerHasUsageFetcher(provider)) return null;
   try {
-    final result = await call(machineId, 'fetch-claude-usage', const <String, dynamic>{});
-    final limits = _asMap(result['limits']);
-    final raw = limits?['windows'];
-    if (raw is! List) return null;
-    final windows = <UsageWindow>[];
-    for (final w in raw) {
-      final parsed = UsageWindow.fromRaw(w);
-      if (parsed != null) windows.add(parsed);
-    }
-    // A daemon that routed the call but had no usable data (no_oauth_token,
-    // http_401, ...) reports an `error` instead — treated the same as stale.
-    return windows.isEmpty ? null : windows;
-  } catch (_) {
+    final result = await call(machineId, 'fetch-provider-usage', <String, dynamic>{'provider': provider});
+    return _windowsFrom(result);
+  } catch (e) {
     // `no_handler` means the daemon predates the RPC (CLI update pending);
     // `target_disconnected`/`timeout` mean the machine is unreachable. All
-    // fall back silently to the in-band windows.
+    // fall back silently to the in-band windows — except Claude on an old
+    // daemon, which still answers the legacy name.
+    if (provider == 'claude' && e.toString().contains('no_handler')) {
+      try {
+        final legacy = await call(machineId, 'fetch-claude-usage', const <String, dynamic>{});
+        return _windowsFrom(legacy);
+      } catch (_) {
+        return null;
+      }
+    }
     return null;
   }
 }
+
+/// Pre-registry entry point kept for callers/tests that only know Claude.
+Future<List<UsageWindow>?> fetchClaudeUsageWindows(
+        {required UsageRpcCaller call, required String machineId}) =>
+    fetchProviderUsageWindows(call: call, machineId: machineId, provider: 'claude');
 
 // --- defensive coercion over dynamic JSON --------------------------------
 

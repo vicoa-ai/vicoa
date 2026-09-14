@@ -67,11 +67,17 @@ import {
   type PersistedWorktree,
   type SessionConfig,
 } from '@/lib/agent-catalog';
+import type { MachineAgentModelsCache } from '@/lib/backend-api';
 import { readAvailableAgents } from '@/lib/desktop-agent-scan';
+import { machineSupportsProviderConfig, readAgentLabels, rpcProviderProbe } from '@/lib/desktop-provider-config';
 import { DirectoryPickerPopover } from '@/components/dashboard/directory-picker-popover';
 import { AddToChatMenu } from '@/components/dashboard/add-to-chat-menu';
 import { ChatUsageIndicator } from '@/components/chat-usage-indicator';
-import { fetchClaudeUsageWindows } from '@/lib/claude-usage';
+import {
+  fetchProviderUsageWindows,
+  machineSupportsProviderUsage,
+  providerHasUsageFetcher,
+} from '@/lib/provider-usage';
 import { SlashCommandSuggestions } from '@/components/dashboard/slash-command-suggestions';
 import { useSlashCommands } from '@/lib/hooks/use-slash-commands';
 import type { SlashCommand, AgentType } from '@/lib/constants/slash-commands';
@@ -100,6 +106,8 @@ import { formatFileSize } from '@/components/chat-attachments';
 import { GitBranch, File as FileIcon, FolderPlus } from 'lucide-react';
 
 const MACHINE_REFRESH_INTERVAL_MS = 30_000;
+
+const EMPTY_AGENT_MODELS_CACHE: MachineAgentModelsCache = { models: {}, modes: {} };
 
 /** One attachment picked before the session exists: preview now, upload later.
  *
@@ -389,9 +397,9 @@ function NewSessionContent() {
   // once there is something to put in it.
   const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
-  // Selected machine's cached real per-agent model lists, fetched lazily so the
-  // picker can show actual models instead of catalog placeholders.
-  const [cachedAgentModels, setCachedAgentModels] = useState<Record<string, { id: string; label: string }[]>>({});
+  // Selected machine's cached real per-agent model (and mode) lists, fetched
+  // lazily so the picker can show actual models instead of catalog placeholders.
+  const [cachedAgentModels, setCachedAgentModels] = useState<MachineAgentModelsCache>(EMPTY_AGENT_MODELS_CACHE);
 
   // Slash-command + mention state for the prompt box (mirrors the chat input).
   const [showSlashCommands, setShowSlashCommands] = useState(false);
@@ -471,11 +479,19 @@ function NewSessionContent() {
     if (attachmentErrorTimer.current) clearTimeout(attachmentErrorTimer.current);
   }, []);
 
+  const currentMachine = machines.find((m) => m.machine_id === selectedMachineId) || null;
+
   // The catalog the picker renders: base catalog with the selected machine's
-  // cached models merged in (falls back to base when nothing is cached).
+  // cached models/modes merged in (falls back to base when nothing is cached),
+  // plus a synthesized entry for every cached agent the static catalog cannot
+  // describe (a catalog-added or hand-configured provider), labelled with the
+  // daemon's own `agent_labels`.
   const effectiveCatalog = useMemo(
-    () => catalogWithCachedModels(catalog, cachedAgentModels),
-    [catalog, cachedAgentModels],
+    () => catalogWithCachedModels(catalog, cachedAgentModels.models, {
+      modes: cachedAgentModels.modes,
+      labels: readAgentLabels(currentMachine),
+    }),
+    [catalog, cachedAgentModels, currentMachine],
   );
 
   const sessionConfig: SessionConfig = perAgentConfigs[activeAgent] ?? defaultsFor(effectiveCatalog, activeAgent);
@@ -631,15 +647,68 @@ function NewSessionContent() {
   // show its real models. Best-effort: empty on error / no cache → catalog
   // defaults. Clears first so we never show another machine's models in flight.
   useEffect(() => {
-    if (!api || !selectedMachineId) { setCachedAgentModels({}); return; }
+    if (!api || !selectedMachineId) { setCachedAgentModels(EMPTY_AGENT_MODELS_CACHE); return; }
     const machineId = selectedMachineId;
     let cancelled = false;
-    setCachedAgentModels({});
+    setCachedAgentModels(EMPTY_AGENT_MODELS_CACHE);
     api.getMachineAgentModels(machineId)
-      .then((models) => { if (!cancelled) setCachedAgentModels(models); })
+      .then((cache) => { if (!cancelled) setCachedAgentModels(cache); })
       .catch(() => { /* keep catalog defaults */ });
     return () => { cancelled = true; };
   }, [api, selectedMachineId]);
+
+  // An agent picked before its cache arrived (a catalog-added agent the
+  // auto-probe below is still filling in) has a config with no model at all,
+  // so its chips would read "Model" / "Mode" with nothing selected once the
+  // lists land. Fill in the defaults the moment the effective catalog can
+  // describe it; agents the static catalog knows always have a model already.
+  useEffect(() => {
+    setPerAgentConfigs((prev) => {
+      let next = prev;
+      for (const [id, config] of Object.entries(prev)) {
+        if (config.model !== undefined) continue;
+        if (!agentById(effectiveCatalog, id)?.models?.length) continue;
+        if (next === prev) next = { ...prev };
+        next[id] = reconcileAgainst(config, effectiveCatalog);
+      }
+      return next;
+    });
+  }, [effectiveCatalog]);
+
+  // Auto-probe: a catalog-added agent has no picker at all until something
+  // fills the machine's cache (a session, or a Check/Add on the Providers
+  // page). When the selected agent has no cached models, the machine is
+  // online and its daemon routes `provider-probe`, run one probe in the
+  // background and refetch the cache — once per (machine, agent) per page
+  // load, never blocking the form. A failed probe leaves the picker as it is;
+  // the Providers page is where the failure reason shows. Only agents outside
+  // the static catalog: the built-ins already render a usable picker.
+  const autoProbedRef = useRef<Set<string>>(new Set());
+  const selectedMachineIdRef = useRef(selectedMachineId);
+  selectedMachineIdRef.current = selectedMachineId;
+  useEffect(() => {
+    if (!api || !selectedMachineId || !currentMachine || !isMachineOnlineShared(currentMachine)) return;
+    if (!machineSupportsProviderConfig(currentMachine)) return;
+    const agent = activeAgent;
+    if (catalog.agents.some((a) => a.id === agent)) return;
+    if ((cachedAgentModels.models[agent]?.length ?? 0) > 0) return;
+    const key = `${selectedMachineId}:${agent}`;
+    if (autoProbedRef.current.has(key)) return;
+    autoProbedRef.current.add(key);
+    const machineId = selectedMachineId;
+    // No effect cleanup on purpose: a probe is an agent's cold start (up to a
+    // minute) and `currentMachine` is a fresh object on every heartbeat, so a
+    // cancel-on-deps-change would discard most results. Instead the result is
+    // applied only if this machine is still the selected one when it lands.
+    rpcProviderProbe(machineId, agent)
+      .then((probe) => {
+        if (!probe.ok || selectedMachineIdRef.current !== machineId) return;
+        return api.getMachineAgentModels(machineId).then((cache) => {
+          if (selectedMachineIdRef.current === machineId) setCachedAgentModels(cache);
+        });
+      })
+      .catch(() => { /* picker keeps its placeholders */ });
+  }, [api, selectedMachineId, currentMachine, activeAgent, catalog, cachedAgentModels]);
 
   const persistSelection = useCallback(
     (overrides?: Partial<{ machineId: string; agent: string; configs: Record<string, SessionConfig> }>) => {
@@ -1634,7 +1703,6 @@ function NewSessionContent() {
     }
   };
 
-  const currentMachine = machines.find((m) => m.machine_id === selectedMachineId) || null;
   const recentDirectories = currentMachine ? getRecentDirectories(currentMachine) : [];
   const isOnline = currentMachine ? isMachineOnline(currentMachine) : false;
   /**
@@ -1661,15 +1729,19 @@ function NewSessionContent() {
     : null;
   const canSubmit = !isSubmitting && !!api && !!selectedMachineId && !!directory.trim() && isOnline;
 
-  // Live Claude plan usage (Session/Weekly limits) for the selected machine,
-  // fetched from its daemon when the page opens — so limits are visible before
-  // committing to a session. Claude-only: the daemon reads the Claude Code
-  // OAuth credential; other agents have no on-demand source.
-  const claudeUsageFetch = useMemo(() => {
-    if (sessionConfig.agent !== 'claude' || !selectedMachineId || !isOnline) return undefined;
+  // Live plan usage (rate-limit windows) for the selected machine, fetched from
+  // its daemon when the page opens — so limits are visible before committing
+  // to a session. Only for providers the daemon can read a credential for
+  // (Claude, Codex, Copilot). A daemon that predates `fetch-provider-usage`
+  // still answers the legacy Claude call; for the others it would only cost a
+  // `no_handler` wait, so the indicator stays hidden there.
+  const providerUsageFetch = useMemo(() => {
+    const provider = sessionConfig.agent;
+    if (!providerHasUsageFetcher(provider) || !selectedMachineId || !isOnline) return undefined;
+    if (provider !== 'claude' && !machineSupportsProviderUsage(currentMachine)) return undefined;
     const machineId = selectedMachineId;
-    return () => fetchClaudeUsageWindows(machineId);
-  }, [sessionConfig.agent, selectedMachineId, isOnline]);
+    return () => fetchProviderUsageWindows(machineId, provider);
+  }, [sessionConfig.agent, selectedMachineId, isOnline, currentMachine]);
 
   // Current branch of the selected directory (worktree chip label). Best
   // effort: offline machine / not a repo / RPC error just keeps the fallback.
@@ -1708,17 +1780,26 @@ function NewSessionContent() {
   }, [selectedMachineId, directory, isOnline]);
 
   const modelEntries = activeAgentDef?.models ?? null;
-  // Catalog agents, plus any the selected machine reports that this client has
-  // never heard of. Those are user-defined providers from that machine's
-  // ~/.vicoa/config.json — the catalog compiled into this build cannot list
-  // them, and waiting for a client release before they are selectable would
-  // defeat the whole point of letting a user add an agent by editing a file.
+  // Catalog agents (static + the machine's cached extras synthesized into
+  // `effectiveCatalog`), plus any the selected machine reports that neither
+  // knows. Those are user-defined providers from that machine's
+  // ~/.vicoa/config.json that have never been probed or run — the catalog
+  // compiled into this build cannot list them, and waiting for a client
+  // release before they are selectable would defeat the whole point of
+  // letting a user add an agent by editing a file.
+  const machineAgentLabels = readAgentLabels(currentMachine);
+  const machineAvailableAgents = readAvailableAgents(currentMachine ?? { metadata: null });
+  const staticAgentIds = new Set(catalog.agents.map((a) => a.id));
   const agentEntries = [
-    ...catalog.agents.map((a) => ({ id: a.id, label: agentPickerLabel(a.id, a.label) })),
-    ...Object.keys(readAvailableAgents(currentMachine ?? { metadata: null }) ?? {})
-      .filter((id) => !catalog.agents.some((a) => a.id === id))
+    ...effectiveCatalog.agents
+      // A synthesized (cache-sourced) entry is only real while the machine still
+      // advertises the provider; a removed config entry must not linger.
+      .filter((a) => staticAgentIds.has(a.id) || !machineAvailableAgents || a.id in machineAvailableAgents)
+      .map((a) => ({ id: a.id, label: agentPickerLabel(a.id, a.label) })),
+    ...Object.keys(machineAvailableAgents ?? {})
+      .filter((id) => !effectiveCatalog.agents.some((a) => a.id === id))
       .sort()
-      .map((id) => ({ id, label: customAgentLabel(id) })),
+      .map((id) => ({ id, label: machineAgentLabels[id] || customAgentLabel(id) })),
   ];
 
   // Drag-drop is offered only while a session can actually be started (a
@@ -2324,16 +2405,16 @@ function NewSessionContent() {
                       </ChipDropdown>
                     )}
                   </div>
-                  {/* Claude account limits (Session/Weekly), fetched from the
-                      selected machine's daemon on page load. Self-hides until
-                      data arrives (and entirely for non-Claude agents or
-                      offline machines). Keyed by machine so switching resets
-                      the fetched snapshot. */}
-                  {claudeUsageFetch && (
+                  {/* Account limits (Session/Weekly, premium requests, …)
+                      fetched from the selected machine's daemon on page load.
+                      Self-hides until data arrives (and entirely for agents
+                      with no fetcher or offline machines). Keyed by machine +
+                      agent so switching either resets the fetched snapshot. */}
+                  {providerUsageFetch && (
                     <ChatUsageIndicator
-                      key={selectedMachineId}
+                      key={`${selectedMachineId}:${sessionConfig.agent}`}
                       usage={null}
-                      fetchLimits={claudeUsageFetch}
+                      fetchLimits={providerUsageFetch}
                       fetchOnMount
                     />
                   )}

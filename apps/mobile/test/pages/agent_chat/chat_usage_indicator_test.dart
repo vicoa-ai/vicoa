@@ -99,6 +99,81 @@ void main() {
     });
   });
 
+  group('fetchProviderUsageWindows', () {
+    final windows = <String, dynamic>{
+      'limits': {
+        'windows': [
+          {'id': 'session', 'label': 'Session', 'used_pct': 12.5, 'resets_at': null},
+        ],
+      },
+    };
+
+    test('providerHasUsageFetcher matches the daemon registry exactly', () {
+      expect(['claude', 'codex', 'copilot'].map(providerHasUsageFetcher), everyElement(isTrue));
+      expect(['gemini', 'cursor', 'opencode', 'qwen', '', null].map(providerHasUsageFetcher), everyElement(isFalse));
+    });
+
+    test('calls fetch-provider-usage with the provider and returns the windows', () async {
+      final calls = <List<dynamic>>[];
+      Future<Map<String, dynamic>> call(String m, String method, Map<String, dynamic> params) async {
+        calls.add([m, method, params]);
+        return windows;
+      }
+
+      final result = await fetchProviderUsageWindows(call: call, machineId: 'm1', provider: 'codex');
+      expect(result!.single.id, 'session');
+      expect(calls, [
+        ['m1', 'fetch-provider-usage', {'provider': 'codex'}],
+      ]);
+    });
+
+    test('never calls the daemon for a provider without a fetcher', () async {
+      var called = false;
+      Future<Map<String, dynamic>> call(String m, String method, Map<String, dynamic> params) async {
+        called = true;
+        return windows;
+      }
+
+      expect(await fetchProviderUsageWindows(call: call, machineId: 'm1', provider: 'gemini'), isNull);
+      expect(called, isFalse);
+    });
+
+    test('an error payload resolves to null', () async {
+      Future<Map<String, dynamic>> call(String m, String method, Map<String, dynamic> params) async =>
+          {'error': 'no_oauth_token'};
+      expect(await fetchProviderUsageWindows(call: call, machineId: 'm1', provider: 'copilot'), isNull);
+    });
+
+    test('claude falls back to the legacy fetch-claude-usage on an old daemon', () async {
+      final methods = <String>[];
+      Future<Map<String, dynamic>> call(String m, String method, Map<String, dynamic> params) async {
+        methods.add(method);
+        if (method == 'fetch-provider-usage') throw Exception('rpc call failed: no_handler');
+        return windows;
+      }
+
+      final result = await fetchProviderUsageWindows(call: call, machineId: 'm1', provider: 'claude');
+      expect(result!.single.id, 'session');
+      expect(methods, ['fetch-provider-usage', 'fetch-claude-usage']);
+      // The pre-registry entry point rides the same path.
+      expect((await fetchClaudeUsageWindows(call: call, machineId: 'm1'))!.single.id, 'session');
+    });
+
+    test('other providers on an old daemon hide silently; transport errors too', () async {
+      var calls = 0;
+      Future<Map<String, dynamic>> call(String m, String method, Map<String, dynamic> params) async {
+        calls++;
+        throw Exception('rpc call failed: no_handler');
+      }
+
+      expect(await fetchProviderUsageWindows(call: call, machineId: 'm1', provider: 'codex'), isNull);
+      expect(calls, 1);
+      Future<Map<String, dynamic>> offline(String m, String method, Map<String, dynamic> params) async =>
+          throw Exception('rpc call failed: target_disconnected');
+      expect(await fetchProviderUsageWindows(call: offline, machineId: 'm1', provider: 'claude'), isNull);
+    });
+  });
+
   group('formatUsageTokens', () {
     test('abbreviates thousands and millions', () {
       expect(formatUsageTokens(512), '512');

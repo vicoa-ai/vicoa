@@ -117,19 +117,40 @@ def session_models(result: Dict[str, Any]) -> List[Dict[str, str]]:
 
 
 def session_modes(result: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Session modes (``modes.availableModes``) as ``[{id, label}]``."""
+    """Session modes (``modes.availableModes``) as ``[{id, label}]``, the
+    agent's current mode (``modes.currentModeId``) first.
+
+    The list is what gets cached per machine (``machine_agent_models.modes``)
+    and the clients treat its first entry as the agent's default, so the
+    agent's own starting mode leads regardless of how it orders the list.
+    """
     modes = result.get("modes")
     if not isinstance(modes, dict):
         return []
-    return [
+    entries = [
         {"id": str(m.get("id")), "label": str(m.get("name") or m.get("id"))}
         for m in (modes.get("availableModes") or [])
         if isinstance(m, dict) and m.get("id")
     ]
+    return current_mode_first(entries, modes.get("currentModeId"))
+
+
+def current_mode_first(
+    entries: List[Dict[str, str]], current_id: Any
+) -> List[Dict[str, str]]:
+    """Reorder ``entries`` so the one with ``current_id`` leads; unchanged when
+    it isn't there (or there is no current mode)."""
+    if not isinstance(current_id, str) or not current_id:
+        return entries
+    current = [e for e in entries if e.get("id") == current_id]
+    if not current:
+        return entries
+    return current + [e for e in entries if e.get("id") != current_id]
 
 
 __all__ = [
     "CLIENT_INFO",
+    "current_mode_first",
     "initialize_payloads",
     "is_auth_required_error",
     "normalize_models",

@@ -59,7 +59,9 @@ FAKE_AGENT = textwrap.dedent(
             result = {
                 "sessionId": "sess-1",
                 "modes": {
-                    "currentModeId": "build",
+                    # Deliberately NOT the first listed: the probe must lead
+                    # with the agent's current mode, whatever the list order.
+                    "currentModeId": "plan",
                     "availableModes": [
                         {"id": "build", "name": "Build"},
                         {"id": "plan", "name": "Plan"},
@@ -256,9 +258,10 @@ def test_probe_ok_reports_agent_models_and_modes(
         {"id": "fast", "label": "Fast"},
         {"id": "smart", "label": "Smart"},
     ]
+    # Current mode first — that is what the clients read as the default.
     assert result["modes"] == [
-        {"id": "build", "label": "Build"},
         {"id": "plan", "label": "Plan"},
+        {"id": "build", "label": "Build"},
     ]
     assert result["elapsed_ms"] >= 0
 

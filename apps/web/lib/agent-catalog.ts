@@ -126,22 +126,79 @@ export function normalizeModelLabel(id: string, label: string): string {
   return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
 }
 
+/** One cached `{id, label}` entry as the machine's `machine_agent_models` row stores it. */
+export interface CachedAgentEntry {
+  id: string;
+  label: string;
+}
+
+/**
+ * What the machine's `machine_agent_models` cache knows besides the model
+ * lists. `modes` is the agent's ACP session modes (only for agents whose
+ * source reported them); `labels` is the daemon's `agent_labels` map, the
+ * only display name a client can have for a provider that exists solely in
+ * that machine's config.
+ */
+export interface CachedAgentExtras {
+  modes?: Record<string, CachedAgentEntry[]>;
+  labels?: Record<string, string>;
+}
+
+/** The "defer to the agent's own model" sentinel a synthesized entry gets. */
+const SYNTHESIZED_DEFAULT_MODEL: CatalogModel = { id: 'default', label: 'Default', is_default: true };
+
 /**
  * Return `base` with each agent's model list replaced by the machine's cached
  * real models when present (keyed by agent id). Agents without a cached entry
  * keep their static catalog defaults. Lets the new-session picker show a
- * machine's actual models once an ACP agent has run there once.
+ * machine's actual models once an ACP agent has run there once — or, since a
+ * daemon `provider-probe` also fills the cache, once it has been Checked or
+ * Added from Settings → Providers.
+ *
+ * Cached ids the static catalog has never heard of (a catalog agent such as
+ * Qwen Code, or a provider hand-written into the machine's config) get a
+ * synthesized entry appended, so the picker can render a real model / mode
+ * dropdown for them instead of nothing at all. It carries the `default`
+ * sentinel (never sent as a model — `toSpawnMetadata`'s rule) plus the cached
+ * models, and the cached modes as `permission_modes` — the field the generic
+ * ACP spawn path forwards as the initial session mode. No efforts: nothing
+ * the cache knows maps to them.
  */
 export function catalogWithCachedModels(
   base: AgentCatalog,
-  cachedByAgent: Record<string, { id: string; label: string }[]>,
+  cachedByAgent: Record<string, CachedAgentEntry[]>,
+  extras: CachedAgentExtras = {},
 ): AgentCatalog {
   if (!cachedByAgent || Object.keys(cachedByAgent).length === 0) return base;
+  const known = new Set(base.agents.map((a) => a.id));
+  const synthesized: CatalogAgent[] = Object.keys(cachedByAgent)
+    .filter((id) => !known.has(id) && (cachedByAgent[id]?.length ?? 0) > 0)
+    .sort()
+    .map((id) => {
+      const models: CatalogModel[] = [
+        { ...SYNTHESIZED_DEFAULT_MODEL },
+        ...cachedByAgent[id]
+          .filter((m) => m.id !== SYNTHESIZED_DEFAULT_MODEL.id)
+          .map((m) => ({ id: m.id, label: normalizeModelLabel(m.id, m.label || m.id) })),
+      ];
+      const entry: CatalogAgent = {
+        id,
+        label: extras.labels?.[id] || customAgentLabel(id),
+        models,
+      };
+      const modes = cachedModesAsPermissionModes(extras.modes?.[id]);
+      if (modes) entry.permission_modes = modes;
+      return entry;
+    });
   return {
     ...base,
-    agents: base.agents.map((a) => {
+    agents: [...base.agents.map((a) => {
       const cached = cachedByAgent[a.id];
-      if (!cached || cached.length === 0) return a;
+      // A static entry with no curated mode list (Copilot, Kimi, Hermes: "source
+      // modes from the live session") takes the machine's cached ones. Cursor
+      // and Gemini keep their verified catalog lists.
+      const cachedModes = a.permission_modes?.length ? undefined : cachedModesAsPermissionModes(extras.modes?.[a.id]);
+      if (!cached || cached.length === 0) return cachedModes ? { ...a, permission_modes: cachedModes } : a;
       // A machine reports only `{id, label}` — no capability metadata. Carry the
       // catalog entry's fields over for ids we already know (`is_default`,
       // `permission_modes`, `default_thinking_effort`, …); without this, the
@@ -166,9 +223,23 @@ export function catalogWithCachedModels(
       const models = sentinel && !cachedModels.some((m) => m.id === sentinel.id)
         ? [{ ...sentinel }, ...cachedModels]
         : cachedModels;
-      return { ...a, models };
-    }),
+      return cachedModes ? { ...a, models, permission_modes: cachedModes } : { ...a, models };
+    }), ...synthesized],
   };
+}
+
+/**
+ * An ACP agent's cached session modes as a `permission_modes` enum. The
+ * agent's first advertised mode is its own default (that is what `session/new`
+ * starts in), so it carries `is_default`. `undefined` when nothing is cached.
+ */
+function cachedModesAsPermissionModes(modes: CachedAgentEntry[] | undefined): CatalogEnumEntry[] | undefined {
+  if (!modes || modes.length === 0) return undefined;
+  return modes.map((m, i) => ({
+    id: m.id,
+    label: m.label || m.id,
+    ...(i === 0 ? { is_default: true } : {}),
+  }));
 }
 
 /**
@@ -316,10 +387,14 @@ export function toSpawnMetadata(config: SessionConfig, prompt?: string): Record<
       m.model = config.model;
     }
   } else {
-    // Generic ACP agents (cursor/gemini/copilot/kimi/hermes): model +
-    // permission_mode pass through; the wrapper applies them best-effort
-    // against the agent's live ACP session state.
-    if (config.model) m.model = config.model;
+    // Generic ACP agents (cursor/gemini/copilot/kimi/hermes and any
+    // catalog-added or synthesized one): model + permission_mode pass through;
+    // the wrapper applies them best-effort against the agent's live ACP
+    // session state. `default`/`auto` is the "keep the agent's own model"
+    // sentinel and is not sent (the wrapper would skip it anyway).
+    if (config.model && config.model !== "default" && config.model !== "auto") {
+      m.model = config.model;
+    }
     if (config.permission_mode) m.permission_mode = config.permission_mode;
   }
   return m;

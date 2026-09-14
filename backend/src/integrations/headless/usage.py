@@ -441,6 +441,167 @@ def claude_limits_from_oauth(response: Optional[Dict[str, Any]]) -> Optional[dic
 
 
 # ---------------------------------------------------------------------------
+# Out-of-band provider usage (daemon `fetch-provider-usage` RPC)
+# ---------------------------------------------------------------------------
+
+
+def _codex_window_label(window: Dict[str, Any], fallback: str) -> str:
+    """Label a Codex window by its actual length when the payload says it.
+
+    The in-band app-server snapshot only has ``primary``/``secondary``, which
+    the CLI renders as Session/Weekly. The out-of-band ``wham/usage`` payload
+    carries ``limit_window_seconds`` — and on a free plan the *primary* window
+    is 30 days, so calling it "Session" would be wrong.
+    """
+    seconds = _coerce_float(window.get("limit_window_seconds"))
+    if seconds is None or seconds <= 0:
+        return fallback
+    hours = seconds / 3600
+    if hours <= 5:
+        return "Session"
+    if abs(hours - 24 * 7) < 1:
+        return "Weekly"
+    if abs(hours - 24 * 30) < 24:
+        return "Monthly"
+    return fallback
+
+
+def _codex_wham_window(
+    window: Any, window_id: str, fallback_label: str
+) -> Optional[dict]:
+    if not isinstance(window, dict):
+        return None
+    pct = _coerce_float(window.get("used_percent"))
+    if pct is None:
+        return None
+    return {
+        "id": window_id,
+        "label": _codex_window_label(window, fallback_label),
+        "used_pct": round(pct, 1),
+        "resets_at": _oauth_reset(window.get("reset_at")),
+    }
+
+
+def codex_limits_from_wham(response: Optional[Dict[str, Any]]) -> Optional[dict]:
+    """Build ``limits`` from ChatGPT's ``GET /backend-api/wham/usage`` response.
+
+    The out-of-band sibling of :func:`codex_limits`: same ``primary`` →
+    ``session`` / ``secondary`` → ``weekly`` window ids so the popover rows line
+    up with the in-band snapshot, but the keys here are snake_case
+    (``used_percent`` / ``reset_at``, epoch seconds) rather than the
+    app-server's camelCase. ``secondary_window`` is ``null`` on plans with a
+    single window. ``credits.balance`` is ``null`` unless the account has
+    bought credits. ``plan_type`` rides along for the tooltip.
+    """
+    if not isinstance(response, dict):
+        return None
+    rate_limit = response.get("rate_limit")
+    if not isinstance(rate_limit, dict):
+        rate_limit = {}
+    windows: List[dict] = []
+    session = _codex_wham_window(rate_limit.get("primary_window"), "session", "Session")
+    if session:
+        windows.append(session)
+    weekly = _codex_wham_window(rate_limit.get("secondary_window"), "weekly", "Weekly")
+    if weekly:
+        windows.append(weekly)
+
+    credits: Optional[dict] = None
+    raw_credits = response.get("credits")
+    if isinstance(raw_credits, dict):
+        balance = _coerce_float(raw_credits.get("balance"))
+        if balance is not None:
+            credits = {"unit": "usd", "remaining": balance}
+
+    if not windows and credits is None:
+        return None
+    limits: Dict[str, Any] = {"windows": windows}
+    if credits is not None:
+        limits["credits"] = credits
+    plan = response.get("plan_type")
+    if isinstance(plan, str) and plan:
+        limits["plan"] = plan
+    return limits
+
+
+# ``quota_snapshots`` keys -> (window id, label), in display order. Code
+# completions are deliberately left out: an agent session never consumes them.
+_COPILOT_QUOTAS = (
+    ("premium_interactions", "premium", "Premium requests"),
+    ("chat", "chat", "Chat"),
+)
+
+
+def copilot_limits(response: Optional[Dict[str, Any]]) -> Optional[dict]:
+    """Build ``limits`` from GitHub's ``GET /copilot_internal/user`` response.
+
+    Each ``quota_snapshots`` entry is a monthly allowance:
+    ``{entitlement, remaining, percent_remaining, unlimited, has_quota}``. A
+    snapshot with no quota (``entitlement`` 0 / ``has_quota`` false — e.g.
+    premium requests on a limited free plan) or an unlimited one has nothing
+    to show as a bar and is skipped. ``used_pct`` is ``100 - percent_remaining``;
+    every window resets on the account-wide ``quota_reset_date_utc`` (the
+    per-snapshot ``quota_reset_at`` is always ``0``). ``entitlement`` /
+    ``remaining`` ride on each window for a tooltip, ``copilot_plan`` as
+    ``plan``.
+    """
+    if not isinstance(response, dict):
+        return None
+    snapshots = response.get("quota_snapshots")
+    if not isinstance(snapshots, dict):
+        return None
+    resets_at = _copilot_reset(response)
+    windows: List[dict] = []
+    for key, window_id, label in _COPILOT_QUOTAS:
+        snap = snapshots.get(key)
+        if not isinstance(snap, dict) or snap.get("unlimited") is True:
+            continue
+        entitlement = _coerce_float(snap.get("entitlement"))
+        if snap.get("has_quota") is False or not entitlement or entitlement <= 0:
+            continue
+        pct_remaining = _coerce_float(snap.get("percent_remaining"))
+        if pct_remaining is None:
+            continue
+        window: Dict[str, Any] = {
+            "id": window_id,
+            "label": label,
+            "used_pct": round(max(0.0, min(100.0, 100.0 - pct_remaining)), 1),
+            "resets_at": resets_at,
+            "entitlement": int(entitlement),
+        }
+        remaining = _coerce_float(snap.get("remaining"))
+        if remaining is not None:
+            window["remaining"] = int(remaining)
+        windows.append(window)
+    if not windows:
+        return None
+    limits: Dict[str, Any] = {"windows": windows}
+    plan = response.get("copilot_plan")
+    if isinstance(plan, str) and plan:
+        limits["plan"] = plan
+    return limits
+
+
+def _copilot_reset(response: Dict[str, Any]) -> Optional[str]:
+    """``quota_reset_date_utc`` (ISO) preferred; ``quota_reset_date`` is a bare
+    ``YYYY-MM-DD`` that we read as UTC midnight."""
+    utc = response.get("quota_reset_date_utc")
+    if isinstance(utc, str) and utc:
+        return utc
+    date = response.get("quota_reset_date")
+    if isinstance(date, str) and date:
+        try:
+            return (
+                datetime.strptime(date, "%Y-%m-%d")
+                .replace(tzinfo=timezone.utc)
+                .isoformat()
+            )
+        except ValueError:
+            return None
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Rate-limit projection (server-side)
 # ---------------------------------------------------------------------------
 

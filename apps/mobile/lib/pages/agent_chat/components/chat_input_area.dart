@@ -73,15 +73,19 @@ class ChatInputArea extends StatelessWidget {
     );
   }
 
-  /// Builds the on-demand Claude rate-limit fetch for the usage indicator, or
-  /// null (keep in-band windows) for non-Claude agents or a session with no
-  /// recorded machine. Mirrors the web's `usageFetchLimits` guard.
-  Future<List<UsageWindow>?> Function()? _claudeUsageFetch() {
-    if (!model.supportsControlSettings()) return null; // Claude only.
+  /// Builds the on-demand rate-limit fetch for the usage indicator, or null
+  /// (keep in-band windows) for agents the daemon has no fetcher for (see
+  /// `providersWithUsageFetcher`) or a session with no recorded machine.
+  /// Mirrors the web's `usageFetchLimits` guard.
+  Future<List<UsageWindow>?> Function()? _usageFetch() {
+    final provider = model.usageProviderId();
+    if (!providerHasUsageFetcher(provider)) return null;
     final machineId = model.machineId;
     if (machineId == null || machineId.isEmpty) return null;
-    return () => fetchClaudeUsageWindows(
-        call: actions.VicoaWsClient.instance.callRpc, machineId: machineId);
+    return () => fetchProviderUsageWindows(
+        call: actions.VicoaWsClient.instance.callRpc,
+        machineId: machineId,
+        provider: provider!);
   }
 
   /// Text alone, or at least one picked image (uploads happen at send time);
@@ -330,7 +334,7 @@ class ChatInputArea extends StatelessWidget {
               // (the in-band ones only update at end of turn).
               ChatUsageIndicator(
                   usage: SessionUsage.fromInstanceData(model.instanceData),
-                  fetchLimits: _claudeUsageFetch()),
+                  fetchLimits: _usageFetch()),
               Expanded(
                 child: Align(
                   alignment: Alignment.centerLeft,

@@ -736,13 +736,18 @@ class MachineSpawnRequest(Base):
 
 
 class MachineAgentModels(Base):
-    """Per-machine, per-agent cache of an ACP agent's available model list.
+    """Per-machine, per-agent cache of an ACP agent's available model and mode
+    lists.
 
-    Written write-on-change from the ``available_models`` a headless wrapper
-    reports onto ``agent_instances.session_config`` on session/new (see
-    ``update_agent_instance_endpoint``). Lets the new-session picker show a
-    machine's REAL model list before a session is started — the catalog only
-    ships static defaults, and the live list is account/version/config-specific.
+    Written write-on-change from two sources: the ``available_models`` /
+    ``available_modes`` a headless wrapper reports onto
+    ``agent_instances.session_config`` on session/new (see
+    ``update_agent_instance_endpoint``), and a successful daemon
+    ``provider-probe`` (agent-facing ``PUT /machines/{id}/agent-models/{agent}``),
+    which is how a just-added catalog agent gets a real picker before it has
+    ever run. Lets the new-session picker show a machine's REAL lists before a
+    session is started — the catalog only ships static defaults, and the live
+    list is account/version/config-specific.
     """
 
     __tablename__ = "machine_agent_models"
@@ -761,7 +766,12 @@ class MachineAgentModels(Base):
     )
     # [{"id": ..., "label": ...}] exactly as the agent's ACP session reported.
     models: Mapped[list] = mapped_column(JSONB)
-    # sha256 of the normalized model list — gates write-on-change.
+    # Same shape for the agent's ACP session modes (plan/build/…). NULL when
+    # the source didn't report any (rows written before the column existed,
+    # or an agent with no mode switching) — a client then keeps its catalog
+    # placeholder, never an empty picker.
+    modes: Mapped[list | None] = mapped_column(JSONB, default=None)
+    # sha256 of the normalized model + mode lists — gates write-on-change.
     models_hash: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc)

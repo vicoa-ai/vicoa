@@ -16,7 +16,7 @@ import {
 } from '@/components/plugins/plugin-composer-actions';
 import type { ComposerContext } from '@/lib/plugins/composer';
 import { ChatUsageIndicator } from '@/components/chat-usage-indicator';
-import { fetchClaudeUsageWindows } from '@/lib/claude-usage';
+import { fetchProviderUsageWindows, providerHasUsageFetcher } from '@/lib/provider-usage';
 import type { SessionUsage } from '@/lib/backend-api';
 import { SlashCommandSuggestions } from '@/components/dashboard/slash-command-suggestions';
 import { QueuedMessagesBar, type QueuedMessageItem } from '@/components/dashboard/queue-status';
@@ -93,6 +93,10 @@ interface ChatInputProps {
   // is narrowed to the big-3 for behavior gating, which collapses ACP agents to
   // the Claude logo; this keeps the chip showing the real agent's mark.
   agentLogoName?: string | null;
+  // Catalog agent id (`session_config.agent`, e.g. 'copilot') for the usage
+  // indicator's out-of-band rate-limit refresh — `agentType` collapses ACP
+  // agents to 'claude', which would ask the daemon for the wrong account.
+  usageProviderId?: string | null;
   projectPath?: string;
   // Machine the project lives on. Lets `@` mentions read the live daemon index
   // instead of the CLI-synced DB copy; null falls back to the DB.
@@ -162,6 +166,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
   instanceId = null,
   agentType = 'claude',
   agentLogoName,
+  usageProviderId = null,
   projectPath,
   machineId = null,
   sessionPermissionModes,
@@ -202,12 +207,14 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
   // via ~/.agents & ~/.codex/skills) alongside commands through the slash
   // trigger. Drives the Add-to-chat menu's label.
   const hasSkills = agentType === 'claude' || agentType === 'opencode' || agentType === 'codex';
-  // Live rate-limit refresh is Claude-only: the daemon reads the Claude Code
-  // OAuth credential. Codex windows arrive in-band from its app-server stream.
+  // Live rate-limit refresh for the providers the daemon can read a credential
+  // for (Claude, Codex, Copilot — see lib/provider-usage.ts). Others keep the
+  // in-band windows their wrapper stamps, if any.
   const usageFetchLimits = useMemo(() => {
-    if (agentType !== 'claude' || !machineId) return undefined;
-    return () => fetchClaudeUsageWindows(machineId);
-  }, [agentType, machineId]);
+    const provider = usageProviderId ?? agentType;
+    if (!providerHasUsageFetcher(provider) || !machineId) return undefined;
+    return () => fetchProviderUsageWindows(machineId, provider);
+  }, [usageProviderId, agentType, machineId]);
   // Bumped by the Add-to-chat "+" menu's "Mention files" action to make the
   // MentionTextarea insert "@" and open the file panel.
   const [mentionSignal, setMentionSignal] = useState(0);
@@ -902,10 +909,10 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
             />
           )}
 
-          {/* Context-window + rate-limit usage (Claude + Codex); self-hides
-              when the session has no usage to show. Opening the popover on a
-              Claude session refreshes the rate-limit windows from the
-              machine's daemon (Codex limits stay in-band only). */}
+          {/* Context-window + rate-limit usage; self-hides when the session
+              has no usage to show. Opening the popover on a Claude / Codex /
+              Copilot session refreshes the rate-limit windows from the
+              machine's daemon (`fetch-provider-usage`). */}
           <ChatUsageIndicator usage={usage} fetchLimits={usageFetchLimits} />
 
           {/* Standalone toolbar buttons contributed by plugins (Tier 1). */}

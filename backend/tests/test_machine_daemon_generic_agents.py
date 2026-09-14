@@ -61,6 +61,19 @@ class TestGenericAgentCommandBuild:
         with pytest.raises(ValueError):
             _build(daemon, "cursor", permission_mode="not-a-mode")
 
+    @pytest.mark.parametrize("agent", ["copilot", "kimi", "hermes"])
+    def test_mode_passes_through_for_agents_without_a_static_enum(
+        self, daemon: MachineDaemon, agent: str
+    ):
+        """No catalog `permission_modes` -> no daemon-side enum to validate
+        against; the id (from the machine's cached `modes`) is forwarded and
+        the wrapper checks it against the live session's availableModes. It
+        used to be dropped silently here."""
+        cmd = _build(daemon, agent, permission_mode="plan")
+        assert _pair_following(cmd, "--permission-mode") == "plan"
+        # Blank still means "no flag".
+        assert "--permission-mode" not in _build(daemon, agent, permission_mode="  ")
+
     def test_prompt_flows_through(self, daemon: MachineDaemon):
         cmd = _build(daemon, "kimi", prompt="fix the bug")
         assert _pair_following(cmd, "--prompt") == "fix the bug"

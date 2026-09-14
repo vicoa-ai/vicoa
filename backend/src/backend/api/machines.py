@@ -156,10 +156,10 @@ def get_machine_agent_models_endpoint(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Session = Depends(get_db),
 ) -> MachineAgentModelsResponse:
-    """Cached available model lists per agent for a machine, so the new-session
-    picker can show real models before a session starts. Populated
-    write-on-change from the ACP wrapper's session/new report; empty until an
-    ACP agent has run at least once on this machine."""
+    """Cached available model/mode lists per agent for a machine, so the
+    new-session picker can show real lists before a session starts. Populated
+    write-on-change from the ACP wrapper's session/new report and from daemon
+    provider probes; empty until one of those has happened on this machine."""
     machine = _get_machine_for_user(db, machine_id, current_user.id)
     rows = (
         db.query(MachineAgentModels)
@@ -167,7 +167,12 @@ def get_machine_agent_models_endpoint(
         .all()
     )
     return MachineAgentModelsResponse(
-        agent_models={row.agent_type: row.models for row in rows}
+        agent_models={row.agent_type: row.models for row in rows},
+        agent_modes={
+            row.agent_type: row.modes
+            for row in rows
+            if isinstance(row.modes, list) and row.modes
+        },
     )
 
 

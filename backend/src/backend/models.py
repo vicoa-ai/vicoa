@@ -329,11 +329,14 @@ class AgentModelEntry(BaseModel):
 
 
 class MachineAgentModelsResponse(BaseModel):
-    """Cached available model lists per agent for a machine — keyed by catalog
-    agent id (e.g. 'cursor', 'opencode'). Empty until an ACP agent has run at
-    least once on the machine."""
+    """Cached available model (and mode) lists per agent for a machine — keyed
+    by catalog agent id (e.g. 'cursor', 'opencode'). Empty until an ACP agent
+    has run at least once on the machine or a daemon probe has cached it.
+    ``agent_modes`` only has keys for agents whose source reported modes; a
+    client keeps its catalog placeholder for the rest."""
 
     agent_models: dict[str, list[AgentModelEntry]] = Field(default_factory=dict)
+    agent_modes: dict[str, list[AgentModelEntry]] = Field(default_factory=dict)
 
 
 class RenameMachineRequest(BaseModel):

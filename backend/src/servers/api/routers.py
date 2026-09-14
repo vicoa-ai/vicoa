@@ -96,6 +96,8 @@ from .models import (
     SpawnSessionRequest,
     SpawnSessionResponse,
     NextSpawnRequestResponse,
+    PutMachineAgentModelsRequest,
+    PutMachineAgentModelsResponse,
     UpdateSpawnRequestRequest,
     MachineSummary,
     VerifyAuthResponse,
@@ -127,6 +129,20 @@ def _maybe_decode_base64(value: str | None) -> str | None:
             return decoded.decode("utf-8", errors="replace")
     except (binascii.Error, ValueError):
         return value
+
+
+def _current_mode_first(modes: object, current: object) -> object:
+    """Cache-side twin of ``acp_handshake.current_mode_first`` for the session
+    PATCH's ``available_modes`` + ``current_mode`` pair; passes junk through
+    untouched for the upsert's own normalisation to drop."""
+    if not isinstance(modes, list) or not isinstance(current, str) or not current:
+        return modes
+    leading = [m for m in modes if isinstance(m, dict) and m.get("id") == current]
+    if not leading:
+        return modes
+    return leading + [
+        m for m in modes if not (isinstance(m, dict) and m.get("id") == current)
+    ]
 
 
 def _get_machine_for_user(db: Session, machine_id: str, user_id: str) -> Machine:
@@ -472,6 +488,45 @@ def update_machine_recent_directories_endpoint(
         last_heartbeat_at=summary.last_heartbeat_at,
         metadata=summary.metadata,
     )
+
+
+_AGENT_TYPE_KEY_MAX = 64  # machine_agent_models.agent_type is String(64)
+
+
+@agent_router.put(
+    "/machines/{machine_id}/agent-models/{agent_type}",
+    response_model=PutMachineAgentModelsResponse,
+)
+def put_machine_agent_models_endpoint(
+    machine_id: str,
+    agent_type: str,
+    request: PutMachineAgentModelsRequest,
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    db: Session = Depends(get_db),
+) -> PutMachineAgentModelsResponse:
+    """Cache an agent's real model/mode lists for a machine from a daemon
+    ``provider-probe`` — the out-of-session source for ``machine_agent_models``
+    (plans/todos/agent-integration-followups.md §2b). Lets the new-session
+    picker offer a just-added catalog agent's real lists before it has ever
+    run. Same write-on-change upsert the session PATCH uses, so the two
+    sources can't disagree about what a row means.
+    """
+    machine = _get_machine_for_user(db, machine_id, user_id)
+    key = agent_type.strip().lower()
+    if not key or len(key) > _AGENT_TYPE_KEY_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid agent type"
+        )
+    updated = upsert_machine_agent_models(
+        db,
+        machine_id=machine.id,
+        agent_type=key,
+        user_id=machine.user_id,
+        models=[m.model_dump() for m in request.models],
+        modes=[m.model_dump() for m in request.modes] if request.modes else None,
+    )
+    db.commit()
+    return PutMachineAgentModelsResponse(agent_type=key, updated=updated)
 
 
 @agent_router.post(
@@ -1331,6 +1386,14 @@ def update_agent_instance_endpoint(
                             agent_type=str(agent_type),
                             user_id=instance.user_id,
                             models=incoming.get("available_models"),
+                            # ACP wrappers report both in one PATCH; a
+                            # models-only report leaves cached modes alone.
+                            # The agent's current mode leads the cached list
+                            # (clients read the first entry as its default).
+                            modes=_current_mode_first(
+                                incoming.get("available_modes"),
+                                incoming.get("current_mode"),
+                            ),
                         )
                 except Exception:
                     logger.warning(

@@ -10,6 +10,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -450,3 +451,171 @@ def test_open_in_methods_and_capability_are_advertised(daemon: MachineDaemon):
     assert "open-path" in advertised
     # The client hides the "Open in…" menu unless the daemon says it's routable.
     assert "open-in" in daemon._capabilities()
+
+
+# --- provider usage + probe cache (agent-integration-followups §2) ---------
+
+
+def test_provider_usage_methods_and_capability_are_advertised(daemon: MachineDaemon):
+    methods = daemon._supported_rpc_methods()
+    assert "fetch-provider-usage" in methods
+    assert "fetch-claude-usage" in methods  # legacy alias stays routable
+    assert "provider-usage" in daemon._capabilities()
+
+
+def test_fetch_provider_usage_dispatched_to_registry(
+    daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch
+):
+    from vicoa.rpc import provider_usage
+
+    provider_usage.clear_cache()
+    monkeypatch.setitem(
+        provider_usage.PROVIDER_USAGE_FETCHERS,
+        "codex",
+        lambda: {"limits": {"windows": [{"id": "session", "used_pct": 1.0}]}},
+    )
+    result = daemon._handle_rpc_request(
+        {"method": "fetch-provider-usage", "params": {"provider": "codex"}}
+    )
+    assert result == {"limits": {"windows": [{"id": "session", "used_pct": 1.0}]}}
+    assert "error" in daemon._handle_rpc_request(
+        {"method": "fetch-provider-usage", "params": {"provider": "gemini"}}
+    )
+    provider_usage.clear_cache()
+
+
+def test_legacy_fetch_claude_usage_still_dispatched(
+    daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch
+):
+    from vicoa.rpc import provider_usage
+
+    provider_usage.clear_cache()
+    monkeypatch.setitem(
+        provider_usage.PROVIDER_USAGE_FETCHERS,
+        "claude",
+        lambda: {"error": "no_oauth_token"},
+    )
+    assert daemon._handle_rpc_request(
+        {"method": "fetch-claude-usage", "params": {}}
+    ) == {"error": "no_oauth_token"}
+    provider_usage.clear_cache()
+
+
+def test_probe_ok_puts_models_and_modes_into_the_machine_cache(
+    daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch
+):
+    from vicoa.rpc import provider_ops
+
+    probe = {
+        "id": "qwen",
+        "ok": True,
+        "stage": "ok",
+        "models": [{"id": "qwen3-coder", "label": "Qwen3 Coder"}],
+        "modes": [{"id": "plan", "label": "Plan"}],
+    }
+    monkeypatch.setattr(provider_ops, "provider_probe", lambda **_kw: dict(probe))
+    daemon.machine_id = "m-1"
+    puts: list[tuple[str, dict]] = []
+
+    def fake_put(path: str, payload: dict):
+        puts.append((path, payload))
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        return resp
+
+    monkeypatch.setattr(daemon, "_put", fake_put)
+    result = daemon._handle_rpc_request(
+        {"method": "provider-probe", "params": {"provider_id": "qwen"}}
+    )
+    assert result["ok"] is True
+    assert puts == [
+        (
+            "/api/v1/machines/m-1/agent-models/qwen",
+            {"models": probe["models"], "modes": probe["modes"]},
+        )
+    ]
+
+
+def test_probe_failure_or_no_machine_writes_nothing(
+    daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch
+):
+    from vicoa.rpc import provider_ops
+
+    puts: list[str] = []
+    monkeypatch.setattr(daemon, "_put", lambda path, payload: puts.append(path))
+    monkeypatch.setattr(
+        provider_ops,
+        "provider_probe",
+        lambda **_kw: {"id": "qwen", "ok": False, "stage": "binary", "error": "x"},
+    )
+    daemon.machine_id = "m-1"
+    daemon._handle_rpc_request(
+        {"method": "provider-probe", "params": {"provider_id": "qwen"}}
+    )
+    assert puts == []
+
+    # ok but local-only daemon (no cloud machine row) -> nothing to write to.
+    monkeypatch.setattr(
+        provider_ops,
+        "provider_probe",
+        lambda **_kw: {"id": "qwen", "ok": True, "models": [{"id": "a", "label": "A"}]},
+    )
+    daemon.machine_id = None
+    daemon._handle_rpc_request(
+        {"method": "provider-probe", "params": {"provider_id": "qwen"}}
+    )
+    assert puts == []
+
+
+def test_cache_put_failure_never_fails_the_probe(
+    daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch
+):
+    from vicoa.rpc import provider_ops
+
+    monkeypatch.setattr(
+        provider_ops,
+        "provider_probe",
+        lambda **_kw: {"id": "qwen", "ok": True, "models": [{"id": "a", "label": "A"}]},
+    )
+    daemon.machine_id = "m-1"
+
+    def boom(path: str, payload: dict):
+        raise RuntimeError("backend down")
+
+    monkeypatch.setattr(daemon, "_put", boom)
+    result = daemon._handle_rpc_request(
+        {"method": "provider-probe", "params": {"provider_id": "qwen"}}
+    )
+    assert result["ok"] is True
+
+
+def test_provider_add_probes_in_the_background(
+    daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch
+):
+    from vicoa.rpc import provider_ops
+
+    monkeypatch.setattr(
+        provider_ops, "provider_add", lambda **_kw: {"id": "qwen", "label": "Qwen"}
+    )
+    monkeypatch.setattr(
+        daemon, "scan_agents_rpc", lambda: {"available_agents": {"qwen": True}}
+    )
+    daemon.machine_id = "m-1"
+    started: list[str] = []
+    monkeypatch.setattr(
+        daemon,
+        "_probe_and_cache_agent_models_background",
+        lambda agent_id: started.append(agent_id),
+    )
+    result = daemon._handle_rpc_request(
+        {"method": "provider-add", "params": {"entry": {"id": "qwen"}}}
+    )
+    assert result["id"] == "qwen" and result["available_agents"] == {"qwen": True}
+    assert started == ["qwen"]
+
+    # A failed add never probes.
+    monkeypatch.setattr(provider_ops, "provider_add", lambda **_kw: {"error": "nope"})
+    daemon._handle_rpc_request(
+        {"method": "provider-add", "params": {"entry": {"id": "x"}}}
+    )
+    assert started == ["qwen"]

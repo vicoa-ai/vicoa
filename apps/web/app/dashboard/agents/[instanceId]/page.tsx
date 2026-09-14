@@ -2752,6 +2752,7 @@ function AgentInstanceContent() {
               instanceId={instanceId}
               agentType={agentType}
               agentLogoName={instance.agent_type_name}
+              usageProviderId={rawAgentId}
               projectPath={toAbsolutePath(instance.project, instance.home_dir)}
               machineId={instance.machine_id ?? null}
               sessionOpencodeModes={isOpencodeAgent ? sessionOpencodeModes : undefined}

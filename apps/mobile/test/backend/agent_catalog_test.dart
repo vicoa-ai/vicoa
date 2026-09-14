@@ -32,13 +32,15 @@ void main() {
 
   group('SessionConfig.toSpawnMetadata', () {
     test('generic ACP agents pass model and permission_mode through', () {
-      final metadata = SessionConfig(agent: 'cursor', model: 'auto', permissionMode: 'plan').toSpawnMetadata(prompt: 'fix it');
-      expect(metadata, {'prompt': 'fix it', 'model': 'auto', 'permission_mode': 'plan'});
+      final metadata = SessionConfig(agent: 'cursor', model: 'composer-2.5', permissionMode: 'plan').toSpawnMetadata(prompt: 'fix it');
+      expect(metadata, {'prompt': 'fix it', 'model': 'composer-2.5', 'permission_mode': 'plan'});
     });
 
-    test('hermes without mode sends only the model', () {
-      final metadata = SessionConfig(agent: 'hermes', model: 'default').toSpawnMetadata();
-      expect(metadata, {'model': 'default'});
+    test('generic ACP agents keep the agent\'s own model for the auto/default sentinel', () {
+      // Same rule as pi/opencode: the sentinel means "don't force a model", so
+      // nothing is sent (the wrapper would skip it anyway).
+      expect(SessionConfig(agent: 'cursor', model: 'auto', permissionMode: 'plan').toSpawnMetadata(), {'permission_mode': 'plan'});
+      expect(SessionConfig(agent: 'hermes', model: 'default').toSpawnMetadata(), <String, dynamic>{});
     });
 
     test('claude shape is unchanged', () {
@@ -127,6 +129,106 @@ void main() {
       final merged = catalogWithCachedModels(base, {'cursor': const []});
       expect(merged.agentById('cursor')!.models!.map((m) => m.id).toList(),
           base.agentById('cursor')!.models!.map((m) => m.id).toList());
+    });
+
+    test('synthesizes an entry for a cached agent the static catalog cannot describe', () {
+      // A catalog-added agent (Qwen Code) that was probed or ran once: the
+      // cache has its models and modes, the daemon's agent_labels its name.
+      // Before this the sheet had no model/mode picker at all for it.
+      final base = agentCatalogFallback();
+      final merged = catalogWithCachedModels(
+        base,
+        {
+          'qwen': [
+            {'id': 'qwen3-coder-plus', 'label': 'Qwen3 Coder Plus'},
+            {'id': 'qwen3-max', 'label': 'Qwen3 Max'},
+          ],
+        },
+        cachedModes: {
+          'qwen': [
+            {'id': 'default', 'label': 'Default'},
+            {'id': 'plan', 'label': 'Plan'},
+          ],
+        },
+        agentLabels: {'qwen': 'Qwen Code'},
+      );
+      expect(merged.agents.length, base.agents.length + 1);
+      final qwen = merged.agents.last;
+      expect(qwen.id, 'qwen');
+      expect(qwen.label, 'Qwen Code');
+      // `default` sentinel first (never sent as a model), then the real list.
+      expect(qwen.models!.map((m) => m.id).toList(), ['default', 'qwen3-coder-plus', 'qwen3-max']);
+      expect(qwen.models!.first.isDefault, isTrue);
+      // Cached modes become permissionModes — the field the generic ACP spawn
+      // path forwards — with the agent's first mode as its default.
+      expect(qwen.permissionModes.map((e) => e.id).toList(), ['default', 'plan']);
+      expect(qwen.permissionModes.first.isDefault, isTrue);
+      expect(qwen.permissionModes.last.isDefault, isFalse);
+      expect(qwen.thinkingEfforts, isEmpty);
+      expect(qwen.reasoningEfforts, isEmpty);
+      expect(qwen.modes, isEmpty);
+      // Static agents keep their order and content.
+      expect(merged.agents.sublist(0, base.agents.length).map((a) => a.id).toList(),
+          base.agents.map((a) => a.id).toList());
+
+      // Drives the config lifecycle end to end.
+      final defaults = SessionConfig.defaultsFor(merged, 'qwen');
+      expect(defaults.model, 'default');
+      expect(defaults.permissionMode, 'default');
+      // The sentinel is never sent as a model; a real pick + mode are.
+      expect(defaults.toSpawnMetadata(), {'permission_mode': 'default'});
+      expect(
+        SessionConfig(agent: 'qwen', model: 'qwen3-max', permissionMode: 'plan').toSpawnMetadata(),
+        {'model': 'qwen3-max', 'permission_mode': 'plan'},
+      );
+      // A config saved before the cache existed reconciles to the defaults.
+      final reconciled = SessionConfig(agent: 'qwen', permissionMode: 'yolo').reconcileAgainst(merged);
+      expect(reconciled.model, 'default');
+      expect(reconciled.permissionMode, 'default');
+    });
+
+    test('synthesized entry falls back to a derived label and skips modes when none are cached', () {
+      final merged = catalogWithCachedModels(agentCatalogFallback(), {
+        'kimi-work': [
+          {'id': 'default', 'label': 'Default'},
+          {'id': 'moonshot-ai/kimi-k2.6', 'label': 'Kimi K2.6'},
+        ],
+      });
+      final kimi = merged.agentById('kimi-work')!;
+      expect(kimi.label, 'Kimi Work');
+      // A cached `default` is not duplicated behind the sentinel.
+      expect(kimi.models!.map((m) => m.id).toList(), ['default', 'moonshot-ai/kimi-k2.6']);
+      expect(kimi.permissionModes, isEmpty);
+    });
+
+    test('cached modes fill in a static agent with no curated mode list, but not one that does', () {
+      final base = agentCatalogFallback();
+      final merged = catalogWithCachedModels(
+        base,
+        {
+          'copilot': [
+            {'id': 'gpt-5-mini', 'label': 'GPT-5 mini'},
+          ],
+        },
+        cachedModes: {
+          'copilot': [
+            {'id': 'agent', 'label': 'Agent'},
+            {'id': 'plan', 'label': 'Plan'},
+          ],
+          'cursor': [
+            {'id': 'weird', 'label': 'Weird'},
+          ],
+          // Modes without models still land.
+          'hermes': [
+            {'id': 'default', 'label': 'Default'},
+          ],
+        },
+      );
+      expect(merged.agentById('copilot')!.permissionModes.map((e) => e.id).toList(), ['agent', 'plan']);
+      expect(merged.agentById('copilot')!.models!.map((m) => m.id).toList(), ['default', 'gpt-5-mini']);
+      expect(merged.agentById('cursor')!.permissionModes.map((e) => e.id).toList(),
+          base.agentById('cursor')!.permissionModes.map((e) => e.id).toList());
+      expect(merged.agentById('hermes')!.permissionModes.map((e) => e.id).toList(), ['default']);
     });
   });
 

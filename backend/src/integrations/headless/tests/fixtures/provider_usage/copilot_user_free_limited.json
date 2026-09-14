@@ -1,0 +1,67 @@
+{
+  "login": "redacted",
+  "access_type_sku": "free_limited_copilot",
+  "analytics_tracking_id": "REDACTED",
+  "assigned_date": "2025-12-14T13:27:16+08:00",
+  "can_signup_for_limited": false,
+  "chat_enabled": true,
+  "cli_enabled": true,
+  "copilot_plan": "individual",
+  "organization_login_list": [],
+  "organization_list": [],
+  "endpoints": {
+    "api": "https://api.individual.githubcopilot.com",
+    "proxy": "https://proxy.individual.githubcopilot.com"
+  },
+  "can_upgrade_plan": true,
+  "quota_snapshots": {
+    "chat": {
+      "overage_count": 0,
+      "overage_permitted": false,
+      "percent_remaining": 100.0,
+      "quota_id": "REDACTED",
+      "quota_remaining": 200.0,
+      "unlimited": false,
+      "timestamp_utc": "2026-09-14T03:47:16.920Z",
+      "has_quota": true,
+      "quota_reset_at": 0,
+      "token_based_billing": true,
+      "credits_used": 0,
+      "remaining": 200,
+      "entitlement": 200
+    },
+    "completions": {
+      "overage_count": 0,
+      "overage_permitted": false,
+      "percent_remaining": 100.0,
+      "quota_id": "REDACTED",
+      "quota_remaining": 2000.0,
+      "unlimited": false,
+      "timestamp_utc": "2026-09-14T03:47:16.920Z",
+      "has_quota": true,
+      "quota_reset_at": 0,
+      "token_based_billing": true,
+      "credits_used": 0,
+      "remaining": 2000,
+      "entitlement": 2000
+    },
+    "premium_interactions": {
+      "overage_count": 0,
+      "overage_permitted": false,
+      "percent_remaining": 0.0,
+      "quota_id": "REDACTED",
+      "quota_remaining": 0.0,
+      "unlimited": false,
+      "timestamp_utc": "2026-09-14T03:47:16.920Z",
+      "has_quota": false,
+      "quota_reset_at": 0,
+      "token_based_billing": true,
+      "credits_used": 0,
+      "remaining": 0,
+      "entitlement": 0
+    }
+  },
+  "token_based_billing": true,
+  "quota_reset_date": "2026-10-01",
+  "quota_reset_date_utc": "2026-10-01T00:00:00.000Z"
+}

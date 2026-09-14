@@ -329,9 +329,15 @@ def _normalize_agent_models(models: object) -> list[dict]:
     return out
 
 
-def _agent_models_hash(normalized: list[dict]) -> str:
-    payload = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+def _agent_models_hash(normalized: list[dict], modes: list[dict] | None = None) -> str:
+    """Hash of the row's comparable content. ``modes`` folds in only when the
+    row has some, so rows written before the column existed hash exactly as
+    they always did until a report brings modes along."""
+    payload: object = (
+        normalized if not modes else {"models": normalized, "modes": modes}
+    )
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def upsert_machine_agent_models(
@@ -341,18 +347,26 @@ def upsert_machine_agent_models(
     agent_type: str,
     user_id: UUID,
     models: object,
+    modes: object = None,
 ) -> bool:
-    """Cache an agent's available models for a machine, write-on-change.
+    """Cache an agent's available models (and modes) for a machine,
+    write-on-change.
 
-    Skips empty lists (never clobbers a known-good list with nothing) and skips
-    writes when the list is unchanged (the common case — the list is stable
-    across sessions). Returns True iff a row was inserted/updated.
+    Skips empty model lists (never clobbers a known-good list with nothing)
+    and skips writes when nothing changed (the common case — the lists are
+    stable across sessions). ``modes`` is optional and merge-only: a report
+    without modes keeps whatever the row already has, so a source that only
+    knows models (an older wrapper) can't erase what a probe stored. Returns
+    True iff a row was inserted/updated.
     """
     normalized = _normalize_agent_models(models)
     if not normalized:
         return False
-    new_hash = _agent_models_hash(normalized)
     row = db.get(MachineAgentModels, (machine_id, agent_type))
+    new_modes = _normalize_agent_models(modes) or None
+    if new_modes is None and row is not None and isinstance(row.modes, list):
+        new_modes = _normalize_agent_models(row.modes) or None
+    new_hash = _agent_models_hash(normalized, new_modes)
     if row is not None and row.models_hash == new_hash:
         return False
     if row is None:
@@ -362,11 +376,13 @@ def upsert_machine_agent_models(
                 agent_type=agent_type,
                 user_id=user_id,
                 models=normalized,
+                modes=new_modes,
                 models_hash=new_hash,
             )
         )
     else:
         row.models = normalized
+        row.modes = new_modes
         row.models_hash = new_hash
         row.user_id = user_id
     return True

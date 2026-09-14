@@ -83,6 +83,28 @@ class UpdateMachineRecentDirectoryRequest(BaseModel):
     )
 
 
+class AgentModelEntry(BaseModel):
+    id: str = Field(..., min_length=1, max_length=256)
+    label: str | None = Field(default=None, max_length=256)
+
+
+class PutMachineAgentModelsRequest(BaseModel):
+    """Body of the agent-facing ``PUT /machines/{id}/agent-models/{agent}``:
+    what a daemon ``provider-probe`` learned from the agent's ``session/new``.
+    Same write-on-change upsert as the session PATCH's ``available_models``;
+    ``modes`` is optional and merge-only (absent keeps the row's current)."""
+
+    models: list[AgentModelEntry] = Field(..., min_length=1, max_length=500)
+    modes: list[AgentModelEntry] | None = Field(default=None, max_length=100)
+
+
+class PutMachineAgentModelsResponse(BaseModel):
+    agent_type: str
+    updated: bool = Field(
+        ..., description="False when the cached lists were already identical"
+    )
+
+
 class MachineSummary(BaseModel):
     machine_id: str = Field(..., description="Identifier of the machine")
     display_name: str | None = Field(default=None, description="Display name if set")
