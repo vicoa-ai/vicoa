@@ -132,6 +132,15 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("invited_email IS NOT NULL"),
     )
+    # Email-only lookup: "which teams have invited this address?" runs on
+    # every GET /teams/invitations and at signup. The unique index above leads
+    # with team_id, so it cannot serve that query.
+    op.create_index(
+        "ix_team_members_invited_email",
+        "team_members",
+        [sa.text("lower(invited_email)")],
+        postgresql_where=sa.text("invited_email IS NOT NULL"),
+    )
 
     # --- 5. team_invites ------------------------------------------------------
     op.create_table(
@@ -281,11 +290,24 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("invited_email IS NOT NULL"),
     )
+    # Email-only lookup for attach_pending_grants at signup (same reason as
+    # ix_team_members_invited_email: the unique index leads with project_id).
+    op.create_index(
+        "ix_project_grants_invited_email",
+        "project_grants",
+        [sa.text("lower(invited_email)")],
+        postgresql_where=sa.text("invited_email IS NOT NULL"),
+    )
 
 
 def downgrade() -> None:
     # Grants, ownership columns and the new team tables go; the old
     # (test-artifact-only) team rows are not restored.
+    op.drop_index(
+        "ix_project_grants_invited_email",
+        table_name="project_grants",
+        postgresql_where=sa.text("invited_email IS NOT NULL"),
+    )
     op.drop_index(
         "uq_project_grants_project_email",
         table_name="project_grants",
@@ -342,6 +364,11 @@ def downgrade() -> None:
 
     op.drop_index("ix_team_invites_team", table_name="team_invites")
     op.drop_table("team_invites")
+    op.drop_index(
+        "ix_team_members_invited_email",
+        table_name="team_members",
+        postgresql_where=sa.text("invited_email IS NOT NULL"),
+    )
     op.drop_index(
         "uq_team_members_team_email",
         table_name="team_members",

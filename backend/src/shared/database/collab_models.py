@@ -142,6 +142,13 @@ class TeamMember(Base):
             unique=True,
             postgresql_where=text("invited_email IS NOT NULL"),
         ),
+        # Email-only lookup (GET /teams/invitations, signup); the unique index
+        # above leads with team_id so it cannot serve it.
+        Index(
+            "ix_team_members_invited_email",
+            func.lower(text("invited_email")),
+            postgresql_where=text("invited_email IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -257,6 +264,12 @@ class ProjectGrant(Base):
             "project_id",
             func.lower(text("invited_email")),
             unique=True,
+            postgresql_where=text("invited_email IS NOT NULL"),
+        ),
+        # Email-only lookup for attach_pending_grants at signup.
+        Index(
+            "ix_project_grants_invited_email",
+            func.lower(text("invited_email")),
             postgresql_where=text("invited_email IS NOT NULL"),
         ),
     )
