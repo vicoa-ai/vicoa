@@ -86,6 +86,9 @@ def _build_wrapper(
     wrapper.acp = MagicMock()
     wrapper._replaying_session = False
     wrapper._startup_complete = True
+    # Past registration: the row exists, so failure reports / status writes
+    # are allowed to reach the server.
+    wrapper._registered = True
     wrapper._stopping = False
     wrapper.session_id = None
     wrapper.last_message_id = None

@@ -23,6 +23,7 @@ import requests
 from requests import Response
 
 from integrations.utils.heartbeat import next_interval_from_response
+from vicoa.session_markers import clear_session_registered, registered_marker_path
 from vicoa.spawn_ws_client import SpawnRequestWsClient
 from vicoa.terminal.coalescer import TerminalOutputCoalescer
 from vicoa.terminal.rpc import PTY_ORDERED_METHODS, PTY_RPC_METHODS, handle_pty_rpc
@@ -61,6 +62,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_POLL_INTERVAL_SECONDS = 5
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30
+# How long `spawn-session` waits for the child to register before reporting
+# failure. The runner's own retry budget is 20s
+# (integrations/utils/registration.py); the rest is process-start slack. Must
+# stay under the server's 30s RPC timeout (shared/websocket/rpc.py), or a slow
+# but successful spawn reads as a timeout to the caller.
+REGISTRATION_WAIT_SECONDS = 24.0
 REQUEST_TIMEOUT_SECONDS = 15
 
 # Opaque CLI keys expire in ~90 days; the server only extends one with <7 days
@@ -2449,6 +2456,9 @@ class MachineDaemon:
             # the child still outlives a daemon/app exit) so a startup crash is
             # captured instead of lost. The wrapper logs to its own file too.
             stderr_log = self._open_session_stderr(session_id)
+            # A resume reuses the id; make sure no stale marker from a previous
+            # run can satisfy the wait below.
+            clear_session_registered(session_id)
             try:
                 process = subprocess.Popen(
                     command,
@@ -2483,6 +2493,17 @@ class MachineDaemon:
             },
             daemon=True,
         ).start()
+        # Hold the RPC until the agent's instance row exists. Returning at
+        # Popen time told the caller "spawned" for a process that might still
+        # fail to register — it then navigated to a row that never appeared,
+        # with the real reason buried in a log file. This is the same shape
+        # the SSE spawn path already has (`_wait_for_process_ready` +
+        # "started"); the RPC path never got it.
+        failure = self._wait_for_registration(session_id, process)
+        if failure is not None:
+            self._rollback_worktree(params.get("directory"), worktree_info)
+            print(f"[daemon] RPC spawn-session {normalized_agent} failed: {failure}")
+            return {"error": failure}
         print(f"[daemon] RPC spawn-session launched {normalized_agent}: {session_id}")
         result: dict[str, Any] = {"agent_instance_id": session_id}
         if worktree_info is not None:
@@ -2799,6 +2820,72 @@ class MachineDaemon:
         finally:
             if not _handed_off:
                 self._active_request_ids.discard(request_id)
+
+    def _wait_for_registration(
+        self,
+        session_id: str,
+        process: subprocess.Popen[bytes],
+        *,
+        timeout: float = REGISTRATION_WAIT_SECONDS,
+        interval: float = 0.1,
+    ) -> str | None:
+        """Block until the child's registered marker appears.
+
+        Returns None once the row exists, else a one-line reason for the RPC
+        error: the child's last stderr line if it exited, or a timeout. A
+        child that is still alive at the deadline is terminated — a runner
+        that has not registered inside its own budget is either wedged or
+        about to give up, and letting it run on would recreate the invisible
+        zombie this wait exists to prevent.
+        """
+        marker = registered_marker_path(session_id)
+        deadline = time.time() + timeout
+        while True:
+            if marker.exists():
+                clear_session_registered(session_id)
+                return None
+            code = process.poll()
+            if code is not None:
+                # The child died before registering. Its last stderr line is
+                # usually the actionable reason (not logged in, bad model, a
+                # missing dependency) — surface it verbatim, since "try again"
+                # would not help. Only when there is nothing to show do we fall
+                # back to the generic, retry-friendly message.
+                tail = self._read_session_stderr_tail(session_id)
+                reason = tail.splitlines()[-1][:300] if tail else ""
+                if reason:
+                    return f"Couldn't start the session: {reason}"
+                return (
+                    "Couldn't start the session. The agent exited "
+                    "unexpectedly, please try again."
+                )
+            if time.time() >= deadline:
+                if marker.exists():
+                    clear_session_registered(session_id)
+                    return None
+                try:
+                    process.terminate()
+                except Exception:  # noqa: BLE001 - best effort
+                    pass
+                # Timed out waiting for the agent to come online — almost always
+                # a transient slow/unreachable server, so retry is the right
+                # advice. The stderr tail here is just the runner's last log
+                # line (rarely actionable) and would clutter the message, so it
+                # goes to the daemon log, not to the user.
+                tail = self._read_session_stderr_tail(session_id)
+                if tail:
+                    logger.warning(
+                        "[daemon] session %s registration timed out after %.0fs; "
+                        "stderr tail:\n%s",
+                        session_id,
+                        timeout,
+                        tail,
+                    )
+                return (
+                    "Couldn't start the session. It didn't come online in "
+                    "time, please try again."
+                )
+            time.sleep(interval)
 
     def _wait_for_process_ready(
         self,

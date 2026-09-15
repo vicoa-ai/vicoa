@@ -387,6 +387,7 @@ class AsyncVicoaClient:
         worktree_name: Optional[str] = None,
         repo_root: Optional[str] = None,
         git_remote_url: Optional[str] = None,
+        timeout: Optional[int] = None,
     ) -> RegisterAgentInstanceResponse:
         """Register or update an agent instance for terminal relay sessions.
 
@@ -467,14 +468,20 @@ class AsyncVicoaClient:
 
         try:
             response = await self._make_request(
-                "POST", "/api/v1/agent-instances", json=payload
+                "POST", "/api/v1/agent-instances", json=payload, timeout=timeout
             )
         except APIError as err:
             if err.status_code == 409 and target_instance_id:
+                # Idempotent re-register: the row exists (a retry after the
+                # first attempt succeeded server-side after we gave up). Read
+                # it back and treat it as ours; the server also answers 200
+                # for a same-owner re-register now, so this is the old-server
+                # path.
                 detail = await self._make_request(
                     "GET",
                     f"/api/v1/agent-instances/{target_instance_id}",
                     params={"message_limit": 0},
+                    timeout=timeout,
                 )
                 return RegisterAgentInstanceResponse(
                     agent_instance_id=detail["id"],

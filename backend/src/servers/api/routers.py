@@ -958,6 +958,19 @@ def _resolve_owned_task_id(db: Session, raw_task_id: str, user_id: str) -> UUID:
     return task_uuid
 
 
+# Statuses a same-owner re-register must not silently adopt (see the
+# idempotent branch in `register_agent_instance_endpoint`).
+_REGISTER_TERMINAL_STATUSES = frozenset(
+    {
+        AgentStatus.COMPLETED,
+        AgentStatus.FAILED,
+        AgentStatus.KILLED,
+        AgentStatus.DISCONNECTED,
+        AgentStatus.DELETED,
+    }
+)
+
+
 def _format_agent_instance(instance: AgentInstance) -> RegisterAgentInstanceResponse:
     metadata = (
         dict(instance.instance_metadata)
@@ -1047,10 +1060,19 @@ def register_agent_instance_endpoint(
                 and existing.instance_metadata
                 and existing.instance_metadata.get("spawn_starting")
             ):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Agent instance already exists",
-                )
+                # Same owner, same id, row still live: this is a retry of a
+                # registration whose first attempt succeeded after the client
+                # gave up (registration is idempotent by instance id). Answer
+                # with the row as it stands — the first attempt already
+                # applied the fields — instead of 409, which turned a late
+                # success into a guaranteed failure. A terminal row is still a
+                # conflict: nothing should be re-registering an ended session.
+                if existing.status in _REGISTER_TERMINAL_STATUSES:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Agent instance already exists",
+                    )
+                return _format_agent_instance(existing)
             # Pre-allocated by a spawn request — activate it.
             existing.status = AgentStatus.ACTIVE
             metadata = dict(existing.instance_metadata)
@@ -1172,7 +1194,25 @@ def register_agent_instance_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    except SAIntegrityError:
+    except SAIntegrityError as exc:
+        # Two retries of the same registration can race: both find no row,
+        # both INSERT, the loser hits the primary key. That loser is the same
+        # idempotent re-register as the 200 branch above — read the row the
+        # winner committed and answer with it.
+        if instance_uuid is not None and "agent_instances_pkey" in str(
+            getattr(exc, "orig", exc)
+        ):
+            db.rollback()
+            winner = (
+                db.query(AgentInstance)
+                .filter(
+                    AgentInstance.id == instance_uuid,
+                    AgentInstance.user_id == UUID(user_id),
+                )
+                .first()
+            )
+            if winner is not None:
+                return _format_agent_instance(winner)
         # *_user_id_fkey -> 401 via app-level handler. See companion sites.
         raise
     except Exception as exc:  # pragma: no cover - unexpected failure

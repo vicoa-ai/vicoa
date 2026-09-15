@@ -41,10 +41,15 @@ from integrations.headless.codex.spawn import (
 from integrations.headless.codex_app_server import CodexAppServerSession
 from integrations.headless.session_lifecycle import instance_update_requests_stop
 from integrations.utils.heartbeat import AsyncSessionHeartbeat
+from integrations.utils.registration import (
+    REGISTRATION_ATTEMPT_TIMEOUT_SECONDS,
+    register_with_retry,
+)
 from vicoa.agents.codex_acp import read_codex_auth_openai_key
 from vicoa.attachments import AttachmentRef, extract_attachment_refs
 from vicoa.sdk.async_client import AsyncVicoaClient
 from vicoa.sdk.exceptions import AuthenticationError
+from vicoa.session_markers import clear_session_registered, mark_session_registered
 from vicoa.session_ws_client import SessionMessagesWsClient
 from vicoa.utils import derive_ws_url, get_project_path
 
@@ -175,6 +180,9 @@ class CodexNativeRunner:
         self._ws_thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._heartbeat: Optional[AsyncSessionHeartbeat] = None
+        # Set once the instance row is known to exist (registered, or reopened
+        # on resume). Gates every write that would otherwise create the row.
+        self._registered = False
         # Serialized turn pipeline. ``_route`` enqueues user messages here and a
         # single long-lived consumer (``_consume_user_messages``) runs them one
         # turn at a time, coalescing any burst that piled up while a turn was
@@ -285,34 +293,30 @@ class CodexNativeRunner:
                         exc_info=True,
                     )
             else:
-                # Bound registration to 10s and abort on timeout, mirroring
-                # HeadlessClaudeRunner.initialize (claude_code.py). Without the
-                # cap the SDK client retries with backoff for up to ~60s (30s
-                # per-request timeout × 6 attempts); a registration that only
-                # succeeds AFTER the app's ~16s spawn wait window has elapsed
-                # leaves an orphan codex session running unregistered — burning
-                # the user's usage — while the app already told the user the
-                # spawn failed (instance_never_registered). Re-raise so run()'s
-                # fatal-error path exits the process instead of registering late.
-                try:
-                    await asyncio.wait_for(
-                        self.vicoa_client.register_agent_instance(
-                            agent_type="codex",
-                            agent_instance_id=self.session_id,
-                            name=self.agent_name,
-                            project=self.project_path,
-                            home_dir=str(Path.home()),
-                            session_config=self._build_session_config(),
-                        ),
-                        timeout=10.0,
-                    )
-                except asyncio.TimeoutError:
-                    logger.error(
-                        "codex_native: agent instance registration timed out "
-                        "for session %s — aborting",
-                        self.session_id,
-                    )
-                    raise
+                # Bounded retry inside a fixed budget, idempotent by instance
+                # id (integrations/utils/registration.py). A registration that
+                # only succeeds after every caller has stopped waiting would
+                # leave an orphan codex session burning the user's usage, so
+                # the budget stays inside the daemon's and the app's windows
+                # and a miss is fatal — run()'s error path exits the process.
+                client = self.vicoa_client
+                await register_with_retry(
+                    lambda: client.register_agent_instance(
+                        agent_type="codex",
+                        agent_instance_id=self.session_id,
+                        name=self.agent_name,
+                        project=self.project_path,
+                        home_dir=str(Path.home()),
+                        session_config=self._build_session_config(),
+                        timeout=int(REGISTRATION_ATTEMPT_TIMEOUT_SECONDS),
+                    ),
+                    log=logger,
+                    label="codex_native",
+                )
+            # The row exists (registered, or reopened on resume). Tell the
+            # daemon, which holds the spawn RPC until this lands.
+            self._registered = True
+            mark_session_registered(self.session_id)
 
             # Keep the session reading as alive while it sits idle awaiting
             # user input — see integrations/utils/heartbeat.py.
@@ -413,8 +417,11 @@ class CodexNativeRunner:
             logger.info("codex_native: interrupted, shutting down")
             self.running = False
             return 0
-        except Exception:
+        except Exception as exc:
             logger.exception("codex_native: fatal error")
+            if not self._registered:
+                # The daemon reads stderr for the spawn error it reports.
+                print(f"Fatal error before registration: {exc}", file=sys.stderr)
             return 1
         finally:
             self.running = False
@@ -452,14 +459,19 @@ class CodexNativeRunner:
                 except Exception:
                     logger.exception("codex subprocess aclose failed")
             if self.vicoa_client is not None:
-                try:
-                    await self.vicoa_client.end_session(self.session_id)
-                except Exception:
-                    logger.exception("end_session failed")
+                # Only a row that exists gets closed: ending an unregistered
+                # session is a wasted round-trip at a server that is already
+                # struggling.
+                if self._registered:
+                    try:
+                        await self.vicoa_client.end_session(self.session_id)
+                    except Exception:
+                        logger.exception("end_session failed")
                 try:
                     await self.vicoa_client.close()
                 except Exception:
                     pass
+            clear_session_registered(self.session_id)
 
     def _start_ws_client(self) -> None:
         """Spin up the session-scoped /ws subscriber on a background thread.

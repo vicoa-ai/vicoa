@@ -39,9 +39,14 @@ from integrations.headless.pi_family.spec import (
 )
 from integrations.headless.session_lifecycle import instance_update_requests_stop
 from integrations.utils.heartbeat import AsyncSessionHeartbeat
+from integrations.utils.registration import (
+    REGISTRATION_ATTEMPT_TIMEOUT_SECONDS,
+    register_with_retry,
+)
 from vicoa.attachments import AttachmentRef, extract_attachment_refs
 from vicoa.sdk.async_client import AsyncVicoaClient
 from vicoa.sdk.exceptions import AuthenticationError
+from vicoa.session_markers import clear_session_registered, mark_session_registered
 from vicoa.session_ws_client import SessionMessagesWsClient
 from vicoa.utils import derive_ws_url, get_project_path
 
@@ -134,6 +139,9 @@ class PiFamilyRunner:
         self._ws_client: Optional[SessionMessagesWsClient] = None
         self._ws_thread: Optional[threading.Thread] = None
         self._heartbeat: Optional[AsyncSessionHeartbeat] = None
+        # Set once the instance row is known to exist (registered, or reopened
+        # on resume). Gates every write that would otherwise create the row.
+        self._registered = False
         #: Serialized turn pipeline: one consumer runs turns one at a time and
         #: coalesces a burst sent during a turn into a single follow-up.
         self._turn_queue: "asyncio.Queue[tuple[str, tuple[AttachmentRef, ...], Optional[str]]]" = asyncio.Queue()
@@ -244,6 +252,10 @@ class PiFamilyRunner:
                 api_key=self.api_key, base_url=self.base_url
             )
             await self._register()
+            # The row exists (registered, or reopened on resume). Tell the
+            # daemon, which holds the spawn RPC until this lands.
+            self._registered = True
+            mark_session_registered(self.session_id)
 
             self._heartbeat = AsyncSessionHeartbeat(
                 agent_instance_id=self.session_id,
@@ -296,28 +308,24 @@ class PiFamilyRunner:
             except Exception:
                 logger.warning("pi_family: failed to reopen instance", exc_info=True)
             return
-        # Bounded, and fatal on timeout: a registration that only succeeds after
-        # the app's spawn wait has elapsed leaves an orphan agent running
-        # unregistered — burning the user's quota — while the app has already
-        # told them the spawn failed.
-        try:
-            await asyncio.wait_for(
-                self.vicoa_client.register_agent_instance(
-                    agent_type=self.spec.catalog_id,
-                    agent_instance_id=self.session_id,
-                    name=self.agent_name,
-                    project=self.project_path,
-                    home_dir=str(Path.home()),
-                    session_config=self._build_session_config(),
-                ),
-                timeout=10.0,
-            )
-        except asyncio.TimeoutError:
-            logger.error(
-                "pi_family: registration timed out for session %s — aborting",
-                self.session_id,
-            )
-            raise
+        # Bounded retry inside a fixed budget, idempotent by instance id
+        # (integrations/utils/registration.py). A registration that only
+        # succeeds after every caller has stopped waiting would leave an orphan
+        # agent burning the user's quota, so a miss past the budget is fatal.
+        client = self.vicoa_client
+        await register_with_retry(
+            lambda: client.register_agent_instance(
+                agent_type=self.spec.catalog_id,
+                agent_instance_id=self.session_id,
+                name=self.agent_name,
+                project=self.project_path,
+                home_dir=str(Path.home()),
+                session_config=self._build_session_config(),
+                timeout=int(REGISTRATION_ATTEMPT_TIMEOUT_SECONDS),
+            ),
+            log=logger,
+            label="pi_family",
+        )
 
     async def _bring_up_agent(self) -> None:
         assert self.vicoa_client is not None
@@ -391,7 +399,16 @@ class PiFamilyRunner:
         return self.subprocess.stderr_tail() if self.subprocess is not None else ""
 
     async def _report_startup_failure(self, message: str) -> None:
-        """Post a user-visible reason for a failed bring-up. Never raises."""
+        """Post a user-visible reason for a failed bring-up. Never raises.
+
+        Only once the row exists: posting before registration would itself
+        create the instance (`/messages/agent` creates-or-retrieves) — the
+        orphan "fatal error" session this runner must never mint. Before
+        registration the reason goes to stderr for the daemon to report.
+        """
+        if not self._registered:
+            print(f"Fatal error before registration: {message}", file=sys.stderr)
+            return
         if self.vicoa_client is None:
             return
         try:
@@ -437,14 +454,17 @@ class PiFamilyRunner:
             except Exception:
                 logger.exception("pi_family: subprocess aclose failed")
         if self.vicoa_client is not None:
-            try:
-                await self.vicoa_client.end_session(self.session_id)
-            except Exception:
-                logger.exception("pi_family: end_session failed")
+            # Only a row that exists gets closed (see _report_startup_failure).
+            if self._registered:
+                try:
+                    await self.vicoa_client.end_session(self.session_id)
+                except Exception:
+                    logger.exception("pi_family: end_session failed")
             try:
                 await self.vicoa_client.close()
             except Exception:
                 pass
+        clear_session_registered(self.session_id)
 
     # ------------------------------------------------------------------
     # WebSocket plumbing

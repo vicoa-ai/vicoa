@@ -54,6 +54,11 @@ def _prep_daemon(monkeypatch: pytest.MonkeyPatch) -> MachineDaemon:
     monkeypatch.setattr(daemon, "_check_agent_installation", lambda agent: None)
     monkeypatch.setattr(daemon, "_build_headless_command", lambda **kw: ["true"])
     monkeypatch.setattr(daemon, "_monitor_session_process", lambda **kw: None)
+    # The stubbed child never registers; these tests are about the worktree
+    # side of the spawn, so treat registration as instant.
+    monkeypatch.setattr(
+        daemon, "_wait_for_registration", lambda session_id, process, **kw: None
+    )
     return daemon
 
 

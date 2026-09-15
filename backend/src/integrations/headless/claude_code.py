@@ -41,10 +41,15 @@ from vicoa.attachments import (
     unavailable_note,
 )
 from vicoa.sdk.async_client import AsyncVicoaClient
+from vicoa.session_markers import clear_session_registered, mark_session_registered
 from vicoa.session_ws_client import SessionMessagesWsClient
 from vicoa.utils import derive_ws_url, get_project_path
 from integrations.headless.session_lifecycle import instance_update_requests_stop
 from integrations.utils.heartbeat import AsyncSessionHeartbeat
+from integrations.utils.registration import (
+    REGISTRATION_ATTEMPT_TIMEOUT_SECONDS,
+    register_with_retry,
+)
 from integrations.headless.format_tools import (
     format_background_task_notification,
     format_tool_use,
@@ -452,6 +457,9 @@ class HeadlessClaudeRunner:
         self.vicoa_client: Optional[AsyncVicoaClient] = None
         self.claude_client: Optional[ClaudeSDKClient] = None
         self._heartbeat: Optional[AsyncSessionHeartbeat] = None
+        # Set once the instance row is known to exist (registered, or reopened
+        # on resume). Gates every write that would otherwise create the row.
+        self._registered = False
         self.running = True
         # Set when the session is closed from another client; suppresses the
         # turn-end AWAITING_INPUT write so a racing turn can't re-open the row.
@@ -1124,16 +1132,24 @@ class HeadlessClaudeRunner:
                 )
         else:
             try:
-                registration = await asyncio.wait_for(
-                    self.vicoa_client.register_agent_instance(
+                # Bounded retry, idempotent by instance id (see
+                # integrations/utils/registration.py): a server that is slow
+                # rather than down gets three tries inside a budget the daemon
+                # and the app are both still waiting on. A late success on an
+                # abandoned attempt is picked up by the next one as 409/200.
+                client = self.vicoa_client
+                registration = await register_with_retry(
+                    lambda: client.register_agent_instance(
                         agent_type=self.agent_name,
                         agent_instance_id=self.session_id,
                         project=self.project_path,
                         home_dir=str(Path.home()),
                         session_config=self._build_session_config(),
                         source="app",
+                        timeout=int(REGISTRATION_ATTEMPT_TIMEOUT_SECONDS),
                     ),
-                    timeout=10.0,
+                    log=self.logger,
+                    label="claude",
                 )
                 updated_session_id = registration.agent_instance_id
                 if updated_session_id and updated_session_id != self.session_id:
@@ -1145,17 +1161,6 @@ class HeadlessClaudeRunner:
                     self.logger.info(
                         "Rebuilt Claude options with updated session ID for MCP server"
                     )
-            except asyncio.TimeoutError:
-                # Re-raise so the headless process exits immediately. The
-                # daemon's _wait_for_process_ready will detect the early exit
-                # and mark the spawn request as error — preventing a 30-second
-                # retry loop that would keep the request "pending" long enough
-                # for _catchup_poll to re-dispatch it to a second session.
-                self.logger.error(
-                    "Agent instance registration timed out for session %s — aborting",
-                    self.session_id,
-                )
-                raise
             except Exception as exc:
                 # Previously logged-and-continued, which left the process
                 # running as an invisible zombie: the daemon's spawn RPC had
@@ -1176,7 +1181,10 @@ class HeadlessClaudeRunner:
                 raise
 
         # Session id is settled now (registration can hand back a different
-        # one). Keep the session reading as alive while it sits idle awaiting
+        # one). Tell the daemon, which holds the spawn RPC until this lands.
+        self._registered = True
+        mark_session_registered(self.session_id)
+        # Keep the session reading as alive while it sits idle awaiting
         # user input — see integrations/utils/heartbeat.py.
         self._heartbeat = AsyncSessionHeartbeat(
             agent_instance_id=self.session_id,
@@ -3541,6 +3549,7 @@ class HeadlessClaudeRunner:
         # so ``run_coroutine_threadsafe`` can schedule ``_route(content)``.
         self._loop = asyncio.get_running_loop()
         self._install_signal_handlers()
+        fatal: Exception | None = None
         try:
             await self.initialize()
 
@@ -3561,10 +3570,17 @@ class HeadlessClaudeRunner:
             self.running = False
         except Exception as e:
             self.logger.error(f"Fatal error in headless runner: {e}")
-            if self.vicoa_client and self.session_id:
+            fatal = e
+            if self._registered and self.vicoa_client and self.session_id:
                 await self.send_to_vicoa(
                     f"Headless Claude encountered a fatal error: {e}"
                 )
+            else:
+                # Never registered: posting the error would itself mint the
+                # instance row (`/messages/agent` creates-or-retrieves), which
+                # is exactly the orphan "fatal error" session this guards
+                # against. The daemon reads stderr instead.
+                print(f"Fatal error before registration: {e}", file=sys.stderr)
         finally:
             self.running = False
             self._auq_registry.cancel_all()
@@ -3626,15 +3642,20 @@ class HeadlessClaudeRunner:
                 except Exception as e:
                     self.logger.error(f"Error closing Claude client: {e}")
 
-            if self.vicoa_client and self.session_id:
+            if self._registered and self.vicoa_client and self.session_id:
                 try:
                     await self.vicoa_client.end_session(self.session_id)
                     self.logger.info("Session ended successfully")
                 except Exception as e:
                     self.logger.error(f"Error ending session: {e}")
+            clear_session_registered(self.session_id)
 
             if self.vicoa_client:
                 await self.vicoa_client.close()
+        if fatal is not None:
+            # Surface as a non-zero exit so the daemon's monitor (and a
+            # terminal user) sees the failure instead of "ended successfully".
+            raise fatal
 
 
 def parse_list_argument(value: str) -> List[str]:

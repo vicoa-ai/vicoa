@@ -48,6 +48,10 @@ from integrations.headless.session_lifecycle import (
     instance_update_requests_stop,
 )
 from integrations.utils.heartbeat import SessionHeartbeat
+from integrations.utils.registration import (
+    REGISTRATION_ATTEMPT_TIMEOUT_SECONDS,
+    register_with_retry_sync,
+)
 from vicoa.attachments import (
     AttachmentRef,
     attachment_note,
@@ -60,6 +64,7 @@ from vicoa.attachments import (
 from protocol.system_prompt import format_prompt_prefix
 from vicoa.sdk.client import VicoaClient
 from vicoa.sdk.exceptions import AuthenticationError
+from vicoa.session_markers import clear_session_registered, mark_session_registered
 from vicoa.session_ws_client import SessionMessagesWsClient
 from vicoa.utils import derive_ws_url
 
@@ -223,6 +228,9 @@ class ACPWrapperBase(ABC):
         # post the reason to the session instead of dying into a bare FAILED row
         # that the UI can only describe as "not accepting input".
         self._startup_complete = False
+        # Set once the instance row is known to exist (registered, or reopened
+        # on resume). Gates every write that would otherwise create the row.
+        self._registered = False
         # Set when the session is closed from another client. Guards against a
         # racing in-flight turn re-opening the row after we were told to stop.
         self._stopping = False
@@ -422,6 +430,13 @@ class ACPWrapperBase(ABC):
         """
         if not (self.vicoa_client and self.config.agent_instance_id):
             return
+        if not self._registered:
+            # Posting before registration would itself create the instance
+            # (`/messages/agent` creates-or-retrieves) — the orphan "fatal
+            # error" session this runner must never mint. The daemon reads
+            # stderr for the reason it reports instead.
+            print(f"Fatal error before registration: {error}", file=sys.stderr)
+            return
         try:
             self._send_feedback_message(self._startup_failure_message(error))
         except Exception as exc:
@@ -471,14 +486,27 @@ class ACPWrapperBase(ABC):
             try:
                 from vicoa.utils import get_project_path
 
-                registration = self.vicoa_client.register_agent_instance(
-                    agent_type=self.config.agent_type,
-                    transport="local",
-                    agent_instance_id=self.config.agent_instance_id,
-                    project=get_project_path(),
-                    home_dir=str(Path.home()),
-                    session_config=self.build_session_config(),
-                    source="app",
+                client = self.vicoa_client
+                project_path = get_project_path()
+                session_config = self.build_session_config()
+                # Bounded retry inside a fixed budget, idempotent by instance
+                # id (integrations/utils/registration.py). A registration that
+                # only succeeds after every caller has stopped waiting would
+                # leave an orphan agent running unregistered, so a miss past
+                # the budget is fatal (re-raised below).
+                registration = register_with_retry_sync(
+                    lambda: client.register_agent_instance(
+                        agent_type=self.config.agent_type,
+                        transport="local",
+                        agent_instance_id=self.config.agent_instance_id,
+                        project=project_path,
+                        home_dir=str(Path.home()),
+                        session_config=session_config,
+                        source="app",
+                        timeout=int(REGISTRATION_ATTEMPT_TIMEOUT_SECONDS),
+                    ),
+                    log=self.log,
+                    label=self.config.agent_type,
                 )
 
                 self.config.agent_instance_id = registration.agent_instance_id
@@ -520,6 +548,11 @@ class ACPWrapperBase(ABC):
         # headless session looks dead to the liveness indicator — see
         # integrations/utils/heartbeat.py.
         self._start_heartbeat()
+        # The row exists (registered, or reopened on resume). Tell the daemon,
+        # which holds the spawn RPC until this lands.
+        if self.vicoa_client and self.config.agent_instance_id:
+            self._registered = True
+            mark_session_registered(self.config.agent_instance_id)
 
         # Start ACP client
         self._start_acp_client()
@@ -3184,7 +3217,10 @@ class ACPWrapperBase(ABC):
             self.acp.stop()
 
         # Mark the instance with a terminal status before closing the session.
-        if self.vicoa_client and self.config.agent_instance_id:
+        # Only a row that exists gets a terminal status: `end_session` and the
+        # status PATCH both 400/404 on an unregistered id, a wasted round-trip
+        # at a server that is already struggling.
+        if self.vicoa_client and self.config.agent_instance_id and self._registered:
             try:
                 if final_status == "COMPLETED":
                     self.vicoa_client.end_session(self.config.agent_instance_id)
@@ -3196,6 +3232,9 @@ class ACPWrapperBase(ABC):
                 self.log(
                     f"[ERROR] Failed to finalize Vicoa session with status {final_status}: {e}"
                 )
+
+        if self.config.agent_instance_id:
+            clear_session_registered(self.config.agent_instance_id)
 
         # Close Vicoa client
         if self.vicoa_client:

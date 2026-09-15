@@ -18,7 +18,7 @@ def _client() -> VicoaClient:
 
 
 def _capture_payload(client: VicoaClient, captured: dict) -> None:
-    def _fake(method, path, json=None, params=None):
+    def _fake(method, path, json=None, params=None, timeout=None):
         captured["json"] = json
         return {"agent_instance_id": "inst-1", "status": "active"}
 
@@ -93,7 +93,7 @@ async def test_async_client_sends_detected_worktree_name(monkeypatch) -> None:
     client = _async_client()
     captured: dict = {}
 
-    async def _fake(method, path, json=None, params=None):
+    async def _fake(method, path, json=None, params=None, timeout=None):
         captured["json"] = json
         return {"agent_instance_id": "inst-1", "status": "active"}
 
