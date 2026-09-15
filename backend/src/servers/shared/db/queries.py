@@ -837,7 +837,7 @@ def requeue_user_message(db: Session, message_id: UUID) -> Message | None:
     return db.query(Message).filter(Message.id == message_id).first()
 
 
-async def send_agent_message(
+def send_agent_message(
     db: Session,
     agent_instance_id: str,
     content: str,
@@ -848,6 +848,10 @@ async def send_agent_message(
     message_metadata: dict | None = None,
 ) -> tuple[str, str, list[Message]]:
     """High-level function to send an agent message and get queued user messages.
+
+    Blocking (sync SQLAlchemy). Async callers must run it in a worker thread —
+    it used to be declared `async def` with no `await` inside, which made
+    every caller run this write on the event loop.
 
     This combines the common pattern of:
     1. Getting or creating an agent instance

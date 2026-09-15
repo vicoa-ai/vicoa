@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 security = HTTPBearer()
 
 
-async def get_current_principal(
+def get_current_principal(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
     db: Annotated[Session, Depends(get_db)],
 ) -> Principal:
@@ -27,6 +27,11 @@ async def get_current_principal(
 
     The request's session is handed to the verifier so the revocation lookup
     reuses it rather than opening a second one.
+
+    Deliberately a plain `def`: FastAPI runs sync dependencies in its worker
+    threadpool, so the `api_keys` lookup this does on EVERY request never
+    pins the event loop. As an `async def` it ran the same blocking query on
+    the loop, and one slow round-trip froze every connection on the server.
     """
     try:
         principal = verify_agent_jwt(credentials.credentials, db)

@@ -1,5 +1,6 @@
 """Notification utilities for sending push, email, and SMS notifications."""
 
+import asyncio
 import logging
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -32,18 +33,36 @@ async def send_message_notifications(
         send_sms: Override SMS notification preference
         send_push: Override push notification preference
     """
-    # Get instance and user
-    instance = db.query(AgentInstance).filter(AgentInstance.id == instance_id).first()
-    if not instance:
-        logger.warning(f"Instance {instance_id} not found for notifications")
-        return
 
-    user = db.query(User).filter(User.id == instance.user_id).first()
-    if not user:
-        logger.warning(f"User {instance.user_id} not found for notifications")
-        return
+    # Get instance and user. Off the event loop: this runs right after the
+    # ingest commit on the hottest path in the server, and the rows were just
+    # expired by that commit, so every attribute below is a fresh SELECT.
+    def _load() -> tuple[AgentInstance, User, str] | None:
+        instance = (
+            db.query(AgentInstance).filter(AgentInstance.id == instance_id).first()
+        )
+        if not instance:
+            logger.warning(f"Instance {instance_id} not found for notifications")
+            return None
+        user = db.query(User).filter(User.id == instance.user_id).first()
+        if not user:
+            logger.warning(f"User {instance.user_id} not found for notifications")
+            return None
+        agent_name = instance.agent_type.name if instance.agent_type else "Agent"
+        # Touch the columns read below so no lazy load fires on the loop.
+        _ = (
+            instance.id,
+            instance.user_id,
+            user.push_notifications_enabled,
+            user.email_notifications_enabled,
+            user.sms_notifications_enabled,
+        )
+        return instance, user, agent_name
 
-    agent_name = instance.agent_type.name if instance.agent_type else "Agent"
+    loaded = await asyncio.to_thread(_load)
+    if loaded is None:
+        return
+    instance, user, agent_name = loaded
 
     # Determine notification preferences based on message type
     if requires_user_input:

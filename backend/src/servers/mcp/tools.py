@@ -5,6 +5,7 @@ the hosted server and stdio server. The authentication logic is handled
 by the individual servers.
 """
 
+import asyncio
 import uuid
 from uuid import UUID
 
@@ -61,7 +62,8 @@ async def log_step_impl(
 
     try:
         # Use send_agent_message for steps (requires_user_input=False)
-        instance_id, message_id, queued_messages = await send_agent_message(
+        instance_id, message_id, queued_messages = await asyncio.to_thread(
+            send_agent_message,
             db=db,
             agent_instance_id=agent_instance_id,
             content=step_description,

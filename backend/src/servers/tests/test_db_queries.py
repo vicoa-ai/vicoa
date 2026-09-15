@@ -70,7 +70,7 @@ class TestMessageIntegration:
     async def test_complete_agent_session_with_messages(self, test_db, test_user):
         """Test a complete agent session using the unified message system."""
         # Step 1: Send first agent message (creates new instance)
-        instance_id, message_id, queued_messages = await send_agent_message(
+        instance_id, message_id, queued_messages = send_agent_message(
             db=test_db,
             agent_instance_id=str(uuid4()),  # Client-generated UUID
             content="Starting integration test task",
@@ -98,7 +98,7 @@ class TestMessageIntegration:
         assert not message.requires_user_input
 
         # Step 2: Send a question (requires user input)
-        _, question_id, _ = await send_agent_message(
+        _, question_id, _ = send_agent_message(
             db=test_db,
             agent_instance_id=instance_id,
             content="Should I refactor this module?",
@@ -122,7 +122,7 @@ class TestMessageIntegration:
         test_db.commit()
 
         # Step 4: Agent polls and gets the user message
-        _, next_message_id, queued_user_msgs = await send_agent_message(
+        _, next_message_id, queued_user_msgs = send_agent_message(
             db=test_db,
             agent_instance_id=instance_id,
             content="Implementing async pattern as requested",
@@ -218,15 +218,13 @@ class TestMessageIntegration:
     def test_multiple_user_messages_queuing(self, test_db, test_user):
         """Test handling multiple queued user messages."""
         # Create instance with initial message
-        instance_id, first_msg_id, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="Initial message",
-                user_id=str(test_user.id),
-                agent_type="Test Agent",
-                requires_user_input=False,
-            )
+        instance_id, first_msg_id, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="Initial message",
+            user_id=str(test_user.id),
+            agent_type="Test Agent",
+            requires_user_input=False,
         )
         test_db.commit()
 
@@ -244,14 +242,12 @@ class TestMessageIntegration:
         test_db.commit()
 
         # Agent sends next message and should get all queued messages
-        _, _, queued_messages = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=instance_id,
-                content="Processing feedback",
-                user_id=str(test_user.id),
-                requires_user_input=False,
-            )
+        _, _, queued_messages = send_agent_message(
+            db=test_db,
+            agent_instance_id=instance_id,
+            content="Processing feedback",
+            user_id=str(test_user.id),
+            requires_user_input=False,
         )
         test_db.commit()
 
@@ -263,14 +259,12 @@ class TestMessageIntegration:
         }
 
         # Next agent message should get no queued messages
-        _, _, queued_messages2 = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=instance_id,
-                content="Continuing work",
-                user_id=str(test_user.id),
-                requires_user_input=False,
-            )
+        _, _, queued_messages2 = send_agent_message(
+            db=test_db,
+            agent_instance_id=instance_id,
+            content="Continuing work",
+            user_id=str(test_user.id),
+            requires_user_input=False,
         )
         test_db.commit()
 
@@ -280,15 +274,13 @@ class TestMessageIntegration:
     def test_concurrent_message_reading(self, test_db, test_user):
         """Test handling of concurrent message reads (stale detection)."""
         # Create instance and first message
-        instance_id, first_msg_id, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="Initial message",
-                user_id=str(test_user.id),
-                agent_type="Test Agent",
-                requires_user_input=False,
-            )
+        instance_id, first_msg_id, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="Initial message",
+            user_id=str(test_user.id),
+            agent_type="Test Agent",
+            requires_user_input=False,
         )
         test_db.commit()
 
@@ -345,16 +337,14 @@ index 1234567..abcdefg 100644
 +    print("Hello, World!")
 """
 
-        instance_id, _, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="Updated greeting function",
-                user_id=str(test_user.id),
-                agent_type="Test Agent",
-                requires_user_input=False,
-                git_diff=git_diff,
-            )
+        instance_id, _, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="Updated greeting function",
+            user_id=str(test_user.id),
+            agent_type="Test Agent",
+            requires_user_input=False,
+            git_diff=git_diff,
         )
         test_db.commit()
 
@@ -363,15 +353,13 @@ index 1234567..abcdefg 100644
         assert instance.git_diff == git_diff.strip()
 
         # Test clearing git diff
-        asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=instance_id,
-                content="Cleared changes",
-                user_id=str(test_user.id),
-                requires_user_input=False,
-                git_diff="",  # Empty string clears the diff
-            )
+        send_agent_message(
+            db=test_db,
+            agent_instance_id=instance_id,
+            content="Cleared changes",
+            user_id=str(test_user.id),
+            requires_user_input=False,
+            git_diff="",  # Empty string clears the diff
         )
         test_db.commit()
 
@@ -382,39 +370,33 @@ index 1234567..abcdefg 100644
     def test_agent_type_normalization(self, test_db, test_user):
         """Test that agent types are normalized to lowercase."""
         # Create instances with different case variations
-        instance1_id, _, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="Test 1",
-                user_id=str(test_user.id),
-                agent_type="Claude Code",
-                requires_user_input=False,
-            )
+        instance1_id, _, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="Test 1",
+            user_id=str(test_user.id),
+            agent_type="Claude Code",
+            requires_user_input=False,
         )
         test_db.commit()
 
-        instance2_id, _, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="Test 2",
-                user_id=str(test_user.id),
-                agent_type="CLAUDE CODE",
-                requires_user_input=False,
-            )
+        instance2_id, _, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="Test 2",
+            user_id=str(test_user.id),
+            agent_type="CLAUDE CODE",
+            requires_user_input=False,
         )
         test_db.commit()
 
-        instance3_id, _, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="Test 3",
-                user_id=str(test_user.id),
-                agent_type="claude code",
-                requires_user_input=False,
-            )
+        instance3_id, _, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="Test 3",
+            user_id=str(test_user.id),
+            agent_type="claude code",
+            requires_user_input=False,
         )
         test_db.commit()
 
@@ -456,28 +438,24 @@ index 1234567..abcdefg 100644
         test_db.commit()
 
         # Create instance for first user
-        instance_id, _, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="User 1 message",
-                user_id=str(test_user.id),
-                agent_type="Test Agent",
-                requires_user_input=False,
-            )
+        instance_id, _, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="User 1 message",
+            user_id=str(test_user.id),
+            agent_type="Test Agent",
+            requires_user_input=False,
         )
         test_db.commit()
 
         # Try to access with other user - should fail
         with pytest.raises(ValueError, match="Access denied"):
-            asyncio.run(
-                send_agent_message(
-                    db=test_db,
-                    agent_instance_id=instance_id,
-                    content="Unauthorized access attempt",
-                    user_id=str(other_user.id),
-                    requires_user_input=False,
-                )
+            send_agent_message(
+                db=test_db,
+                agent_instance_id=instance_id,
+                content="Unauthorized access attempt",
+                user_id=str(other_user.id),
+                requires_user_input=False,
             )
 
     @pytest.mark.integration
@@ -491,7 +469,7 @@ index 1234567..abcdefg 100644
         for i in range(5):
             content = f"Message {i + 1}"
             message_contents.append(content)
-            await send_agent_message(
+            send_agent_message(
                 db=test_db,
                 agent_instance_id=instance_id,
                 content=content,
@@ -521,15 +499,13 @@ index 1234567..abcdefg 100644
         instance_id = str(uuid4())
 
         # Initial message - should be ACTIVE
-        asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=instance_id,
-                content="Starting work",
-                user_id=str(test_user.id),
-                agent_type="Test Agent",
-                requires_user_input=False,
-            )
+        send_agent_message(
+            db=test_db,
+            agent_instance_id=instance_id,
+            content="Starting work",
+            user_id=str(test_user.id),
+            agent_type="Test Agent",
+            requires_user_input=False,
         )
         test_db.commit()
 
@@ -537,14 +513,12 @@ index 1234567..abcdefg 100644
         assert instance.status == AgentStatus.ACTIVE
 
         # Question - should change to AWAITING_INPUT
-        asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=instance_id,
-                content="Need user input",
-                user_id=str(test_user.id),
-                requires_user_input=True,
-            )
+        send_agent_message(
+            db=test_db,
+            agent_instance_id=instance_id,
+            content="Need user input",
+            user_id=str(test_user.id),
+            requires_user_input=True,
         )
         test_db.commit()
 
@@ -552,14 +526,12 @@ index 1234567..abcdefg 100644
         assert instance.status == AgentStatus.AWAITING_INPUT
 
         # Regular message - should go back to ACTIVE
-        asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=instance_id,
-                content="Got input, continuing",
-                user_id=str(test_user.id),
-                requires_user_input=False,
-            )
+        send_agent_message(
+            db=test_db,
+            agent_instance_id=instance_id,
+            content="Got input, continuing",
+            user_id=str(test_user.id),
+            requires_user_input=False,
         )
         test_db.commit()
 
@@ -578,14 +550,12 @@ index 1234567..abcdefg 100644
         assert instance.status == AgentStatus.COMPLETED
 
         # Messages after completion should not change status
-        asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=instance_id,
-                content="Message after completion",
-                user_id=str(test_user.id),
-                requires_user_input=True,
-            )
+        send_agent_message(
+            db=test_db,
+            agent_instance_id=instance_id,
+            content="Message after completion",
+            user_id=str(test_user.id),
+            requires_user_input=True,
         )
         test_db.commit()
 
@@ -596,15 +566,13 @@ index 1234567..abcdefg 100644
     def test_create_user_message_with_mark_as_read(self, test_db, test_user):
         """Test creating a user message with mark_as_read=True."""
         # Create an agent instance first
-        instance_id, _, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="Initial agent message",
-                user_id=str(test_user.id),
-                agent_type="Test Agent",
-                requires_user_input=False,
-            )
+        instance_id, _, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="Initial agent message",
+            user_id=str(test_user.id),
+            agent_type="Test Agent",
+            requires_user_input=False,
         )
         test_db.commit()
 
@@ -645,15 +613,13 @@ index 1234567..abcdefg 100644
     def test_create_user_message_without_mark_as_read(self, test_db, test_user):
         """Test creating a user message with mark_as_read=False."""
         # Create an agent instance first
-        instance_id, _, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="Initial agent message",
-                user_id=str(test_user.id),
-                agent_type="Test Agent",
-                requires_user_input=False,
-            )
+        instance_id, _, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="Initial agent message",
+            user_id=str(test_user.id),
+            agent_type="Test Agent",
+            requires_user_input=False,
         )
         test_db.commit()
 
@@ -704,15 +670,13 @@ index 1234567..abcdefg 100644
         test_db.commit()
 
         # Create instance for first user
-        instance_id, _, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="User 1 agent message",
-                user_id=str(test_user.id),
-                agent_type="Test Agent",
-                requires_user_input=False,
-            )
+        instance_id, _, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="User 1 agent message",
+            user_id=str(test_user.id),
+            agent_type="Test Agent",
+            requires_user_input=False,
         )
         test_db.commit()
 
@@ -745,15 +709,13 @@ index 1234567..abcdefg 100644
     def test_user_messages_in_polling(self, test_db, test_user):
         """Test that user messages created with mark_as_read=False appear in polling."""
         # Create an agent instance with a question
-        instance_id, question_id, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="What should I do?",
-                user_id=str(test_user.id),
-                agent_type="Test Agent",
-                requires_user_input=True,
-            )
+        instance_id, question_id, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="What should I do?",
+            user_id=str(test_user.id),
+            agent_type="Test Agent",
+            requires_user_input=True,
         )
         test_db.commit()
 
@@ -815,15 +777,13 @@ index 1234567..abcdefg 100644
     def test_interleaved_messages_with_mixed_mark_as_read(self, test_db, test_user):
         """Test interleaved agent and user messages with mixed mark_as_read settings."""
         # Create initial agent instance
-        instance_id, msg1_id, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="Agent: Starting work",
-                user_id=str(test_user.id),
-                agent_type="Test Agent",
-                requires_user_input=False,
-            )
+        instance_id, msg1_id, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="Agent: Starting work",
+            user_id=str(test_user.id),
+            agent_type="Test Agent",
+            requires_user_input=False,
         )
         test_db.commit()
 
@@ -838,14 +798,12 @@ index 1234567..abcdefg 100644
         test_db.commit()
 
         # Agent message 2
-        _, msg2_id, queued = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=instance_id,
-                content="Agent: Working on step 1",
-                user_id=str(test_user.id),
-                requires_user_input=False,
-            )
+        _, msg2_id, queued = send_agent_message(
+            db=test_db,
+            agent_instance_id=instance_id,
+            content="Agent: Working on step 1",
+            user_id=str(test_user.id),
+            requires_user_input=False,
         )
         test_db.commit()
         assert (
@@ -873,14 +831,12 @@ index 1234567..abcdefg 100644
         test_db.commit()
 
         # Agent message 3 - should see the two unread user messages
-        _, msg3_id, queued = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=instance_id,
-                content="Agent: Switching to async pattern",
-                user_id=str(test_user.id),
-                requires_user_input=False,
-            )
+        _, msg3_id, queued = send_agent_message(
+            db=test_db,
+            agent_instance_id=instance_id,
+            content="Agent: Switching to async pattern",
+            user_id=str(test_user.id),
+            requires_user_input=False,
         )
         test_db.commit()
         assert len(queued) == 2
@@ -921,7 +877,7 @@ index 1234567..abcdefg 100644
     async def test_complex_conversation_flow_with_questions(self, test_db, test_user):
         """Test a complex conversation with questions, user responses, and mixed read states."""
         # Agent starts and asks a question
-        instance_id, q1_id, _ = await send_agent_message(
+        instance_id, q1_id, _ = send_agent_message(
             db=test_db,
             agent_instance_id=str(uuid4()),
             content="What framework should I use?",
@@ -956,7 +912,7 @@ index 1234567..abcdefg 100644
         test_db.commit()
 
         # Agent continues and gets both messages
-        _, msg2_id, queued = await send_agent_message(
+        _, msg2_id, queued = send_agent_message(
             db=test_db,
             agent_instance_id=instance_id,
             content="Setting up FastAPI with Pydantic",
@@ -976,7 +932,7 @@ index 1234567..abcdefg 100644
         assert instance.status == AgentStatus.ACTIVE
 
         # Agent asks another question
-        _, q2_id, _ = await send_agent_message(
+        _, q2_id, _ = send_agent_message(
             db=test_db,
             agent_instance_id=instance_id,
             content="Should I add authentication?",
@@ -996,7 +952,7 @@ index 1234567..abcdefg 100644
         test_db.commit()
 
         # Agent continues - should not see the already-read message
-        _, msg3_id, queued = await send_agent_message(
+        _, msg3_id, queued = send_agent_message(
             db=test_db,
             agent_instance_id=instance_id,
             content="Adding JWT authentication",
@@ -1016,15 +972,13 @@ index 1234567..abcdefg 100644
     def test_last_read_tracking_with_multiple_user_messages(self, test_db, test_user):
         """Test that last_read_message_id correctly tracks through multiple user messages."""
         # Create agent instance
-        instance_id, msg1_id, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="Agent message 1",
-                user_id=str(test_user.id),
-                agent_type="Test Agent",
-                requires_user_input=False,
-            )
+        instance_id, msg1_id, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="Agent message 1",
+            user_id=str(test_user.id),
+            agent_type="Test Agent",
+            requires_user_input=False,
         )
         test_db.commit()
 
@@ -1064,14 +1018,12 @@ index 1234567..abcdefg 100644
         assert instance.last_read_message_id == UUID(read_msg_id)
 
         # Agent sends next message - should not see any queued messages
-        _, agent_msg_id, queued = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=instance_id,
-                content="Agent continues",
-                user_id=str(test_user.id),
-                requires_user_input=False,
-            )
+        _, agent_msg_id, queued = send_agent_message(
+            db=test_db,
+            agent_instance_id=instance_id,
+            content="Agent continues",
+            user_id=str(test_user.id),
+            requires_user_input=False,
         )
         test_db.commit()
 
@@ -1085,15 +1037,13 @@ index 1234567..abcdefg 100644
     ):
         """Simulate the polling endpoint behavior with interleaved messages."""
         # Create instance
-        instance_id, msg1_id, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="Agent starts",
-                user_id=str(test_user.id),
-                agent_type="Test Agent",
-                requires_user_input=False,
-            )
+        instance_id, msg1_id, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="Agent starts",
+            user_id=str(test_user.id),
+            agent_type="Test Agent",
+            requires_user_input=False,
         )
         test_db.commit()
 
@@ -1157,15 +1107,13 @@ index 1234567..abcdefg 100644
     ):
         """Test that user messages to completed instances still update last_read_message_id."""
         # Create and complete an instance
-        instance_id, _, _ = asyncio.run(
-            send_agent_message(
-                db=test_db,
-                agent_instance_id=str(uuid4()),
-                content="Starting task",
-                user_id=str(test_user.id),
-                agent_type="Test Agent",
-                requires_user_input=False,
-            )
+        instance_id, _, _ = send_agent_message(
+            db=test_db,
+            agent_instance_id=str(uuid4()),
+            content="Starting task",
+            user_id=str(test_user.id),
+            agent_type="Test Agent",
+            requires_user_input=False,
         )
         test_db.commit()
 

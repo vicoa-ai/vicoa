@@ -406,3 +406,38 @@ def test_close_user_swallows_exceptions_from_callback() -> None:
 
     assert manager.close_user("u1") == 2  # both attempted
     assert good_calls == ["good"]  # second callback still ran
+
+
+async def test_enqueue_from_a_worker_thread_lands_on_the_owning_loop() -> None:
+    """A broadcast fired inside a threadpool commit must reach the writer.
+
+    `after_commit` runs the broadcast on whichever thread committed. The
+    outbox is an asyncio.Queue owned by the endpoint's loop, so a foreign
+    thread must hop via `call_soon_threadsafe` rather than touch it directly.
+    """
+    manager = ConnectionManager()
+    conn = _conn("c1", "u1", "user-scoped", "user:u1:user-scoped")
+    assert conn.loop is asyncio.get_running_loop()
+    manager.register(conn)
+
+    def _from_thread() -> None:
+        manager.broadcast_update("u1", {"entity": "x"}, rooms=["user:u1:user-scoped"])
+
+    await asyncio.to_thread(_from_thread)
+
+    frame = await asyncio.wait_for(conn.outbox.get(), timeout=2.0)
+    assert frame == {"type": "update", "payload": {"entity": "x"}}
+
+
+async def test_enqueue_on_the_owning_loop_is_immediate() -> None:
+    conn = _conn("c1", "u1", "user-scoped", "user:u1:user-scoped")
+    conn.enqueue({"type": "ping"})
+    assert conn.outbox.get_nowait() == {"type": "ping"}
+
+
+def test_enqueue_without_a_loop_is_a_direct_put() -> None:
+    """Sync tests build connections with no running loop; that stays a plain put."""
+    conn = _conn("c1", "u1", "user-scoped", "user:u1:user-scoped")
+    assert conn.loop is None
+    conn.enqueue({"type": "ping"})
+    assert conn.outbox.get_nowait() == {"type": "ping"}

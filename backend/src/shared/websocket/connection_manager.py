@@ -54,6 +54,13 @@ def connections_closed_slow_count() -> int:
     return _connections_closed_slow
 
 
+def _running_loop_or_none() -> "asyncio.AbstractEventLoop | None":
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
 @dataclass(slots=True, eq=False)
 class Connection:
     """One WebSocket client: its identity, scope, joined rooms, and outbox.
@@ -94,14 +101,39 @@ class Connection:
     outbox: "asyncio.Queue[dict]" = field(
         default_factory=lambda: asyncio.Queue(maxsize=_OUTBOX_MAXSIZE)
     )
+    # The event loop that owns `outbox` — the one the WS endpoint's writer
+    # task runs on. Captured at construction; None when built outside a
+    # running loop (unit tests), in which case enqueue is a direct put.
+    loop: "asyncio.AbstractEventLoop | None" = field(
+        default_factory=lambda: _running_loop_or_none()
+    )
 
     def enqueue(self, frame: dict) -> None:
         """Queue a frame for the endpoint's writer task to send.
+
+        Safe to call from any thread. Broadcasts fire from `after_commit`
+        listeners, and a commit made in a worker thread (every sync endpoint,
+        and the ingest path's `run_in_threadpool` block) fires them there —
+        but `asyncio.Queue` is not thread-safe, and a `put_nowait` from a
+        foreign thread wakes the writer through a plain `call_soon`, which
+        does not kick the loop's selector: the frame then waits for whatever
+        next wakes the loop. Hop to the owning loop when we are not on it.
 
         On a full outbox the connection is shed exactly once: counter
         incremented, warning logged, `on_overflow` callback invoked. Further
         enqueues are silent no-ops until the socket actually closes.
         """
+        if self.overflowed:
+            return
+        loop = self.loop
+        if loop is not None and _running_loop_or_none() is not loop:
+            if loop.is_closed():
+                return
+            loop.call_soon_threadsafe(self._put, frame)
+            return
+        self._put(frame)
+
+    def _put(self, frame: dict) -> None:
         if self.overflowed:
             return
         try:

@@ -117,24 +117,37 @@ class FCMNotificationService(NotificationServiceBase):
             return False
 
         try:
-            # Check if user has push notifications enabled
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user or not user.push_notifications_enabled:
-                logger.info(f"Push notifications disabled for user {user_id}")
-                return False
 
-            # Get user's active FCM push tokens (filter by platform)
-            tokens = (
-                db.query(PushToken)
-                .filter(
-                    PushToken.user_id == user_id,
-                    PushToken.is_active,
-                    PushToken.platform.in_(
-                        ["android", "ios", "web"]
-                    ),  # Support Flutter tokens
+            def _load_tokens() -> list[PushToken] | None:
+                # Sync SQLAlchemy in a worker thread; this method is awaited
+                # from the message-ingest path and must not pin the loop.
+                # Check if user has push notifications enabled
+                user = db.query(User).filter(User.id == user_id).first()
+                if not user or not user.push_notifications_enabled:
+                    logger.info(f"Push notifications disabled for user {user_id}")
+                    return None
+
+                # Get user's active FCM push tokens (filter by platform)
+                rows = (
+                    db.query(PushToken)
+                    .filter(
+                        PushToken.user_id == user_id,
+                        PushToken.is_active,
+                        PushToken.platform.in_(
+                            ["android", "ios", "web"]
+                        ),  # Support Flutter tokens
+                    )
+                    .all()
                 )
-                .all()
-            )
+                # Materialise the columns used below (token strings, ids) so
+                # nothing lazy-loads once we are back on the loop.
+                for row in rows:
+                    _ = (row.token, row.id, row.platform)
+                return rows
+
+            tokens = await asyncio.to_thread(_load_tokens)
+            if tokens is None:
+                return False
 
             if not tokens:
                 logger.info(f"No FCM tokens found for user {user_id}")
@@ -160,7 +173,9 @@ class FCMNotificationService(NotificationServiceBase):
             # Sent on every push so the OS renders/updates it in the background
             # (iOS applies aps.badge automatically) and the Flutter foreground
             # handler can mirror it from the data payload.
-            badge_count = self._awaiting_input_count(db, user_id)
+            badge_count = await asyncio.to_thread(
+                self._awaiting_input_count, db, user_id
+            )
 
             # Prepare FCM message
             notification = messaging.Notification(title=title, body=body)
@@ -411,11 +426,14 @@ class FCMNotificationService(NotificationServiceBase):
             # loop in a single commit. SQLAlchemy's dirty tracking flushes
             # all mutated PushToken rows in one round-trip; no-op when no
             # tokens went stale this call.
-            try:
-                db.commit()
-            except Exception:
-                logger.exception("Failed to persist FCM token deactivations")
-                db.rollback()
+            def _persist() -> None:
+                try:
+                    db.commit()
+                except Exception:
+                    logger.exception("Failed to persist FCM token deactivations")
+                    db.rollback()
+
+            await asyncio.to_thread(_persist)
 
     async def send_question_notification(
         self,

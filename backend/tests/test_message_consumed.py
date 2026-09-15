@@ -169,7 +169,7 @@ async def test_consumed_endpoint_marks_status_and_broadcasts(
     connection_manager.register(web)
     try:
         with SessionLocal() as db:
-            response = await mark_message_consumed_endpoint(
+            response = mark_message_consumed_endpoint(
                 message_id=message_id, user_id=str(user_id), db=db
             )
 
@@ -195,11 +195,11 @@ async def test_consumed_endpoint_is_idempotent(
     message_id = _make_user_message(instance_id, {"queue": {"status": "queued"}})
 
     with SessionLocal() as db:
-        first = await mark_message_consumed_endpoint(
+        first = mark_message_consumed_endpoint(
             message_id=message_id, user_id=str(user_id), db=db
         )
     with SessionLocal() as db:
-        second = await mark_message_consumed_endpoint(
+        second = mark_message_consumed_endpoint(
             message_id=message_id, user_id=str(user_id), db=db
         )
 
@@ -221,7 +221,7 @@ async def test_consumed_endpoint_404s_for_another_users_message(
 
     with SessionLocal() as db:
         with pytest.raises(HTTPException) as exc_info:
-            await mark_message_consumed_endpoint(
+            mark_message_consumed_endpoint(
                 message_id=message_id, user_id=str(uuid4()), db=db
             )
 
@@ -316,7 +316,7 @@ async def test_consumed_endpoint_accepts_the_steered_body(
     connection_manager.register(web)
     try:
         with SessionLocal() as db:
-            await mark_message_consumed_endpoint(
+            mark_message_consumed_endpoint(
                 message_id=message_id,
                 user_id=str(user_id),
                 db=db,
@@ -340,7 +340,7 @@ async def test_requeue_endpoint_flips_and_broadcasts(
     connection_manager.register(web)
     try:
         with SessionLocal() as db:
-            response = await requeue_message_endpoint(
+            response = requeue_message_endpoint(
                 message_id=message_id, user_id=str(user_id), db=db
             )
         assert response == {"success": True, "message_id": str(message_id)}
@@ -364,8 +364,6 @@ async def test_requeue_endpoint_404s_for_another_users_message(
 
     with SessionLocal() as db:
         with pytest.raises(HTTPException) as exc_info:
-            await requeue_message_endpoint(
-                message_id=message_id, user_id=str(uuid4()), db=db
-            )
+            requeue_message_endpoint(message_id=message_id, user_id=str(uuid4()), db=db)
 
     assert exc_info.value.status_code == 404

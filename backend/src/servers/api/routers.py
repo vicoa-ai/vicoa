@@ -15,6 +15,7 @@ from fastapi import (
     status,
     Response,
 )
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -1494,38 +1495,46 @@ async def create_agent_message_endpoint(
     try:
         decoded_git_diff = _maybe_decode_base64(request.git_diff)
 
-        # Use the unified send_agent_message function
-        instance_id, message_id, queued_messages = await send_agent_message(
-            db=db,
-            agent_instance_id=request.agent_instance_id,
-            content=request.content,
-            user_id=user_id,
-            agent_type=request.agent_type,
-            requires_user_input=request.requires_user_input,
-            git_diff=decoded_git_diff,
-            message_metadata=request.message_metadata,
-        )
-        db.flush()
-        message_responses = [
-            MessageResponse(
-                id=str(msg.id),
-                content=msg.content,
-                sender_type=msg.sender_type.value,
-                created_at=msg.created_at.isoformat(),
-                requires_user_input=msg.requires_user_input,
-                message_metadata=msg.message_metadata,
+        def _write() -> tuple[str, str, list[MessageResponse]]:
+            # Every database round-trip of the ingest path happens here, in a
+            # worker thread. This is the hottest write on the server (every
+            # agent output frame); as inline sync work it pinned the event
+            # loop for the whole transaction, so one slow round-trip stalled
+            # every WebSocket and request on the process.
+            instance_id, message_id, queued_messages = send_agent_message(
+                db=db,
+                agent_instance_id=request.agent_instance_id,
+                content=request.content,
+                user_id=user_id,
+                agent_type=request.agent_type,
+                requires_user_input=request.requires_user_input,
+                git_diff=decoded_git_diff,
+                message_metadata=request.message_metadata,
             )
-            for msg in queued_messages
-        ]
-        # The agent posted a message and its instance's status/git_diff
-        # changed — broadcast both (§2.5).
-        message = db.get(Message, UUID(message_id))
-        if message is not None:
-            _broadcast_new_message(db, message, user_id)
-        instance = db.get(AgentInstance, UUID(instance_id))
-        if instance is not None:
-            _broadcast_instance_update(db, instance, user_id)
-        db.commit()
+            db.flush()
+            message_responses = [
+                MessageResponse(
+                    id=str(msg.id),
+                    content=msg.content,
+                    sender_type=msg.sender_type.value,
+                    created_at=msg.created_at.isoformat(),
+                    requires_user_input=msg.requires_user_input,
+                    message_metadata=msg.message_metadata,
+                )
+                for msg in queued_messages
+            ]
+            # The agent posted a message and its instance's status/git_diff
+            # changed — broadcast both (§2.5).
+            message = db.get(Message, UUID(message_id))
+            if message is not None:
+                _broadcast_new_message(db, message, user_id)
+            instance = db.get(AgentInstance, UUID(instance_id))
+            if instance is not None:
+                _broadcast_instance_update(db, instance, user_id)
+            db.commit()
+            return instance_id, message_id, message_responses
+
+        instance_id, message_id, message_responses = await run_in_threadpool(_write)
 
         # Send notifications if requested, after the write commits.
         await send_message_notifications(
@@ -1805,58 +1814,79 @@ async def request_user_input_endpoint(
     """
 
     try:
-        # Find the message; verify it is the user's own agent message.
-        message = (
-            db.query(Message)
-            .join(AgentInstance, Message.agent_instance_id == AgentInstance.id)
-            .filter(
-                Message.id == message_id,
-                Message.sender_type == SenderType.AGENT,
-                AgentInstance.user_id == user_id,
-            )
-            .first()
-        )
-        if not message:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Agent message not found or access denied",
-            )
-        if message.requires_user_input:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Message already requires user input",
-            )
 
-        message.requires_user_input = True
-        agent_instance_id = message.agent_instance_id
-        notify_content = message.content
-
-        queued_messages = get_queued_user_messages(db, agent_instance_id, message_id)
-        should_notify = not queued_messages
-        if should_notify:
-            agent_instance = (
-                db.query(AgentInstance)
-                .filter(AgentInstance.id == agent_instance_id)
+        def _write() -> tuple[UUID, str, bool, list[MessageResponse], str]:
+            # All database work off the event loop (see
+            # create_agent_message_endpoint for why).
+            # Find the message; verify it is the user's own agent message.
+            message = (
+                db.query(Message)
+                .join(AgentInstance, Message.agent_instance_id == AgentInstance.id)
+                .filter(
+                    Message.id == message_id,
+                    Message.sender_type == SenderType.AGENT,
+                    AgentInstance.user_id == user_id,
+                )
                 .first()
             )
-            if agent_instance:
-                agent_instance.status = AgentStatus.AWAITING_INPUT
-                db.flush()
-                _broadcast_instance_update(db, agent_instance, user_id)
+            if not message:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Agent message not found or access denied",
+                )
+            if message.requires_user_input:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Message already requires user input",
+                )
 
-        message_responses = [
-            MessageResponse(
-                id=str(msg.id),
-                content=msg.content,
-                sender_type=msg.sender_type.value,
-                created_at=msg.created_at.isoformat(),
-                requires_user_input=msg.requires_user_input,
-                message_metadata=msg.message_metadata,
+            message.requires_user_input = True
+            agent_instance_id = message.agent_instance_id
+            notify_content = message.content
+
+            queued_messages = get_queued_user_messages(
+                db, agent_instance_id, message_id
             )
-            for msg in (queued_messages or [])
-        ]
-        response_status = "ok" if queued_messages is not None else "stale"
-        db.commit()  # commit before FCM: WS broadcast already landed, FCM failure must not roll back DB
+            should_notify = not queued_messages
+            if should_notify:
+                agent_instance = (
+                    db.query(AgentInstance)
+                    .filter(AgentInstance.id == agent_instance_id)
+                    .first()
+                )
+                if agent_instance:
+                    agent_instance.status = AgentStatus.AWAITING_INPUT
+                    db.flush()
+                    _broadcast_instance_update(db, agent_instance, user_id)
+
+            message_responses = [
+                MessageResponse(
+                    id=str(msg.id),
+                    content=msg.content,
+                    sender_type=msg.sender_type.value,
+                    created_at=msg.created_at.isoformat(),
+                    requires_user_input=msg.requires_user_input,
+                    message_metadata=msg.message_metadata,
+                )
+                for msg in (queued_messages or [])
+            ]
+            response_status = "ok" if queued_messages is not None else "stale"
+            db.commit()  # commit before FCM: WS broadcast already landed, FCM failure must not roll back DB
+            return (
+                agent_instance_id,
+                notify_content,
+                should_notify,
+                message_responses,
+                response_status,
+            )
+
+        (
+            agent_instance_id,
+            notify_content,
+            should_notify,
+            message_responses,
+            response_status,
+        ) = await run_in_threadpool(_write)
 
         if should_notify:
             await send_message_notifications(
@@ -1890,7 +1920,7 @@ async def request_user_input_endpoint(
 
 
 @agent_router.patch("/messages/{message_id}/consumed")
-async def mark_message_consumed_endpoint(
+def mark_message_consumed_endpoint(
     message_id: UUID,
     user_id: Annotated[str, Depends(get_current_user_id)],
     db: Session = Depends(get_db),
@@ -1925,7 +1955,7 @@ async def mark_message_consumed_endpoint(
 
 
 @agent_router.patch("/messages/{message_id}/requeue")
-async def requeue_message_endpoint(
+def requeue_message_endpoint(
     message_id: UUID,
     user_id: Annotated[str, Depends(get_current_user_id)],
     db: Session = Depends(get_db),
