@@ -74,6 +74,7 @@ from servers.shared.db import (
     upsert_machine_agent_models,
 )
 from servers.shared.notification_utils import send_message_notifications
+from servers.presence import presence
 from .auth import get_current_user_id
 from .models import (
     CreateMessageRequest,
@@ -411,27 +412,48 @@ def heartbeat_machine_endpoint(
     user_id: Annotated[str, Depends(get_current_user_id)],
     db: Session = Depends(get_db),
 ) -> RegisterMachineResponse:
+    """Record a daemon heartbeat.
+
+    A tick is an in-memory touch (`servers.presence`); the row's
+    `last_heartbeat_at` is renewed by the batched lease flush, not here. The
+    only write this endpoint still does is a metadata merge when the daemon
+    sends something new — in practice `last_pid`, which changes once per
+    daemon lifetime — so the steady-state tick is one PK read and no
+    transaction. The `machine-update` frame is still emitted on every tick
+    (clients refresh the timestamp from it), but only when someone is
+    connected to receive it.
+    """
     machine = _get_machine_for_user(db, machine_id, user_id)
+    seen_at = presence.touch_machine(machine.id, machine.user_id)
 
-    now = datetime.now(timezone.utc)
-    machine.last_heartbeat_at = now
-    machine.updated_at = now
-
-    if request.metadata:
-        metadata = (
-            machine.machine_metadata
-            if isinstance(machine.machine_metadata, dict)
-            else {}
-        )
-        if metadata is None:
-            metadata = {}
-        metadata.update(request.metadata)
+    incoming = request.metadata or {}
+    current = (
+        machine.machine_metadata if isinstance(machine.machine_metadata, dict) else {}
+    )
+    changed = {k: v for k, v in incoming.items() if current.get(k) != v}
+    if changed:
+        metadata = dict(current)
+        metadata.update(changed)
         machine.machine_metadata = metadata
-
-    db.flush()
-    summary = _machine_summary(machine)
-    _broadcast_machine_update(db, machine, user_id)
-    db.commit()
+        machine.last_heartbeat_at = seen_at
+        machine.updated_at = seen_at
+        db.flush()
+        summary = _machine_summary(machine)
+        _broadcast_machine_update(db, machine, user_id)
+        db.commit()
+    else:
+        # Detach so the fresh timestamp below is for the wire only: the
+        # session is closed without a flush, and the lease flush owns the
+        # column.
+        db.expunge(machine)
+        machine.last_heartbeat_at = seen_at
+        summary = _machine_summary(machine)
+        if connection_manager.has_user_scoped(user_id):
+            connection_manager.broadcast_update(
+                user_id,
+                build_machine_update(machine),
+                [f"user:{user_id}:user-scoped"],
+            )
     return RegisterMachineResponse(
         machine_id=summary.machine_id,
         display_name=summary.display_name,
@@ -1607,81 +1629,62 @@ def heartbeat_instance(
 ) -> dict:
     """Record a heartbeat for an agent instance.
 
-    - Verifies the instance belongs to the authenticated user
-    - Updates last_heartbeat_at to now()
-    - Returns the updated timestamp
-    """
-    from datetime import datetime, timezone
+    A tick is an in-memory touch (`servers.presence`); the row's
+    `last_heartbeat_at` is renewed by the batched lease flush. Ownership is
+    verified against the database on the first tick from a session and cached
+    for the rest of the process lifetime, so the steady-state tick does no
+    database work at all.
 
-    try:
-        instance = (
-            db.query(AgentInstance)
+    The `instance-update` frame is still emitted per tick because clients
+    refresh `last_heartbeat_at` from it, but only when the user has a
+    dashboard connected to receive it — a frame to an empty room was the
+    common case, and it cost a row read to build.
+
+    The legacy `NOTIFY message_channel_*` that used to accompany every tick
+    is gone: nothing ever consumed its `agent_heartbeat` event — the SSE
+    listeners treat any NOTIFY as a wake-up and run an (empty) cursor query.
+    """
+    owner = UUID(user_id)
+    if not presence.instance_is_known(agent_instance_id, owner):
+        exists = (
+            db.query(AgentInstance.id)
             .filter(
                 AgentInstance.id == agent_instance_id,
-                AgentInstance.user_id == user_id,
+                AgentInstance.user_id == owner,
             )
             .first()
         )
-        if not instance:
+        if exists is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Agent instance not found",
             )
+    seen_at = presence.touch_instance(agent_instance_id, owner)
 
-        heartbeat_at = datetime.now(timezone.utc)
-        instance.last_heartbeat_at = heartbeat_at
-        db.flush()
-        _broadcast_instance_update(db, instance, user_id)
-        db.commit()
-
-        # Legacy NOTIFY: safety net for SSE clients (websocket-migration §2.7,
-        # alive through Wave B). Runs in its own transaction so a NOTIFY
-        # failure doesn't roll back the heartbeat write above, matching the
-        # original "NOTIFY is best-effort" semantics.
-        try:
-            channel_name = f"message_channel_{agent_instance_id}"
-            payload = json.dumps(
-                {
-                    "event_type": "agent_heartbeat",
-                    "instance_id": str(agent_instance_id),
-                    "last_heartbeat_at": heartbeat_at.isoformat() + "Z",
-                }
+    if connection_manager.has_user_scoped(user_id):
+        instance = (
+            db.query(AgentInstance)
+            .filter(
+                AgentInstance.id == agent_instance_id,
+                AgentInstance.user_id == owner,
             )
-            # Quote channel due to hyphens in UUID
-            db.execute(text(f'NOTIFY "{channel_name}", :payload'), {"payload": payload})
-            db.commit()
-        except Exception as notify_err:
-            db.rollback()
-            logger.warning(
-                f"Failed to send agent_heartbeat NOTIFY for {agent_instance_id}: {notify_err}"
+            .first()
+        )
+        if instance is not None:
+            # Detach so the fresh timestamp is for the wire only: the session
+            # closes without a flush, and the lease flush owns the column.
+            db.expunge(instance)
+            instance.last_heartbeat_at = seen_at
+            connection_manager.broadcast_update(
+                user_id,
+                build_instance_update(instance),
+                [f"user:{user_id}:user-scoped"],
             )
 
-        return {
-            "agent_instance_id": str(agent_instance_id),
-            "last_heartbeat_at": heartbeat_at.isoformat() + "Z",
-        }
-    except HTTPException:
-        raise
-    except SAIntegrityError:
-        db.rollback()
-        # *_user_id_fkey -> 401 via app-level handler.
-        raise
-    except SAOperationalError as exc:
-        # Transient flycast disconnect — let the global handler convert
-        # to 503 + Retry-After so the daemon retries naturally.
-        db.rollback()
-        if is_db_disconnect(exc):
-            raise
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(exc)}",
-        )
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}",
-        )
+    return {
+        "agent_instance_id": str(agent_instance_id),
+        "last_heartbeat_at": seen_at.isoformat(),
+    }
 
 
 @agent_router.get("/messages/pending", response_model=GetMessagesResponse)
