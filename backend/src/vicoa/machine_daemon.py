@@ -22,6 +22,7 @@ from uuid import uuid4
 import requests
 from requests import Response
 
+from integrations.utils.heartbeat import next_interval_from_response
 from vicoa.spawn_ws_client import SpawnRequestWsClient
 from vicoa.terminal.coalescer import TerminalOutputCoalescer
 from vicoa.terminal.rpc import PTY_ORDERED_METHODS, PTY_RPC_METHODS, handle_pty_rpc
@@ -538,6 +539,8 @@ class MachineDaemon:
         # on fatal auth; None (the default) everywhere else.
         self.on_cloud_status: Callable[[str], None] | None = None
         self._last_heartbeat_sent: float = 0.0
+        # Cadence for the next tick; the server adjusts it per response.
+        self._heartbeat_interval_next: float = float(self.heartbeat_interval)
         # Set by any REST 401 (see ``_raise_for_auth``). The cross-thread
         # signal that the credential is dead: a background heartbeat thread
         # sets it, the main loop watches it to stop the stream and exit.
@@ -908,8 +911,20 @@ class MachineDaemon:
             )
             response.raise_for_status()
             self._last_heartbeat_sent = time.time()
+            # Server-driven cadence: while the server can see this daemon's
+            # WebSocket it asks for a slow tick (the socket is the liveness
+            # signal); an older server sends no field and the configured
+            # interval stands. See integrations/utils/heartbeat.py.
+            try:
+                self._heartbeat_interval_next = next_interval_from_response(
+                    response.json(), float(self.heartbeat_interval)
+                )
+            except ValueError:
+                self._heartbeat_interval_next = float(self.heartbeat_interval)
         except RequestException as exc:
             logger.debug(f"Heartbeat failed (will retry): {exc}")
+            # A failed tick is a reason to try again soon, not to wait long.
+            self._heartbeat_interval_next = float(self.heartbeat_interval)
 
     # ------------------------------------------------------------------
     # Spawn handling
@@ -2868,7 +2883,10 @@ class MachineDaemon:
 
         def _heartbeat_loop() -> None:
             while not stop_heartbeat.wait(1):
-                if time.time() - self._last_heartbeat_sent >= self.heartbeat_interval:
+                if (
+                    time.time() - self._last_heartbeat_sent
+                    >= self._heartbeat_interval_next
+                ):
                     try:
                         self.send_heartbeat()
                     except AuthenticationError:
@@ -2924,7 +2942,7 @@ class MachineDaemon:
                 if stop_heartbeat:
                     break
                 now = time.time()
-                if now - self._last_heartbeat_sent >= self.heartbeat_interval:
+                if now - self._last_heartbeat_sent >= self._heartbeat_interval_next:
                     self.send_heartbeat()
 
         hb_thread = Thread(target=_heartbeat_loop, daemon=True)

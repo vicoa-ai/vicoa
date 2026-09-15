@@ -264,3 +264,212 @@ def test_machine_tick_rejects_unowned(user_instance: tuple[UUID, UUID]) -> None:
                 db=db,
             )
     assert exc.value.status_code == 404
+
+
+# ----- the socket is the signal -----
+
+
+def _session_conn(user_id: UUID, instance_id: UUID) -> Connection:
+    return Connection(
+        connection_id=uuid4().hex,
+        user_id=str(user_id),
+        scope="session-scoped",
+        rooms=frozenset({f"user:{user_id}:session:{instance_id}"}),
+        instance_id=str(instance_id),
+    )
+
+
+def _machine_conn(user_id: UUID, machine_id: UUID) -> Connection:
+    return Connection(
+        connection_id=uuid4().hex,
+        user_id=str(user_id),
+        scope="machine-scoped",
+        rooms=frozenset({f"user:{user_id}:machine:{machine_id}"}),
+        machine_id=str(machine_id),
+    )
+
+
+def test_connected_socket_is_a_live_heartbeat_regardless_of_the_column() -> None:
+    from servers.presence import (
+        CONNECTED_TICK_INTERVAL_SECONDS,
+        DEFAULT_TICK_INTERVAL_SECONDS,
+    )
+
+    reg = PresenceRegistry()
+    user_id, instance_id = uuid4(), uuid4()
+    stale = datetime.now(timezone.utc) - timedelta(hours=3)
+    assert reg.effective_instance_heartbeat(instance_id, stale) == stale
+    assert reg.tick_interval_for_instance(instance_id) == DEFAULT_TICK_INTERVAL_SECONDS
+
+    conn = _session_conn(user_id, instance_id)
+    connection_manager.register(conn)
+    reg.note_connected(conn)
+    try:
+        # Connected: proof of life is "now", ownership is cached from the
+        # handshake, and the client is told to tick rarely.
+        effective = reg.effective_instance_heartbeat(instance_id, stale)
+        assert effective is not None and effective > stale
+        assert reg.instance_is_known(instance_id, user_id)
+        assert (
+            reg.tick_interval_for_instance(instance_id)
+            == CONNECTED_TICK_INTERVAL_SECONDS
+        )
+    finally:
+        connection_manager.unregister(conn)
+        reg.note_disconnected(conn)
+
+    # Disconnected: last seen at the disconnect, so the decay starts there.
+    after = reg.effective_instance_heartbeat(instance_id, stale)
+    assert after is not None and after > stale
+    assert reg.tick_interval_for_instance(instance_id) == DEFAULT_TICK_INTERVAL_SECONDS
+
+
+def test_live_state_comes_from_the_sockets() -> None:
+    from shared.database.liveness import LiveState
+
+    reg = PresenceRegistry()
+    user_id, instance_id, machine_id = uuid4(), uuid4(), uuid4()
+    long_ago = datetime.now(timezone.utc) - timedelta(hours=3)
+    inst = AgentInstance(
+        id=instance_id,
+        agent_type_id=uuid4(),
+        user_id=user_id,
+        status=AgentStatus.AWAITING_INPUT,
+        machine_id=machine_id,
+        started_at=long_ago,
+        last_heartbeat_at=long_ago,
+    )
+    # Nothing connected, columns stale: the host is what's unreachable.
+    assert reg.live_state_for(inst, long_ago) == LiveState.MACHINE_OFFLINE
+
+    daemon = _machine_conn(user_id, machine_id)
+    connection_manager.register(daemon)
+    try:
+        # Daemon socket present, agent socket absent and stale: agent stopped.
+        assert reg.live_state_for(inst, long_ago) == LiveState.AGENT_STOPPED
+        agent = _session_conn(user_id, instance_id)
+        connection_manager.register(agent)
+        try:
+            assert reg.live_state_for(inst, long_ago) == LiveState.LIVE
+        finally:
+            connection_manager.unregister(agent)
+    finally:
+        connection_manager.unregister(daemon)
+
+
+@pytest.mark.integration
+def test_flush_leases_connected_sockets_without_any_tick(
+    user_instance: tuple[UUID, UUID],
+) -> None:
+    user_id, instance_id = user_instance
+    conn = _session_conn(user_id, instance_id)
+    connection_manager.register(conn)
+    try:
+        with SessionLocal() as db:
+            assert flush_leases(db, presence) == (1, 0)
+        assert _heartbeat_column(instance_id) is not None
+    finally:
+        connection_manager.unregister(conn)
+
+
+@pytest.mark.integration
+def test_heartbeat_response_asks_a_connected_client_to_tick_rarely(
+    user_instance: tuple[UUID, UUID],
+) -> None:
+    from servers.presence import (
+        CONNECTED_TICK_INTERVAL_SECONDS,
+        DEFAULT_TICK_INTERVAL_SECONDS,
+    )
+
+    user_id, instance_id = user_instance
+    with SessionLocal() as db:
+        body = heartbeat_instance(
+            agent_instance_id=instance_id, user_id=str(user_id), db=db
+        )
+    assert body["next_interval_seconds"] == DEFAULT_TICK_INTERVAL_SECONDS
+
+    conn = _session_conn(user_id, instance_id)
+    connection_manager.register(conn)
+    try:
+        with SessionLocal() as db:
+            body = heartbeat_instance(
+                agent_instance_id=instance_id, user_id=str(user_id), db=db
+            )
+        assert body["next_interval_seconds"] == CONNECTED_TICK_INTERVAL_SECONDS
+    finally:
+        connection_manager.unregister(conn)
+
+
+@pytest.mark.integration
+def test_refresh_pushes_live_rows_to_dashboards(
+    user_instance: tuple[UUID, UUID],
+) -> None:
+    """The frame the client tick used to produce, now produced from the socket."""
+    from servers.presence import refresh_dashboards
+
+    user_id, instance_id = user_instance
+    stale = datetime.now(timezone.utc) - timedelta(hours=3)
+    with SessionLocal() as db:
+        row = db.get(AgentInstance, instance_id)
+        assert row is not None
+        row.last_heartbeat_at = stale
+        db.commit()
+
+    agent = _session_conn(user_id, instance_id)
+    web = _user_conn(user_id)
+    connection_manager.register(agent)
+    connection_manager.register(web)
+    presence.note_connected(agent)
+    try:
+        with SessionLocal() as db:
+            assert refresh_dashboards(db, presence) == 1
+        frame = web.outbox.get_nowait()
+        body = frame["payload"]["body"]
+        assert body["t"] == "instance-update"
+        assert body["id"] == str(instance_id)
+        assert body["live_state"] == "live"
+        # The socket, not the stale column, is what the dashboard sees.
+        assert body["last_heartbeat_at"] > stale.isoformat()
+        assert web.outbox.empty()
+    finally:
+        connection_manager.unregister(web)
+        connection_manager.unregister(agent)
+        presence.note_disconnected(agent)
+
+    # Nobody watching: nothing built.
+    with SessionLocal() as db:
+        assert refresh_dashboards(db, presence) == 0
+
+
+@pytest.mark.integration
+def test_session_connect_shows_live_at_once_when_watched(
+    user_instance: tuple[UUID, UUID],
+) -> None:
+    from servers.presence import broadcast_session_connected
+
+    user_id, instance_id = user_instance
+    agent = _session_conn(user_id, instance_id)
+    # Not watched: no frame, no row read.
+    broadcast_session_connected(agent)
+
+    web = _user_conn(user_id)
+    connection_manager.register(web)
+    connection_manager.register(agent)
+    try:
+        broadcast_session_connected(agent)
+        body = web.outbox.get_nowait()["payload"]["body"]
+        assert body["id"] == str(instance_id)
+        assert body["live_state"] == "live"
+
+        # A row already reading as live (a blip, or every socket reconnecting
+        # after a deploy) is not a transition: no frame.
+        with SessionLocal() as db:
+            row = db.get(AgentInstance, instance_id)
+            assert row is not None
+            row.last_heartbeat_at = datetime.now(timezone.utc)
+            db.commit()
+        broadcast_session_connected(agent)
+        assert web.outbox.empty()
+    finally:
+        connection_manager.unregister(agent)
+        connection_manager.unregister(web)

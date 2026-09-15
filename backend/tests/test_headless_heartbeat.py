@@ -187,3 +187,108 @@ def test_async_runners_wire_a_heartbeat(module_name: str):
     src = inspect.getsource(module)
     assert "AsyncSessionHeartbeat(" in src, f"{module_name} never starts a heartbeat"
     assert "_heartbeat.stop()" in src, f"{module_name} never stops its heartbeat"
+
+
+# --------------------------------------------------------------------------
+# Server-driven cadence (servers/presence.py answers `next_interval_seconds`)
+# --------------------------------------------------------------------------
+
+
+def test_next_interval_from_response_reads_and_clamps():
+    from integrations.utils.heartbeat import (
+        MAX_HEARTBEAT_INTERVAL_SECONDS,
+        MIN_HEARTBEAT_INTERVAL_SECONDS,
+        next_interval_from_response,
+    )
+
+    assert next_interval_from_response({"next_interval_seconds": 120}, 30.0) == 120.0
+    # Absent (older server), wrong shape, or non-numeric: the fallback stands.
+    assert next_interval_from_response({}, 30.0) == 30.0
+    assert next_interval_from_response(None, 30.0) == 30.0
+    assert next_interval_from_response({"next_interval_seconds": "x"}, 30.0) == 30.0
+    assert next_interval_from_response({"next_interval_seconds": True}, 30.0) == 30.0
+    # Clamped both ways so a bad value can neither hammer nor silence.
+    assert (
+        next_interval_from_response({"next_interval_seconds": 1}, 30.0)
+        == MIN_HEARTBEAT_INTERVAL_SECONDS
+    )
+    assert (
+        next_interval_from_response({"next_interval_seconds": 99999}, 30.0)
+        == MAX_HEARTBEAT_INTERVAL_SECONDS
+    )
+
+
+async def test_async_heartbeat_honours_the_server_cadence(monkeypatch):
+    """The sleep after a tick is what the server asked for, not the default."""
+    sleeps: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def _capture(delay: float) -> None:
+        sleeps.append(delay)
+        # Let the loop run one full iteration, then park it.
+        if len(sleeps) >= 2:
+            await real_sleep(3600)
+        await real_sleep(0)
+
+    monkeypatch.setattr("integrations.utils.heartbeat.asyncio.sleep", _capture)
+    monkeypatch.setattr("integrations.utils.heartbeat.random.uniform", lambda a, b: 0.0)
+
+    class _Client:
+        async def heartbeat_instance(self, agent_instance_id: str) -> dict:
+            return {"next_interval_seconds": 120}
+
+    hb = AsyncSessionHeartbeat(agent_instance_id="inst-1", vicoa_client=_Client())
+    hb.start()
+    try:
+        for _ in range(50):
+            if len(sleeps) >= 2:
+                break
+            await real_sleep(0.01)
+    finally:
+        await hb.stop()
+    # sleeps[0] is the startup stagger; sleeps[1] follows the first tick.
+    assert len(sleeps) >= 2
+    assert sleeps[1] == 120.0
+
+
+def test_sync_heartbeat_honours_the_server_cadence():
+    """Same contract for the thread-based loop the ACP runners use."""
+    import time
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def json(self) -> dict:
+            return {"next_interval_seconds": 120}
+
+    class _Http:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def post(self, url: str, timeout: float | None = None) -> _Resp:
+            self.calls += 1
+            return _Resp()
+
+    waits: list[float] = []
+    hb = SessionHeartbeat(
+        agent_instance_id="inst-1",
+        base_url="https://agents.example/",
+        http_session=_Http(),
+        interval=5.0,
+    )
+    real_wait = hb._stop_event.wait
+
+    def _wait(timeout: float | None = None) -> bool:
+        if timeout is not None and timeout > 2.0:
+            waits.append(timeout)
+            hb._stop_event.set()  # one iteration is enough
+        return real_wait(timeout if timeout is not None and timeout <= 2.0 else 0)
+
+    hb._stop_event.wait = _wait  # type: ignore[method-assign]
+    hb.start()
+    deadline = time.time() + 3.0
+    while not waits and time.time() < deadline:
+        time.sleep(0.02)
+    hb.stop()
+    assert waits and 118.0 <= waits[0] <= 122.0

@@ -50,6 +50,7 @@ from shared.websocket.protocol import (
     terminal_room,
 )
 from shared.websocket.rpc import RpcError, rpc_router
+from servers.presence import broadcast_session_connected, presence
 from servers.shared.db.queries import (
     FetchMessagesResult,
     fetch_session_messages,
@@ -693,10 +694,18 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         scope=resolved.scope,
         rooms=frozenset({resolved.room}),
         machine_id=resolved.machine_id,
+        instance_id=resolved.instance_id,
         on_overflow=_on_overflow,
         on_revoked=_on_revoked,
     )
     connection_manager.register(conn)
+    # The socket is the liveness signal (servers/presence.py): its presence
+    # keeps the row's lease renewed and, for a dashboard watching, a connect
+    # is the moment the session reads as live again — say so right away
+    # rather than on the next refresh sweep.
+    presence.note_connected(conn)
+    if conn.scope == "session-scoped":
+        await asyncio.to_thread(broadcast_session_connected, conn)
     try:
         await websocket.send_json(
             {
@@ -711,6 +720,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         logger.info("WS %s client disconnected before server_info", conn.connection_id)
     finally:
         connection_manager.unregister(conn)
+        presence.note_disconnected(conn)
         # Drop this daemon's RPC handlers and fail its in-flight calls (§2.8).
         # A no-op for non-daemon connections.
         rpc_router.unregister(conn)

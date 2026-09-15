@@ -65,6 +65,15 @@ class RegisterMachineResponse(BaseModel):
     metadata: dict | None = Field(
         default=None, description="Metadata stored on the machine record"
     )
+    next_interval_seconds: int | None = Field(
+        default=None,
+        description=(
+            "Heartbeat cadence the server asks the daemon to use next; set on "
+            "the heartbeat endpoint only. A daemon whose WebSocket the server "
+            "can see is told to tick rarely (the socket is the liveness "
+            "signal). Older daemons ignore it."
+        ),
+    )
 
 
 class HeartbeatMachineRequest(BaseModel):

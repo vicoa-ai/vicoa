@@ -463,6 +463,8 @@ def heartbeat_machine_endpoint(
         home_dir=summary.home_dir,
         last_heartbeat_at=summary.last_heartbeat_at,
         metadata=summary.metadata,
+        # See heartbeat_instance: the daemon's socket is the signal.
+        next_interval_seconds=presence.tick_interval_for_machine(machine.id),
     )
 
 
@@ -1693,6 +1695,10 @@ def heartbeat_instance(
     return {
         "agent_instance_id": str(agent_instance_id),
         "last_heartbeat_at": seen_at.isoformat(),
+        # Server-driven cadence: a client whose session socket is visible here
+        # is told to tick rarely (its socket is the signal); one the server
+        # can't see keeps the 30s fallback. Older clients ignore the field.
+        "next_interval_seconds": presence.tick_interval_for_instance(agent_instance_id),
     }
 
 
