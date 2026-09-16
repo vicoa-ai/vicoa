@@ -8,6 +8,7 @@
     "start": "next start",
     "blog:cover": "tsx scripts/generate-blog-cover.ts",
     "check:theme": "node scripts/check-theme-colors.mjs",
+    "gen:file-icons": "node scripts/gen-file-icons.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit && node scripts/check-theme-colors.mjs",
     "test": "vitest run",
