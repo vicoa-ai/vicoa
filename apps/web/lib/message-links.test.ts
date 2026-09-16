@@ -1,3 +1,6 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import Markdown from 'react-markdown';
 import { describe, test, expect } from 'vitest';
 import {
   messageUrlTransform,
@@ -9,12 +12,48 @@ import {
 const POSIX: WorkspaceContext = { cwd: '/Users/nick/proj', homeDir: '/Users/nick' };
 const WINDOWS: WorkspaceContext = { cwd: 'C:\\Users\\Nick\\proj', homeDir: 'C:\\Users\\Nick' };
 
+/**
+ * What the chat's `a` renderer receives for `[x](<destination>)`: the real
+ * react-markdown pipeline with the chat's `urlTransform`. The markdown layer
+ * percent-encodes the destination on the way (spaces, backslashes,
+ * non-ASCII), so calling `messageUrlTransform` directly would test hrefs that
+ * never occur in production.
+ */
+function renderedHref(destination: string): string | undefined {
+  let seen: string | undefined;
+  renderToStaticMarkup(
+    createElement(
+      Markdown,
+      {
+        urlTransform: messageUrlTransform,
+        components: {
+          a: ({ href }) => {
+            seen = href;
+            return null;
+          },
+        },
+      },
+      `[x](<${destination.replace(/[<>]/g, '\\$&')}>)`,
+    ),
+  );
+  return seen;
+}
+
 /** The file a link resolves to, or the non-file verdict, for terse assertions. */
 function resolve(href: string, ctx: WorkspaceContext = POSIX): MessageLink {
-  return parseMessageLink(messageUrlTransform(href), ctx);
+  return parseMessageLink(renderedHref(href), ctx);
 }
 
 describe('messageUrlTransform', () => {
+  test('receives percent-encoded hrefs from the markdown layer', () => {
+    // The shapes that used to reach the files panel still encoded (#67), or
+    // be stripped as an unknown `C:` scheme.
+    expect(renderedHref('src/my file.ts')).toBe('src/my%20file.ts');
+    expect(renderedHref('src/my%20file.ts')).toBe('src/my%20file.ts');
+    expect(renderedHref('C:\\Users\\Nick\\proj\\a.ts')).toBe('C:%5CUsers%5CNick%5Cproj%5Ca.ts');
+    expect(renderedHref('docs/relazione è.txt')).toBe('docs/relazione%20%C3%A8.txt');
+  });
+
   test('keeps web URLs, file: URLs and paths', () => {
     for (const url of [
       'https://vicoa.ai/docs',
@@ -82,6 +121,52 @@ describe('parseMessageLink — workspace files', () => {
       kind: 'file',
       file: { path: 'src/my file.ts' },
     });
+    expect(resolve('file:///C:/Users/Nick/proj/My%20Documents/report.xlsx', WINDOWS)).toEqual({
+      kind: 'file',
+      file: { path: 'My Documents/report.xlsx' },
+    });
+  });
+
+  test('spaces and non-ASCII survive the renderer\'s percent-encoding', () => {
+    // vicoa-ai/vicoa#67: these opened `My%20Documents/report.xlsx` in the panel.
+    for (const href of ['My Documents/report.xlsx', 'My%20Documents/report.xlsx']) {
+      expect(resolve(href)).toEqual({ kind: 'file', file: { path: 'My Documents/report.xlsx' } });
+    }
+    expect(resolve('/Users/nick/proj/My Documents/report.xlsx')).toEqual({
+      kind: 'file',
+      file: { path: 'My Documents/report.xlsx' },
+    });
+    expect(resolve('C:\\Users\\Nick\\proj\\My Documents\\report.xlsx', WINDOWS)).toEqual({
+      kind: 'file',
+      file: { path: 'My Documents/report.xlsx' },
+    });
+    expect(resolve('docs/relazione è.txt')).toEqual({
+      kind: 'file',
+      file: { path: 'docs/relazione è.txt' },
+    });
+    expect(resolve('docs/relazione%20%C3%A8.txt')).toEqual({
+      kind: 'file',
+      file: { path: 'docs/relazione è.txt' },
+    });
+  });
+
+  test('an encoded # or : belongs to the file name, not a line reference', () => {
+    expect(resolve('notes/issue%233.md')).toEqual({ kind: 'file', file: { path: 'notes/issue#3.md' } });
+    expect(resolve('notes/issue%233.md#L4')).toEqual({
+      kind: 'file',
+      file: { path: 'notes/issue#3.md', line: 4 },
+    });
+    expect(resolve('logs/12%3A30.txt')).toEqual({ kind: 'file', file: { path: 'logs/12:30.txt' } });
+  });
+
+  test('a malformed escape is kept as written', () => {
+    expect(resolve('src/100%.txt')).toEqual({ kind: 'file', file: { path: 'src/100%.txt' } });
+    // A truncated UTF-8 sequence makes `decodeURIComponent` throw; the link
+    // stays a link rather than taking the message down with it.
+    expect(parseMessageLink('src/%E0%A4%A.txt', POSIX)).toEqual({
+      kind: 'file',
+      file: { path: 'src/%E0%A4%A.txt' },
+    });
   });
 
   test('~ expands to the machine home directory', () => {
@@ -146,6 +231,7 @@ describe('parseMessageLink — line references', () => {
 
   test('a bare filename with a line ref is a path, not a URL scheme', () => {
     expect(resolve('foo.ts:42')).toEqual({ kind: 'file', file: { path: 'foo.ts', line: 42 } });
+    expect(resolve('my file.ts:42')).toEqual({ kind: 'file', file: { path: 'my file.ts', line: 42 } });
   });
 
   test('a named fragment is dropped rather than read as a line', () => {
@@ -171,6 +257,11 @@ describe('parseMessageLink — refusals', () => {
       path: '../other-project/secrets.env',
     });
     expect(resolve('~/.ssh/id_rsa')).toEqual({ kind: 'outside', path: '~/.ssh/id_rsa' });
+    // Reported decoded, so the tooltip reads as a path.
+    expect(resolve('/Users/nick/other proj/x.txt')).toEqual({
+      kind: 'outside',
+      path: '/Users/nick/other proj/x.txt',
+    });
     expect(resolve('file://host/share/x.txt')).toEqual({ kind: 'inert' });
   });
 

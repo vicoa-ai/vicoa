@@ -13,6 +13,14 @@
  *
  * So every href is classified here first, and only genuine web URLs are allowed
  * to leave the app.
+ *
+ * One more thing the markdown layer does before either function here runs:
+ * `mdast-util-to-hast` percent-encodes the destination (`normalizeUri`), so a
+ * space arrives as `%20`, a Windows backslash as `%5C` and any non-ASCII
+ * character as UTF-8 escapes — whether the agent pre-encoded it or wrote
+ * `[x](<My Documents/report.xlsx>)`. Local paths are decoded again here;
+ * otherwise the files panel opens a file literally named `My%20Documents`
+ * and Copy / Open / Reveal all fail on it (vicoa-ai/vicoa#67).
  */
 
 import { toAbsolutePath } from '@/lib/utils';
@@ -49,11 +57,13 @@ export interface WorkspaceContext {
 const WEB_SCHEME = /^(?:https?|mailto):/i;
 /** `scheme:` at the head of a URL, per RFC 3986. */
 const SCHEME = /^([a-z][a-z0-9+.\-]*):/i;
-/** `C:\…` / `c:/…` — a Windows drive, not a URL scheme. */
-const WINDOWS_DRIVE = /^[a-z]:[\\/]/i;
+/** `C:\…` / `c:/…` — a Windows drive, not a URL scheme. Also matches the
+ *  backslash as the renderer delivers it, `C:%5C…`. */
+const WINDOWS_DRIVE = /^[a-z]:(?:[\\/]|%5c)/i;
 /** `foo.ts:42`, `foo.ts:42:7` — a bare filename carrying a line reference. The
- *  leading run parses as a URL scheme but is a path; only digits may follow. */
-const FILENAME_WITH_LINE = /^[a-z][a-z0-9+.\-]*:\d+(?::\d+)?$/i;
+ *  leading run parses as a URL scheme but is a path; only digits may follow.
+ *  `%XX` escapes belong to the name (`my%20file.ts:42`). */
+const FILENAME_WITH_LINE = /^[a-z](?:[a-z0-9+.\-]|%[0-9a-f]{2})*:\d+(?::\d+)?$/i;
 
 /**
  * react-markdown's `urlTransform`, widened by `file:` and `name:line`.
@@ -174,22 +184,24 @@ function looksLikePath(path: string): boolean {
   return path.includes('/') || /\.[A-Za-z0-9]{1,12}$/.test(path);
 }
 
-/** Decode a `file:` URL (including `file:///C:/…`) to a plain path. */
+/** The path of a `file:` URL — still percent-encoded, and still carrying the
+ *  slash a `file:///C:/…` URL puts before the drive letter. */
 function pathFromFileUrl(href: string): string | null {
   // Tolerate `file:/x`, `file://x` and `file:///x` alike; a non-empty authority
   // (a UNC host) is not something the daemon can open, so refuse it.
   const m = /^file:(?:\/\/([^/]*))?(\/.*)?$/i.exec(href);
   if (!m || m[1]) return null;
-  const raw = m[2];
-  if (!raw) return null;
-  let decoded: string;
+  return m[2] || null;
+}
+
+/** Undo the renderer's percent-encoding. A malformed escape (`%E0%A4%A`) is
+ *  kept as written rather than thrown on. */
+function percentDecode(path: string): string {
   try {
-    decoded = decodeURIComponent(raw);
+    return decodeURIComponent(path);
   } catch {
-    decoded = raw;
+    return path;
   }
-  // `/C:/Users/…` → `C:/Users/…`
-  return /^\/[a-z]:[\\/]/i.test(decoded) ? decoded.slice(1) : decoded;
 }
 
 /**
@@ -210,6 +222,7 @@ export function parseMessageLink(
   if (raw.startsWith('//')) return { kind: 'inert' };
 
   let candidate = raw;
+  let fromFileUrl = false;
   const scheme = SCHEME.exec(raw);
   if (scheme && !WINDOWS_DRIVE.test(raw) && !FILENAME_WITH_LINE.test(raw)) {
     if (WEB_SCHEME.test(raw)) return { kind: 'external', href: raw };
@@ -217,9 +230,16 @@ export function parseMessageLink(
     const fromUrl = pathFromFileUrl(raw);
     if (fromUrl === null) return { kind: 'inert' };
     candidate = fromUrl;
+    fromFileUrl = true;
   }
 
-  const { path: rawPath, line } = splitLineRef(candidate);
+  // The line reference comes off first, while the path is still encoded: a
+  // `#` or `:` in a file name travels as `%23` / `%3A` and must not be read as
+  // one. Then the escapes go — for `file:` URLs and bare paths alike.
+  const { path: encodedPath, line } = splitLineRef(candidate);
+  let rawPath = percentDecode(encodedPath);
+  // `file:///C:/Users/…` → `/C:/Users/…` → `C:/Users/…`
+  if (fromFileUrl && /^\/[a-z]:[\\/]/i.test(rawPath)) rawPath = rawPath.slice(1);
   if (rawPath === '') return { kind: 'inert' };
 
   // Without a working directory there is no panel to open the file in.

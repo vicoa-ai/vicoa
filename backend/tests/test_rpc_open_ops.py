@@ -7,6 +7,7 @@ Finder on the machine running the suite.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -117,6 +118,37 @@ def test_finder_reveals_a_file_but_opens_a_directory(
 
     assert open_ops.open_path(str(project), "finder", "") == {"ok": True}
     assert spawned[-1] == ["open", str(project)]
+
+
+def test_explorer_keeps_the_select_switch_outside_the_quoted_path(
+    monkeypatch: pytest.MonkeyPatch, project: Path, spawned: list[list[str]]
+):
+    """A path with spaces gets quoted on Windows; the switch must not be.
+
+    Joined into one argument, `subprocess` renders `"/select,C:\\My Files\\x"`
+    and Explorer no longer recognises the switch (vicoa-ai/vicoa#67).
+    """
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        open_ops.shutil,
+        "which",
+        lambda cmd: r"C:\Windows\explorer.exe" if cmd == "explorer" else None,
+    )
+    (project / "My Documents").mkdir()
+    (project / "My Documents" / "report.xlsx").write_bytes(b"")
+    doc = str(project / "My Documents" / "report.xlsx")
+
+    assert open_ops.open_path(str(project), "explorer", "My Documents/report.xlsx") == {
+        "ok": True
+    }
+    assert spawned[-1] == [r"C:\Windows\explorer.exe", "/select,", doc]
+    # The command line Windows would actually receive.
+    assert subprocess.list2cmdline(spawned[-1]) == (
+        rf'C:\Windows\explorer.exe /select, "{doc}"'
+    )
+
+    assert open_ops.open_path(str(project), "explorer", "My Documents") == {"ok": True}
+    assert spawned[-1] == [r"C:\Windows\explorer.exe", str(project / "My Documents")]
 
 
 def test_editor_cli_gets_the_path_as_its_own_argument(

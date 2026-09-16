@@ -318,7 +318,12 @@ def _resolve_launcher(spec: _AppSpec) -> _Launcher | None:
         return lambda path, is_dir: ["open", path] if is_dir else ["open", "-R", path]
     if spec.special == "explorer":
         exe = shutil.which("explorer") or "explorer"
-        return lambda path, is_dir: [exe, path] if is_dir else [exe, f"/select,{path}"]
+        # `/select,` travels as its own argument. Joined to the path,
+        # `subprocess` would quote a path with spaces *together with* the
+        # switch (`"/select,C:\My Files\x.xlsx"`), and Explorer — which
+        # tokenises its command line itself — no longer sees a switch at all.
+        # Apart, the line is the canonical `/select, "C:\My Files\x.xlsx"`.
+        return lambda path, is_dir: [exe, path] if is_dir else [exe, "/select,", path]
     if spec.special == "xdg-file-manager":
         return _xdg_file_manager_launcher()
 
