@@ -1,14 +1,14 @@
-import { Check, Mail } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { FAQSection, type FAQItem } from '@/components/faq-section';
 import { PricingCards } from '@/components/billing/pricing-cards';
+import { ExcludedGlyph, IncludedGlyph } from '@/components/billing/plan-glyphs';
 import { PostHogPageEvent } from '@/components/posthog-page-event';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
   title: 'Pricing Plans - Vicoa | Affordable Remote AI Coding Assistant',
-  description: 'Choose the perfect Vicoa plan for your coding needs. A free, unlimited desktop app plus a free mobile tier (20 messages/month), Pro for unlimited messages everywhere, or custom Teams plans. Run Claude Code, Codex, and 6+ more agents from anywhere.',
+  description: 'Choose the perfect Vicoa plan for your coding needs. A free desktop, web and mobile app with one remote machine, Pro for unlimited machines and automations, or custom Enterprise plans. Run Claude Code, Codex, and 40+ coding agents from anywhere.',
   keywords: [
     'Vicoa pricing',
     'AI coding assistant pricing',
@@ -19,15 +19,15 @@ export const metadata: Metadata = {
     'free coding assistant',
   ],
   openGraph: {
-    title: 'Vicoa Pricing - Free, Pro & Teams Plans',
-    description: 'Flexible pricing for developers of all levels. Start with a free, unlimited desktop app and 20 free mobile messages, or upgrade to Pro for unlimited AI-powered coding assistance.',
+    title: 'Vicoa Pricing - Free, Pro & Enterprise Plans',
+    description: 'Flexible pricing for developers of all levels. Start free on one machine, or upgrade to Pro to run agents across every machine you own.',
     type: 'website',
     url: 'https://vicoa.ai/pricing',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Vicoa Pricing Plans',
-    description: 'Choose the perfect plan for your coding needs. Free, unlimited desktop app; free mobile tier with 20 messages/month.',
+    description: 'Choose the perfect plan for your coding needs. Free on one machine; Pro for unlimited machines and automations.',
   },
   alternates: {
     canonical: 'https://vicoa.ai/pricing',
@@ -36,9 +36,9 @@ export const metadata: Metadata = {
 
 const pricingFaqs: FAQItem[] = [
   {
-    question: 'What happens when I reach the free tier limit?',
+    question: 'What are the limits on the Free plan?',
     answer:
-      "The 20-message monthly limit applies to the mobile app. The desktop app stays free and unlimited, so you can keep coding there anytime. To lift the mobile limit, upgrade to Pro for unlimited messages across every device. Your data and settings are preserved when you upgrade."
+      'Free includes one remote machine and up to ten automations. There is no message cap: desktop, web and mobile use is unmetered. When you connect a second machine or add an eleventh automation, we ask you to upgrade to Pro. Your sessions, settings and data are always preserved.'
   },
   {
     question: 'Can I change plans anytime?',
@@ -56,14 +56,14 @@ const pricingFaqs: FAQItem[] = [
       "Annual Pro includes a free trial. If you're not satisfied, you can cancel anytime during the trial period at no charge. For subscriptions via mobile apps, refunds are handled by App Store and Google Play Store."
   },
   {
-    question: "What's included in Enterprise support?",
+    question: 'What do Enterprise plans include?',
     answer:
-      'Enterprise customers get a dedicated account manager, priority support with SLA guarantees, custom onboarding and training, and direct access to our engineering team for technical issues.'
+      'Enterprise adds centralized billing with an admin portal, SSO & SCIM provisioning, on-premise deployment, usage analytics, advanced security, and an SLA with a dedicated account manager and direct access to our engineering team. Pricing depends on seat count and deployment, so email hi@vicoa.ai and we will put together a quote.'
   },
   {
-    question: 'Can I use my own API keys?',
+    question: 'Do I need my own AI subscription or API keys?',
     answer:
-      'Yes, all plans require you to provide your own API keys for Claude or other AI providers. Vicoa provides the infrastructure to run your agents remotely, while you maintain control of your AI provider accounts.'
+      'Yes. Vicoa does not resell model access on any plan: sign in with the Claude, ChatGPT/Codex, GitHub Copilot or other subscription you already have, or bring your own API keys. Vicoa provides the infrastructure to run your agents from anywhere; you keep control of your provider accounts and pay them directly, with no usage markup.'
   }
 ];
 
@@ -82,6 +82,9 @@ export default async function PricingPage() {
           <h1 className="text-3xl sm:text-4xl lg:text-5xl text-foreground mb-4">
             Vicoa Pricing Plans
           </h1>
+          <p className="text-base sm:text-lg text-muted-foreground max-w-2xl mx-auto">
+            Free on one machine. Go Pro to code across all of them.
+          </p>
         </div>
       </section>
 
@@ -95,72 +98,69 @@ export default async function PricingPage() {
       {/* Features Comparison */}
       <section className="py-20 sm:py-24 lg:py-32">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-2xl sm:text-3xl lg:text-5xl text-foreground mb-6">
-              Compare Plans
-            </h2>
-            <p className="text-base sm:text-lg lg:text-xl text-muted-foreground max-w-2xl mx-auto">
-              Find the perfect fit for your coding needs
-            </p>
-          </div>
+          <h2 className="text-2xl sm:text-3xl lg:text-5xl text-foreground text-center mb-12 lg:mb-16">
+            Compare plans
+          </h2>
 
-          <div className="max-w-5xl mx-auto">
-            <div className="overflow-x-auto custom-scrollbar">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="border-b-2 border-border">
-                    <th className="text-left py-6 px-4 text-base font-semibold text-foreground">Feature</th>
-                    <th className="text-center py-6 px-4 text-base font-semibold text-foreground">Free</th>
-                    <th className="text-center py-6 px-4 text-base font-semibold text-blue-600 dark:text-blue-400">Pro</th>
-                    <th className="text-center py-6 px-4 text-base font-semibold text-foreground">Teams</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  <ComparisonSection title="Usage" />
-                  <ComparisonRow feature="Mobile messages / month" free="20" pro="Unlimited" enterprise="Unlimited" />
-                  <ComparisonRow feature="Desktop app (Mac, Windows, Linux)" free="Unlimited" pro="Unlimited" enterprise="Unlimited" />
-                  <ComparisonRow feature="Web & mobile apps (iOS, Android)" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Agent sessions" free="Unlimited on desktop" pro="Unlimited everywhere" enterprise="Unlimited everywhere" />
+          {/* overflow-visible on lg so the sticky header sticks to the page,
+              not to a horizontal scroll container that never scrolls vertically */}
+          <div className="max-w-5xl mx-auto overflow-x-auto custom-scrollbar lg:overflow-visible">
+            <table className="w-full min-w-[640px] border-separate border-spacing-0 text-sm">
+              <thead className="sticky top-0 z-10 bg-background">
+                <tr>
+                  <th scope="col" className="w-2/5 border-b border-border py-4 pr-4 text-left">
+                    <span className="sr-only">Feature</span>
+                  </th>
+                  <th scope="col" className="border-b border-border py-4 pl-4 text-left text-base font-semibold text-foreground">Free</th>
+                  <th scope="col" className="border-b border-border py-4 pl-4 text-left text-base font-semibold text-foreground">Pro</th>
+                  <th scope="col" className="border-b border-border py-4 pl-4 text-left text-base font-semibold text-foreground">Enterprise</th>
+                </tr>
+              </thead>
+              <tbody>
+                <ComparisonSection title="Usage" />
+                <ComparisonRow feature="Remote machines" free="1" pro="Unlimited" enterprise="Unlimited" />
+                <ComparisonRow feature="Automations" free="10" pro="Unlimited" enterprise="Unlimited" />
+                <ComparisonRow feature="Desktop app (Mac, Windows, Linux)" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Web & mobile apps (iOS, Android)" free={true} pro={true} enterprise={true} />
 
-                  <ComparisonSection title="Agents & models" />
-                  <ComparisonRow feature="Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="300+ models via OpenRouter" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Bring your own subscriptions & API keys (no usage markup)" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Parallel sessions, each on its own git worktree" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Permission modes, thinking toggle & mid-session model switch" free={true} pro={true} enterprise={true} />
+                <ComparisonSection title="Agents & models" />
+                <ComparisonRow feature="Claude Code, Codex, OpenCode, Gemini, Antigravity, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="30+ more ACP agents in one click: Amp, Cline, Devin, goose, Kiro, Qwen Code & others" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Any other ACP-compatible agent, with your own command" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Bring your own subscriptions & API keys (no usage markup)" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Parallel sessions, each on its own git worktree" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Permission modes, thinking toggle & mid-session model switch" free={true} pro={true} enterprise={true} />
 
-                  <ComparisonSection title="Work from anywhere" />
-                  <ComparisonRow feature="Remote connections to your machines" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Start, resume & interrupt sessions from any device" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Real-time cross-device sync" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Push notifications & one-tap approvals" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Talk to code (voice dictation)" free={true} pro={true} enterprise={true} />
+                <ComparisonSection title="Work from anywhere" />
+                <ComparisonRow feature="Remote connections to your machines" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Start, resume & interrupt sessions from any device" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Real-time cross-device sync" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Push notifications & one-tap approvals" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Talk to code (voice dictation)" free={true} pro={true} enterprise={true} />
 
-                  <ComparisonSection title="Plan & automate" />
-                  <ComparisonRow feature="Tasks: board & list views, sub-tasks, labels" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Scheduled automations & run history" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Session organization: rename, pin, group & filter" free={true} pro={true} enterprise={true} />
+                <ComparisonSection title="Plan & automate" />
+                <ComparisonRow feature="Tasks: board & list views, sub-tasks, labels" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Scheduled automations & run history" free={true} pro={true} enterprise={true} />
 
-                  <ComparisonSection title="Code & review" />
-                  <ComparisonRow feature="Git diffs, commit history & in-place file editing" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Built-in terminals (local, remote & web)" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Live preview & workspace search" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Slash commands & @ file search" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Image & file attachments" free={true} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Context & rate-limit usage insights" free={true} pro={true} enterprise={true} />
+                <ComparisonSection title="Code & review" />
+                <ComparisonRow feature="Git diffs, commit history & in-place file editing" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Built-in terminals (local, remote & web)" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Live preview & workspace search" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Slash commands & @ file search" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Image & file attachments" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Context & rate-limit usage insights" free={true} pro={true} enterprise={true} />
 
-                  <ComparisonSection title="Support & teams" />
-                  <ComparisonRow feature="Support" free="Community" pro="Priority" enterprise="Dedicated" />
-                  <ComparisonRow feature="Early feature access" free={false} pro={true} enterprise={true} />
-                  <ComparisonRow feature="Centralized billing & admin portal" free={false} pro={false} enterprise={true} />
-                  <ComparisonRow feature="SSO & SCIM provisioning" free={false} pro={false} enterprise={true} />
-                  <ComparisonRow feature="On-premise deployment" free={false} pro={false} enterprise={true} />
-                  <ComparisonRow feature="Usage analytics" free={false} pro={false} enterprise={true} />
-                  <ComparisonRow feature="Advanced security" free={false} pro={false} enterprise={true} />
-                  <ComparisonRow feature="SLA guarantee" free={false} pro={false} enterprise={true} />
-                </tbody>
-              </table>
-            </div>
+                <ComparisonSection title="Support & enterprise" />
+                <ComparisonRow feature="Support" free="Community" pro="Priority" enterprise="Dedicated" />
+                <ComparisonRow feature="Early feature access" free={false} pro={true} enterprise={true} />
+                <ComparisonRow feature="Centralized billing & admin portal" free={false} pro={false} enterprise={true} />
+                <ComparisonRow feature="SSO & SCIM provisioning" free={false} pro={false} enterprise={true} />
+                <ComparisonRow feature="On-premise deployment" free={false} pro={false} enterprise={true} />
+                <ComparisonRow feature="Usage analytics" free={false} pro={false} enterprise={true} />
+                <ComparisonRow feature="Advanced security" free={false} pro={false} enterprise={true} />
+                <ComparisonRow feature="SLA guarantee" free={false} pro={false} enterprise={true} />
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
@@ -187,18 +187,15 @@ export default async function PricingPage() {
             <Button
               asChild
               variant="outline"
-              className="rounded-full px-8"
+              className="h-12 rounded-full px-8"
             >
               <Link href="/docs">View Documentation</Link>
             </Button>
             <Button
               asChild
-              className="rounded-full px-8 bg-black hover:bg-gray-800 text-white dark:bg-white dark:text-black dark:hover:bg-gray-200"
+              className="h-12 rounded-full px-8 bg-black hover:bg-gray-800 text-white dark:bg-white dark:text-black dark:hover:bg-gray-200"
             >
-              <a href="mailto:hi@vicoa.ai">
-                Contact Support
-                <Mail className="ml-2 h-4 w-4" />
-              </a>
+              <a href="mailto:hi@vicoa.ai">Contact Support</a>
             </Button>
           </div>
         </div>
@@ -211,13 +208,14 @@ export default async function PricingPage() {
 
 function ComparisonSection({ title }: { title: string }) {
   return (
-    <tr className="bg-muted/40">
-      <td
+    <tr>
+      <th
+        scope="colgroup"
         colSpan={4}
-        className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+        className="pt-10 pb-3 text-left text-base font-semibold text-foreground"
       >
         {title}
-      </td>
+      </th>
     </tr>
   );
 }
@@ -235,21 +233,17 @@ function ComparisonRow({
 }) {
   const renderCell = (value: string | boolean) => {
     if (typeof value === 'boolean') {
-      return value ? (
-        <Check className="h-5 w-5 text-foreground mx-auto" />
-      ) : (
-        <span className="text-muted-foreground text-sm">—</span>
-      );
+      return value ? <IncludedGlyph /> : <ExcludedGlyph />;
     }
-    return <span className="text-sm text-foreground">{value}</span>;
+    return value;
   };
 
   return (
-    <tr className="hover:bg-muted/20 transition-colors">
-      <td className="py-4 px-4 text-sm text-foreground">{feature}</td>
-      <td className="py-4 px-4 text-center">{renderCell(free)}</td>
-      <td className="py-4 px-4 text-center bg-blue-50/50 dark:bg-blue-950/20">{renderCell(pro)}</td>
-      <td className="py-4 px-4 text-center">{renderCell(enterprise)}</td>
+    <tr>
+      <td className="border-b border-border/60 py-3.5 pr-4 text-foreground/80">{feature}</td>
+      <td className="border-b border-border/60 py-3.5 pl-4 text-foreground">{renderCell(free)}</td>
+      <td className="border-b border-border/60 py-3.5 pl-4 text-foreground">{renderCell(pro)}</td>
+      <td className="border-b border-border/60 py-3.5 pl-4 text-foreground">{renderCell(enterprise)}</td>
     </tr>
   );
 }
