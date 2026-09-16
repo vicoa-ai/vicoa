@@ -278,8 +278,14 @@ jobs:
         # generate-notes lists merged PRs ONLY (direct-to-main commits — version
         # bumps, hotfixes — vanish) and needs a previous_tag_name that shares
         # history. Instead we list EVERY commit since the previous desktop release,
-        # grouped by conventional-commit type, each linked to its PR (squash-merge
-        # `(#N)` suffix) or commit. Base = the most recent published GitHub release
+        # each linked to its PR (squash-merge `(#N)` suffix) or commit, grouped by
+        # subject: this repo writes `Area: what changed` subjects, not conventional
+        # commits, so a bare `feat`/`fix` prefix check filed every feature under
+        # Maintenance (v0.1.27). Now version bumps, reverts and the chore-type
+        # prefixes are Maintenance, a subject that starts with "Fix" (after an
+        # optional `Area:`) is a Fix, and everything else is a Feature — a
+        # feature is the common case here, so that is the default, not the
+        # exception. Base = the most recent published GitHub release
         # that isn't us (every release here is a desktop release); desktop-v* trigger
         # tags get cleaned up so we don't rely on them, and we fall back to the repo
         # root when the previous tag shares no history (the pre-open-source v0.1.18
@@ -320,10 +326,22 @@ jobs:
             printf '\n'
           }
 
+          classify() {  # stdin: "hash<TAB>subject" lines; prints those in bucket $1 (feat|fix|maint)
+            awk -F'\t' -v want="$1" '
+              NF {
+                s = $2
+                if      (s ~ /^(chore|ci|build|docs|style|test)([(:]|$)/ ||
+                         s ~ /^(Bump |Update pyproject|Desktop: v[0-9]|Revert |[Ll]int)/) b = "maint"
+                else if (s ~ /^([A-Za-z]+: )?[Ff]ix(es)?([(: ]|$)/)                       b = "fix"
+                else                                                                       b = "feat"
+                if (b == want) print
+              }'
+          }
+
           ALL=$(git log --no-merges --format="%h%x09%s" "${BASE}..HEAD")
-          FEATS=$(printf '%s\n' "$ALL" | awk -F'\t' 'NF && $2 ~ /^feat/')
-          FIXES=$(printf '%s\n' "$ALL" | awk -F'\t' 'NF && $2 ~ /^fix/')
-          OTHER=$(printf '%s\n' "$ALL" | awk -F'\t' 'NF && $2 !~ /^(feat|fix)/')
+          FEATS=$(printf '%s\n' "$ALL" | classify feat)
+          FIXES=$(printf '%s\n' "$ALL" | classify fix)
+          OTHER=$(printf '%s\n' "$ALL" | classify maint)
 
           {
             printf 'Bundles Vicoa CLI daemon [%s](https://www.npmjs.com/package/@vicoa/cli/v/%s).\n\n' "$DAEMON" "${DAEMON#v}"
