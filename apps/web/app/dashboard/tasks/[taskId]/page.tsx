@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Plus } from 'lucide-react';
+import { ArrowLeft, Play, Plus } from 'lucide-react';
 
 import {
   AgentInstanceResponse,
@@ -51,6 +51,7 @@ import {
 } from '@/components/dashboard/task-ui';
 import { ReactionRow, TaskTimeline } from './task-timeline';
 import { CommentComposer } from './comment-composer';
+import { StartSessionDialog } from '../start-session-dialog';
 
 // Slow on purpose: this is a single-player backlog, and the point of the poll
 // is to catch an agent's comment landing while the tab sits open — not to
@@ -102,6 +103,12 @@ export default function TaskDetailPage() {
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // Set when "Start session" is fired on a task that has sub-tasks — opens the
+  // picker so the user can choose which ride along (same flow as the board).
+  const [sessionDialog, setSessionDialog] = useState<{
+    task: TaskResponse;
+    subtasks: TaskResponse[];
+  } | null>(null);
 
   // The whole page's data. Kept in one function so focus-revalidation and the
   // interval can't drift apart from the initial load.
@@ -217,6 +224,32 @@ export default function TaskDetailPage() {
       setTaskReactions(timeline.reactions);
     },
     [api, task],
+  );
+
+  // "Start session" seeds a new agent session from this task — the same path
+  // as the board's context-menu action: with sub-tasks, open the picker first;
+  // without, go straight to the New Session page.
+  const startSession = useCallback(() => {
+    if (!task) return;
+    const children = allTasks.filter((t) => t.parent_task_id === task.id);
+    if (children.length === 0) {
+      router.push(`/dashboard/agents/new-session?taskId=${task.id}`);
+      return;
+    }
+    setSessionDialog({ task, subtasks: children });
+  }, [router, task, allTasks]);
+
+  // Picker confirmed: carry the chosen sub-task ids to the New Session page,
+  // which seeds them into the prompt and advances their status with the parent.
+  const confirmStartSession = useCallback(
+    (selectedIds: string[]) => {
+      if (!sessionDialog) return;
+      const params = new URLSearchParams({ taskId: sessionDialog.task.id });
+      if (selectedIds.length > 0) params.set('subtasks', selectedIds.join(','));
+      setSessionDialog(null);
+      router.push(`/dashboard/agents/new-session?${params.toString()}`);
+    },
+    [router, sessionDialog],
   );
 
   if (isLoading) {
@@ -429,9 +462,25 @@ export default function TaskDetailPage() {
             <span className="px-2 text-sm text-muted-foreground">
               {sessions.length === 0 ? 'None yet' : `${sessions.length} linked`}
             </span>
+            <button
+              type="button"
+              onClick={startSession}
+              className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+            >
+              <Play className="size-3.5" />
+              Start session
+            </button>
           </RailGroup>
         </aside>
       </div>
+
+      <StartSessionDialog
+        open={!!sessionDialog}
+        parentTask={sessionDialog?.task ?? null}
+        subtasks={sessionDialog?.subtasks ?? []}
+        onClose={() => setSessionDialog(null)}
+        onConfirm={confirmStartSession}
+      />
     </div>
   );
 }
