@@ -751,6 +751,12 @@ class MachineDaemon:
         `worktree` param and the `git-worktree-*` RPCs, so it can show the
         worktree option. An old daemon omits it and the app stays hidden.
 
+        `worktree-name` tells the app the spawn-session `worktree.name` param
+        is honoured and the `git-worktree-check-name` RPC is routable here, so
+        the picker can offer a name field for a new worktree. Gated separately
+        from `worktree` because an old daemon drops the unknown `name` *silently*
+        and spawns a random slug — the user would type a name and get another.
+
         `agent-scan` tells the app the `scan-agents` RPC is routable here,
         so the desktop agent scan can offer a Rescan button. An old daemon
         omits it and the button stays hidden rather than failing `no_handler`.
@@ -814,6 +820,7 @@ class MachineDaemon:
         """
         return [
             "worktree",
+            "worktree-name",
             "agent-scan",
             "provider-config",
             "file-index",
@@ -2081,6 +2088,10 @@ class MachineDaemon:
             from vicoa.rpc import worktree_ops
 
             return worktree_ops.list_worktrees(**(frame.get("params") or {}))
+        if method == "git-worktree-check-name":
+            from vicoa.rpc import worktree_ops
+
+            return worktree_ops.check_worktree_name(**(frame.get("params") or {}))
         if method == "git-worktree-remove":
             from vicoa.rpc import worktree_ops
 
@@ -2191,6 +2202,7 @@ class MachineDaemon:
             "git-unstage",
             "git-commit",
             "git-worktree-list",
+            "git-worktree-check-name",
             "git-worktree-remove",
             "worktree-trust-grant",
             "worktree-run-setup",
@@ -2408,13 +2420,18 @@ class MachineDaemon:
             # Optional worktree isolation: `worktree:{new:true}` forks a fresh
             # branch + checkout off the directory's HEAD and runs the agent
             # there instead. The target path is daemon-computed (never
-            # app-supplied). A creation failure short-circuits before any
-            # launch side effects.
+            # app-supplied); an optional `name` is the user's pick for the
+            # branch, else a random slug. A creation failure short-circuits
+            # before any launch side effects.
             worktree_param = params.get("worktree")
             if isinstance(worktree_param, dict) and worktree_param.get("new") is True:
                 from vicoa.rpc.worktree_ops import create_worktree
 
-                created = create_worktree(directory)
+                requested_name = worktree_param.get("name")
+                created = create_worktree(
+                    directory,
+                    name=requested_name if isinstance(requested_name, str) else None,
+                )
                 if "error" in created:
                     return {"error": f"Failed to create worktree: {created['error']}"}
                 worktree_info = created

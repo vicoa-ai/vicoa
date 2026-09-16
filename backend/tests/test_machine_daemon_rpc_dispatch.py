@@ -318,14 +318,28 @@ def test_worktree_run_setup_requires_paths(daemon: MachineDaemon):
     assert "error" in result
 
 
+def test_git_worktree_check_name_dispatched_to_handler(
+    daemon: MachineDaemon, committed_repo: Path, home: Path
+):
+    frame = {
+        "method": "git-worktree-check-name",
+        "params": {"cwd": str(committed_repo), "name": "feat-login"},
+    }
+    assert daemon._handle_rpc_request(frame) == {"available": True}
+
+
 def test_worktree_methods_are_advertised(daemon: MachineDaemon):
     # The server routes a method to this daemon only if it advertises it on
     # connect, so dispatch support is useless unless the method is announced.
     advertised = daemon._supported_rpc_methods()
     assert "git-worktree-list" in advertised
+    assert "git-worktree-check-name" in advertised
     assert "git-worktree-remove" in advertised
     assert "worktree-trust-grant" in advertised
     assert "worktree-run-setup" in advertised
+    # The name field is feature-detected separately from `worktree`: an old
+    # daemon drops `worktree.name` silently and spawns a random slug.
+    assert "worktree-name" in daemon._capabilities()
 
 
 def _head(repo: Path) -> str:

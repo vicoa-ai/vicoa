@@ -254,3 +254,70 @@ def test_spawn_worktree_on_non_repo_errors_without_launching(
 
     assert "error" in result
     assert calls.get("called") is not True  # never tried to launch the agent
+
+
+def test_spawn_with_named_worktree_uses_the_name(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    daemon = _prep_daemon(monkeypatch)
+    calls: dict = {}
+    _patch_popen(monkeypatch, calls)
+
+    result = daemon.spawn_session_rpc(
+        {
+            "params": {
+                "directory": str(committed_repo),
+                "agent": "claude",
+                "worktree": {"new": True, "name": "feat-login"},
+            }
+        }
+    )
+
+    assert "agent_instance_id" in result
+    assert result["branch"] == "feat-login"
+    assert Path(result["worktree_path"]).parent.name == "feat-login"
+    assert calls["cwd"] == result["worktree_path"]
+
+
+def test_spawn_with_taken_worktree_name_errors_without_launching(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    from vicoa.rpc.worktree_ops import create_worktree
+
+    create_worktree(str(committed_repo), name="feat-login")
+    daemon = _prep_daemon(monkeypatch)
+    calls: dict = {}
+    _patch_popen(monkeypatch, calls)
+
+    result = daemon.spawn_session_rpc(
+        {
+            "params": {
+                "directory": str(committed_repo),
+                "agent": "claude",
+                "worktree": {"new": True, "name": "feat-login"},
+            }
+        }
+    )
+
+    assert result["error"].endswith("name_taken")
+    assert calls.get("called") is not True
+
+
+def test_spawn_with_blank_or_non_string_name_falls_back_to_random(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    daemon = _prep_daemon(monkeypatch)
+    _patch_popen(monkeypatch, {})
+
+    for name in ("", "  ", None, 42):
+        result = daemon.spawn_session_rpc(
+            {
+                "params": {
+                    "directory": str(committed_repo),
+                    "agent": "claude",
+                    "worktree": {"new": True, "name": name},
+                }
+            }
+        )
+        assert "agent_instance_id" in result, (name, result)
+        assert result["branch"].strip(), name

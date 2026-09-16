@@ -74,14 +74,21 @@ class LocalRpcDispatcher:
         branch = params.get("branch")
         explicit_path = params.get("path")
 
+        if not isinstance(explicit_path, str) or not explicit_path.strip():
+            # Managed layout: reuse the daemon's creator, which handles both a
+            # random slug and a requested branch (validated, collision = error)
+            # exactly as `spawn-session worktree:{new, name}` does.
+            from vicoa.rpc.worktree_ops import create_worktree
+
+            return create_worktree(
+                cwd, name=branch if isinstance(branch, str) else None
+            )
         if not isinstance(branch, str) or not branch.strip():
-            # No branch requested: reuse the daemon's generator (unique
-            # branch + computed path) exactly as `spawn-session worktree:new`.
+            # A bare path with no branch never had a defined meaning — the
+            # managed random-slug create is what it always did.
             from vicoa.rpc.worktree_ops import create_worktree
 
             return create_worktree(cwd)
-
-        from vicoa.rpc.worktree_paths import repo_basename, worktrees_parent_dir
 
         branch_name = branch.strip()
         abs_repo = Path(os.path.expanduser(cwd)).resolve()
@@ -94,11 +101,7 @@ class LocalRpcDispatcher:
             if probe.returncode != 0:
                 return {"error": "not_a_repo"}
 
-        if isinstance(explicit_path, str) and explicit_path.strip():
-            target = Path(os.path.expanduser(explicit_path.strip())).resolve()
-        else:
-            parent = worktrees_parent_dir(abs_repo)
-            target = parent / branch_name / repo_basename(abs_repo)
+        target = Path(os.path.expanduser(explicit_path.strip())).resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
 
         proc = subprocess.run(

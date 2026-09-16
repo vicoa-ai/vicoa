@@ -119,6 +119,135 @@ def test_two_worktrees_in_same_repo_are_distinct(home: Path, committed_repo: Pat
     assert Path(r2["path"]).is_dir()
 
 
+def test_create_worktree_with_a_name_uses_it_for_branch_and_dir(
+    home: Path, committed_repo: Path
+):
+    from vicoa.rpc.worktree_ops import create_worktree
+
+    result = create_worktree(str(committed_repo), name=" feat-login ")
+
+    assert "error" not in result, result
+    assert result["branch"] == "feat-login"
+    path = Path(result["path"])
+    assert _worktree_branch(path) == "feat-login"
+    # Same layout as a random name: the user's name is the middle dir.
+    assert path.parent.name == "feat-login"
+    assert path.name == "my-app"
+
+
+def test_create_worktree_with_a_slash_name_nests_the_middle_dir(
+    home: Path, committed_repo: Path
+):
+    from vicoa.rpc.worktree_ops import create_worktree
+
+    result = create_worktree(str(committed_repo), name="feat/login")
+
+    assert "error" not in result, result
+    assert result["branch"] == "feat/login"
+    path = Path(result["path"])
+    assert _worktree_branch(path) == "feat/login"
+    assert path.parent.parent.name == "feat"
+    assert path.parent.parent.parent.name == "my-app-worktrees"
+
+
+def test_create_worktree_with_a_taken_name_errors_instead_of_suffixing(
+    home: Path, committed_repo: Path
+):
+    from vicoa.rpc.worktree_ops import create_worktree
+
+    first = create_worktree(str(committed_repo), name="feat-login")
+    assert "error" not in first, first
+
+    # The user asked for THAT name: a silent `feat-login-2` would be a surprise.
+    assert create_worktree(str(committed_repo), name="feat-login") == {
+        "error": "name_taken"
+    }
+    # An existing branch (no worktree) is equally taken.
+    _git(committed_repo, "branch", "hotfix")
+    assert create_worktree(str(committed_repo), name="hotfix") == {
+        "error": "name_taken"
+    }
+
+
+def test_create_worktree_with_an_invalid_name_errors(home: Path, committed_repo: Path):
+    from vicoa.rpc.worktree_ops import create_worktree
+
+    for bad in ("has space", "-leading-dash", "two..dots", "trailing.lock"):
+        assert create_worktree(str(committed_repo), name=bad) == {
+            "error": "invalid_name"
+        }, bad
+
+
+def test_create_worktree_with_a_blank_name_falls_back_to_random(
+    home: Path, committed_repo: Path
+):
+    from vicoa.rpc.worktree_ops import create_worktree
+
+    result = create_worktree(str(committed_repo), name="   ")
+
+    assert "error" not in result, result
+    assert result["branch"].strip() and result["branch"] != "   "
+
+
+# --- check_worktree_name ------------------------------------------------------
+
+
+def test_check_worktree_name_free_name_is_available(home: Path, committed_repo: Path):
+    from vicoa.rpc.worktree_ops import check_worktree_name
+
+    assert check_worktree_name(str(committed_repo), "feat-login") == {"available": True}
+
+
+def test_check_worktree_name_taken_name_suggests_a_free_suffix(
+    home: Path, committed_repo: Path
+):
+    from vicoa.rpc.worktree_ops import check_worktree_name, create_worktree
+
+    create_worktree(str(committed_repo), name="feat-login")
+    create_worktree(str(committed_repo), name="feat-login-2")
+
+    assert check_worktree_name(str(committed_repo), "feat-login") == {
+        "available": False,
+        "reason": "name_taken",
+        "suggestion": "feat-login-3",
+    }
+
+
+def test_check_worktree_name_existing_branch_is_taken(home: Path, committed_repo: Path):
+    from vicoa.rpc.worktree_ops import check_worktree_name
+
+    _git(committed_repo, "branch", "hotfix")
+
+    verdict = check_worktree_name(str(committed_repo), "hotfix")
+    assert verdict["available"] is False
+    assert verdict["reason"] == "name_taken"
+    assert verdict["suggestion"] == "hotfix-2"
+
+
+def test_check_worktree_name_invalid_ref_has_no_suggestion(
+    home: Path, committed_repo: Path
+):
+    from vicoa.rpc.worktree_ops import check_worktree_name
+
+    assert check_worktree_name(str(committed_repo), "has space") == {
+        "available": False,
+        "reason": "invalid_name",
+    }
+    assert check_worktree_name(str(committed_repo), "") == {
+        "available": False,
+        "reason": "invalid_name",
+    }
+
+
+def test_check_worktree_name_on_non_repo_returns_error(home: Path, tmp_path: Path):
+    from vicoa.rpc.worktree_ops import check_worktree_name
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    assert check_worktree_name(str(plain), "feat") == {"error": "not_a_repo"}
+
+
 # --- list_worktrees -----------------------------------------------------------
 
 

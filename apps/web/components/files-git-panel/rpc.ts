@@ -443,6 +443,33 @@ export async function rpcGitWorktreeList(
   return (result.worktrees as WorktreeInfo[]) ?? [];
 }
 
+/** The daemon's verdict on a user-typed name for a new worktree
+ * (`git-worktree-check-name`). `suggestion` is the first free `name-2`,
+ * `name-3`, … when the name is taken, for a one-click fix. */
+export type WorktreeNameCheck =
+  | { available: true }
+  | { available: false; reason: 'invalid_name' | 'name_taken'; suggestion?: string };
+
+export async function rpcGitWorktreeCheckName(
+  machineId: string,
+  cwd: string,
+  name: string,
+): Promise<WorktreeNameCheck> {
+  const result = await getRpcClient(machineId).callRpc(machineId, 'git-worktree-check-name', {
+    cwd,
+    name,
+  });
+  if (typeof result.error === 'string') {
+    throw new RpcError(result.error);
+  }
+  if (result.available === true) return { available: true };
+  return {
+    available: false,
+    reason: result.reason === 'name_taken' ? 'name_taken' : 'invalid_name',
+    suggestion: typeof result.suggestion === 'string' ? result.suggestion : undefined,
+  };
+}
+
 /**
  * `git-worktree-remove`. `cwd` must be the repo's MAIN checkout, not the
  * worktree: a worktree whose folder is already gone can't host the git call

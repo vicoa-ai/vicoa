@@ -85,6 +85,7 @@ import { applySlashCommandSelection, commandInsertText, detectSlashCommand, slas
 import { WorktreePickerPopover } from '@/components/dashboard/worktree-picker-popover';
 import {
   machineSupportsWorktree,
+  machineSupportsWorktreeName,
   resolveWorktreeSpawn,
   type WorktreeMode,
 } from '@/lib/worktree-selection';
@@ -372,6 +373,11 @@ function NewSessionContent() {
   // Branch of the selected existing worktree, for the chip label (the path
   // basename is just the repo name, so it can't stand in for the branch).
   const [selectedWorktreeBranch, setSelectedWorktreeBranch] = useState<string | null>(null);
+  // User-chosen branch name for a `new` worktree; empty = the daemon's random
+  // slug. Deliberately NOT persisted with the rest of the setup: a name is
+  // one-shot (the next session would collide on it), so only the mode carries
+  // over between visits.
+  const [newWorktreeName, setNewWorktreeName] = useState('');
   const [prompt, setPrompt] = useState('');
   // Chat history carried over by a fork, shown as a removable composer chip and
   // prepended to the first message on submit.
@@ -1150,6 +1156,9 @@ function NewSessionContent() {
   // the directory it targets first lands, apply it instead of clearing (consumed
   // once so subsequent directory edits clear normally).
   useEffect(() => {
+    // A typed name belongs to one repo as much as a path does — every branch
+    // below starts it over.
+    setNewWorktreeName('');
     const preselect = pendingWorktreeRef.current;
     if (preselect && preselect.path === directory) {
       pendingWorktreeRef.current = null;
@@ -1503,6 +1512,7 @@ function NewSessionContent() {
         mode: worktreeMode,
         baseDirectory: directory.trim(),
         selectedWorktreePath,
+        newWorktreeName,
       });
 
       const result = await getWsClient().callRpc(
@@ -1526,6 +1536,8 @@ function NewSessionContent() {
       }
       persistSelection();
       clearPromptDraft();
+      // The worktree name is consumed by this spawn (it now exists as a branch).
+      setNewWorktreeName('');
       // The forked history is consumed by this spawn.
       clearForkContext();
       setForkContext(null);
@@ -2010,10 +2022,13 @@ function NewSessionContent() {
                 cwd={directory}
                 mode={worktreeMode}
                 selectedPath={selectedWorktreePath}
-                onSelect={(m, path, branch) => {
+                nameSupported={machineSupportsWorktreeName(currentMachine)}
+                newName={newWorktreeName}
+                onSelect={(m, path, branch, name) => {
                   setWorktreeMode(m);
                   setSelectedWorktreePath(path);
                   setSelectedWorktreeBranch(branch || null);
+                  setNewWorktreeName(m === 'new' ? (name ?? '') : '');
                 }}
                 side="top"
                 disabled={!api || !isOnline || !directory.trim()}
@@ -2029,7 +2044,7 @@ function NewSessionContent() {
                     {worktreeMode === 'none'
                       ? (currentBranch ?? 'Current branch')
                       : worktreeMode === 'new'
-                        ? 'New worktree'
+                        ? (newWorktreeName ? `New: ${newWorktreeName}` : 'New worktree')
                         : (selectedWorktreeBranch
                             ?? selectedWorktreePath?.split('/').filter(Boolean).pop()
                             ?? 'Worktree')}

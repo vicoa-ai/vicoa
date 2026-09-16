@@ -16,7 +16,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from vicoa.rpc.worktree_names import generate_unique_name
+from vicoa.rpc.worktree_names import disambiguate, generate_unique_name
 from vicoa.utils import get_project_path
 from vicoa.rpc.worktree_paths import (
     UnmanagedWorktree,
@@ -54,12 +54,59 @@ def _branch_exists(repo: Path, name: str) -> bool:
     return proc.returncode == 0
 
 
-def create_worktree(repo_dir: str) -> dict[str, Any]:
+def _is_valid_branch_name(name: str) -> bool:
+    """git's own verdict on `name` as a branch — the single source of truth
+    for what a user-typed worktree name may look like (the web mirrors the
+    common rules for instant feedback, but this is what decides)."""
+    proc = subprocess.run(
+        ["git", "check-ref-format", "--branch", name],
+        capture_output=True,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def check_worktree_name(cwd: str, name: str) -> dict[str, Any]:
+    """Whether `name` is free to become a new worktree (+ branch) of `cwd`'s repo.
+
+    Returns `{"available": True}`, or `{"available": False, "reason":
+    "invalid_name" | "name_taken", "suggestion"?: str}` — `suggestion` is the
+    first free `name-2`, `name-3`, … for a taken name, so the app can offer a
+    one-click fix. A name is taken if the branch exists or the worktree's
+    middle dir does (the same test `create_worktree` applies to a random
+    name). `{"error": "not_a_repo"}` for a non-repo.
+    """
+    abs_repo = Path(os.path.expanduser(cwd)).resolve()
+    if not _is_git_repo(abs_repo):
+        return {"error": "not_a_repo"}
+
+    candidate = name.strip()
+    if not candidate or not _is_valid_branch_name(candidate):
+        return {"available": False, "reason": "invalid_name"}
+
+    parent = worktrees_parent_dir(abs_repo)
+
+    def is_taken(n: str) -> bool:
+        return _branch_exists(abs_repo, n)
+
+    if (parent / candidate).exists() or is_taken(candidate):
+        return {
+            "available": False,
+            "reason": "name_taken",
+            "suggestion": disambiguate(parent, candidate, is_taken=is_taken),
+        }
+    return {"available": True}
+
+
+def create_worktree(repo_dir: str, name: str | None = None) -> dict[str, Any]:
     """Fork a fresh branch + checkout off `repo_dir`'s current HEAD.
 
     Returns `{"path", "branch"}` on success or `{"error"}` if the directory is
     not a git repo or `git worktree add` fails (e.g. unborn HEAD). The branch
-    name equals the worktree name; both are daemon-generated and unique.
+    name equals the worktree name. Without `name` the daemon generates a
+    unique random slug; with one, the user's choice is used verbatim and a
+    collision is an error (`name_taken`) rather than a silent `-2` — they
+    asked for THAT name. An invalid ref is `invalid_name`.
     """
     abs_repo = Path(os.path.expanduser(repo_dir)).resolve()
     if not _is_git_repo(abs_repo):
@@ -71,7 +118,15 @@ def create_worktree(repo_dir: str) -> dict[str, Any]:
     # `name` (the branch) is the middle dir; the checkout leaf is the project
     # basename so the session's `project` displays as the project name. The
     # collision check is on the middle dir under `parent`.
-    name = generate_unique_name(parent, is_taken=lambda n: _branch_exists(abs_repo, n))
+    if name is not None and name.strip():
+        verdict = check_worktree_name(repo_dir, name)
+        if not verdict.get("available"):
+            return {"error": str(verdict.get("reason") or "invalid_name")}
+        name = name.strip()
+    else:
+        name = generate_unique_name(
+            parent, is_taken=lambda n: _branch_exists(abs_repo, n)
+        )
     path = parent / name / repo_basename(abs_repo)
 
     # `git worktree add` creates the intermediate <branch> dir and the leaf.

@@ -55,6 +55,23 @@ def test_two_collisions_append_three(tmp_path: Path):
     assert name == f"{base}-3"
 
 
+def test_disambiguate_keeps_a_free_base_and_suffixes_a_taken_one(tmp_path: Path):
+    from vicoa.rpc import worktree_names
+
+    assert worktree_names.disambiguate(tmp_path, "feat-login") == "feat-login"
+
+    (tmp_path / "feat-login").mkdir()
+    assert worktree_names.disambiguate(tmp_path, "feat-login") == "feat-login-2"
+
+    # A branch-only collision on the suffix skips to the next free one.
+    assert (
+        worktree_names.disambiguate(
+            tmp_path, "feat-login", is_taken=lambda n: n == "feat-login-2"
+        )
+        == "feat-login-3"
+    )
+
+
 def test_every_vocab_combination_is_a_valid_git_ref():
     from vicoa.rpc import worktree_names
 
