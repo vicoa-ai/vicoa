@@ -3,7 +3,7 @@
 Collaboration plan §3.2 / §3.3 (P3). The project-anchored access model.
 
 Revision ID: b7c3e9a1d5f2
-Revises: a3f1c9e27b45
+Revises: c7d2e9a1b4f6
 Create Date: 2026-09-11
 
 **Teams are dropped and recreated**, not migrated. Verified in production on
@@ -29,7 +29,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "b7c3e9a1d5f2"
-down_revision = "a3f1c9e27b45"
+down_revision = "c7d2e9a1b4f6"
 branch_labels = None
 depends_on = None
 
