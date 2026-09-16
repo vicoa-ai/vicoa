@@ -1590,6 +1590,8 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
               <FileViewer
                 state={activeFile}
                 wrap={true}
+                machineId={machineId}
+                cwd={cwd}
                 markdownSource={markdownSource}
                 diffSideBySide={diffSideBySide}
                 revealLine={

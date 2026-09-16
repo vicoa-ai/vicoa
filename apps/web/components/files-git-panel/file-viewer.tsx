@@ -1,14 +1,19 @@
 'use client';
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import hljs from 'highlight.js';
+import { ExternalLink } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import type { FileViewState } from './use-files-tab';
+import type { OpenApp } from './rpc';
 import type { DiffNav } from './diff-editor';
 import { isMarkdownPath, languageForFile } from './file-icon';
+import { FileTypeIcon } from './file-type-icon';
 import { MarkdownPreview } from './markdown-preview';
 import { PANEL_BG, SCROLL_STYLE } from './styles';
 import { SCROLL_PERSIST_MS } from './cm-scroll';
+import { useOpenIn } from './use-open-in';
 
 // CodeMirror is loaded only when a file is actually edited, keeping it out of
 // the panel's initial bundle.
@@ -45,6 +50,101 @@ function basename(path: string): string {
   return i < 0 ? path : path.slice(i + 1);
 }
 
+/**
+ * What a tab shows when Vicoa has no way to render the file — the `.xlsx` the
+ * agent just generated, a 40 MB log. This is the moment the user wants the
+ * file *somewhere else*, so the two ways out sit right here instead of in a
+ * menu: hand it to the OS's default app, or reveal it in the file manager.
+ * Pure — `UnviewablePlaceholder` below supplies the apps from the machine.
+ */
+function UnviewableCard({
+  path,
+  message,
+  size,
+  defaultApp,
+  fileManager,
+  error,
+  onOpen,
+}: {
+  path: string;
+  message: string;
+  size?: number;
+  /** The machine's rows of each kind; absent when it offers none (no machine,
+   * or a daemon without `open-in`), which leaves just the message. */
+  defaultApp?: OpenApp;
+  fileManager?: OpenApp;
+  error: string | null;
+  onOpen: (appId: string) => void;
+}) {
+  const name = basename(path);
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center font-mono">
+      <FileTypeIcon fileName={name} size={40} />
+      <div className="min-w-0 max-w-full">
+        <div className="truncate text-sm text-foreground">{name}</div>
+        <div className="text-xs text-muted-foreground">
+          {message}
+          {size !== undefined && ` · ${formatBytes(size)}`}
+        </div>
+      </div>
+      {(defaultApp || fileManager) && (
+        <div className="mt-1 flex flex-col items-center gap-1">
+          {defaultApp && (
+            <Button size="sm" onClick={() => onOpen(defaultApp.id)}>
+              <ExternalLink />
+              Open with default app
+            </Button>
+          )}
+          {fileManager && (
+            <Button
+              size="sm"
+              variant="link"
+              className="text-xs font-normal text-muted-foreground"
+              onClick={() => onOpen(fileManager.id)}
+            >
+              Reveal in {fileManager.label}
+            </Button>
+          )}
+        </div>
+      )}
+      {error && <div className="text-[11px] text-red-600 dark:text-red-400">{error}</div>}
+    </div>
+  );
+}
+
+/** {@link UnviewableCard} wired to the session's machine — the same daemon
+ * RPCs as the "Open in ▾" menu, so an old daemon degrades to the message. */
+function UnviewablePlaceholder({
+  path,
+  message,
+  size,
+  machineId,
+  cwd,
+}: {
+  path: string;
+  message: string;
+  size?: number;
+  machineId: string | null;
+  cwd: string | null;
+}) {
+  const noop = useCallback(() => {}, []);
+  const { apps, error, setError, openWith } = useOpenIn({ machineId, cwd, path }, noop);
+  return (
+    <UnviewableCard
+      path={path}
+      message={message}
+      size={size}
+      defaultApp={apps.find((app) => app.kind === 'default')}
+      fileManager={apps.find((app) => app.kind === 'file-manager')}
+      error={error}
+      onOpen={(appId) => {
+        setError(null);
+        openWith(appId);
+      }}
+    />
+  );
+}
+
 function ErrorMessage({ code }: { code: string }) {
   const messageByCode: Record<string, string> = {
     path_not_found: 'File no longer exists',
@@ -74,10 +174,17 @@ export function FileViewer({
   onSave,
   onScrollAnchor,
   onDiffNav,
+  machineId = null,
+  cwd = null,
 }: {
   state: FileViewState;
   wrap: boolean;
   markdownSource?: boolean;
+  /** The session's machine and project directory — lets a file Vicoa can't
+   * render offer "open with default app" / "reveal" on that machine. Either
+   * `null` (no machine, or not wired) hides those. */
+  machineId?: string | null;
+  cwd?: string | null;
   /** In diff mode, lay the editor out as two side-by-side panes instead of the
    * single inline diff. */
   diffSideBySide?: boolean;
@@ -115,6 +222,16 @@ export function FileViewer({
       </div>
     );
   }
+  if (state.error === 'too_large') {
+    return (
+      <UnviewablePlaceholder
+        path={state.path}
+        message="Too large to preview here"
+        machineId={machineId}
+        cwd={cwd}
+      />
+    );
+  }
   if (state.error) {
     return <ErrorMessage code={state.error} />;
   }
@@ -143,10 +260,13 @@ export function FileViewer({
 
   if (result.is_binary) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-sm text-muted-foreground font-mono gap-2">
-        <span>Binary file — cannot preview</span>
-        <span className="text-xs">{formatBytes(result.size)}</span>
-      </div>
+      <UnviewablePlaceholder
+        path={state.path}
+        message="No preview available"
+        size={result.size}
+        machineId={machineId}
+        cwd={cwd}
+      />
     );
   }
 
