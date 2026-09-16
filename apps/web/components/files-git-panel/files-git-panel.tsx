@@ -115,6 +115,10 @@ interface FilesGitPanelProps {
    * the panel was already open or is being opened by this same request. `line`
    * scrolls a freshly-opened tab to that 1-based line. */
   openFileRequest?: { path: string; nonce: number; line?: number } | null;
+  /** True while the session's agent is mid-turn. The working→idle edge is when
+   * the tree and history most likely changed (the agent edited, committed…),
+   * so the visible Files/Changes surface refreshes itself on that edge. */
+  agentWorking?: boolean;
 }
 
 function basename(path: string): string {
@@ -161,7 +165,7 @@ function envExportPrefix(env: Record<string, string>): string {
   return `export ${pairs.map(([k, v]) => `${k}=${shSingleQuote(v)}`).join(' ')} && `;
 }
 
-export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, overlay, canMaximize, pendingAction, openFileRequest }: FilesGitPanelProps) {
+export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, overlay, canMaximize, pendingAction, openFileRequest, agentWorking }: FilesGitPanelProps) {
   // `desktop` is present exactly when the Electron preload injected a desktop
   // config. Safe to read directly — this component never server-renders
   // (panel.open starts false until the hydration effect runs).
@@ -355,6 +359,13 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
   const showTerminal =
     canUseTerminal && !splitActive && activeTerminalId !== null && files.activeFilePath === null;
 
+  // The Changes tab is two surfaces — the working-tree status up top and the
+  // commit history pane below — so a refresh of the tab means both.
+  const refreshGit = useCallback(() => {
+    git.refresh();
+    commits.refresh();
+  }, [git, commits]);
+
   const selectFixedTab = useCallback(
     (tab: 'files' | 'git') => {
       files.activateFile(null);
@@ -363,12 +374,9 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
       if (!splitActive) setActiveTerminal(instanceId, null);
       panel.setActiveTab(tab);
       if (tab === 'files') files.refreshAll();
-      else {
-        git.refresh();
-        commits.refresh();
-      }
+      else refreshGit();
     },
-    [setActiveTerminal, instanceId, panel, files, git, commits, splitActive],
+    [setActiveTerminal, instanceId, panel, files, refreshGit, splitActive],
   );
 
   const addTerminal = useCallback(() => {
@@ -856,25 +864,39 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
     [panel],
   );
 
-  // Refresh on visibility / focus. Terminal tabs need no refresh — their pty
-  // stream is push-based.
+  // Refresh whichever files/git surface is showing. Unsplit, an active
+  // terminal means none is (terminals need no refresh — their pty stream is
+  // push-based). In the split layout the dock's selection is always set, but
+  // the top region still shows files/changes — refresh those.
+  const refreshVisibleSurface = useCallback(() => {
+    if (!splitActive && activeTerminalId !== null) return;
+    if (panel.activeTab === 'files') files.refreshAll();
+    else if (panel.activeTab === 'git') refreshGit();
+  }, [panel.activeTab, activeTerminalId, splitActive, files, refreshGit]);
+  const refreshVisibleSurfaceRef = useRef(refreshVisibleSurface);
+  refreshVisibleSurfaceRef.current = refreshVisibleSurface;
+
+  // Refresh on visibility / focus.
   useEffect(() => {
     if (!panel.open) return;
     const onVisibility = () => {
-      if (document.visibilityState !== 'visible') return;
-      // Unsplit, an active terminal means no files/git surface is showing. In
-      // the split layout the dock's selection is always set, but the top
-      // region still shows files/changes — refresh those.
-      if (!splitActive && activeTerminalId !== null) return;
-      if (panel.activeTab === 'files') files.refreshAll();
-      else if (panel.activeTab === 'git') {
-        git.refresh();
-        commits.refresh();
-      }
+      if (document.visibilityState === 'visible') refreshVisibleSurfaceRef.current();
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [panel.open, panel.activeTab, activeTerminalId, splitActive, files, git, commits]);
+  }, [panel.open]);
+
+  // Refresh when the agent's turn ends (working → idle). Nothing pushes
+  // "the repo changed" from the daemon, and the turn edge is the moment the
+  // agent's edits/commits have landed. A hidden page waits for the visibility
+  // handler instead; a closed panel is unmounted and re-fetches on open.
+  const wasAgentWorkingRef = useRef(false);
+  useEffect(() => {
+    const was = wasAgentWorkingRef.current;
+    wasAgentWorkingRef.current = agentWorking === true;
+    if (!was || agentWorking) return;
+    if (document.visibilityState === 'visible') refreshVisibleSurfaceRef.current();
+  }, [agentWorking]);
 
   // The drawers only exist over a file view — drop them whenever no file is active.
   useEffect(() => {
@@ -1448,7 +1470,7 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
       <div className="flex items-center gap-2 border-b border-border px-3 py-1 flex-shrink-0">
         <BranchInfo status={git.status} />
         <div style={NO_DRAG} className="flex items-center gap-0.5 flex-shrink-0 ml-auto">
-          <TipButton label="Refresh" onClick={git.refresh}>
+          <TipButton label="Refresh" onClick={refreshGit}>
             <RefreshCw className="h-4 w-4" />
           </TipButton>
           <TipButton

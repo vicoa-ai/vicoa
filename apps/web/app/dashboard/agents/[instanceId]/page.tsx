@@ -2652,6 +2652,7 @@ function AgentInstanceContent() {
               panel={panel}
               pendingAction={pendingPanelActionRef}
               openFileRequest={openFileRequest}
+              agentWorking={agentIsWorking}
               overlay
               canMaximize
             />
@@ -2797,6 +2798,7 @@ function AgentInstanceContent() {
           panel={panel}
           pendingAction={pendingPanelActionRef}
           openFileRequest={openFileRequest}
+          agentWorking={agentIsWorking}
           canMaximize
         />
       )}
