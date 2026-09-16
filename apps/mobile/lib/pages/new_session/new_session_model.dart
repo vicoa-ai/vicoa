@@ -106,12 +106,29 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
     FFAppState().clearChatDraft(_draftPromptKey);
   }
 
-  /// Agents offered by the new-session UI — derived from the catalog so a
-  /// new agent ships via a catalog bump instead of a hardcoded list here.
-  List<Map<String, dynamic>> get agentTypes => [
-        for (final a in (agentCatalog?.agents ?? const <CatalogAgent>[]))
-          {'id': a.id, 'name': a.label, 'isComingSoon': false},
-      ];
+  /// Agents offered by the new-session UI — the catalog, so a new built-in
+  /// agent ships via a catalog bump instead of a hardcoded list, plus any the
+  /// selected machine reports that this build has never heard of.
+  ///
+  /// Those extras are user-defined providers from that machine's
+  /// ~/.vicoa/config.json. The catalog compiled into this app cannot list them,
+  /// and making the user wait for an App Store release before a provider they
+  /// added by editing a file becomes selectable would defeat the point.
+  List<Map<String, dynamic>> get agentTypes {
+    final catalogAgents = agentCatalog?.agents ?? const <CatalogAgent>[];
+    final known = {for (final a in catalogAgents) a.id};
+    final custom = (selectedMachineAvailableAgents ?? const <String, bool>{})
+        .keys
+        .where((id) => !known.contains(id))
+        .toList()
+      ..sort();
+    return [
+      for (final a in catalogAgents)
+        {'id': a.id, 'name': a.label, 'isComingSoon': false},
+      for (final id in custom)
+        {'id': id, 'name': customAgentLabel(id), 'isComingSoon': false},
+    ];
+  }
 
   // Per-agent catalog + selection state (plan §7.3). Loaded SWR-style on
   // sheet open; the baked-in fallback keeps the sheet renderable offline.
@@ -119,20 +136,28 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
   static const String _legacyPersistenceKey = 'vicoa:last-remote-session-selection';
   AgentCatalog? agentCatalog;
   bool isLoadingCatalog = false;
-  /// Selected machine's cached real model lists, keyed by agent id. Filled
-  /// lazily from GET /machines/{id}/agent-models so the picker can show a
-  /// machine's actual models instead of catalog placeholders. Empty until an
-  /// ACP agent has run on the machine once (then we fall back to the catalog).
-  Map<String, List<Map<String, String>>> _machineAgentModels = {};
+  /// Selected machine's cached real model (and mode) lists, keyed by agent
+  /// id. Filled lazily from GET /machines/{id}/agent-models so the picker can
+  /// show a machine's actual models instead of catalog placeholders. Empty
+  /// until an ACP agent has run on the machine once or a daemon probe cached
+  /// it (then we fall back to the catalog).
+  actions.MachineAgentModelsCache _machineAgentModels =
+      const actions.MachineAgentModelsCache();
 
   /// Catalog the new-session picker should render: the base catalog with the
-  /// selected machine's cached models merged in (falls back to base).
+  /// selected machine's cached models/modes merged in (falls back to base),
+  /// plus a synthesized entry for every cached agent the static catalog
+  /// cannot describe, labelled with the daemon's own `agent_labels`.
   AgentCatalog? get pickerCatalog {
     final base = agentCatalog;
     if (base == null) return null;
-    return _machineAgentModels.isEmpty
-        ? base
-        : catalogWithCachedModels(base, _machineAgentModels);
+    if (_machineAgentModels.isEmpty) return base;
+    return catalogWithCachedModels(
+      base,
+      _machineAgentModels.models,
+      cachedModes: _machineAgentModels.modes,
+      agentLabels: parseAgentLabels(getSelectedMachine()),
+    );
   }
 
   final Map<String, SessionConfig> _perAgentConfigs = {};
@@ -559,7 +584,7 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
     _reloadDirectoryDerivedState();
     // Clear the previous machine's cached models immediately, then refetch so
     // the picker never shows another machine's models while in flight.
-    _machineAgentModels = {};
+    _machineAgentModels = const actions.MachineAgentModelsCache();
     unawaited(_loadMachineAgentModels(machineId));
   }
 
@@ -567,10 +592,10 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
   /// Best-effort: on error or no cache the picker just uses catalog defaults.
   Future<void> _loadMachineAgentModels(String? machineId) async {
     if (machineId == null) return;
-    final models = await actions.apiGetMachineAgentModels(machineId);
+    final cache = await actions.apiGetMachineAgentModels(machineId);
     // Drop a stale response if the user switched machines mid-flight.
     if (selectedMachineId != machineId) return;
-    _machineAgentModels = models;
+    _machineAgentModels = cache;
     onStateChanged?.call();
   }
 

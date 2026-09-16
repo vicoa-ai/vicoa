@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Loader2 } from 'lucide-react';
@@ -12,6 +12,11 @@ import {
   readDesktopAuthNonce,
   storeDesktopAuthNonce,
 } from '@/lib/desktop-auth';
+import {
+  trackSignInCancelled,
+  trackSignInRetried,
+  trackSignInWaiting,
+} from '@/lib/desktop-telemetry';
 import { useDesktopAuthCallback } from '../use-desktop-auth-callback';
 import { DRAG_REGION } from '@/lib/app-region';
 
@@ -32,6 +37,13 @@ export default function DesktopSignInPage() {
   const router = useRouter();
   const [phase, setPhase] = useState<'waiting' | 'connecting' | 'error'>('waiting');
   const [error, setError] = useState<string | null>(null);
+
+  // "We are waiting for the deep link" — the half of the sign-in hole that
+  // `desktop_onboarding_signin_started` alone cannot see. Mount-scoped, not
+  // action-scoped: reaching this screen IS the fact worth recording.
+  useEffect(() => {
+    trackSignInWaiting();
+  }, []);
 
   useDesktopAuthCallback((status) => {
     if (status.kind === 'connecting') {
@@ -54,6 +66,7 @@ export default function DesktopSignInPage() {
   // of truth — a pending callback stays valid), minting a fresh one only when
   // none exists.
   const openBrowser = useCallback(() => {
+    trackSignInRetried(phase === 'error');
     const bridge = getDesktopAuthBridge();
     if (!bridge) {
       setPhase('error');
@@ -66,9 +79,10 @@ export default function DesktopSignInPage() {
     setError(null);
     const mode = new URLSearchParams(window.location.search).get('mode');
     void bridge.openExternal(desktopAuthUrl(nonce, mode));
-  }, []);
+  }, [phase]);
 
   const cancel = useCallback(() => {
+    trackSignInCancelled();
     clearDesktopAuthNonce();
     router.push('/desktop-welcome');
   }, [router]);

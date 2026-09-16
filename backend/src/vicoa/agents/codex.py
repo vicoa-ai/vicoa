@@ -12,6 +12,7 @@ from typing import Optional
 from integrations.codex_helpers.initial_session_config import (
     build_initial_session_config_codex,
 )
+from integrations.utils.heartbeat import next_interval_from_response
 from vicoa.constants import DEFAULT_API_URL
 from vicoa.sdk.client import VicoaClient
 from vicoa.utils import get_project_path
@@ -216,14 +217,23 @@ def run_codex(args, unknown_args, api_key: str) -> int:
 
             time.sleep(random.uniform(0, 2.0))
             while not stop_event.is_set():
+                next_interval = interval
                 try:
                     resp = session.post(url, timeout=10)
-                    _ = resp.status_code  # ignore; 404 expected until instance exists
+                    # 404 expected until the instance exists; on success honour
+                    # the server-driven cadence (integrations/utils/heartbeat.py).
+                    if resp.status_code < 400:
+                        try:
+                            next_interval = next_interval_from_response(
+                                resp.json(), interval
+                            )
+                        except ValueError:
+                            pass
                 except Exception:
                     pass
 
                 # Sleep with jitter; ensure a minimum reasonable delay
-                delay = interval + random.uniform(-2.0, 2.0)
+                delay = next_interval + random.uniform(-2.0, 2.0)
                 if delay < 5:
                     delay = 5
                 end_time = time.time() + delay

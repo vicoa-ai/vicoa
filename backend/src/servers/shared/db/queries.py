@@ -23,6 +23,7 @@ from shared.websocket import (
     build_machine_update,
     build_new_message_update,
 )
+from shared.database.agent_profile_models import AgentProfile
 from shared.database.session import SessionLocal
 from shared.database.utils import sanitize_git_diff
 from shared.llms import generate_conversation_title
@@ -328,9 +329,15 @@ def _normalize_agent_models(models: object) -> list[dict]:
     return out
 
 
-def _agent_models_hash(normalized: list[dict]) -> str:
-    payload = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+def _agent_models_hash(normalized: list[dict], modes: list[dict] | None = None) -> str:
+    """Hash of the row's comparable content. ``modes`` folds in only when the
+    row has some, so rows written before the column existed hash exactly as
+    they always did until a report brings modes along."""
+    payload: object = (
+        normalized if not modes else {"models": normalized, "modes": modes}
+    )
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def upsert_machine_agent_models(
@@ -340,18 +347,26 @@ def upsert_machine_agent_models(
     agent_type: str,
     user_id: UUID,
     models: object,
+    modes: object = None,
 ) -> bool:
-    """Cache an agent's available models for a machine, write-on-change.
+    """Cache an agent's available models (and modes) for a machine,
+    write-on-change.
 
-    Skips empty lists (never clobbers a known-good list with nothing) and skips
-    writes when the list is unchanged (the common case — the list is stable
-    across sessions). Returns True iff a row was inserted/updated.
+    Skips empty model lists (never clobbers a known-good list with nothing)
+    and skips writes when nothing changed (the common case — the lists are
+    stable across sessions). ``modes`` is optional and merge-only: a report
+    without modes keeps whatever the row already has, so a source that only
+    knows models (an older wrapper) can't erase what a probe stored. Returns
+    True iff a row was inserted/updated.
     """
     normalized = _normalize_agent_models(models)
     if not normalized:
         return False
-    new_hash = _agent_models_hash(normalized)
     row = db.get(MachineAgentModels, (machine_id, agent_type))
+    new_modes = _normalize_agent_models(modes) or None
+    if new_modes is None and row is not None and isinstance(row.modes, list):
+        new_modes = _normalize_agent_models(row.modes) or None
+    new_hash = _agent_models_hash(normalized, new_modes)
     if row is not None and row.models_hash == new_hash:
         return False
     if row is None:
@@ -361,11 +376,13 @@ def upsert_machine_agent_models(
                 agent_type=agent_type,
                 user_id=user_id,
                 models=normalized,
+                modes=new_modes,
                 models_hash=new_hash,
             )
         )
     else:
         row.models = normalized
+        row.modes = new_modes
         row.models_hash = new_hash
         row.user_id = user_id
     return True
@@ -725,8 +742,14 @@ def get_queued_user_messages(
     return messages
 
 
-def mark_message_consumed(db: Session, message_id: UUID) -> Message | None:
+def mark_message_consumed(
+    db: Session, message_id: UUID, *, steered: bool = False
+) -> Message | None:
     """Stamp `message_metadata["queue"]` as consumed, unless already cancelled.
+
+    `steered=True` records that the wrapper delivered the message into the
+    agent's *running* turn (the user's Steer request) rather than as the
+    next turn — the UI badges the message accordingly.
 
     Server-side `jsonb_set` so concurrent writers never clobber each other's
     metadata keys outside `queue`. Skips the update (via the WHERE clause)
@@ -762,7 +785,11 @@ def mark_message_consumed(db: Session, message_id: UUID) -> Message | None:
                     else_=cast({}, JSONB),
                 ),
                 "{queue}",
-                cast({"status": "consumed", "consumed_at": now}, JSONB),
+                cast(
+                    {"status": "consumed", "consumed_at": now}
+                    | ({"steered": True} if steered else {}),
+                    JSONB,
+                ),
             )
         )
     )
@@ -771,7 +798,46 @@ def mark_message_consumed(db: Session, message_id: UUID) -> Message | None:
     return db.query(Message).filter(Message.id == message_id).first()
 
 
-async def send_agent_message(
+def requeue_user_message(db: Session, message_id: UUID) -> Message | None:
+    """Put a `queue.status=steer` message back to `queued`.
+
+    The wrapper calls this when it could not deliver a Steer request into
+    the running turn (Codex `activeTurnNotSteerable`, an older agent CLI, a
+    dead transport): the message stays in the wrapper's local queue and runs
+    as the next turn, so the UI should show it as plainly queued again. The
+    strict `== "steer"` guard means a message that was consumed or cancelled
+    in the meantime is left alone (returns the row unchanged).
+
+    Same `jsonb_typeof` guard as `mark_message_consumed`. Returns the
+    refreshed row, or None if no message has this id.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    stmt = (
+        update(Message)
+        .where(
+            Message.id == message_id,
+            Message.message_metadata[("queue", "status")].astext == "steer",
+        )
+        .values(
+            message_metadata=func.jsonb_set(
+                case(
+                    (
+                        func.jsonb_typeof(Message.message_metadata) == "object",
+                        Message.message_metadata,
+                    ),
+                    else_=cast({}, JSONB),
+                ),
+                "{queue}",
+                cast({"status": "queued", "requeued_at": now}, JSONB),
+            )
+        )
+    )
+    db.execute(stmt)
+    db.flush()
+    return db.query(Message).filter(Message.id == message_id).first()
+
+
+def send_agent_message(
     db: Session,
     agent_instance_id: str,
     content: str,
@@ -782,6 +848,10 @@ async def send_agent_message(
     message_metadata: dict | None = None,
 ) -> tuple[str, str, list[Message]]:
     """High-level function to send an agent message and get queued user messages.
+
+    Blocking (sync SQLAlchemy). Async callers must run it in a worker thread —
+    it used to be declared `async def` with no `await` inside, which made
+    every caller run this write on the event loop.
 
     This combines the common pattern of:
     1. Getting or creating an agent instance
@@ -999,3 +1069,69 @@ def trigger_webhook_for_user_response(
         logger.error(
             f"Failed to trigger webhook for agent instance {agent_instance_id}: {e}"
         )
+
+
+def resolve_spawn_agent_profile(user_id: str, agent_profile_id: str) -> dict | None:
+    """Load an agent profile for a spawn, scoped to its owner.
+
+    Returns ``{"id", "agent", "system_prompt"}`` or ``None`` when the id is
+    unknown, malformed, archived, or belongs to someone else. The user scope is
+    the point: a ``system_prompt`` is text injected into the agent process, so
+    resolving it server-side from an id — rather than trusting instructions sent
+    in the spawn metadata — is what keeps one user's profile out of another's
+    session.
+    """
+    try:
+        owner_uuid = UUID(user_id)
+        profile_uuid = UUID(agent_profile_id)
+    except (ValueError, TypeError):
+        return None
+    with SessionLocal() as db:
+        profile = (
+            db.query(AgentProfile)
+            .filter(
+                AgentProfile.id == profile_uuid,
+                AgentProfile.user_id == owner_uuid,
+                AgentProfile.is_archived.is_(False),
+            )
+            .first()
+        )
+        if profile is None:
+            return None
+        return {
+            "id": str(profile.id),
+            "agent": profile.agent,
+            "system_prompt": profile.system_prompt,
+        }
+
+
+def stamp_instance_agent_profile(
+    user_id: str, instance_id: str, agent_profile_id: str
+) -> bool:
+    """Record which profile a session was started from (display-only provenance).
+
+    Separate from the spawn RPC because the daemon mints the instance id locally
+    and the row only appears when the wrapper registers, moments later — so the
+    caller polls with this rather than writing inside the spawn transaction.
+    Returns False while the row is still missing, so the caller can retry.
+    """
+    try:
+        owner_uuid = UUID(user_id)
+        instance_uuid = UUID(instance_id)
+        profile_uuid = UUID(agent_profile_id)
+    except (ValueError, TypeError):
+        return True  # unusable input: nothing to wait for
+    with SessionLocal() as db:
+        instance = (
+            db.query(AgentInstance)
+            .filter(
+                AgentInstance.id == instance_uuid,
+                AgentInstance.user_id == owner_uuid,
+            )
+            .first()
+        )
+        if instance is None:
+            return False
+        instance.agent_profile_id = profile_uuid
+        db.commit()
+        return True

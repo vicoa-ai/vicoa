@@ -4,10 +4,14 @@ import { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore
 import { useParams, useRouter } from 'next/navigation';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { AgentTypeIcon } from '@/components/dashboard/agent-type-icon';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { agentPrincipal, useAgentProfiles } from '@/lib/use-agent-profiles';
 import { Button } from '@/components/ui/button';
 import { X, ArrowDown, Pin, Loader2, Menu, PanelLeft, Folder, FolderPlus, MessageCircle, FileCode } from 'lucide-react';
 import { useDesktopChrome } from '@/components/dashboard/desktop-chrome-context';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
+import { attachSelectionDragFix } from '@/lib/selection-drag-fix';
+import { attachSelectionDragTrace, selectionTraceEnabled } from '@/lib/selection-drag-trace';
 import { DesktopTitlebarLead, DesktopWindowControlsSpacer, useDesktopWindows } from '@/components/desktop/window-chrome';
 import { getDesktopConfig } from '@/lib/runtime-config';
 import { trackFirstMessageSent } from '@/lib/desktop-telemetry';
@@ -25,6 +29,8 @@ import { SubagentGroup } from '@/components/dashboard/subagent-group';
 import { MessageItem, resolveAgentType, DateSeparator, ThinkingIndicator, vibingMessages, getMessageVisibleText } from '@/components/dashboard/chat-message-item';
 import { ChatFindBar } from '@/components/dashboard/chat-find-bar';
 import { FindHighlightProvider } from '@/components/dashboard/chat-find-context';
+import { FileLinkProvider } from '@/components/dashboard/file-link-context';
+import type { WorkspaceFileLink } from '@/lib/message-links';
 import { groupSubagents } from '@/components/dashboard/subagent-grouping';
 import { getChatItemSearchText } from '@/lib/chat-search';
 import { buildForkTranscript, saveForkContext } from '@/lib/fork-session';
@@ -52,7 +58,7 @@ import {
   resumeSession,
 } from '@/lib/session-resume';
 import { AskUserQuestionSubmitPayload, buildAskUserQuestionCancelPersistMessage, buildAskUserQuestionControlMessage, buildAskUserQuestionSummaryMessage, parseAskUserQuestionPayload } from '@/components/dashboard/ask-user-question-panel';
-import { parseQueuePayload, type QueuedMessageItem } from '@/components/dashboard/queue-status';
+import { isPendingQueueStatus, parseQueuePayload, type QueuedMessageItem } from '@/components/dashboard/queue-status';
 import {
   isControlEnvelope,
   isInterruptControlMessage,
@@ -185,6 +191,7 @@ function AgentInstanceContent() {
   const dashboardContext = useAgentDashboard();
   const { refreshData, updateInstanceStatus } = dashboardContext;
   const { openSidebar } = useDashboardNavigation();
+  const { byId: agentProfilesById } = useAgentProfiles();
 
   // The message store (lib/message-store.ts) owns this session's messages +
   // instance metadata; the page paints whatever the store already has. A
@@ -202,6 +209,9 @@ function AgentInstanceContent() {
     () => (storeEntry?.instance ? { ...storeEntry.instance, messages: storeEntry.messages } : null),
     [storeEntry],
   );
+  const sessionAgentProfile = instance?.agent_profile_id
+    ? (agentProfilesById.get(instance.agent_profile_id) ?? null)
+    : null;
   const hasOlderMessages = storeEntry?.hasOlder ?? false;
   const [error, setError] = useState<string | null>(null);
   // Loading = nothing to paint yet and no failure to report. Derived, not
@@ -244,7 +254,7 @@ function AgentInstanceContent() {
   // through `openFileRequest`, whose bumped nonce makes the panel open it even
   // when it's already mounted / already showing another file.
   const [fileSearchOpen, setFileSearchOpen] = useState(false);
-  const [openFileRequest, setOpenFileRequest] = useState<{ path: string; nonce: number } | null>(
+  const [openFileRequest, setOpenFileRequest] = useState<{ path: string; nonce: number; line?: number } | null>(
     null,
   );
   // Focus-mode chat peek (design A): temporarily reveal the chat beneath the
@@ -304,6 +314,7 @@ function AgentInstanceContent() {
   // programmatic stick-to-bottom only ever *increases* scrollTop, so a decrease
   // paired with a real wheel/touch/scrollbar gesture is the user leaving.
   const scrollerElRef = useRef<HTMLElement | null>(null);
+  const detachSelectionDragFixRef = useRef<(() => void) | null>(null);
   const lastScrollTopRef = useRef(0);
   const userScrollUpIntentRef = useRef(false);
   const pointerScrollActiveRef = useRef(false);
@@ -673,6 +684,8 @@ function AgentInstanceContent() {
   const handleScrollerRef = useCallback((node: HTMLElement | Window | null) => {
     const previous = scrollerElRef.current;
     if (previous) {
+      detachSelectionDragFixRef.current?.();
+      detachSelectionDragFixRef.current = null;
       previous.removeEventListener('scroll', handleScrollerScroll);
       previous.removeEventListener('wheel', handleScrollerWheel);
       previous.removeEventListener('touchstart', handleScrollerTouchStart);
@@ -695,6 +708,15 @@ function AgentInstanceContent() {
       element.addEventListener('pointerdown', handleScrollerPointerDown, { passive: true });
       element.addEventListener('pointerup', handleScrollerPointerUp, { passive: true });
       element.addEventListener('pointercancel', handleScrollerPointerUp, { passive: true });
+      // Drag-selecting transcript text must work on every mousedown — see
+      // lib/selection-drag-fix.ts for the Blink quirks this papers over.
+      const detachFix = attachSelectionDragFix(element);
+      // Opt-in console trace for selection jumps that only reproduce live.
+      const detachTrace = selectionTraceEnabled() ? attachSelectionDragTrace(element) : null;
+      detachSelectionDragFixRef.current = () => {
+        detachFix();
+        detachTrace?.();
+      };
     }
   }, [
     handleScrollerScroll,
@@ -865,9 +887,11 @@ function AgentInstanceContent() {
     }
   }, [isSending, instanceId, postMessageToInstance, addOptimisticUserMessage, removeOptimisticMessage, followOwnSend]);
 
-  const handleOptionClick = (option: string) => {
+  // Memoised like the other MessageItem callbacks: a fresh function here
+  // defeated MessageItem's memo and re-rendered every row on every page render.
+  const handleOptionClick = useCallback((option: string) => {
     sendMessage(option);
-  };
+  }, [sendMessage]);
 
   const handleAskUserQuestionSubmit = useCallback((payload: AskUserQuestionSubmitPayload) => {
     console.debug('[AskUserQuestion] Submit payload', {
@@ -1180,11 +1204,12 @@ function AgentInstanceContent() {
     return max;
   }, [allMessages]);
 
-  // True for a `queued` message the agent has demonstrably moved past — its
-  // live status is stale and it belongs in the transcript, not the bar.
+  // True for a `queued` (or `steer`) message the agent has demonstrably moved
+  // past — its live status is stale and it belongs in the transcript, not the
+  // bar.
   const isDrainedQueued = useCallback(
     (m: MessageResponse) =>
-      parseQueuePayload(m)?.status === 'queued' &&
+      isPendingQueueStatus(parseQueuePayload(m)?.status) &&
       queueProgressAt !== null &&
       !!m.created_at &&
       m.created_at < queueProgressAt,
@@ -1203,7 +1228,9 @@ function AgentInstanceContent() {
     return allMessages
       .filter((m) => {
         if (!USER_SENDER_TYPES.has(m.sender_type)) return false;
-        if (parseQueuePayload(m)?.status !== 'queued') return false;
+        // `steer` rows stay in the bar (with a steering indicator) until the
+        // daemon settles them to `consumed` or back to `queued`.
+        if (!isPendingQueueStatus(parseQueuePayload(m)?.status)) return false;
         if (isDrainedQueued(m)) return false;
         const raw = m.content || '';
         if (raw.trim() === 'Waiting for your input...') return false;
@@ -1218,7 +1245,12 @@ function AgentInstanceContent() {
         // Optimistic rows have no backend id yet, so cancel/retrieve can't reach
         // the server until the echo swaps in the real id — flagged so the row's
         // actions stay disabled for that sub-second round-trip.
-        return { id: m.id, text, pending: m.id.startsWith('optimistic-') };
+        return {
+          id: m.id,
+          text,
+          pending: m.id.startsWith('optimistic-'),
+          steering: parseQueuePayload(m)?.status === 'steer',
+        };
       });
   }, [allMessages, isDrainedQueued]);
 
@@ -1238,7 +1270,7 @@ function AgentInstanceContent() {
       // it only appeared once the *next* message drained the queue, reading
       // as though it had been sent then.
       if (isInterruptControlMessage(m.content || '')) return true;
-      if (status === 'queued') return isDrainedQueued(m);
+      if (isPendingQueueStatus(status)) return isDrainedQueued(m);
       return true;
     });
   }, [allMessages, isDrainedQueued]);
@@ -1328,6 +1360,13 @@ function AgentInstanceContent() {
   // Flatten groups + thinking indicator into a single list of items for Virtuoso.
   // `key` is stable per item (separator uses date, messages use id) so Virtuoso
   // can correctly preserve scroll position when older history is prepended.
+  // Header/footer are module-level components (see VIRTUOSO_COMPONENTS); what
+  // they show comes through Virtuoso's `context` prop instead of closures.
+  const virtuosoContext = useMemo<TranscriptListContext>(
+    () => ({ loadingOlder: hasOlderMessages || isLoadingOlder }),
+    [hasOlderMessages, isLoadingOlder],
+  );
+
   const chatItems = useMemo<ChatItem[]>(() => {
     const itemsAgentType = resolveAgentType(instance?.agent_type_name || undefined);
     const items: ChatItem[] = [];
@@ -1594,10 +1633,24 @@ function AgentInstanceContent() {
   // Open a file picked in the ⌘P finder: reveal the panel and hand it the path.
   // The bumped nonce makes the panel open it whether it was closed (opens on
   // mount) or already showing something else.
-  const handleOpenSearchedFile = useCallback((path: string) => {
-    panel.setOpen(true);
-    setOpenFileRequest((prev) => ({ path, nonce: (prev?.nonce ?? 0) + 1 }));
-  }, [panel]);
+  // Depend on the stable `setOpen`, not the `panel` object — usePanelState
+  // returns a fresh object every render, and this callback feeds the
+  // FileLinkProvider value that every message's link renderer subscribes to.
+  const { setOpen: setPanelOpen } = panel;
+  const handleOpenSearchedFile = useCallback((path: string, line?: number) => {
+    setPanelOpen(true);
+    setOpenFileRequest((prev) => ({ path, line, nonce: (prev?.nonce ?? 0) + 1 }));
+  }, [setPanelOpen]);
+
+  // Same, for a file path an agent cited as a link in its message. Only offered
+  // once the session has a machine to read the file from — otherwise the links
+  // render as plain text rather than as clicks that would fail (see
+  // components/dashboard/file-link-context.tsx).
+  const handleOpenLinkedFile = useCallback(
+    (file: WorkspaceFileLink) => handleOpenSearchedFile(file.path, file.line),
+    [handleOpenSearchedFile],
+  );
+  const canOpenLinkedFiles = !!instance?.machine_id && !!instance?.project;
 
   // ⌘P opens the file finder. Session-scoped and gated on a reachable machine —
   // the finder reads the live project index off the daemon, and picking a file
@@ -2015,6 +2068,11 @@ function AgentInstanceContent() {
   const configuredAgentId =
     typeof instance.session_config?.agent === 'string' ? instance.session_config.agent.trim().toLowerCase() : '';
   const rawAgentId = configuredAgentId || (instance.agent_type_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Steer (deliver a queued message into the running turn) is a per-agent
+  // capability: Codex, Claude Code and pi/omp have a mid-turn primitive; ACP
+  // agents and OpenCode only queue. Read from the static catalog entry — the
+  // capability is fixed per agent, not per machine.
+  const canSteer = agentById(AGENT_CATALOG_FALLBACK, rawAgentId)?.supports_steer === true;
   const acpLive = isAcpAgent ? extractAcpControlsFromInstance(instance) : null;
   const acpCatalogAgent = isAcpAgent ? agentById(AGENT_CATALOG_FALLBACK, rawAgentId) : undefined;
   const acpStaticModes = acpCatalogAgent?.permission_modes ?? acpCatalogAgent?.modes ?? [];
@@ -2151,7 +2209,20 @@ function AgentInstanceContent() {
               <Menu className="h-5 w-5" />
               <span className="sr-only">Open sidebar</span>
             </Button>
-            <AgentTypeIcon agentTypeName={instance.agent_type_name} size={14} whiteForOpenAI />
+            {/* The session's identity, when it was started from a saved agent.
+                Provenance, not a live link: the config chips below stay the
+                authority on what it's actually running, and the two legitimately
+                diverge as soon as the user switches model mid-session. */}
+            {sessionAgentProfile ? (
+              <span title={sessionAgentProfile.system_prompt || undefined} className="flex items-center gap-1.5 min-w-0">
+                <PrincipalAvatar principal={agentPrincipal(sessionAgentProfile)} size="xs" />
+                <span className="truncate text-xs text-muted-foreground">
+                  {sessionAgentProfile.name}
+                </span>
+              </span>
+            ) : (
+              <AgentTypeIcon agentTypeName={instance.agent_type_name} size={14} whiteForOpenAI />
+            )}
             {instance.pinned_at ? <Pin className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" /> : null}
             <h1 className="text-sm font-normal font-mono flex items-center gap-2 min-w-0 max-w-md">
               {(() => {
@@ -2340,6 +2411,11 @@ function AgentInstanceContent() {
       </div> */}
 
       {/* Messages Area - virtualized via react-virtuoso */}
+      <FileLinkProvider
+        cwd={instance?.project ?? null}
+        homeDir={instance?.home_dir ?? null}
+        openFile={canOpenLinkedFiles ? handleOpenLinkedFile : null}
+      >
       <FindHighlightProvider query={findOpen ? findNeedle : ''} activeKey={findActiveKey}>
       <div className="relative flex-1 min-h-0">
         {!hasMessageItems ? (
@@ -2482,6 +2558,8 @@ function AgentInstanceContent() {
                           description={item.description}
                           expanded={expandedToolItems.has(item.key)}
                           onToggle={() => toggleToolItem(item.key)}
+                          agentType={agentType}
+                          projectPath={projectRootPath}
                           renderMessage={(message) => (
                             <MessageItem
                               message={message}
@@ -2514,17 +2592,8 @@ function AgentInstanceContent() {
                 </div>
               );
             }}
-            components={{
-              Header: () =>
-                hasOlderMessages || isLoadingOlder ? (
-                  <div className="flex items-center justify-center py-3 text-muted-foreground">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  </div>
-                ) : (
-                  <div className="h-6" />
-                ),
-              Footer: () => <div className="h-32" />,
-            }}
+            context={virtuosoContext}
+            components={VIRTUOSO_COMPONENTS}
           />
         )}
 
@@ -2583,6 +2652,7 @@ function AgentInstanceContent() {
               panel={panel}
               pendingAction={pendingPanelActionRef}
               openFileRequest={openFileRequest}
+              agentWorking={agentIsWorking}
               overlay
               canMaximize
             />
@@ -2590,6 +2660,7 @@ function AgentInstanceContent() {
         )}
       </div>
       </FindHighlightProvider>
+      </FileLinkProvider>
 
       {/* Git Changes Button */}
       {/* {instance.git_diff && (() => {
@@ -2682,6 +2753,7 @@ function AgentInstanceContent() {
               instanceId={instanceId}
               agentType={agentType}
               agentLogoName={instance.agent_type_name}
+              usageProviderId={rawAgentId}
               projectPath={toAbsolutePath(instance.project, instance.home_dir)}
               machineId={instance.machine_id ?? null}
               sessionOpencodeModes={isOpencodeAgent ? sessionOpencodeModes : undefined}
@@ -2706,6 +2778,7 @@ function AgentInstanceContent() {
               singleColumnModels={singleColumnModels}
               usage={instance.instance_metadata?.usage ?? null}
               queuedItems={queuedItems}
+              canSteer={canSteer}
             />
           </div>
         </div>
@@ -2725,6 +2798,7 @@ function AgentInstanceContent() {
           panel={panel}
           pendingAction={pendingPanelActionRef}
           openFileRequest={openFileRequest}
+          agentWorking={agentIsWorking}
           canMaximize
         />
       )}
@@ -2765,6 +2839,26 @@ function AgentInstanceContent() {
     </div>
   );
 }
+
+/** What the transcript list's header needs to know; passed via Virtuoso `context`. */
+interface TranscriptListContext {
+  loadingOlder: boolean;
+}
+
+// Virtuoso treats each entry as a React component *type*, so these must be
+// module-level: an inline `{ Header: () => … }` object hands it a new type per
+// render and remounts the header/footer every time.
+const VIRTUOSO_COMPONENTS = {
+  Header: ({ context }: { context?: TranscriptListContext }) =>
+    context?.loadingOlder ? (
+      <div className="flex items-center justify-center py-3 text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      </div>
+    ) : (
+      <div className="h-6" />
+    ),
+  Footer: () => <div className="h-32" />,
+};
 
 export default function AgentInstancePage() {
   return <AgentInstanceContent />;

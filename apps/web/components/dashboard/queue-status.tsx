@@ -1,16 +1,24 @@
 'use client';
 
 import { useState } from 'react';
-import { X, Loader2, Undo2 } from 'lucide-react';
+import { X, Loader2, Undo2, Zap } from 'lucide-react';
 import { MessageResponse } from '@/lib/backend-api';
-import { cancelQueuedMessage } from '@/lib/agent-instance-api';
+import { cancelQueuedMessage, steerQueuedMessage } from '@/lib/agent-instance-api';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
-export type QueueMessageStatus = 'queued' | 'consumed' | 'cancelled';
+/**
+ * `queued` → waiting for the current turn to end. `steer` → the user pressed
+ * Steer; the daemon is delivering it into the running turn and will settle it
+ * to `consumed` (with `steered`) or back to `queued`. `consumed` / `cancelled`
+ * are terminal.
+ */
+export type QueueMessageStatus = 'queued' | 'steer' | 'consumed' | 'cancelled';
 
 export interface QueuePayload {
   status: QueueMessageStatus;
+  /** Set on a `consumed` message the agent took mid-turn (a Steer). */
+  steered?: boolean;
 }
 
 /**
@@ -27,10 +35,15 @@ export function parseQueuePayload(message: MessageResponse): QueuePayload | null
     return null;
   }
   const status = queueRaw.status;
-  if (status !== 'queued' && status !== 'consumed' && status !== 'cancelled') {
+  if (status !== 'queued' && status !== 'steer' && status !== 'consumed' && status !== 'cancelled') {
     return null;
   }
-  return { status };
+  return queueRaw.steered === true ? { status, steered: true } : { status };
+}
+
+/** A message still living in the queue bar: waiting, or being steered. */
+export function isPendingQueueStatus(status: QueueMessageStatus | undefined): boolean {
+  return status === 'queued' || status === 'steer';
 }
 
 export interface QueuedMessageItem {
@@ -40,6 +53,9 @@ export interface QueuedMessageItem {
    *  retrieve both call the backend by id, so they're disabled until the echo
    *  swaps in the real id (a sub-second round-trip). */
   pending?: boolean;
+  /** `queue.status === 'steer'`: the daemon is delivering this message into
+   *  the running turn. Rendered with a steering indicator; actions disabled. */
+  steering?: boolean;
 }
 
 /**
@@ -53,18 +69,43 @@ function QueuedMessageRow({
   id,
   text,
   pending,
+  steering,
+  canSteer,
   onRetrieve,
 }: {
   instanceId: string;
   id: string;
   text: string;
   pending?: boolean;
+  steering?: boolean;
+  canSteer?: boolean;
   onRetrieve?: (text: string) => void;
 }) {
   const [isCancelling, setIsCancelling] = useState(false);
-  // Until the real id echoes back, both actions would hit the backend with the
-  // optimistic id (a 404). Block them for that sub-second window.
-  const actionsDisabled = isCancelling || !!pending;
+  const [isSteering, setIsSteering] = useState(false);
+  // Until the real id echoes back, every action would hit the backend with the
+  // optimistic id (a 404). Block them for that sub-second window. A message
+  // already being steered is out of the user's hands too: the daemon settles
+  // it (consumed, or back to queued) within a round-trip.
+  const actionsDisabled = isCancelling || isSteering || !!pending || !!steering;
+
+  // "Steer" = deliver into the running turn now, at the agent's next safe
+  // boundary, instead of after the turn ends. The request only flips the
+  // row's status; the WS patch to `steer` swaps this row into its steering
+  // look, and the daemon's `consumed` patch removes it.
+  const handleSteer = async () => {
+    if (actionsDisabled) return;
+    setIsSteering(true);
+    try {
+      const { steered } = await steerQueuedMessage(instanceId, id);
+      // Not steered = no longer plainly queued (already picked up or removed);
+      // the WS patch for that state re-derives the row, so just unlock.
+      if (!steered) setIsSteering(false);
+    } catch (err) {
+      console.error('Failed to steer queued message:', err);
+      setIsSteering(false);
+    }
+  };
 
   const handleRemove = async () => {
     if (actionsDisabled) return;
@@ -94,12 +135,43 @@ function QueuedMessageRow({
     }
   };
 
+  const showSteering = !!steering || isSteering;
+
   return (
     <div className="group flex items-start gap-2 px-1 py-1">
       <span className="flex-1 min-w-0 text-xs leading-5 text-muted-foreground/80 whitespace-pre-wrap break-words line-clamp-2">
         {text}
       </span>
-      {onRetrieve && (
+      {showSteering && (
+        <span
+          className="mt-0.5 inline-flex shrink-0 items-center justify-center p-0.5 text-muted-foreground/60"
+          aria-label="Steering into the current turn"
+        >
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        </span>
+      )}
+      {canSteer && !showSteering && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleSteer}
+              disabled={actionsDisabled}
+              aria-label="Steer: send into the current turn now"
+              className={cn(
+                'mt-0.5 inline-flex shrink-0 items-center justify-center rounded-full p-0.5 text-muted-foreground/60',
+                'hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground disabled:opacity-50 disabled:pointer-events-none',
+              )}
+            >
+              <Zap className="h-3.5 w-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center">
+            Steer — send into the current turn now
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {onRetrieve && !showSteering && (
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -120,25 +192,27 @@ function QueuedMessageRow({
           </TooltipContent>
         </Tooltip>
       )}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            onClick={handleRemove}
-            disabled={actionsDisabled}
-            aria-label="Remove queued message"
-            className={cn(
-              'mt-0.5 inline-flex shrink-0 items-center justify-center rounded-full p-0.5 text-muted-foreground/60',
-              'hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground disabled:opacity-50 disabled:pointer-events-none',
-            )}
-          >
-            {isCancelling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="center">
-          Remove from queue
-        </TooltipContent>
-      </Tooltip>
+      {!showSteering && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleRemove}
+              disabled={actionsDisabled}
+              aria-label="Remove queued message"
+              className={cn(
+                'mt-0.5 inline-flex shrink-0 items-center justify-center rounded-full p-0.5 text-muted-foreground/60',
+                'hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground disabled:opacity-50 disabled:pointer-events-none',
+              )}
+            >
+              {isCancelling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center">
+            Remove from queue
+          </TooltipContent>
+        </Tooltip>
+      )}
     </div>
   );
 }
@@ -153,10 +227,14 @@ function QueuedMessageRow({
 export function QueuedMessagesBar({
   instanceId,
   items,
+  canSteer,
   onRetrieve,
 }: {
   instanceId: string;
   items: QueuedMessageItem[];
+  /** The session's agent can take a message mid-turn (catalog
+   *  `supports_steer`); shows the per-row Steer button. */
+  canSteer?: boolean;
   onRetrieve?: (text: string) => void;
 }) {
   if (items.length === 0) return null;
@@ -172,6 +250,8 @@ export function QueuedMessagesBar({
               id={item.id}
               text={item.text}
               pending={item.pending}
+              steering={item.steering}
+              canSteer={canSteer}
               onRetrieve={onRetrieve}
             />
           ))}

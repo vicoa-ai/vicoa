@@ -14,7 +14,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
-import { resolveDaemonPath } from './resolve-path';
+import { resolveDaemonPath, type ResolvedDaemonPath } from './resolve-path';
 
 export type DaemonStatus =
   | 'idle' // never started
@@ -56,6 +56,13 @@ export interface DaemonManagerOptions {
    * a VICOA_DAEMON_CMD override and a bundled binary both still win over it.
    */
   managedDaemonPath?: string | null;
+  /**
+   * An already-started login-shell PATH resolution (resolve-path.ts). The shell
+   * probe takes ~1s+ on a real profile, so the boot path kicks it off first thing
+   * and lets it overlap the renderer-server start; the first spawn awaits it.
+   * Absent → resolved lazily on the first spawn.
+   */
+  pathResolution?: Promise<ResolvedDaemonPath>;
   env?: NodeJS.ProcessEnv;
   log?: (line: string) => void;
 }
@@ -247,9 +254,10 @@ export class DaemonManager {
   private child: ChildProcess | null = null;
   private status: DaemonStatus = 'idle';
   private localOnly = true;
-  /** Login-shell PATH for the daemon child; resolved once, lazily, then cached. */
+  /** Login-shell PATH for the daemon child; resolved once (async), then cached. */
   private daemonPath: string | null = null;
   private daemonPathResolved = false;
+  private pathResolution: Promise<ResolvedDaemonPath> | null;
   private cloudStatus: CloudStatus | undefined;
   private cloudPollTimer: NodeJS.Timeout | null = null;
   private lastError: string | undefined;
@@ -269,6 +277,7 @@ export class DaemonManager {
     this.origin = options.origin;
     this.bundledDaemonPath = options.bundledDaemonPath ?? null;
     this.managedDaemonPath = options.managedDaemonPath ?? null;
+    this.pathResolution = options.pathResolution ?? null;
     this.baseEnv = options.env ?? process.env;
     this.log = options.log ?? ((line) => console.log(`[daemon] ${line}`));
   }
@@ -290,15 +299,19 @@ export class DaemonManager {
   /**
    * Resolve (once) the login-shell PATH to hand the daemon child so it can find
    * user-installed `claude` / `codex` even when launched from Finder with a
-   * minimal launchd PATH. Cached; safe across restarts. Never throws.
+   * minimal launchd PATH. Cached; safe across restarts. Never throws. Awaits
+   * the boot-time probe when one was handed in, so the main thread never
+   * blocks on the shell.
    */
-  private ensureDaemonPath(): void {
+  private async ensureDaemonPath(): Promise<void> {
     if (this.daemonPathResolved) {
       return;
     }
-    this.daemonPathResolved = true;
+    if (this.pathResolution === null) {
+      this.pathResolution = resolveDaemonPath(this.baseEnv);
+    }
     try {
-      const resolved = resolveDaemonPath(this.baseEnv);
+      const resolved = await this.pathResolution;
       this.daemonPath = resolved.path;
       this.log(
         `resolved PATH (${resolved.entryCount} entries; ` +
@@ -308,6 +321,7 @@ export class DaemonManager {
       this.daemonPath = null;
       this.log(`PATH resolution failed, using inherited PATH: ${errorMessage(err)}`);
     }
+    this.daemonPathResolved = true;
   }
 
   get isLocalOnly(): boolean {
@@ -362,7 +376,13 @@ export class DaemonManager {
     const generation = this.generation;
     this.clearCloudPoll();
     this.cloudStatus = undefined;
-    this.ensureDaemonPath();
+    // 'starting' before the (possibly still running) PATH probe so the tray
+    // reflects the boot as soon as it is requested, not once the shell answers.
+    this.setState('starting');
+    await this.ensureDaemonPath();
+    if (generation !== this.generation) {
+      return false; // stopped/restarted while the PATH probe was still running
+    }
 
     const [cmd, ...leadingArgs] = this.resolvedCommand();
     if (cmd === undefined) {
@@ -382,7 +402,6 @@ export class DaemonManager {
       }),
     ];
     this.log(`spawning: ${cmd} ${args.join(' ')} (local-only=${this.localOnly})`);
-    this.setState('starting');
 
     let child: ChildProcess;
     try {

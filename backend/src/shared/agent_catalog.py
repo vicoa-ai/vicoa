@@ -16,7 +16,10 @@ from protocol.agent_catalog import (
     AGENT_CATALOG_JSON,
     PERMISSION_MODES,
     REASONING_EFFORTS,
+    SESSION_CONFIG_KEYS,
     THINKING_EFFORTS,
+    known_agent_ids,
+    normalize_session_config,
 )
 
 __all__ = [
@@ -25,5 +28,8 @@ __all__ = [
     "AGENT_CATALOG_JSON",
     "PERMISSION_MODES",
     "REASONING_EFFORTS",
+    "SESSION_CONFIG_KEYS",
     "THINKING_EFFORTS",
+    "known_agent_ids",
+    "normalize_session_config",
 ]

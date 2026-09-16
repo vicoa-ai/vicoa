@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from vicoa.rpc.worktree_names import generate_unique_name
+from vicoa.utils import get_project_path
 from vicoa.rpc.worktree_paths import (
     UnmanagedWorktree,
     assert_managed_worktree,
@@ -99,6 +100,13 @@ def _prune_empty_dirs(start: Path) -> None:
     current = start.resolve()
     while current != root and str(current).startswith(str(root) + os.sep):
         try:
+            # Finder drops a `.DS_Store` into any folder it has shown, which
+            # would otherwise make rmdir fail and leave the `<branch>` dir
+            # behind forever. It is pure Finder metadata, safe to drop.
+            entries = list(current.iterdir())
+            if entries and all(e.name == ".DS_Store" for e in entries):
+                for e in entries:
+                    e.unlink()
             current.rmdir()  # only succeeds if empty
         except OSError:
             break
@@ -118,7 +126,8 @@ def _parse_worktree_porcelain(blob: bytes) -> list[dict[str, Any]]:
 
     Records are blank-line separated. Each starts with a `worktree <path>`
     line, followed by `HEAD <sha>` and either `branch refs/heads/<name>` or a
-    bare `detached` line.
+    bare `detached` line. Git >= 2.36 adds `prunable <reason>` when the
+    checkout directory is gone but the registration remains.
     """
     records: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
@@ -135,16 +144,24 @@ def _parse_worktree_porcelain(blob: bytes) -> list[dict[str, Any]]:
             current["branch"] = ref.removeprefix("refs/heads/")
         elif raw_line == "detached":
             current["detached"] = True
+        elif raw_line == "prunable" or raw_line.startswith("prunable "):
+            current["prunable"] = True
     return records
 
 
 def list_worktrees(cwd: str) -> dict[str, Any]:
     """List a repo's worktrees, excluding the main one.
 
-    Returns `{"worktrees": [{path, branch, head, managed}]}` or
-    `{"error": "not_a_repo"}`. `managed` marks worktrees the daemon created
-    (under `~/vicoa/workspaces/`) — only those are removable by the app; the
-    user's own hand-made worktrees are flagged unmanaged.
+    Returns `{"worktrees": [{path, display_path, branch, head, managed,
+    prunable}]}` or `{"error": "not_a_repo"}`. `managed` marks worktrees the
+    daemon created (under `~/vicoa/workspaces/`) — only those are removable by
+    the app; the user's own hand-made worktrees are flagged unmanaged.
+
+    `display_path` is the home-collapsed form (`~/…`) produced by the same
+    helper a session's `project` is registered with, so the app can match a
+    worktree to the sessions running in it by plain string equality.
+    `prunable` is git's own verdict that the checkout directory is gone while
+    the registration lingers — the app shows such a worktree as deleted.
     """
     abs_dir = Path(os.path.expanduser(cwd)).resolve()
     if not _is_git_repo(abs_dir):
@@ -165,9 +182,11 @@ def list_worktrees(cwd: str) -> dict[str, Any]:
     worktrees = [
         {
             "path": rec["path"],
+            "display_path": get_project_path(rec["path"]),
             "branch": rec.get("branch", ""),
             "head": rec.get("head", ""),
             "managed": _is_managed(rec["path"]),
+            "prunable": bool(rec.get("prunable", False)),
         }
         for rec in linked
     ]
@@ -182,9 +201,19 @@ def remove_worktree(
     Confinement is by identity, not path prefix: `worktree_path` must be a real
     *linked* worktree of the repo at `cwd` (managed or hand-made), checked
     against `git worktree list`. Since that listing drops the main worktree,
-    the main checkout is never removable, and any path that isn't a worktree is
-    rejected as `not_a_worktree`. The branch is always kept, so commits stay
-    recoverable from a desktop. Returns `{"ok": True}` or `{"error": ...}`.
+    the main checkout is never removable, and an existing path that isn't a
+    worktree is rejected as `not_a_worktree`. The branch is always kept, so
+    commits stay recoverable from a desktop.
+
+    `cwd` should be the repo's MAIN checkout, not the worktree itself: a
+    worktree whose directory is already gone (removed by hand, or by an earlier
+    removal whose RPC timed out) cannot host the git call. Such a stale entry
+    is still removed cleanly from the main checkout (git prunes it), and a path
+    that is neither on disk nor registered is reported as already removed —
+    idempotent, so the app can always finish its own bookkeeping.
+
+    Returns `{"ok": True}` (with `"already_removed": True` for the no-op case)
+    or `{"error": ...}`.
     """
     abs_repo = Path(os.path.expanduser(cwd)).resolve()
     if not _is_git_repo(abs_repo):
@@ -197,7 +226,12 @@ def remove_worktree(
         return listing
     listed = {Path(w["path"]).resolve() for w in listing["worktrees"]}
     if resolved not in listed:
-        return {"error": "not_a_worktree"}
+        if resolved.exists():
+            return {"error": "not_a_worktree"}
+        # Nothing on disk and nothing registered: it is already gone. Still
+        # sweep the `<branch>` middle dir a previous removal may have left.
+        _prune_empty_dirs(resolved.parent)
+        return {"ok": True, "already_removed": True}
 
     argv = ["git", "-C", str(abs_repo), "worktree", "remove"]
     if force:

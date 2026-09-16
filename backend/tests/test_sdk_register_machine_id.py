@@ -16,7 +16,7 @@ def _client() -> VicoaClient:
 
 
 def _capture_payload(client: VicoaClient, captured: dict) -> None:
-    def _fake(method, path, json=None, params=None):
+    def _fake(method, path, json=None, params=None, timeout=None):
         captured["json"] = json
         return {"agent_instance_id": "inst-1", "status": "active"}
 
@@ -68,7 +68,7 @@ def _async_client() -> AsyncVicoaClient:
 
 
 def _capture_async_payload(client: AsyncVicoaClient, captured: dict) -> None:
-    async def _fake(method, path, json=None, params=None):
+    async def _fake(method, path, json=None, params=None, timeout=None):
         captured["json"] = json
         return {"agent_instance_id": "inst-1", "status": "active"}
 

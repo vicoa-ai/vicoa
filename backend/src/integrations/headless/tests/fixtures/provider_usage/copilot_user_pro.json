@@ -1,0 +1,33 @@
+{
+  "login": "redacted",
+  "access_type_sku": "monthly_subscriber",
+  "copilot_plan": "individual_pro",
+  "quota_snapshots": {
+    "chat": {
+      "percent_remaining": 100.0,
+      "unlimited": true,
+      "has_quota": true,
+      "remaining": 0,
+      "entitlement": 0
+    },
+    "completions": {
+      "percent_remaining": 100.0,
+      "unlimited": true,
+      "has_quota": true,
+      "remaining": 0,
+      "entitlement": 0
+    },
+    "premium_interactions": {
+      "overage_count": 0,
+      "overage_permitted": true,
+      "percent_remaining": 37.5,
+      "quota_remaining": 112.5,
+      "unlimited": false,
+      "has_quota": true,
+      "quota_reset_at": 0,
+      "remaining": 112,
+      "entitlement": 300
+    }
+  },
+  "quota_reset_date": "2026-10-01"
+}

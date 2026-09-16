@@ -27,8 +27,32 @@ import threading
 from typing import Any, Callable, Optional
 
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30.0
+# Bounds on a server-suggested cadence, so a bad value can neither hammer the
+# server nor silence a session for longer than the liveness thresholds allow.
+MIN_HEARTBEAT_INTERVAL_SECONDS = 5.0
+MAX_HEARTBEAT_INTERVAL_SECONDS = 600.0
 
 logger = logging.getLogger(__name__)
+
+
+def next_interval_from_response(payload: object, fallback: float) -> float:
+    """The cadence the server asked for, or ``fallback``.
+
+    The heartbeat endpoints answer with ``next_interval_seconds``: a server
+    that can see this session's WebSocket tells it to tick rarely (the socket
+    is the liveness signal — servers/presence.py); one that can't, or an older
+    server that doesn't send the field, keeps the 30s fallback. Clamped so a
+    bad value can't hurt either side.
+    """
+    if not isinstance(payload, dict):
+        return fallback
+    raw = payload.get("next_interval_seconds")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return fallback
+    return min(
+        max(float(raw), MIN_HEARTBEAT_INTERVAL_SECONDS),
+        MAX_HEARTBEAT_INTERVAL_SECONDS,
+    )
 
 
 class SessionHeartbeat:
@@ -95,17 +119,23 @@ class SessionHeartbeat:
             return
 
         while not self._stop_event.is_set():
+            interval = self.interval
             try:
                 resp = self.http_session.post(self.url, timeout=10)
                 # 404 is expected in the window before the instance row exists.
                 if resp.status_code >= 400 and resp.status_code != 404:
                     self.log(f"[WARN] Heartbeat failed {resp.status_code}")
+                elif resp.status_code < 400:
+                    try:
+                        interval = next_interval_from_response(resp.json(), interval)
+                    except ValueError:
+                        pass
             except Exception as exc:
                 self.log(f"[WARN] Heartbeat error: {exc}")
 
             # Jitter each interval so concurrent sessions stay spread out.
-            delay = self.interval + random.uniform(-2.0, 2.0)
-            self._stop_event.wait(max(delay, 5.0))
+            delay = interval + random.uniform(-2.0, 2.0)
+            self._stop_event.wait(max(delay, MIN_HEARTBEAT_INTERVAL_SECONDS))
 
     def __enter__(self) -> "SessionHeartbeat":
         self.start()
@@ -161,8 +191,12 @@ class AsyncSessionHeartbeat:
         await asyncio.sleep(random.uniform(0, 2.0))
 
         while True:
+            interval = self.interval
             try:
-                await self.vicoa_client.heartbeat_instance(self.agent_instance_id)
+                payload = await self.vicoa_client.heartbeat_instance(
+                    self.agent_instance_id
+                )
+                interval = next_interval_from_response(payload, interval)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -171,4 +205,8 @@ class AsyncSessionHeartbeat:
                 logger.debug("session heartbeat failed", exc_info=True)
 
             # Jitter each interval so concurrent sessions stay spread out.
-            await asyncio.sleep(max(self.interval + random.uniform(-2.0, 2.0), 5.0))
+            await asyncio.sleep(
+                max(
+                    interval + random.uniform(-2.0, 2.0), MIN_HEARTBEAT_INTERVAL_SECONDS
+                )
+            )

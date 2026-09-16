@@ -27,7 +27,6 @@ import { getDesktopConfig, type DesktopRuntimeConfig } from '@/lib/runtime-confi
 import { ThemeSelect } from '@/components/plugins/theme-select';
 import {
   checkForUpdates,
-  downloadUpdate,
   getAppVersion,
   getDesktopUpdatesBridge,
   quitAndInstallUpdate,
@@ -45,7 +44,7 @@ import {
 } from '@/lib/desktop-cli';
 import { DRAG_REGION } from '@/lib/app-region';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
-import { UserAvatarEditor } from '@/components/dashboard/user-avatar-editor';
+import { AvatarEditor } from '@/components/dashboard/avatar-editor';
 import type { UserProfile } from '@/lib/backend-api';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { computeStreaks, formatCompact, formatDays } from '@/lib/profile-stats';
@@ -87,7 +86,10 @@ export function DesktopSettings() {
   const tab = activeSettingsTab(searchParams.get('tab'));
 
   return (
-    <div className="flex h-full flex-1 flex-col font-mono">
+    // min-w-0: this is a flex item beside the settings sidebar, and without it
+    // `min-width: auto` keeps the column at its content's min-content width —
+    // a narrow window then scrolls the whole app sideways.
+    <div className="flex h-full min-w-0 flex-1 flex-col font-mono">
       {/* No header on settings routes, so the top strip is the drag region. */}
       <div style={DRAG_REGION} className="h-11 shrink-0" />
       <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -265,6 +267,7 @@ function ProfileSection() {
     // Falls back to the email only to derive an initial; never rendered as text.
     name: profile?.display_name || name || email,
     avatarImageUri: profile?.avatar_image_uri,
+    emoji: profile?.avatar_emoji,
     updatedAt: profile?.updated_at,
   };
   // Show the email under the name, unless the name slot already shows it.
@@ -281,7 +284,7 @@ function ProfileSection() {
           attach one to (and no API client yet, briefly, on first paint), so it
           just renders. */}
       {isCloud && api ? (
-        <UserAvatarEditor
+        <AvatarEditor
           principal={avatarPrincipal}
           size="xl"
           onUploadImage={async (file) => {
@@ -290,6 +293,14 @@ function ProfileSection() {
           }}
           onRemoveImage={async () => {
             await api.deleteMyAvatar();
+            await refreshProfile();
+          }}
+          onSetEmoji={async (emoji) => {
+            await api.updateMyAvatarEmoji(emoji);
+            await refreshProfile();
+          }}
+          onClearEmoji={async () => {
+            await api.updateMyAvatarEmoji(null);
             await refreshProfile();
           }}
         />
@@ -669,7 +680,7 @@ function updateStatusLabel(status: UpdateStatus): string {
     case 'checking':
       return 'Checking for updates…';
     case 'available':
-      return `Version ${status.version} available`;
+      return `Version ${status.version} available — downloading…`;
     case 'downloading':
       return `Downloading… ${status.percent}%`;
     case 'downloaded':
@@ -685,8 +696,9 @@ function updateStatusLabel(status: UpdateStatus): string {
 
 /**
  * Version readout + updater controls. Hidden on plain web (no bridge). The
- * button follows the status: Check → Download → Restart to update; the same
- * flow the sidebar SidebarUpdateCallout offers, surfaced in Settings.
+ * button follows the status: Check → (auto-download, progress shown here) →
+ * Restart to update; the same one-click flow the sidebar SidebarUpdateCallout
+ * offers, surfaced in Settings.
  */
 function UpdatesCard() {
   const status = useDesktopUpdateStatus();
@@ -710,16 +722,7 @@ function UpdatesCard() {
           <span className="text-xs text-muted-foreground">{version ?? '—'}</span>
         </SettingsRow>
         <SettingsRow title="Updates" description={updateStatusLabel(status)}>
-          {status.state === 'available' ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs"
-              onClick={() => void downloadUpdate()}
-            >
-              Download
-            </Button>
-          ) : status.state === 'downloaded' ? (
+          {status.state === 'downloaded' ? (
             <Button
               variant="outline"
               size="sm"
@@ -730,7 +733,7 @@ function UpdatesCard() {
             </Button>
           ) : status.state === 'downloading' ? (
             <span className="text-xs text-muted-foreground">{status.percent}%</span>
-          ) : (
+          ) : status.state === 'available' ? null : (
             <Button
               variant="outline"
               size="sm"

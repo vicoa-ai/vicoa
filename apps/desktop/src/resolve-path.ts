@@ -13,8 +13,13 @@
  *
  * The resolver is deliberately defensive: a 2s timeout, falls back to the
  * inherited PATH on any error, and never throws.
+ *
+ * It is ASYNC on purpose: sourcing a real zsh/bash profile (nvm, conda, oh-my-
+ * zsh, …) routinely takes 1-1.5s, and a synchronous spawn would block the
+ * Electron main thread for that long — nothing paints, the window can't open.
+ * Callers start it early (boot) so it overlaps the renderer-server start.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -82,34 +87,62 @@ export function findExecutableOnPath(name: string, pathStr: string): string | nu
 }
 
 /**
- * Probe the user's login shell for its interactive PATH. Returns null on any
- * failure (missing shell, timeout, non-zero exit, empty output). Never throws.
+ * Probe the user's login shell for its interactive PATH. Resolves null on any
+ * failure (missing shell, timeout, empty output). Never rejects.
  *
  * `-lic <cmd>` = login + interactive + run a command: this sources the same
  * rc/profile files the user's terminal does (nvm, asdf, homebrew shellenv, …),
  * which is exactly where user-installed CLIs get onto PATH.
  */
-export function readLoginShellPath(env: NodeJS.ProcessEnv = process.env): string | null {
+export function readLoginShellPath(env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
   const shell = env.SHELL !== undefined && env.SHELL.length > 0 ? env.SHELL : '/bin/zsh';
-  try {
-    const result = spawnSync(
-      shell,
-      ['-lic', 'command -v claude >/dev/null 2>&1; printf "%s" "$PATH"'],
-      {
-        encoding: 'utf8',
-        timeout: SHELL_RESOLVE_TIMEOUT_MS,
+  return new Promise((resolve) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(shell, ['-lic', 'command -v claude >/dev/null 2>&1; printf "%s" "$PATH"'], {
         env,
         stdio: ['ignore', 'pipe', 'ignore'],
-      },
-    );
-    if (result.error !== undefined && result.error !== null) {
-      return null;
+        // Own process group, so the timeout can take out anything the profile
+        // itself spawned (an `nvm` init, a slow `brew shellenv`, …) — killing
+        // just the shell would leave those holding our stdout pipe open.
+        detached: true,
+      });
+    } catch {
+      resolve(null);
+      return;
     }
-    const out = typeof result.stdout === 'string' ? result.stdout.trim() : '';
-    return out.length > 0 ? out : null;
-  } catch {
-    return null;
-  }
+    const chunks: Buffer[] = [];
+    let settled = false;
+    const finish = (value: string | null): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    // A profile that hangs (prompting, network) must not gate the daemon spawn.
+    const timer = setTimeout(() => {
+      try {
+        if (child.pid !== undefined) {
+          process.kill(-child.pid, 'SIGKILL'); // the whole group (see `detached`)
+        } else {
+          child.kill('SIGKILL');
+        }
+      } catch {
+        // already gone
+      }
+      finish(null);
+    }, SHELL_RESOLVE_TIMEOUT_MS);
+    child.stdout?.on('data', (chunk: Buffer) => chunks.push(chunk));
+    child.on('error', () => finish(null));
+    child.on('close', () => {
+      // Exit status is deliberately ignored: a noisy rc file can leave `$?`
+      // non-zero while the PATH it printed is perfectly good.
+      const out = Buffer.concat(chunks).toString('utf8').trim();
+      finish(out.length > 0 ? out : null);
+    });
+  });
 }
 
 export interface ResolvedDaemonPath {
@@ -130,17 +163,26 @@ export interface ResolvedDaemonPath {
  *
  * `path` is only non-null when the merge actually adds a dir the inherited PATH
  * lacked — we never override PATH just to reorder it, and never blank it out.
- * Defensive: never throws; falls back to leaving PATH alone on any error.
+ * Defensive: never rejects; falls back to leaving PATH alone on any error.
  */
-export function resolveDaemonPath(env: NodeJS.ProcessEnv = process.env): ResolvedDaemonPath {
-  const currentPath = env.PATH ?? '';
+export async function resolveDaemonPath(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ResolvedDaemonPath> {
   let shellPath: string | null = null;
   try {
-    shellPath = readLoginShellPath(env);
+    shellPath = await readLoginShellPath(env);
   } catch {
     shellPath = null;
   }
+  return mergeDaemonPath(shellPath, env);
+}
 
+/** The pure merge step of `resolveDaemonPath`, split out so it is unit-testable. */
+export function mergeDaemonPath(
+  shellPath: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): ResolvedDaemonPath {
+  const currentPath = env.PATH ?? '';
   const merged = mergePathEntries([shellPath, currentPath, ...fallbackPathDirs(env)]);
   const claudePath = findExecutableOnPath('claude', merged.length > 0 ? merged : currentPath);
 

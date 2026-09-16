@@ -21,10 +21,12 @@ import {
   X,
 } from 'lucide-react';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
-import type { MachineSummary, ProjectResponse, TaskResponse } from '@/lib/backend-api';
+import type { AgentProfile, MachineSummary, ProjectResponse, TaskResponse } from '@/lib/backend-api';
 import { TaskPickerPopover } from '@/components/dashboard/task-picker-popover';
 import { MentionTextarea } from '@/components/mention-textarea';
 import { AgentTypeIcon, getAgentLogoSrc } from '@/components/dashboard/agent-type-icon';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { agentPrincipal, agentProfileBlockedReason } from '@/lib/use-agent-profiles';
 import { ChipDropdown, ModeIcon, TickItem, modelListWidthClass, modelSublabel } from '@/components/dashboard/session-config-dropdown';
 import { rpcGitStatus } from '@/components/files-git-panel/rpc';
 import { FilesGitPanel, FilesGitPanelToggle, usePanelState } from '@/components/files-git-panel';
@@ -34,6 +36,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  resetNewSessionGuards,
+  trackNewSessionViewed,
+  trackSessionCreateFailed,
+  trackSubmitBlocked,
+  type MachineState,
+  type SessionCreateFailure,
+  type SubmitBlockedReason,
+} from '@/lib/desktop-telemetry';
 import { toAbsolutePath } from '@/lib/utils';
 import {
   isMachineOnline as isMachineOnlineShared,
@@ -43,6 +54,7 @@ import {
   AGENT_CATALOG_FALLBACK,
   agentById,
   agentPickerLabel,
+  customAgentLabel,
   catalogWithCachedModels,
   defaultsFor,
   loadPersistedSelection,
@@ -55,10 +67,17 @@ import {
   type PersistedWorktree,
   type SessionConfig,
 } from '@/lib/agent-catalog';
+import type { MachineAgentModelsCache } from '@/lib/backend-api';
+import { readAvailableAgents } from '@/lib/desktop-agent-scan';
+import { machineSupportsProviderConfig, readAgentLabels, rpcProviderProbe } from '@/lib/desktop-provider-config';
 import { DirectoryPickerPopover } from '@/components/dashboard/directory-picker-popover';
 import { AddToChatMenu } from '@/components/dashboard/add-to-chat-menu';
 import { ChatUsageIndicator } from '@/components/chat-usage-indicator';
-import { fetchClaudeUsageWindows } from '@/lib/claude-usage';
+import {
+  fetchProviderUsageWindows,
+  machineSupportsProviderUsage,
+  providerHasUsageFetcher,
+} from '@/lib/provider-usage';
 import { SlashCommandSuggestions } from '@/components/dashboard/slash-command-suggestions';
 import { useSlashCommands } from '@/lib/hooks/use-slash-commands';
 import type { SlashCommand, AgentType } from '@/lib/constants/slash-commands';
@@ -78,6 +97,7 @@ import { DesktopCollapsedLead, DesktopWindowControlsSpacer } from '@/components/
 import { comboInline, getShortcutCombo, matchesShortcut } from '@/lib/desktop-shortcuts';
 import { getDesktopShellBridge } from '@/lib/desktop-shell';
 import { collectComposerDrop, folderPathToMention } from '@/lib/chat-drop';
+import { collectComposerPaste, pasteTargetIsEditable } from '@/lib/chat-paste';
 import { FolderRefChip } from '@/components/folder-ref-chip';
 import { ForkContextChip } from '@/components/dashboard/fork-context-chip';
 import { postInstanceMessage } from '@/lib/agent-instance-api';
@@ -86,6 +106,8 @@ import { formatFileSize } from '@/components/chat-attachments';
 import { GitBranch, File as FileIcon, FolderPlus } from 'lucide-react';
 
 const MACHINE_REFRESH_INTERVAL_MS = 30_000;
+
+const EMPTY_AGENT_MODELS_CACHE: MachineAgentModelsCache = { models: {}, modes: {} };
 
 /** One attachment picked before the session exists: preview now, upload later.
  *
@@ -169,6 +191,33 @@ const LIFTED_DROPDOWN_CLASSES =
   'w-[var(--radix-dropdown-menu-trigger-width)] py-1 font-mono ' +
   'border border-foreground/15 shadow-xl';
 const LIFTED_DROPDOWN_SIDE_OFFSET = 8;
+
+/**
+ * What to say when the composer can't submit, per surface.
+ *
+ * Split by surface because the original copy was web-only: "Run `vicoa daemon`
+ * to connect this machine" is unactionable in the desktop app, where the daemon
+ * is bundled and supervised by Electron. The user has no such command and
+ * should never need one.
+ */
+const SUBMIT_BLOCKED_COPY: Record<SubmitBlockedReason, { web: string; desktop: string }> = {
+  no_api: {
+    web: 'Unable to reach the API. Check that you are still signed in.',
+    desktop: 'Unable to reach the API. Check that you are still signed in.',
+  },
+  no_machine: {
+    web: 'No machines connected. Run `vicoa daemon` on a machine to connect it.',
+    desktop: 'Waiting for this machine to connect. The Vicoa daemon is still starting up.',
+  },
+  machine_offline: {
+    web: 'This machine is offline. Sessions can only be started on online machines.',
+    desktop: 'This machine is offline because the Vicoa daemon stopped. Restarting Vicoa reconnects it.',
+  },
+  no_directory: {
+    web: 'Choose a folder to work in before starting a session.',
+    desktop: 'Choose a folder to work in before starting a session.',
+  },
+};
 
 /** Setup chips above the prompt box (machine · directory · worktree).
     Same surface as the prompt box; hover ≈ the dropdown-item highlight
@@ -343,9 +392,14 @@ function NewSessionContent() {
   const [catalog, setCatalog] = useState<AgentCatalog>(AGENT_CATALOG_FALLBACK);
   const [perAgentConfigs, setPerAgentConfigs] = useState<Record<string, SessionConfig>>({});
   const [activeAgent, setActiveAgent] = useState<string>('claude');
-  // Selected machine's cached real per-agent model lists, fetched lazily so the
-  // picker can show actual models instead of catalog placeholders.
-  const [cachedAgentModels, setCachedAgentModels] = useState<Record<string, { id: string; label: string }[]>>({});
+  // Saved agent presets (collab P1). Empty for most users, and the picker then
+  // renders exactly as it did before — the "My agents" section only appears
+  // once there is something to put in it.
+  const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
+  // Selected machine's cached real per-agent model (and mode) lists, fetched
+  // lazily so the picker can show actual models instead of catalog placeholders.
+  const [cachedAgentModels, setCachedAgentModels] = useState<MachineAgentModelsCache>(EMPTY_AGENT_MODELS_CACHE);
 
   // Slash-command + mention state for the prompt box (mirrors the chat input).
   const [showSlashCommands, setShowSlashCommands] = useState(false);
@@ -425,14 +479,26 @@ function NewSessionContent() {
     if (attachmentErrorTimer.current) clearTimeout(attachmentErrorTimer.current);
   }, []);
 
+  const currentMachine = machines.find((m) => m.machine_id === selectedMachineId) || null;
+
   // The catalog the picker renders: base catalog with the selected machine's
-  // cached models merged in (falls back to base when nothing is cached).
+  // cached models/modes merged in (falls back to base when nothing is cached),
+  // plus a synthesized entry for every cached agent the static catalog cannot
+  // describe (a catalog-added or hand-configured provider), labelled with the
+  // daemon's own `agent_labels`.
   const effectiveCatalog = useMemo(
-    () => catalogWithCachedModels(catalog, cachedAgentModels),
-    [catalog, cachedAgentModels],
+    () => catalogWithCachedModels(catalog, cachedAgentModels.models, {
+      modes: cachedAgentModels.modes,
+      labels: readAgentLabels(currentMachine),
+    }),
+    [catalog, cachedAgentModels, currentMachine],
   );
 
   const sessionConfig: SessionConfig = perAgentConfigs[activeAgent] ?? defaultsFor(effectiveCatalog, activeAgent);
+  const selectedProfile = useMemo(
+    () => agentProfiles.find((p) => p.id === selectedProfileId) ?? null,
+    [agentProfiles, selectedProfileId],
+  );
   // Map the (possibly ACP) selected agent onto the three command-bearing types.
   const slashAgentType: AgentType =
     sessionConfig.agent === 'codex' ? 'codex' : sessionConfig.agent === 'opencode' ? 'opencode' : 'claude';
@@ -533,6 +599,15 @@ function NewSessionContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    api.listAgentProfiles()
+      .then((list) => { if (!cancelled) setAgentProfiles(list); })
+      .catch(() => { /* presets are additive; the picker works without them */ });
+    return () => { cancelled = true; };
+  }, [api]);
+
   // Background catalog fetch — reconcile per-agent configs against the live
   // catalog when it arrives so opt_in additions and label changes propagate.
   useEffect(() => {
@@ -572,15 +647,68 @@ function NewSessionContent() {
   // show its real models. Best-effort: empty on error / no cache → catalog
   // defaults. Clears first so we never show another machine's models in flight.
   useEffect(() => {
-    if (!api || !selectedMachineId) { setCachedAgentModels({}); return; }
+    if (!api || !selectedMachineId) { setCachedAgentModels(EMPTY_AGENT_MODELS_CACHE); return; }
     const machineId = selectedMachineId;
     let cancelled = false;
-    setCachedAgentModels({});
+    setCachedAgentModels(EMPTY_AGENT_MODELS_CACHE);
     api.getMachineAgentModels(machineId)
-      .then((models) => { if (!cancelled) setCachedAgentModels(models); })
+      .then((cache) => { if (!cancelled) setCachedAgentModels(cache); })
       .catch(() => { /* keep catalog defaults */ });
     return () => { cancelled = true; };
   }, [api, selectedMachineId]);
+
+  // An agent picked before its cache arrived (a catalog-added agent the
+  // auto-probe below is still filling in) has a config with no model at all,
+  // so its chips would read "Model" / "Mode" with nothing selected once the
+  // lists land. Fill in the defaults the moment the effective catalog can
+  // describe it; agents the static catalog knows always have a model already.
+  useEffect(() => {
+    setPerAgentConfigs((prev) => {
+      let next = prev;
+      for (const [id, config] of Object.entries(prev)) {
+        if (config.model !== undefined) continue;
+        if (!agentById(effectiveCatalog, id)?.models?.length) continue;
+        if (next === prev) next = { ...prev };
+        next[id] = reconcileAgainst(config, effectiveCatalog);
+      }
+      return next;
+    });
+  }, [effectiveCatalog]);
+
+  // Auto-probe: a catalog-added agent has no picker at all until something
+  // fills the machine's cache (a session, or a Check/Add on the Providers
+  // page). When the selected agent has no cached models, the machine is
+  // online and its daemon routes `provider-probe`, run one probe in the
+  // background and refetch the cache — once per (machine, agent) per page
+  // load, never blocking the form. A failed probe leaves the picker as it is;
+  // the Providers page is where the failure reason shows. Only agents outside
+  // the static catalog: the built-ins already render a usable picker.
+  const autoProbedRef = useRef<Set<string>>(new Set());
+  const selectedMachineIdRef = useRef(selectedMachineId);
+  selectedMachineIdRef.current = selectedMachineId;
+  useEffect(() => {
+    if (!api || !selectedMachineId || !currentMachine || !isMachineOnlineShared(currentMachine)) return;
+    if (!machineSupportsProviderConfig(currentMachine)) return;
+    const agent = activeAgent;
+    if (catalog.agents.some((a) => a.id === agent)) return;
+    if ((cachedAgentModels.models[agent]?.length ?? 0) > 0) return;
+    const key = `${selectedMachineId}:${agent}`;
+    if (autoProbedRef.current.has(key)) return;
+    autoProbedRef.current.add(key);
+    const machineId = selectedMachineId;
+    // No effect cleanup on purpose: a probe is an agent's cold start (up to a
+    // minute) and `currentMachine` is a fresh object on every heartbeat, so a
+    // cancel-on-deps-change would discard most results. Instead the result is
+    // applied only if this machine is still the selected one when it lands.
+    rpcProviderProbe(machineId, agent)
+      .then((probe) => {
+        if (!probe.ok || selectedMachineIdRef.current !== machineId) return;
+        return api.getMachineAgentModels(machineId).then((cache) => {
+          if (selectedMachineIdRef.current === machineId) setCachedAgentModels(cache);
+        });
+      })
+      .catch(() => { /* picker keeps its placeholders */ });
+  }, [api, selectedMachineId, currentMachine, activeAgent, catalog, cachedAgentModels]);
 
   const persistSelection = useCallback(
     (overrides?: Partial<{ machineId: string; agent: string; configs: Record<string, SessionConfig> }>) => {
@@ -614,12 +742,33 @@ function NewSessionContent() {
   // Switching agents is a different shape: the new agent has its own
   // remembered config, so just flip the active key.
   const switchAgent = useCallback((nextAgentId: string) => {
+    // Picking a raw provider clears any selected preset: the provider is part of
+    // an agent's identity (unlike model/effort, which stay editable within it),
+    // so a profile whose agent no longer matches is no longer what's running.
+    setSelectedProfileId(null);
     setActiveAgent(nextAgentId);
     setPerAgentConfigs((prev) => {
       if (prev[nextAgentId]) return prev;
       return { ...prev, [nextAgentId]: defaultsFor(effectiveCatalog, nextAgentId) };
     });
     persistSelection({ agent: nextAgentId });
+  }, [effectiveCatalog, persistSelection]);
+
+  /**
+   * Apply a saved agent: its config lands in the ordinary per-agent config, so
+   * every chip below stays live and the user can tweak one field without
+   * "leaving" the preset. A preset is a shortcut, never a cage.
+   */
+  const applyAgentProfile = useCallback((profile: AgentProfile) => {
+    const next = reconcileAgainst(
+      { ...(profile.config as unknown as SessionConfig), agent: profile.agent },
+      effectiveCatalog,
+    );
+    setActiveAgent(profile.agent);
+    setPerAgentConfigs((prev) => ({ ...prev, [profile.agent]: next }));
+    setSelectedProfileId(profile.id);
+    if (profile.default_machine_id) setSelectedMachineId(profile.default_machine_id);
+    persistSelection({ agent: profile.agent });
   }, [effectiveCatalog, persistSelection]);
 
   // Select/clear the task chip and persist the choice. Marking restoredTaskIdRef
@@ -731,6 +880,36 @@ function NewSessionContent() {
   }, [api, sortMachinesOnlineFirst]);
 
   useEffect(() => { loadMachines(); }, [loadMachines]);
+
+  // What the picker actually resolved to, as a single value both the telemetry
+  // and the submit guard can read. Kept in a ref as well as derived at render
+  // because `handleSubmit` needs it from inside a callback without taking a
+  // dependency on every liveness tick.
+  const machineState: MachineState =
+    machines.length === 0 ? 'none' : machines.some(isMachineOnline) ? 'online' : 'offline';
+  const machineStateRef = useRef(machineState);
+  machineStateRef.current = machineState;
+
+  // Which shell this is. Runtime (not the compile-time NEXT_PUBLIC flag) because
+  // this page is served by the same bundle on web and desktop.
+  const isDesktop = !!getDesktopConfig();
+
+  // `submitBlockedReason` is derived far below, with the other render values —
+  // this ref lets `handleSubmit` read it without taking a dependency on every
+  // liveness tick.
+  const submitBlockedRef = useRef<SubmitBlockedReason | null>(null);
+
+  // Fires once, after the FIRST machine fetch settles — mount-time would report
+  // `none` for everybody, since the list is empty on the first render. This is
+  // the missing top of the activation funnel: of the people who reach this
+  // screen, how many are looking at a machine they can actually launch on.
+  useEffect(() => {
+    if (isLoadingMachines || !api) return;
+    trackNewSessionViewed(machineState, machines.length);
+  }, [isLoadingMachines, api, machineState, machines.length]);
+
+  // Re-arm the once-per-mount guards so a later visit is measured again.
+  useEffect(() => resetNewSessionGuards, []);
 
   // Realtime machine list over the shared WebSocket: a daemon connecting or
   // heartbeating broadcasts a `machine-update`, which we fold into the list at
@@ -1186,6 +1365,32 @@ function NewSessionContent() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [addPickedFiles]);
 
+  // Ctrl/⌘+V of a screenshot attaches it, under the same caps as the picker.
+  // A clipboard carrying text still pastes text (see `collectComposerPaste`).
+  const handlePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const { files, handled } = collectComposerPaste(event.clipboardData);
+    if (!handled) return;
+    event.preventDefault();
+    addPickedFiles(files);
+  }, [addPickedFiles]);
+
+  // Same document-level fallback as the session composer: a screenshot is taken
+  // in another app, so the window often has nothing focused when the user
+  // pastes. Never takes a paste aimed at a field that accepts typing.
+  useEffect(() => {
+    if (isSubmitting) return;
+    const onDocumentPaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented || pasteTargetIsEditable(event.target)) return;
+      const { files, handled } = collectComposerPaste(event.clipboardData);
+      if (!handled) return;
+      event.preventDefault();
+      addPickedFiles(files);
+      textareaRef.current?.focus({ preventScroll: true });
+    };
+    document.addEventListener('paste', onDocumentPaste);
+    return () => document.removeEventListener('paste', onDocumentPaste);
+  }, [isSubmitting, addPickedFiles]);
+
   // Add desktop-resolved folder paths from a drop as chips (deduped), the same
   // shape the "Add folder" action produces — expanded to @path/ on submit.
   const addDroppedFolderRefs = useCallback((paths: string[]) => {
@@ -1226,7 +1431,30 @@ function NewSessionContent() {
   }, [prompt, slashCommands]);
 
   const handleSubmit = useCallback(async () => {
-    if (!api || !selectedMachineId || !directory.trim() || isSubmitting) return;
+    if (isSubmitting) return;
+    // A blocked press is a real event, not a no-op. The reason is already on
+    // screen, in the banner directly above the composer, so the press adds no new
+    // UI — but the send button stays clickable rather than `disabled` so the
+    // press is measurable at all: a disabled button fires no onClick, which is
+    // why this leak was invisible for seven weeks.
+    const blocked = submitBlockedRef.current;
+    if (blocked) {
+      trackSubmitBlocked(blocked, machineStateRef.current);
+      return;
+    }
+    if (!api || !selectedMachineId || !directory.trim()) return;
+
+    // The picker greys out profiles an out-of-date machine can't carry, but the
+    // machine can be switched *after* one is chosen. Refuse rather than spawn an
+    // agent that silently loses its instructions.
+    if (selectedProfile) {
+      const machineForProfile = machines.find((m) => m.machine_id === selectedMachineId);
+      const blocked = agentProfileBlockedReason(selectedProfile, machineForProfile);
+      if (blocked) {
+        setErrorMessage(blocked);
+        return;
+      }
+    }
 
     // Where the user launched from. Spawning is async (RPC + waitForEntity), and
     // if they navigate away before it finishes we must not yank them to the new
@@ -1284,10 +1512,14 @@ function NewSessionContent() {
           directory: spawn.directory,
           agent: sessionConfig.agent,
           metadata,
+          // The server resolves the profile's instructions from this id — they
+          // are deliberately never sent in `metadata`.
+          ...(selectedProfileId ? { agent_profile_id: selectedProfileId } : {}),
           ...(spawn.worktree ? { worktree: spawn.worktree } : {}),
         },
       );
       if (result.error) {
+        trackSessionCreateFailed('spawn_error');
         setErrorMessage(String(result.error));
         setIsSubmitting(false);
         return;
@@ -1407,19 +1639,24 @@ function NewSessionContent() {
       openCreatedSession(router, startPath, `/dashboard/agents/${newInstanceId}`);
     } catch (error) {
       let message = 'Failed to start session. Please verify the daemon is running.';
+      let reason: SessionCreateFailure = 'unknown';
       if (error instanceof RpcError) {
         if (error.code === 'no_handler') {
           message = 'That machine is offline. Make sure the Vicoa daemon is running.';
+          reason = 'machine_offline';
         } else if (error.code === 'timeout') {
           message = "The daemon didn't respond in time. It may be busy — try again.";
+          reason = 'daemon_timeout';
         } else if (error.code === 'target_disconnected') {
           message = 'The daemon disconnected before responding. Try again in a moment.';
+          reason = 'daemon_disconnected';
         }
       }
+      trackSessionCreateFailed(reason);
       setErrorMessage(message);
       setIsSubmitting(false);
     }
-  }, [api, selectedMachineId, directory, sessionConfig, prompt, selectedTask, subtasks, pendingImages, pendingFolderRefs, forkContext, machines, isSubmitting, worktreeMode, selectedWorktreePath, persistSelection, refreshData, router]);
+  }, [api, selectedMachineId, directory, sessionConfig, prompt, selectedTask, subtasks, pendingImages, pendingFolderRefs, forkContext, machines, isSubmitting, worktreeMode, selectedWorktreePath, selectedProfile, selectedProfileId, persistSelection, refreshData, router]);
 
   // Insert the highlighted command into the prompt (vs. the chat input, which
   // sends immediately — starting a session is heavier, so we let the user
@@ -1466,25 +1703,45 @@ function NewSessionContent() {
     }
   };
 
-  const currentMachine = machines.find((m) => m.machine_id === selectedMachineId) || null;
   const recentDirectories = currentMachine ? getRecentDirectories(currentMachine) : [];
   const isOnline = currentMachine ? isMachineOnline(currentMachine) : false;
-  // Derived empty-machine notice — recomputed every render (incl. the liveness
-  // tick), so it clears the instant a daemon connects and reappears when the
-  // last one drops. Suppressed while a real error banner is showing.
-  const showNoMachinesNotice =
-    !!api && !isLoadingMachines && machines.length === 0 && !errorMessage;
+  /**
+   * The one reason the composer can't submit, in precedence order — recomputed
+   * every render (incl. the liveness tick), so it clears the instant a daemon
+   * connects and returns when the last one drops.
+   *
+   * `null` while the first machine fetch is in flight: showing "no machines" for
+   * the second before the list arrives is what made the screen read as broken on
+   * a slow start. Suppressed while a real error banner is showing, which is
+   * strictly more specific.
+   */
+  const submitBlockedReason: SubmitBlockedReason | null = (() => {
+    if (isLoadingMachines || errorMessage) return null;
+    if (!api) return 'no_api';
+    if (machines.length === 0 || !selectedMachineId) return 'no_machine';
+    if (!isOnline) return 'machine_offline';
+    if (!directory.trim()) return 'no_directory';
+    return null;
+  })();
+  submitBlockedRef.current = submitBlockedReason;
+  const blockedMessage = submitBlockedReason
+    ? SUBMIT_BLOCKED_COPY[submitBlockedReason][isDesktop ? 'desktop' : 'web']
+    : null;
   const canSubmit = !isSubmitting && !!api && !!selectedMachineId && !!directory.trim() && isOnline;
 
-  // Live Claude plan usage (Session/Weekly limits) for the selected machine,
-  // fetched from its daemon when the page opens — so limits are visible before
-  // committing to a session. Claude-only: the daemon reads the Claude Code
-  // OAuth credential; other agents have no on-demand source.
-  const claudeUsageFetch = useMemo(() => {
-    if (sessionConfig.agent !== 'claude' || !selectedMachineId || !isOnline) return undefined;
+  // Live plan usage (rate-limit windows) for the selected machine, fetched from
+  // its daemon when the page opens — so limits are visible before committing
+  // to a session. Only for providers the daemon can read a credential for
+  // (Claude, Codex, Copilot). A daemon that predates `fetch-provider-usage`
+  // still answers the legacy Claude call; for the others it would only cost a
+  // `no_handler` wait, so the indicator stays hidden there.
+  const providerUsageFetch = useMemo(() => {
+    const provider = sessionConfig.agent;
+    if (!providerHasUsageFetcher(provider) || !selectedMachineId || !isOnline) return undefined;
+    if (provider !== 'claude' && !machineSupportsProviderUsage(currentMachine)) return undefined;
     const machineId = selectedMachineId;
-    return () => fetchClaudeUsageWindows(machineId);
-  }, [sessionConfig.agent, selectedMachineId, isOnline]);
+    return () => fetchProviderUsageWindows(machineId, provider);
+  }, [sessionConfig.agent, selectedMachineId, isOnline, currentMachine]);
 
   // Current branch of the selected directory (worktree chip label). Best
   // effort: offline machine / not a repo / RPC error just keeps the fallback.
@@ -1523,7 +1780,27 @@ function NewSessionContent() {
   }, [selectedMachineId, directory, isOnline]);
 
   const modelEntries = activeAgentDef?.models ?? null;
-  const agentEntries = catalog.agents.map((a) => ({ id: a.id, label: agentPickerLabel(a.id, a.label) }));
+  // Catalog agents (static + the machine's cached extras synthesized into
+  // `effectiveCatalog`), plus any the selected machine reports that neither
+  // knows. Those are user-defined providers from that machine's
+  // ~/.vicoa/config.json that have never been probed or run — the catalog
+  // compiled into this build cannot list them, and waiting for a client
+  // release before they are selectable would defeat the whole point of
+  // letting a user add an agent by editing a file.
+  const machineAgentLabels = readAgentLabels(currentMachine);
+  const machineAvailableAgents = readAvailableAgents(currentMachine ?? { metadata: null });
+  const staticAgentIds = new Set(catalog.agents.map((a) => a.id));
+  const agentEntries = [
+    ...effectiveCatalog.agents
+      // A synthesized (cache-sourced) entry is only real while the machine still
+      // advertises the provider; a removed config entry must not linger.
+      .filter((a) => staticAgentIds.has(a.id) || !machineAvailableAgents || a.id in machineAvailableAgents)
+      .map((a) => ({ id: a.id, label: agentPickerLabel(a.id, a.label) })),
+    ...Object.keys(machineAvailableAgents ?? {})
+      .filter((id) => !effectiveCatalog.agents.some((a) => a.id === id))
+      .sort()
+      .map((id) => ({ id, label: machineAgentLabels[id] || customAgentLabel(id) })),
+  ];
 
   // Drag-drop is offered only while a session can actually be started (a
   // machine picked, online, a working directory set) — same gate as the "Add
@@ -1594,30 +1871,10 @@ function NewSessionContent() {
         </div>
       </div>
 
-      {/* Main area — banners at the top, hero centered in the remaining space.
-          All selectors live as chips around the prompt box below. */}
+      {/* Main area: just the hero, centered. Banners live down in the composer,
+          next to the controls they are about. */}
       <div className="flex-1 min-h-0 overflow-y-auto p-6 pb-32 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full dark:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/20">
         <div className="max-w-4xl mx-auto flex h-full flex-col">
-          {(errorMessage || showNoMachinesNotice || (currentMachine && !isOnline)) && (
-            <div className="space-y-4">
-              {errorMessage && (
-                <div className="bg-destructive/10 text-destructive text-sm px-3 py-2 rounded-lg font-mono">
-                  {errorMessage}
-                </div>
-              )}
-              {showNoMachinesNotice && (
-                <div className="bg-muted text-muted-foreground text-sm px-3 py-2 rounded-lg font-mono">
-                  No machines connected. Run{' '}
-                  <code className="text-foreground">vicoa daemon</code> to connect this machine.
-                </div>
-              )}
-              {currentMachine && !isOnline && (
-                <div className="bg-orange-500/10 text-orange-600 dark:text-orange-500 text-sm px-3 py-2 rounded-lg font-mono">
-                  This machine is currently offline. Sessions can only be started on online machines.
-                </div>
-              )}
-            </div>
-          )}
           <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6">
             <Image
               src="/images/vicoa-light.webp"
@@ -1647,6 +1904,30 @@ function NewSessionContent() {
       {/* Chat-style input pinned to bottom */}
       <div className="flex-shrink-0 p-4">
         <div className="max-w-4xl mx-auto">
+          {/* Why the composer can't submit, immediately above the machine chip it
+              is usually about. It used to sit at the top of the scrolling pane,
+              a full viewport away from the control it explains — on a short
+              window the composer looked dead with the reason off-screen. */}
+          {(errorMessage || blockedMessage) && (
+            <div className="mb-3 space-y-2">
+              {errorMessage && (
+                <div className="bg-destructive/10 text-destructive text-sm px-3 py-2 rounded-lg font-mono">
+                  {errorMessage}
+                </div>
+              )}
+              {blockedMessage && (
+                <div
+                  className={
+                    submitBlockedReason === 'machine_offline'
+                      ? 'bg-orange-500/10 text-orange-600 dark:text-orange-500 text-sm px-3 py-2 rounded-lg font-mono'
+                      : 'bg-muted text-muted-foreground text-sm px-3 py-2 rounded-lg font-mono'
+                  }
+                >
+                  {blockedMessage}
+                </div>
+              )}
+            </div>
+          )}
           {/* Setup chips: machine · working dir · worktree (when supported) */}
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
             <DropdownMenu>
@@ -1899,9 +2180,10 @@ function NewSessionContent() {
                   openMentionSignal={mentionSignal}
                   onMentionOpenChange={(open) => { if (open) setShowSlashCommands(false); }}
                   onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
                   placeholder="Type messages, @files, /skills or commands"
                   rows={1}
-                  disabled={isSubmitting || !canSubmit}
+                  disabled={isSubmitting}
                   className="w-full bg-transparent border-0 py-2 px-2 text-sm resize-none focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50 leading-5 placeholder:text-muted-foreground/30"
                   style={{
                     height: '36px',
@@ -1930,26 +2212,73 @@ function NewSessionContent() {
                       title="Agent"
                       contentClassName="w-52"
                       chip={
-                        <>
-                          <AgentTypeIcon agentTypeName={sessionConfig.agent} size={12} whiteForOpenAI />
-                          <span className="min-w-0 truncate">
-                            {agentEntries.find((a) => a.id === sessionConfig.agent)?.label ?? sessionConfig.agent}
-                          </span>
-                        </>
+                        selectedProfile ? (
+                          <>
+                            <PrincipalAvatar
+                              principal={agentPrincipal(selectedProfile)}
+                              size="xs"
+                            />
+                            <span className="min-w-0 truncate">{selectedProfile.name}</span>
+                          </>
+                        ) : (
+                          <>
+                            <AgentTypeIcon agentTypeName={sessionConfig.agent} size={12} whiteForOpenAI />
+                            <span className="min-w-0 truncate">
+                              {agentEntries.find((a) => a.id === sessionConfig.agent)?.label ?? sessionConfig.agent}
+                            </span>
+                          </>
+                        )
                       }
                     >
-                      {(close) =>
-                        agentEntries.map((a) => (
-                          <TickItem
-                            key={a.id}
-                            label={a.label}
-                            leading={<AgentTypeIcon agentTypeName={a.id} size={12} whiteForOpenAI />}
-                            isSelected={a.id === sessionConfig.agent}
-                            isPending={false}
-                            onClick={() => { switchAgent(a.id); close(); }}
-                          />
-                        ))
-                      }
+                      {(close) => (
+                        <>
+                          {/* Saved presets first, then the raw providers. The
+                              section only renders when the user has agents, so
+                              nobody pays for a feature they haven't used. */}
+                          {agentProfiles.length > 0 && (
+                            <>
+                              <div className="px-2 pt-1 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                My agents
+                              </div>
+                              {agentProfiles.map((profile) => {
+                                // Instructions need a daemon new enough to carry
+                                // them; an older one drops the metadata silently,
+                                // so offer the profile as unavailable rather than
+                                // let it spawn a quietly de-fanged agent.
+                                const blocked = agentProfileBlockedReason(profile, currentMachine);
+                                return (
+                                <TickItem
+                                  key={profile.id}
+                                  label={profile.name}
+                                  sublabel={blocked ? 'Update required' : undefined}
+                                  disabled={!!blocked}
+                                  leading={
+                                    <PrincipalAvatar
+                                      principal={agentPrincipal(profile)}
+                                      size="xs"
+                                    />
+                                  }
+                                  isSelected={profile.id === selectedProfileId}
+                                  isPending={false}
+                                  onClick={() => { applyAgentProfile(profile); close(); }}
+                                />
+                                );
+                              })}
+                              <div className="my-1 h-px bg-border" />
+                            </>
+                          )}
+                          {agentEntries.map((a) => (
+                            <TickItem
+                              key={a.id}
+                              label={a.label}
+                              leading={<AgentTypeIcon agentTypeName={a.id} size={12} whiteForOpenAI />}
+                              isSelected={!selectedProfileId && a.id === sessionConfig.agent}
+                              isPending={false}
+                              onClick={() => { switchAgent(a.id); close(); }}
+                            />
+                          ))}
+                        </>
+                      )}
                     </ChipDropdown>
                     {modelEntries && modelEntries.length > 0 && (
                       <ChipDropdown
@@ -2076,16 +2405,16 @@ function NewSessionContent() {
                       </ChipDropdown>
                     )}
                   </div>
-                  {/* Claude account limits (Session/Weekly), fetched from the
-                      selected machine's daemon on page load. Self-hides until
-                      data arrives (and entirely for non-Claude agents or
-                      offline machines). Keyed by machine so switching resets
-                      the fetched snapshot. */}
-                  {claudeUsageFetch && (
+                  {/* Account limits (Session/Weekly, premium requests, …)
+                      fetched from the selected machine's daemon on page load.
+                      Self-hides until data arrives (and entirely for agents
+                      with no fetcher or offline machines). Keyed by machine +
+                      agent so switching either resets the fetched snapshot. */}
+                  {providerUsageFetch && (
                     <ChatUsageIndicator
-                      key={selectedMachineId}
+                      key={`${selectedMachineId}:${sessionConfig.agent}`}
                       usage={null}
-                      fetchLimits={claudeUsageFetch}
+                      fetchLimits={providerUsageFetch}
                       fetchOnMount
                     />
                   )}
@@ -2094,8 +2423,11 @@ function NewSessionContent() {
                   type="button"
                   size="icon"
                   onClick={handleSubmit}
-                  disabled={!canSubmit}
-                  className="shrink-0 rounded-full w-7 h-7 p-0 border-0 focus:outline-none focus:ring-0 focus-visible:ring-0 focus-visible:border-transparent focus-visible:outline-none"
+                  disabled={isSubmitting}
+                  aria-disabled={!canSubmit}
+                  className={`shrink-0 rounded-full w-7 h-7 p-0 border-0 focus:outline-none focus:ring-0 focus-visible:ring-0 focus-visible:border-transparent focus-visible:outline-none ${
+                    canSubmit ? '' : 'opacity-50'
+                  }`}
                 >
                   {isSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
                 </Button>

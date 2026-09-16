@@ -343,6 +343,7 @@ class VicoaClient:
         repo_root: Optional[str] = None,
         git_remote_url: Optional[str] = None,
         task_id: Optional[Union[str, uuid.UUID]] = None,
+        timeout: Optional[int] = None,
     ) -> RegisterAgentInstanceResponse:
         """Register or update an agent instance for terminal relay sessions.
 
@@ -428,14 +429,20 @@ class VicoaClient:
 
         try:
             response = self._make_request(
-                "POST", "/api/v1/agent-instances", json=payload
+                "POST", "/api/v1/agent-instances", json=payload, timeout=timeout
             )
         except APIError as err:
             if err.status_code == 409 and target_instance_id:
+                # Idempotent re-register: the row exists (a retry after the
+                # first attempt succeeded server-side after we gave up). Read
+                # it back and treat it as ours; the server also answers 200
+                # for a same-owner re-register now, so this is the old-server
+                # path.
                 detail = self._make_request(
                     "GET",
                     f"/api/v1/agent-instances/{target_instance_id}",
                     params={"message_limit": 0},
+                    timeout=timeout,
                 )
                 return RegisterAgentInstanceResponse(
                     agent_instance_id=detail["id"],
@@ -652,15 +659,26 @@ class VicoaClient:
         messages = response.get("messages", [])
         return [msg for msg in messages if isinstance(msg, dict)]
 
-    def mark_message_consumed(self, message_id: Union[str, uuid.UUID]) -> None:
+    def mark_message_consumed(
+        self, message_id: Union[str, uuid.UUID], *, steered: bool = False
+    ) -> None:
         """Mark a user message as consumed (picked up by the wrapper's turn).
 
         Sync twin of ``AsyncVicoaClient.mark_message_consumed``. Clears the
         ``message_metadata.queue`` stamp the API applies when a message lands
         on an already-ACTIVE instance, so the UI's queued-messages bar stops
-        showing it once the agent actually starts the turn.
+        showing it once the agent actually starts the turn. ``steered=True``
+        records a mid-turn (Steer) delivery.
         """
-        self._make_request("PATCH", f"/api/v1/messages/{str(message_id)}/consumed")
+        self._make_request(
+            "PATCH",
+            f"/api/v1/messages/{str(message_id)}/consumed",
+            json={"steered": True} if steered else None,
+        )
+
+    def requeue_message(self, message_id: Union[str, uuid.UUID]) -> None:
+        """Sync twin of ``AsyncVicoaClient.requeue_message``."""
+        self._make_request("PATCH", f"/api/v1/messages/{str(message_id)}/requeue")
 
     def update_agent_instance_status(
         self, agent_instance_id: Union[str, uuid.UUID], status: str

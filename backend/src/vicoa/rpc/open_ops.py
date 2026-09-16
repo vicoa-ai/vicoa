@@ -13,6 +13,13 @@ row — that is the extension point.
 
 Detection is per-call and cheap (`shutil.which` + a few `Path.exists`): an app
 installed after the daemon started shows up on the next `list-open-apps`.
+
+**The one exception to "the client names the app": `default`.** "Open with
+default app" hands the file to whatever the OS has registered for its type
+(Excel for `.xlsx`, the PDF viewer for `.pdf`) — the OS resolves the app, we
+don't keep a catalog of viewers. That is also the one entry where the *file*
+decides what runs, so it refuses anything the OS would execute rather than
+open (see `_would_execute`).
 """
 
 from __future__ import annotations
@@ -45,7 +52,9 @@ class _AppSpec:
     `platform` is a `sys.platform` value, or `"*"` for "wherever it's found".
     `target` says what the app wants handed to it: `"path"` opens the file or
     folder itself (editors, Finder), `"dir"` always resolves to a directory
-    (terminals `cd` into it, so a file target means its parent).
+    (terminals `cd` into it, so a file target means its parent), `"file"`
+    accepts files only (the default app — a folder's "default app" is the file
+    manager, which has its own row).
 
     Availability is resolved in order: `special` (a built-in OS launcher, always
     present) → `command` on PATH → `mac_app` bundle. The macOS bundle fallback
@@ -73,6 +82,10 @@ class _AppSpec:
 
 # Adding an app = adding a row here. Order is the order the client renders.
 _CATALOG: tuple[_AppSpec, ...] = (
+    # ── The OS default handler for the file's type ───────────────────────────
+    _AppSpec(
+        "default", "Default app", "default", "*", target="file", special="default"
+    ),
     # ── File managers ────────────────────────────────────────────────────────
     _AppSpec("finder", "Finder", "file-manager", "darwin", special="finder"),
     _AppSpec("explorer", "File Explorer", "file-manager", "win32", special="explorer"),
@@ -81,8 +94,7 @@ _CATALOG: tuple[_AppSpec, ...] = (
         "File Manager",
         "file-manager",
         "linux",
-        target="dir",
-        command="xdg-open",
+        special="xdg-file-manager",
     ),
     # ── Editors ──────────────────────────────────────────────────────────────
     _AppSpec(
@@ -203,6 +215,89 @@ _CATALOG: tuple[_AppSpec, ...] = (
 #: An argv builder: `(absolute path, whether it is a directory) -> argv`.
 _Launcher = Callable[[str, bool], list[str]]
 
+# Reveal on Linux: ask whichever file manager implements the freedesktop
+# `FileManager1` interface (Nautilus, Dolphin, Thunar, Nemo, …) to select the
+# file. `--print-reply` makes dbus-send wait for the answer, so the `||` falls
+# back to plain xdg-open of the folder when nothing on the bus implements it.
+# The URI and the folder ride in as positional parameters — the script text
+# never has a file name spliced into it.
+_SHOW_ITEMS_SH = (
+    "dbus-send --session --print-reply --dest=org.freedesktop.FileManager1 "
+    "/org/freedesktop/FileManager1 org.freedesktop.FileManager1.ShowItems "
+    '"array:string:$1" string: >/dev/null 2>&1 || exec xdg-open "$2"'
+)
+
+# What the OS would *run* on open rather than display: binaries, installers,
+# shortcuts, and scripts whose default handler is an interpreter (WSH for
+# `.js`/`.vbs`, the Python launcher for `.py`, Terminal for `.command`). Lower
+# case, with the dot. One flat list rather than per platform: a script is a
+# script wherever it is, the editors in the same menu are the tool for those,
+# and a rule that doesn't depend on the host is one the user can predict.
+_EXECUTABLE_EXTS: frozenset[str] = frozenset(
+    # Windows
+    ".exe .com .scr .pif .msi .msp .bat .cmd .vbs .vbe .js .jse .wsf .wsh .ps1 "
+    ".psm1 .hta .cpl .msc .lnk .reg .inf .application .appref-ms .gadget "
+    # macOS
+    ".app .command .tool .pkg .mpkg .dmg "
+    # Linux
+    ".desktop .run .appimage "
+    # Everywhere
+    ".jar .sh .bash .zsh .py .pyw".split()
+)
+
+
+def _would_execute(path: Path) -> bool:
+    """Whether handing `path` to the OS default handler would run it.
+
+    The client that asks may be a phone, or (eventually) a collaborator; the
+    daemon runs as the account that owns the files. "Open with default app"
+    on `setup.exe` must therefore be a refusal, not a launch. Two checks: the
+    extension list above, and on POSIX the executable bit — macOS `open` runs
+    a `+x` file with no known type in Terminal, and Launch Services falls back
+    to the mode bit whenever it doesn't recognise the extension, so the safe
+    rule is "executable means executable". Reveal-in-Finder is unaffected and
+    is the way to open one of these deliberately.
+    """
+    if path.suffix.lower() in _EXECUTABLE_EXTS:
+        return True
+    # `os.access(X_OK)` is meaningless on Windows (it only checks existence).
+    return sys.platform != "win32" and os.access(path, os.X_OK)
+
+
+def _default_app_launcher() -> _Launcher | None:
+    """`open` / ShellExecute / `xdg-open`: the OS picks the app from the type."""
+    if sys.platform == "darwin":
+        return lambda path, _is_dir: ["open", path]
+    if sys.platform == "win32":
+        # `explorer.exe <file>` performs the shell's default verb on it, the
+        # same as a double-click — and, unlike `os.startfile`, it keeps to the
+        # fixed-argv model here, and a type with no association gets Windows'
+        # own "How do you want to open this file?" picker instead of an error.
+        exe = shutil.which("explorer") or "explorer"
+        return lambda path, _is_dir: [exe, path]
+    xdg_open = shutil.which("xdg-open")
+    if xdg_open:
+        return lambda path, _is_dir: [xdg_open, path]
+    return None
+
+
+def _xdg_file_manager_launcher() -> _Launcher | None:
+    """Linux file manager: select the file over D-Bus, else open its folder."""
+    xdg_open = shutil.which("xdg-open")
+    if not xdg_open:
+        return None
+    dbus_send = shutil.which("dbus-send")
+
+    def launch(path: str, is_dir: bool) -> list[str]:
+        if is_dir:
+            return [xdg_open, path]
+        folder = str(Path(path).parent)
+        if not dbus_send:
+            return [xdg_open, folder]
+        return ["sh", "-c", _SHOW_ITEMS_SH, "vicoa-reveal", Path(path).as_uri(), folder]
+
+    return launch
+
 
 def _mac_app_installed(name: str) -> bool:
     return any(
@@ -216,12 +311,16 @@ def _resolve_launcher(spec: _AppSpec) -> _Launcher | None:
     if spec.platform != "*" and spec.platform != sys.platform:
         return None
 
+    if spec.special == "default":
+        return _default_app_launcher()
     if spec.special == "finder":
         # Reveal semantics for a file (select it in its folder), open for a dir.
         return lambda path, is_dir: ["open", path] if is_dir else ["open", "-R", path]
     if spec.special == "explorer":
         exe = shutil.which("explorer") or "explorer"
         return lambda path, is_dir: [exe, path] if is_dir else [exe, f"/select,{path}"]
+    if spec.special == "xdg-file-manager":
+        return _xdg_file_manager_launcher()
 
     if spec.command:
         executable = shutil.which(spec.command)
@@ -288,8 +387,9 @@ def open_path(cwd: str, app: str, path: str = "") -> dict[str, Any]:
 
     `app` is an id from `list_open_apps`; an unknown or uninstalled one is
     refused rather than shelled out. Errors mirror the other file RPCs
-    (`path_not_found` / `outside_project`) plus `unknown_app`, `app_not_found`
-    and `launch_failed`.
+    (`path_not_found` / `outside_project` / `not_a_file`) plus `unknown_app`,
+    `app_not_found`, `launch_failed`, and `not_openable` for a file the
+    default app would execute instead of open.
     """
     project_root = Path(os.path.expanduser(cwd))
     if not project_root.is_dir():
@@ -313,6 +413,10 @@ def open_path(cwd: str, app: str, path: str = "") -> dict[str, Any]:
         # Terminals cd into the target; a file means "its folder".
         target = target.parent
         is_dir = True
+    if spec.target == "file" and is_dir:
+        return {"error": "not_a_file"}
+    if spec.special == "default" and _would_execute(target):
+        return {"error": "not_openable"}
 
     try:
         _spawn(launcher(str(target), is_dir))

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MessageResponse } from '@/lib/backend-api';
-import { groupSubagents, parseSubagentPayload } from './subagent-grouping';
+import { groupSubagents, parseSubagentPayload, subagentGroupStatus } from './subagent-grouping';
 
 const base: MessageResponse = {
   id: 'x',
@@ -20,7 +20,13 @@ const plain = (id: string, content = `content-${id}`): MessageResponse => ({
 const subagentMsg = (
   id: string,
   toolUseId: string,
-  opts: { subagentType?: string; description?: string; content?: string } = {},
+  opts: {
+    subagentType?: string;
+    description?: string;
+    content?: string;
+    role?: string;
+    status?: string;
+  } = {},
 ): MessageResponse => ({
   ...base,
   id,
@@ -30,7 +36,8 @@ const subagentMsg = (
       tool_use_id: toolUseId,
       subagent_type: opts.subagentType ?? 'explore',
       description: opts.description ?? 'Map the codebase',
-      role: 'step',
+      role: opts.role ?? 'step',
+      ...(opts.status ? { status: opts.status } : {}),
     },
   },
 });
@@ -42,6 +49,8 @@ describe('parseSubagentPayload', () => {
       toolUseId: 'task-1',
       subagentType: 'explore',
       description: 'Find X',
+      role: 'step',
+      status: null,
     });
   });
 
@@ -63,7 +72,41 @@ describe('parseSubagentPayload', () => {
       toolUseId: 'task-1',
       subagentType: 'agent',
       description: '',
+      role: 'step',
+      status: null,
     });
+  });
+
+  it('reads the settled report\'s role and status', () => {
+    const msg = subagentMsg('m1', 'task-1', { role: 'result', status: 'failed' });
+    expect(parseSubagentPayload(msg)).toMatchObject({ role: 'result', status: 'failed' });
+  });
+});
+
+describe('subagentGroupStatus', () => {
+  it('reads the settled report\'s status', () => {
+    const messages = [
+      subagentMsg('s1', 'task-1'),
+      subagentMsg('r1', 'task-1', { role: 'result', status: 'failed' }),
+    ];
+    expect(subagentGroupStatus(messages)).toBe('failed');
+  });
+
+  it('is null while the sub-agent is still running', () => {
+    expect(subagentGroupStatus([subagentMsg('s1', 'task-1')])).toBeNull();
+  });
+
+  it('takes the last status when a run somehow reports twice', () => {
+    const messages = [
+      subagentMsg('r1', 'task-1', { role: 'result', status: 'completed' }),
+      subagentMsg('s1', 'task-1'),
+      subagentMsg('r2', 'task-1', { role: 'result', status: 'stopped' }),
+    ];
+    expect(subagentGroupStatus(messages)).toBe('stopped');
+  });
+
+  it('ignores untagged messages', () => {
+    expect(subagentGroupStatus([plain('m1')])).toBeNull();
   });
 });
 

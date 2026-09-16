@@ -171,6 +171,38 @@ def test_list_worktrees_flags_unmanaged_worktrees(
     assert match["managed"] is False
 
 
+def test_list_worktrees_reports_display_path_in_session_form(
+    home: Path, committed_repo: Path
+):
+    from vicoa.rpc.worktree_ops import create_worktree, list_worktrees
+
+    created = create_worktree(str(committed_repo))
+
+    [entry] = list_worktrees(str(committed_repo))["worktrees"]
+
+    # `display_path` collapses HOME to `~` exactly like a session's registered
+    # `project`, so the app can match a worktree to its sessions by equality.
+    assert entry["display_path"].startswith("~/vicoa/workspaces/")
+    assert entry["display_path"] == "~" + created["path"][len(str(home)) :]
+    assert entry["prunable"] is False
+
+
+def test_list_worktrees_flags_a_checkout_whose_directory_is_gone(
+    home: Path, committed_repo: Path
+):
+    import shutil
+
+    from vicoa.rpc.worktree_ops import create_worktree, list_worktrees
+
+    created = create_worktree(str(committed_repo))
+    shutil.rmtree(created["path"])  # removed behind git's back
+
+    [entry] = list_worktrees(str(committed_repo))["worktrees"]
+
+    assert entry["branch"] == created["branch"]
+    assert entry["prunable"] is True
+
+
 def test_list_worktrees_on_non_repo_returns_error(home: Path, tmp_path: Path):
     from vicoa.rpc.worktree_ops import list_worktrees
 
@@ -278,18 +310,79 @@ def test_remove_worktree_allows_unmanaged_worktree(
     assert branch_check.returncode == 0
 
 
-def test_remove_worktree_refuses_managed_path_that_is_not_a_worktree(
+def test_remove_worktree_refuses_existing_dir_that_is_not_a_worktree(
     home: Path, committed_repo: Path
 ):
     from vicoa.rpc.worktree_ops import remove_worktree
     from vicoa.rpc.worktree_paths import worktree_dir_for
 
-    # A path under the workspaces root for this repo, but no such worktree.
+    # A real directory under the workspaces root, but never a worktree of the
+    # repo — confinement by identity must refuse to touch it.
+    impostor = worktree_dir_for(committed_repo, "impostor")
+    impostor.mkdir(parents=True)
+    (impostor / "keep.txt").write_text("mine\n")
+
+    assert remove_worktree(str(committed_repo), str(impostor), force=True) == {
+        "error": "not_a_worktree"
+    }
+    assert (impostor / "keep.txt").exists()
+
+
+def test_remove_worktree_is_a_noop_when_nothing_is_there(
+    home: Path, committed_repo: Path
+):
+    from vicoa.rpc.worktree_ops import remove_worktree
+    from vicoa.rpc.worktree_paths import worktree_dir_for
+
+    # Neither on disk nor registered: the app may be finishing bookkeeping for
+    # a worktree that was already removed. Idempotent, distinguishable.
     ghost = worktree_dir_for(committed_repo, "ghost")
 
     assert remove_worktree(str(committed_repo), str(ghost), force=True) == {
-        "error": "not_a_worktree"
+        "ok": True,
+        "already_removed": True,
     }
+
+
+def test_remove_worktree_removes_a_stale_registration_from_the_main_checkout(
+    home: Path, committed_repo: Path
+):
+    import shutil
+
+    from vicoa.rpc.worktree_ops import create_worktree, list_worktrees, remove_worktree
+
+    created = create_worktree(str(committed_repo))
+    path = Path(created["path"])
+    shutil.rmtree(path)  # the directory is gone; git still lists it as prunable
+    assert list_worktrees(str(committed_repo))["worktrees"]
+
+    # From the worktree's own (now missing) path nothing can run — this is the
+    # `not_a_repo` the app used to surface; the main checkout must be the cwd.
+    assert remove_worktree(created["path"], created["path"], force=True) == {
+        "error": "not_a_repo"
+    }
+    result = remove_worktree(str(committed_repo), created["path"], force=True)
+
+    assert result == {"ok": True}
+    assert list_worktrees(str(committed_repo))["worktrees"] == []
+    assert not path.parent.exists()  # the <branch> middle dir is swept too
+    assert _branch_exists(committed_repo, created["branch"])
+
+
+def test_remove_worktree_prunes_branch_dir_despite_finder_ds_store(
+    home: Path, committed_repo: Path
+):
+    from vicoa.rpc.worktree_ops import create_worktree, remove_worktree
+
+    created = create_worktree(str(committed_repo))
+    path = Path(created["path"])
+    middle = path.parent
+    (middle / ".DS_Store").write_bytes(b"\0")  # Finder browsed the folder
+
+    assert remove_worktree(str(committed_repo), created["path"], force=False) == {
+        "ok": True
+    }
+    assert not middle.exists()
 
 
 def test_remove_worktree_dirty_needs_force(home: Path, committed_repo: Path):

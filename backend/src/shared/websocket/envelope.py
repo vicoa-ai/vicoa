@@ -83,9 +83,17 @@ def build_message_update(msg: Message) -> dict:
     }
 
 
-def _instance_row(inst: AgentInstance, t: str) -> dict:
-    """Complete agent_instances row as JSON primitives (§2.4 mutable body)."""
-    return {
+def _instance_row(
+    inst: AgentInstance, t: str, *, live_state: str | None = None
+) -> dict:
+    """Complete agent_instances row as JSON primitives (§2.4 mutable body).
+
+    `live_state` is set only by the WebSocket server, which knows whether the
+    agent's socket is present (servers/presence.py); the `backend` process
+    has no such registry and leaves it absent, and clients keep deriving
+    from the heartbeat timestamps in either case.
+    """
+    row = {
         "t": t,
         "id": str(inst.id),
         # Wire key stays `user_agent_id` even though the column is now
@@ -112,6 +120,9 @@ def _instance_row(inst: AgentInstance, t: str) -> dict:
         "updated_at": _iso(inst.updated_at),
         "pinned_at": _iso(inst.pinned_at),
     }
+    if live_state is not None:
+        row["live_state"] = live_state
+    return row
 
 
 def build_instance_created_update(inst: AgentInstance) -> dict:
@@ -124,13 +135,15 @@ def build_instance_created_update(inst: AgentInstance) -> dict:
     }
 
 
-def build_instance_update(inst: AgentInstance) -> dict:
+def build_instance_update(
+    inst: AgentInstance, *, live_state: str | None = None
+) -> dict:
     """`update` payload for an agent instance status/metadata change."""
     return {
         "entity": "agent_instances",
         "entity_id": str(inst.id),
         "event_id": f"{inst.id}:update",
-        "body": _instance_row(inst, "instance-update"),
+        "body": _instance_row(inst, "instance-update", live_state=live_state),
     }
 
 

@@ -32,6 +32,8 @@ def _prime(runner) -> None:
     runner.thinking_effort = "low"
     runner.model = "claude-sonnet-4-6"
     runner.permission_mode = "acceptEdits"
+    # No agent profile: the builder layers this onto the claude_code preset.
+    runner.system_prompt = None
     runner.allowed_tools = None
     runner.disallowed_tools = None
     runner.cwd = "/tmp"

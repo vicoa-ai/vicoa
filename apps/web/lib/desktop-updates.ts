@@ -1,11 +1,12 @@
 /**
  * Desktop auto-update — renderer side of the preload bridge (src/updater.ts).
  *
- * The Electron main process owns electron-updater; this module mirrors its
+ * The Electron main process owns electron-updater and downloads a newer
+ * version on its own as soon as a check finds one; this module mirrors its
  * status over `window.vicoaDesktopUpdates` and exposes:
  *   - useDesktopUpdateStatus()  — live status via useSyncExternalStore
- *   - check / download / quitAndInstall / getAppVersion action wrappers
- *   - bannerViewForStatus()     — pure derivation of what the banner shows
+ *   - check / quitAndInstall / getAppVersion action wrappers
+ *   - bannerViewForStatus()     — pure derivation of what the callout shows
  *
  * Null bridge on plain web / SSR — every consumer no-ops there.
  */
@@ -100,14 +101,6 @@ export async function checkForUpdates(): Promise<UpdateStatus | null> {
   }
 }
 
-export async function downloadUpdate(): Promise<void> {
-  try {
-    await getDesktopUpdatesBridge()?.download();
-  } catch {
-    // errors surface as a status push; the caller shows the banner/error text
-  }
-}
-
 export async function quitAndInstallUpdate(): Promise<void> {
   await getDesktopUpdatesBridge()?.quitAndInstall();
 }
@@ -127,20 +120,20 @@ export async function getAppVersion(): Promise<string | null> {
 // ---------------------------------------------------------------------------
 
 export type UpdateBannerView =
-  | { kind: 'available'; version: string }
-  | { kind: 'downloading'; percent: number }
   | { kind: 'downloaded'; version: string }
   | { kind: 'error'; message: string };
 
 /**
- * What the top-of-window banner should show, or null when it stays hidden.
+ * What the sidebar callout should show, or null when it stays hidden.
  *
- * - `checking` / `not-available` / `idle` never surface a banner — that
- *   feedback lives in Settings; the banner is for actionable states only.
- * - `available` / `downloaded` hide once the user dismisses that exact version
- *   (a newer version re-shows).
+ * - `idle` / `checking` / `not-available` never surface — that feedback lives
+ *   in Settings; the callout is for actionable states only.
+ * - `available` / `downloading` stay hidden too: main auto-downloads, so there
+ *   is nothing to click until the update is ready (progress is in Settings).
+ * - `downloaded` hides once the user dismisses that exact version (a newer
+ *   version re-shows).
  * - `error` only shows when the user kicked off the action themselves
- *   (`userActed`), so a failed background check never nags.
+ *   (`userActed`), so a failed background check/download never nags.
  */
 export function bannerViewForStatus(
   status: UpdateStatus,
@@ -148,12 +141,6 @@ export function bannerViewForStatus(
   userActed: boolean,
 ): UpdateBannerView | null {
   switch (status.state) {
-    case 'available':
-      return status.version === dismissedVersion
-        ? null
-        : { kind: 'available', version: status.version };
-    case 'downloading':
-      return { kind: 'downloading', percent: status.percent };
     case 'downloaded':
       return status.version === dismissedVersion
         ? null

@@ -61,6 +61,19 @@ class TestGenericAgentCommandBuild:
         with pytest.raises(ValueError):
             _build(daemon, "cursor", permission_mode="not-a-mode")
 
+    @pytest.mark.parametrize("agent", ["copilot", "kimi", "hermes"])
+    def test_mode_passes_through_for_agents_without_a_static_enum(
+        self, daemon: MachineDaemon, agent: str
+    ):
+        """No catalog `permission_modes` -> no daemon-side enum to validate
+        against; the id (from the machine's cached `modes`) is forwarded and
+        the wrapper checks it against the live session's availableModes. It
+        used to be dropped silently here."""
+        cmd = _build(daemon, agent, permission_mode="plan")
+        assert _pair_following(cmd, "--permission-mode") == "plan"
+        # Blank still means "no flag".
+        assert "--permission-mode" not in _build(daemon, agent, permission_mode="  ")
+
     def test_prompt_flows_through(self, daemon: MachineDaemon):
         cmd = _build(daemon, "kimi", prompt="fix the bug")
         assert _pair_following(cmd, "--prompt") == "fix the bug"
@@ -167,11 +180,37 @@ class TestSpawnRequestModelValidation:
         req = SpawnSessionRequest(directory="/tmp/x", agent=agent)
         assert req.agent == agent
 
-    def test_unknown_agent_rejected(self):
+    def test_unknown_but_well_formed_agent_is_accepted(self):
+        """A user-defined provider lives in that user's ~/.vicoa/config.json on
+        their own machine, so the backend cannot hold a list of them. Rejecting
+        an id it does not recognise would 422 a custom agent before the machine
+        that owns it ever saw the request; the daemon is the authority."""
+        from servers.api.models import SpawnSessionRequest
+
+        assert (
+            SpawnSessionRequest(directory="/tmp/x", agent="windsurf").agent
+            == "windsurf"
+        )
+
+    @pytest.mark.parametrize(
+        "agent",
+        [
+            "",
+            "   ",
+            "Bad Id",
+            "../../etc/passwd",
+            "9lives",
+            "under_score",
+            "trailing/slash",
+        ],
+    )
+    def test_malformed_agent_id_rejected(self, agent):
+        """Shape is still checked: the id reaches log directory names and spawn
+        argv, so anything that is not a lowercase slug is refused."""
         from servers.api.models import SpawnSessionRequest
 
         with pytest.raises(ValueError):
-            SpawnSessionRequest(directory="/tmp/x", agent="windsurf")
+            SpawnSessionRequest(directory="/tmp/x", agent=agent)
 
     def test_legacy_claude_code_alias(self):
         from servers.api.models import SpawnSessionRequest

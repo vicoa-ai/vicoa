@@ -33,8 +33,55 @@ export interface UserProfile {
   /** Served by us (/api/v1/users/{id}/avatar); render via `<PrincipalAvatar>`. */
   avatar_image_uri?: string | null;
   avatar_source?: string | null;
+  /** Picked emoji, shown when there is no image (see lib/principals.ts). */
+  avatar_emoji?: string | null;
   /** Cache-buster for the stable avatar URL (see lib/principals.ts). */
   updated_at?: string | null;
+}
+
+/**
+ * A saved agent preset (collaboration P1): provider + model + config +
+ * instructions, with a name and an avatar. `config` is the verbatim
+ * `SessionConfig` shape, so it can be handed straight to `reconcileAgainst`.
+ */
+export interface AgentProfile {
+  id: string;
+  name: string;
+  description: string | null;
+  avatar_image_uri: string | null;
+  avatar_source: string | null;
+  color: string | null;
+  emoji: string | null;
+  agent: string;
+  config: Record<string, unknown>;
+  system_prompt: string | null;
+  default_machine_id: string | null;
+  default_project_id: string | null;
+  position: number;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+  /** Sessions this agent has started. Null from the agent-facing CLI mirror,
+   *  which does not compute it. */
+  session_count?: number | null;
+  /** When any of those sessions was last active — `max(updated_at)`, not the
+   *  newest start time, so a long session still being worked in reads as
+   *  recent. Null when the agent has never run (or from the CLI mirror). */
+  last_active_at?: string | null;
+}
+
+export interface AgentProfileInput {
+  name?: string;
+  agent?: string;
+  description?: string | null;
+  color?: string | null;
+  emoji?: string | null;
+  config?: Record<string, unknown>;
+  system_prompt?: string | null;
+  default_machine_id?: string | null;
+  default_project_id?: string | null;
+  position?: number;
+  is_archived?: boolean;
 }
 
 /** The avatar endpoints' payload. Deliberately carries no email — an avatar is
@@ -44,6 +91,7 @@ export interface UserAvatar {
   display_name: string | null;
   avatar_image_uri: string | null;
   avatar_source: string | null;
+  avatar_emoji: string | null;
   updated_at: string;
 }
 
@@ -78,6 +126,13 @@ export interface AgentInstanceResponse {
   project_id?: string | null;
   home_dir?: string | null;
   pinned_at?: string | null;
+  /**
+   * Which agent profile started this session (collab P1) — provenance only, so
+   * the row can show that agent's name and avatar rather than a generic
+   * provider mark. Resolved client-side against the profile list the picker
+   * already holds; see lib/use-agent-profiles.ts.
+   */
+  agent_profile_id?: string | null;
   /** Host this session runs on. Null for legacy TUI-registered sessions. */
   machine_id?: string | null;
   last_heartbeat_at?: string | null;
@@ -88,6 +143,8 @@ export interface AgentInstanceResponse {
    * under their project rather than in a synthetic "main" bucket.
    */
   worktree_name?: string | null;
+  /** Registration-time stamps (`source`, `repo_root`, usage…); see the type. */
+  instance_metadata?: SessionInstanceMetadata | null;
   /**
    * Server-derived liveness at fetch time. Prefer `useSessionLiveness`, which
    * recomputes this on a timer — see lib/session-liveness.ts for why a
@@ -165,6 +222,12 @@ export interface SessionUsageWindow {
   resets_at?: string | null;
 }
 
+/** GET /machines/{id}/agent-models — see `getMachineAgentModels`. */
+export interface MachineAgentModelsCache {
+  models: Record<string, { id: string; label: string }[]>;
+  modes: Record<string, { id: string; label: string }[]>;
+}
+
 /**
  * Live usage stamped by the headless runner onto `instance_metadata.usage`
  * (Claude + Codex). `context` is the per-conversation token fill; `limits` is
@@ -191,6 +254,14 @@ export interface SessionInstanceMetadata {
    * for the interactive CLI wrapper. Absent on pre-stamping sessions.
    */
   source?: string | null;
+  /**
+   * The repo's MAIN checkout (home-collapsed), stamped at registration. For a
+   * session in a linked worktree this differs from its own `project` — it is
+   * where worktree-level git RPCs must run, since the worktree folder itself
+   * may be gone by the time the sidebar acts on it. Absent on non-git dirs and
+   * pre-stamping sessions.
+   */
+  repo_root?: string | null;
   [key: string]: unknown;
 }
 
@@ -209,6 +280,15 @@ export interface AgentInstanceDetail {
   home_dir?: string | null;
   pinned_at?: string | null;
   session_config?: Record<string, unknown> | null;
+  /**
+   * Which agent profile started this session (collab P1). PROVENANCE ONLY —
+   * `session_config` is what it's actually running, and the two legitimately
+   * diverge the moment the user switches model mid-session. Resolve the name
+   * and avatar from the profile list the picker already holds.
+   */
+  agent_profile_id?: string | null;
+  /** See AgentInstanceResponse.project_id. */
+  project_id?: string | null;
   instance_metadata?: SessionInstanceMetadata | null;
   machine_id?: string | null;
   last_heartbeat_at?: string | null;
@@ -358,6 +438,13 @@ export interface ProjectDirectory {
 export interface ProjectResponse {
   id: string;
   name: string;
+  /**
+   * Task-identifier prefix — "VIC" makes this project's tasks read "VIC-42".
+   * Auto-derived on the project's first task, so it is null for a project that
+   * has never held one. Editable in project settings; unique within the owner,
+   * never globally.
+   */
+  key: string | null;
   git_remote_url: string | null;
   color: string | null;
   icon: string | null;
@@ -386,20 +473,86 @@ export interface TaskLabelResponse {
   color: string;
 }
 
+/** A user or an agent, in the one shape `<PrincipalAvatar>` renders. */
+export interface PrincipalResponse {
+  type: 'user' | 'agent' | 'system';
+  id: string | null;
+  name: string | null;
+  avatar_image_uri: string | null;
+  emoji: string | null;
+  updated_at: string | null;
+}
+
 export interface TaskResponse {
   id: string;
   project_id: string;
+  /** Per-project sequential number; null for a task that predates the backfill. */
+  number: number | null;
+  /** "VIC-42" — null when the project has no key or the task has no number. */
+  identifier: string | null;
   title: string;
   description: string | null;
   status: TaskStatus;
   priority: TaskPriority;
   position: number;
   parent_task_id: string | null;
+  /** Denormalized so a sub-task can say "Part of: <title>" without a refetch. */
+  parent_title: string | null;
+  assignee_type: 'user' | 'agent' | null;
+  assignee_id: string | null;
+  assignee: PrincipalResponse | null;
   labels: TaskLabelResponse[];
   start_date: string | null;
   due_date: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface TaskReactionSummary {
+  emoji: string;
+  count: number;
+  /** Whether the signed-in user is one of them — drives the pill's filled state. */
+  reacted: boolean;
+  /**
+   * Who reacted, oldest first, capped server-side. `count` is the true total,
+   * so "and N others" is the difference.
+   */
+  reactors: PrincipalResponse[];
+}
+
+export interface TaskCommentResponse {
+  id: string;
+  task_id: string;
+  /**
+   * The root this comment answers, or null when it is one. Threads are one
+   * level deep, so this always names a root — never another reply. The list
+   * arrives in thread order: each root immediately followed by its replies.
+   */
+  parent_comment_id: string | null;
+  author: PrincipalResponse;
+  /** null once soft-deleted; render a tombstone, not an empty comment. */
+  body: string | null;
+  kind: 'comment' | 'system';
+  reactions: TaskReactionSummary[];
+  created_at: string;
+  edited_at: string | null;
+  deleted_at: string | null;
+}
+
+export interface TaskActivityResponse {
+  id: string;
+  /** null when the change had no request context (a background sweep). */
+  actor: PrincipalResponse | null;
+  action: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface TaskTimelineResponse {
+  comments: TaskCommentResponse[];
+  activity: TaskActivityResponse[];
+  /** Reactions on the task itself, not on any comment. */
+  reactions: TaskReactionSummary[];
 }
 
 export interface CreateProjectRequest {
@@ -442,6 +595,9 @@ export interface UpdateTaskRequest {
   label_ids?: string[];
   start_date?: string | null;
   due_date?: string | null;
+  /** The pair moves together — the backend rejects one without the other. */
+  assignee_type?: 'user' | 'agent' | null;
+  assignee_id?: string | null;
 }
 
 export interface CreateTaskLabelRequest {
@@ -503,6 +659,9 @@ export interface AutomationResponse {
   worktree: AutomationWorktree | null;
   /** SessionConfig shape (agent / model / effort / permission-mode). */
   session_config: Record<string, unknown>;
+  /** Live reference to a saved agent. When set, the scheduler resolves it at
+   *  dispatch and `session_config` above is only the fallback snapshot. */
+  agent_profile_id?: string | null;
   schedule_kind: AutomationScheduleKind;
   frequency: AutomationFrequency | null;
   timezone: string;
@@ -576,6 +735,7 @@ export interface CreateAutomationRequest {
   directory: string;
   worktree?: AutomationWorktree | null;
   session_config: Record<string, unknown>;
+  agent_profile_id?: string | null;
   schedule_kind: AutomationScheduleKind;
   /** One-time: absolute ISO instant (UTC-anchored). */
   run_at?: string | null;
@@ -592,6 +752,7 @@ export interface UpdateAutomationRequest {
   directory?: string;
   worktree?: AutomationWorktree | null;
   session_config?: Record<string, unknown>;
+  agent_profile_id?: string | null;
   schedule_kind?: AutomationScheduleKind;
   run_at?: string | null;
   frequency?: AutomationFrequency | null;
@@ -773,6 +934,82 @@ class BackendAPI {
     return this.request<UserAvatar>('/api/v1/me/avatar', { method: 'DELETE' });
   }
 
+  /** Pick (or clear, with `null`) the emoji shown when there is no image. */
+  async updateMyAvatarEmoji(emoji: string | null): Promise<UserAvatar> {
+    return this.request<UserAvatar>('/api/v1/me/avatar-emoji', {
+      method: 'PUT',
+      body: JSON.stringify({ emoji }),
+    });
+  }
+
+  // Agent profiles — the "Agents" the UI shows (collaboration P1). Not to be
+  // confused with agent *types* (`/api/v1/user-agents`), which mean "claude
+  // code" / "codex" and are auto-created per session.
+
+  async listAgentProfiles(includeArchived = false): Promise<AgentProfile[]> {
+    const query = includeArchived ? '?include_archived=true' : '';
+    return this.request<AgentProfile[]>(`/api/v1/agents${query}`);
+  }
+
+  async createAgentProfile(input: AgentProfileInput): Promise<AgentProfile> {
+    return this.request<AgentProfile>('/api/v1/agents', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  }
+
+  async updateAgentProfile(id: string, input: AgentProfileInput): Promise<AgentProfile> {
+    return this.request<AgentProfile>(`/api/v1/agents/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+  }
+
+  /** Hard delete. Returns how many automations referenced it — they keep running
+   *  off their fallback snapshot, so this is a warning, never a blocker. */
+  async deleteAgentProfile(id: string): Promise<{ id: string; automations_affected: number }> {
+    return this.request<{ id: string; automations_affected: number }>(
+      `/api/v1/agents/${id}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async uploadAgentProfileAvatar(id: string, file: File | Blob): Promise<AgentProfile> {
+    const headers = await this.getHeaders();
+    // Let the browser set the multipart boundary; a fixed JSON type breaks it.
+    delete headers['Content-Type'];
+    const form = new FormData();
+    form.append('file', file);
+    const response = await fetch(`${this.config.baseUrl}/api/v1/agents/${id}/avatar`, {
+      method: 'PUT',
+      headers,
+      body: form,
+    });
+    if (!response.ok) {
+      let message = `Backend API error: ${response.status} ${response.statusText}`;
+      try {
+        const body = await response.json();
+        if (typeof body?.detail === 'string' && body.detail.trim()) message = body.detail;
+      } catch {
+        // fall back to the generic HTTP error
+      }
+      throw Object.assign(new Error(message), { status: response.status });
+    }
+    return response.json();
+  }
+
+  async deleteAgentProfileAvatar(id: string): Promise<AgentProfile> {
+    return this.request<AgentProfile>(`/api/v1/agents/${id}/avatar`, { method: 'DELETE' });
+  }
+
+  /** This agent's run history: the sessions it started, newest first. Stamped at
+   *  spawn, so editing the agent never rewrites what already ran. */
+  async listAgentProfileSessions(id: string, limit = 50): Promise<AgentInstanceResponse[]> {
+    return this.request<AgentInstanceResponse[]>(
+      `/api/v1/agents/${id}/sessions?limit=${limit}`,
+    );
+  }
+
   // API Key management
   async listApiKeys(): Promise<APIKeyResponse[]> {
     return this.request<APIKeyResponse[]>('/api/v1/auth/api-keys');
@@ -913,6 +1150,20 @@ class BackendAPI {
     );
   }
 
+  /**
+   * Ask for a still-queued user message to be steered into the agent's
+   * running turn instead of waiting for it to end. Only flips the row to
+   * `queue.status = 'steer'`; the daemon delivers it and settles the row to
+   * `consumed` (with `steered: true`) or back to `queued`. Resolves to
+   * `{ steered: false }` if the message was no longer plainly queued.
+   */
+  async steerQueuedMessage(instanceId: string, messageId: string): Promise<{ steered: boolean }> {
+    return this.request<{ steered: boolean }>(
+      `/api/v1/agent-instances/${instanceId}/messages/${messageId}/steer`,
+      { method: 'POST' },
+    );
+  }
+
   // Stream messages (for real-time updates). Legacy SSE — superseded by the
   // WebSocket client (ws-client.ts); kept until the Wave A SSE retirement.
   async getMessageStreamUrl(instanceId: string): Promise<string> {
@@ -1045,18 +1296,30 @@ class BackendAPI {
    * populated once an ACP agent has run there. Lets the new-session picker show
    * real models before a session starts; empty until something is cached.
    */
-  async getMachineAgentModels(
-    machineId: string,
-  ): Promise<Record<string, { id: string; label: string }[]>> {
+  /**
+   * The machine's cached per-agent model lists (and, for ACP agents whose
+   * source reported them, session modes), keyed by catalog agent id. Filled
+   * by the wrappers' session/new report and by daemon provider probes.
+   */
+  async getMachineAgentModels(machineId: string): Promise<MachineAgentModelsCache> {
     const resp = await this.request<{
       agent_models?: Record<string, { id: string; label: string }[]>;
+      agent_modes?: Record<string, { id: string; label: string }[]>;
     }>(`/api/v1/machines/${machineId}/agent-models`);
-    return resp.agent_models ?? {};
+    return { models: resp.agent_models ?? {}, modes: resp.agent_modes ?? {} };
   }
 
   async spawnRemoteSession(
     machineId: string,
-    request: { directory: string; agent?: RemoteAgentType; prompt?: string; metadata?: Record<string, unknown> }
+    request: {
+      directory: string;
+      agent?: RemoteAgentType;
+      prompt?: string;
+      metadata?: Record<string, unknown>;
+      /** Records provenance on the session AND is what the server reads the
+       *  profile's instructions from — they are never sent in `metadata`. */
+      agent_profile_id?: string | null;
+    }
   ): Promise<SpawnRemoteSessionResponse> {
     const { metadata, ...rest } = request;
     return this.request<SpawnRemoteSessionResponse>(
@@ -1256,6 +1519,58 @@ class BackendAPI {
   /** Agent sessions started from this task, most recent first. */
   async listTaskSessions(taskId: string): Promise<AgentInstanceResponse[]> {
     return this.request<AgentInstanceResponse[]>(`/api/v1/tasks/${taskId}/sessions`);
+  }
+
+  /** Comments + activity in one round trip (no WS channel for tasks). */
+  async getTaskTimeline(taskId: string): Promise<TaskTimelineResponse> {
+    return this.request<TaskTimelineResponse>(`/api/v1/tasks/${taskId}/timeline`);
+  }
+
+  // Every mutation below answers with the whole timeline: the caller was going
+  // to revalidate anyway, and it closes the window where an optimistic append
+  // and a background poll disagree about ordering.
+  async createTaskComment(
+    taskId: string,
+    body: string,
+    /** Reply into this comment's thread. Replying to a reply lands in the same thread. */
+    parentCommentId?: string,
+  ): Promise<TaskTimelineResponse> {
+    return this.request<TaskTimelineResponse>(`/api/v1/tasks/${taskId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ body, parent_comment_id: parentCommentId ?? null }),
+    });
+  }
+
+  async updateTaskComment(
+    taskId: string,
+    commentId: string,
+    body: string,
+  ): Promise<TaskTimelineResponse> {
+    return this.request<TaskTimelineResponse>(
+      `/api/v1/tasks/${taskId}/comments/${commentId}`,
+      { method: 'PATCH', body: JSON.stringify({ body }) },
+    );
+  }
+
+  async deleteTaskComment(taskId: string, commentId: string): Promise<TaskTimelineResponse> {
+    return this.request<TaskTimelineResponse>(
+      `/api/v1/tasks/${taskId}/comments/${commentId}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async toggleTaskReaction(
+    taskId: string,
+    target: { targetType: 'task' | 'comment'; targetId: string; emoji: string },
+  ): Promise<TaskTimelineResponse> {
+    return this.request<TaskTimelineResponse>(`/api/v1/tasks/${taskId}/reactions`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        target_type: target.targetType,
+        target_id: target.targetId,
+        emoji: target.emoji,
+      }),
+    });
   }
 
   async updateTask(taskId: string, data: UpdateTaskRequest): Promise<TaskResponse> {

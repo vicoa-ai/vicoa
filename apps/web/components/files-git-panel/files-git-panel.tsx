@@ -109,11 +109,16 @@ interface FilesGitPanelProps {
    * handler wasn't listening) still open a fresh terminal tab: the page sets the
    * ref and opens the panel, and the freshly-mounted panel runs the action. */
   pendingAction?: { current: PanelPendingAction | null };
-  /** Open a specific project file, e.g. from the ⌘P file finder. The `nonce`
-   * bumps per request so repeat-opening the same path still fires; reactive
-   * (unlike `pendingAction`) so it works whether the panel was already open or
-   * is being opened by this same request. */
-  openFileRequest?: { path: string; nonce: number } | null;
+  /** Open a specific project file, e.g. from the ⌘P file finder or a file link
+   * in an agent message. The `nonce` bumps per request so repeat-opening the
+   * same path still fires; reactive (unlike `pendingAction`) so it works whether
+   * the panel was already open or is being opened by this same request. `line`
+   * scrolls a freshly-opened tab to that 1-based line. */
+  openFileRequest?: { path: string; nonce: number; line?: number } | null;
+  /** True while the session's agent is mid-turn. The working→idle edge is when
+   * the tree and history most likely changed (the agent edited, committed…),
+   * so the visible Files/Changes surface refreshes itself on that edge. */
+  agentWorking?: boolean;
 }
 
 function basename(path: string): string {
@@ -160,7 +165,7 @@ function envExportPrefix(env: Record<string, string>): string {
   return `export ${pairs.map(([k, v]) => `${k}=${shSingleQuote(v)}`).join(' ')} && `;
 }
 
-export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, overlay, canMaximize, pendingAction, openFileRequest }: FilesGitPanelProps) {
+export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, overlay, canMaximize, pendingAction, openFileRequest, agentWorking }: FilesGitPanelProps) {
   // `desktop` is present exactly when the Electron preload injected a desktop
   // config. Safe to read directly — this component never server-renders
   // (panel.open starts false until the hydration effect runs).
@@ -354,6 +359,13 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
   const showTerminal =
     canUseTerminal && !splitActive && activeTerminalId !== null && files.activeFilePath === null;
 
+  // The Changes tab is two surfaces — the working-tree status up top and the
+  // commit history pane below — so a refresh of the tab means both.
+  const refreshGit = useCallback(() => {
+    git.refresh();
+    commits.refresh();
+  }, [git, commits]);
+
   const selectFixedTab = useCallback(
     (tab: 'files' | 'git') => {
       files.activateFile(null);
@@ -362,12 +374,9 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
       if (!splitActive) setActiveTerminal(instanceId, null);
       panel.setActiveTab(tab);
       if (tab === 'files') files.refreshAll();
-      else {
-        git.refresh();
-        commits.refresh();
-      }
+      else refreshGit();
     },
-    [setActiveTerminal, instanceId, panel, files, git, commits, splitActive],
+    [setActiveTerminal, instanceId, panel, files, refreshGit, splitActive],
   );
 
   const addTerminal = useCallback(() => {
@@ -592,8 +601,13 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
         // Ctrl+Tab / Ctrl+Shift+Tab cycle the panel tabs (VSCode/browser
         // convention). Tab has no text-editing meaning, so — unlike the old
         // ⌘←/→ binding — this fires even while editing a file or in a terminal.
-        // Capture phase (below) means we win before CodeMirror/xterm see it.
+        // Capture phase (below) only means we run *first*: the event still
+        // reaches the focused xterm textarea, and xterm would encode Ctrl+Tab
+        // as a plain `\t` for the shell (zsh: list every command). The terminal
+        // pane yields prevented keydowns; stopping propagation keeps CodeMirror
+        // out of it too.
         event.preventDefault();
+        event.stopPropagation();
         cycleTab(event.shiftKey ? -1 : 1);
       } else if (canUseTerminal && matchesShortcut(event, 'terminal-focus')) {
         // Jump to the terminal from anywhere: open the panel, surface the
@@ -850,25 +864,39 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
     [panel],
   );
 
-  // Refresh on visibility / focus. Terminal tabs need no refresh — their pty
-  // stream is push-based.
+  // Refresh whichever files/git surface is showing. Unsplit, an active
+  // terminal means none is (terminals need no refresh — their pty stream is
+  // push-based). In the split layout the dock's selection is always set, but
+  // the top region still shows files/changes — refresh those.
+  const refreshVisibleSurface = useCallback(() => {
+    if (!splitActive && activeTerminalId !== null) return;
+    if (panel.activeTab === 'files') files.refreshAll();
+    else if (panel.activeTab === 'git') refreshGit();
+  }, [panel.activeTab, activeTerminalId, splitActive, files, refreshGit]);
+  const refreshVisibleSurfaceRef = useRef(refreshVisibleSurface);
+  refreshVisibleSurfaceRef.current = refreshVisibleSurface;
+
+  // Refresh on visibility / focus.
   useEffect(() => {
     if (!panel.open) return;
     const onVisibility = () => {
-      if (document.visibilityState !== 'visible') return;
-      // Unsplit, an active terminal means no files/git surface is showing. In
-      // the split layout the dock's selection is always set, but the top
-      // region still shows files/changes — refresh those.
-      if (!splitActive && activeTerminalId !== null) return;
-      if (panel.activeTab === 'files') files.refreshAll();
-      else if (panel.activeTab === 'git') {
-        git.refresh();
-        commits.refresh();
-      }
+      if (document.visibilityState === 'visible') refreshVisibleSurfaceRef.current();
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [panel.open, panel.activeTab, activeTerminalId, splitActive, files, git, commits]);
+  }, [panel.open]);
+
+  // Refresh when the agent's turn ends (working → idle). Nothing pushes
+  // "the repo changed" from the daemon, and the turn edge is the moment the
+  // agent's edits/commits have landed. A hidden page waits for the visibility
+  // handler instead; a closed panel is unmounted and re-fetches on open.
+  const wasAgentWorkingRef = useRef(false);
+  useEffect(() => {
+    const was = wasAgentWorkingRef.current;
+    wasAgentWorkingRef.current = agentWorking === true;
+    if (!was || agentWorking) return;
+    if (document.visibilityState === 'visible') refreshVisibleSurfaceRef.current();
+  }, [agentWorking]);
 
   // The drawers only exist over a file view — drop them whenever no file is active.
   useEffect(() => {
@@ -1084,15 +1112,26 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
   // request that opened the panel is still the current prop. Mirrors
   // `openFromTree` (clear the visible terminal, then open in edit mode).
   const lastOpenFileNonce = useRef(0);
+  // The line to jump to once that file's surface is up, for a request that
+  // carried one (a file link in the chat). Held here rather than on the tab
+  // because it is a one-shot navigation, not remembered scroll position — the
+  // surface clears it via `onRevealed`, so re-showing the tab later restores
+  // where the user actually left off, not the line they arrived at.
+  const [revealLine, setRevealLine] = useState<
+    { path: string; line: number; nonce: number } | null
+  >(null);
   useEffect(() => {
     if (!openFileRequest || openFileRequest.nonce === lastOpenFileNonce.current) return;
     lastOpenFileNonce.current = openFileRequest.nonce;
     if (!splitActive) setActiveTerminal(instanceId, null);
-    files.openFile(openFileRequest.path, { preview: false });
+    const { path, line, nonce } = openFileRequest;
+    setRevealLine(line ? { path, line, nonce } : null);
+    files.openFile(path, { preview: false, scrollLine: line });
     // `files`/`setActiveTerminal` are stable enough; the nonce guard makes a
     // spurious re-run a no-op, so key the effect on the request identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openFileRequest, instanceId, splitActive]);
+  const clearRevealLine = useCallback(() => setRevealLine(null), []);
   // Commit the staged set; the history pane below shows the new commit, so
   // refresh it on success (the hook already refreshes the working-tree status).
   const handleCommit = () => {
@@ -1431,7 +1470,7 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
       <div className="flex items-center gap-2 border-b border-border px-3 py-1 flex-shrink-0">
         <BranchInfo status={git.status} />
         <div style={NO_DRAG} className="flex items-center gap-0.5 flex-shrink-0 ml-auto">
-          <TipButton label="Refresh" onClick={git.refresh}>
+          <TipButton label="Refresh" onClick={refreshGit}>
             <RefreshCw className="h-4 w-4" />
           </TipButton>
           <TipButton
@@ -1573,8 +1612,16 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
               <FileViewer
                 state={activeFile}
                 wrap={true}
+                machineId={machineId}
+                cwd={cwd}
                 markdownSource={markdownSource}
                 diffSideBySide={diffSideBySide}
+                revealLine={
+                  revealLine && revealLine.path === activeFile.path
+                    ? { line: revealLine.line, nonce: revealLine.nonce }
+                    : undefined
+                }
+                onRevealed={clearRevealLine}
                 onDraftChange={(content) => files.updateDraft(activeFile.path, content)}
                 onSave={() => files.saveFile(activeFile.path)}
                 onScrollAnchor={files.setScrollAnchor}

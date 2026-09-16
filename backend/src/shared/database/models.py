@@ -34,6 +34,11 @@ class User(Base):
     # ``projects.icon_source``: a 'user' upload is never clobbered.
     avatar_image_uri: Mapped[str | None] = mapped_column(Text, default=None)
     avatar_source: Mapped[str | None] = mapped_column(String(16), default=None)
+    # A picked emoji, rendered in place of the generated initial when there is no
+    # image. Same role (and same column width) as ``agent_profiles.emoji`` and
+    # ``projects.icon``: not everyone wants to upload a photo, and a glyph is a
+    # cheaper, more private way to be recognisable than a face.
+    avatar_emoji: Mapped[str | None] = mapped_column(String(16), default=None)
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc)
     )
@@ -155,6 +160,15 @@ class AgentInstance(Base):
             "rate_limited_until",
             postgresql_where=text("rate_limited_until IS NOT NULL"),
         ),
+        # An agent preset's run history and its session count both filter on
+        # this column, and Postgres does not index a FK for you. Partial,
+        # because the overwhelming majority of sessions are ad-hoc and carry
+        # NULL here — same reasoning as the rate-limit index above.
+        Index(
+            "ix_agent_instances_agent_profile",
+            "agent_profile_id",
+            postgresql_where=text("agent_profile_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -239,6 +253,17 @@ class AgentInstance(Base):
     # surface. See plans/session-config-storage.md §3.1.
     session_config: Mapped[dict | None] = mapped_column(
         JSONB, nullable=True, default=None
+    )
+    # Which agent profile this session was started from (collab P1). Pure
+    # provenance: `session_config` above is the authoritative snapshot of what the
+    # session is actually running, and the two legitimately diverge the moment the
+    # user switches model mid-session. Read only to render the profile's name and
+    # avatar in place of the generic provider icon — never to re-derive config.
+    # SET NULL: deleting a profile must not touch the sessions it started.
+    agent_profile_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_profiles.id", ondelete="SET NULL"),
+        type_=PostgresUUID(as_uuid=True),
+        default=None,
     )
     last_read_message_id: Mapped[UUID | None] = mapped_column(
         ForeignKey(
@@ -711,13 +736,18 @@ class MachineSpawnRequest(Base):
 
 
 class MachineAgentModels(Base):
-    """Per-machine, per-agent cache of an ACP agent's available model list.
+    """Per-machine, per-agent cache of an ACP agent's available model and mode
+    lists.
 
-    Written write-on-change from the ``available_models`` a headless wrapper
-    reports onto ``agent_instances.session_config`` on session/new (see
-    ``update_agent_instance_endpoint``). Lets the new-session picker show a
-    machine's REAL model list before a session is started — the catalog only
-    ships static defaults, and the live list is account/version/config-specific.
+    Written write-on-change from two sources: the ``available_models`` /
+    ``available_modes`` a headless wrapper reports onto
+    ``agent_instances.session_config`` on session/new (see
+    ``update_agent_instance_endpoint``), and a successful daemon
+    ``provider-probe`` (agent-facing ``PUT /machines/{id}/agent-models/{agent}``),
+    which is how a just-added catalog agent gets a real picker before it has
+    ever run. Lets the new-session picker show a machine's REAL lists before a
+    session is started — the catalog only ships static defaults, and the live
+    list is account/version/config-specific.
     """
 
     __tablename__ = "machine_agent_models"
@@ -736,7 +766,12 @@ class MachineAgentModels(Base):
     )
     # [{"id": ..., "label": ...}] exactly as the agent's ACP session reported.
     models: Mapped[list] = mapped_column(JSONB)
-    # sha256 of the normalized model list — gates write-on-change.
+    # Same shape for the agent's ACP session modes (plan/build/…). NULL when
+    # the source didn't report any (rows written before the column existed,
+    # or an agent with no mode switching) — a client then keeps its catalog
+    # placeholder, never an empty picker.
+    modes: Mapped[list | None] = mapped_column(JSONB, default=None)
+    # sha256 of the normalized model + mode lists — gates write-on-change.
     models_hash: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(timezone.utc)

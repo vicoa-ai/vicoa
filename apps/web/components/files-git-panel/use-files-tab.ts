@@ -12,6 +12,7 @@ import {
 } from './rpc';
 import { loadExpansion, saveExpansion, loadFileTabs, saveFileTabs } from './panel-storage';
 import { ancestorPaths } from './tree';
+import { PollBackoff, isDaemonUnreachable } from './stat-poll';
 import { RpcError } from '@/lib/ws-client';
 import {
   indexOfTab,
@@ -61,7 +62,17 @@ interface UseFilesTabApi {
    * it, so a new tab defaults to `'edit'` and an already-open tab keeps its mode.
    * `opts.preview` (single click) reuses the one preview slot; omitting it (double
    * click) opens/commits a permanent tab. */
-  openFile: (path: string, opts?: { mode?: 'edit' | 'diff'; preview?: boolean }) => void;
+  openFile: (
+    path: string,
+    opts?: {
+      mode?: 'edit' | 'diff';
+      preview?: boolean;
+      /** Where a *freshly-opened* tab should start (session restore, or a file
+       *  link that named a line). An already-open tab keeps its position. */
+      scrollLine?: number;
+      scrollOffset?: number;
+    },
+  ) => void;
   activateFile: (path: string | null) => void;
   /** Remember the top scroll anchor of a tab (line + sub-line px offset), so
    * re-showing it (or reopening the session) restores the scroll position. */
@@ -106,6 +117,10 @@ export function useFilesTab(args: UseFilesTabArgs): UseFilesTabApi {
   const listingsRef = useRef(listings);
   const activeFilePathRef = useRef(activeFilePath);
   const autosaveEnabledRef = useRef(autosaveEnabled);
+  // Stat-poll pacing (see `pollOpenFiles`): the hold after an unreachable
+  // daemon, and whether a round is still running.
+  const pollBackoff = useRef(new PollBackoff());
+  const pollInFlight = useRef(false);
   // Remembered HEAD-vs-staged diff baseline (a global preference, like autosave).
   // A ref, not state: it only seeds new diff tabs, so it needs no re-render, and
   // reading localStorage post-mount keeps SSR output stable.
@@ -203,6 +218,7 @@ export function useFilesTab(args: UseFilesTabArgs): UseFilesTabApi {
     autosaveTimers.current.clear();
     savingPaths.current.clear();
     resavePaths.current.clear();
+    pollBackoff.current.reset();
     setListings(new Map());
     setListingErrors(new Map());
     setRootError(null);
@@ -667,33 +683,61 @@ export function useFilesTab(args: UseFilesTabArgs): UseFilesTabApi {
   }, []);
 
   // Poll open editable tabs for an on-disk change the user should know about.
+  // Skipped while the page is hidden (nobody is looking), while a previous
+  // round is still in flight (an offline daemon makes each call wait out the
+  // relay's grace window, longer than the tick), and while the backoff is
+  // holding it off after the daemon proved unreachable — see `stat-poll.ts`.
   const pollOpenFiles = useCallback(async () => {
     const mId = machineIdRef.current;
     const c = cwdRef.current;
     if (!mId || !c) return;
-    const active = activeFilePathRef.current;
-    for (const t of openFilesRef.current) {
-      if (t.baseHash == null || t.loading || t.saving) continue;
-      // Only the tabs that care: any editing tab, plus the active viewer.
-      if (!t.editing && t.path !== active) continue;
-      let stat;
-      try {
-        stat = await rpcStatFile(mId, c, t.path);
-      } catch {
-        continue; // transient/deleted — retry next round
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (pollInFlight.current || pollBackoff.current.paused()) return;
+    pollInFlight.current = true;
+    try {
+      const active = activeFilePathRef.current;
+      for (const t of openFilesRef.current) {
+        if (t.baseHash == null || t.loading || t.saving) continue;
+        // Only the tabs that care: any editing tab, plus the active viewer.
+        if (!t.editing && t.path !== active) continue;
+        let stat;
+        try {
+          stat = await rpcStatFile(mId, c, t.path);
+        } catch (err) {
+          if (err instanceof RpcError && isDaemonUnreachable(err.code)) {
+            pollBackoff.current.fail();
+            return; // the other tabs live on the same daemon — no point asking
+          }
+          continue; // deleted / unreadable — retry next round
+        }
+        pollBackoff.current.reset();
+        if (stat.content_hash === t.baseHash) continue; // unchanged (incl. our own save)
+        if (t.editing && t.dirty) {
+          setOpenFiles((prev) => patchTab(prev, t.path, { externalChange: true }));
+        } else {
+          void quietReload(t.path); // clean viewer / untouched edit → take disk
+        }
       }
-      if (stat.content_hash === t.baseHash) continue; // unchanged (incl. our own save)
-      if (t.editing && t.dirty) {
-        setOpenFiles((prev) => patchTab(prev, t.path, { externalChange: true }));
-      } else {
-        void quietReload(t.path); // clean viewer / untouched edit → take disk
-      }
+    } finally {
+      pollInFlight.current = false;
     }
   }, [quietReload]);
 
   useEffect(() => {
     const id = setInterval(() => void pollOpenFiles(), POLL_MS);
-    return () => clearInterval(id);
+    // Coming back to the page: drop any hold and look right away, so a file
+    // the agent rewrote while the tab was in the background refreshes at once
+    // rather than after whatever remained of a 60s backoff.
+    const onVisible = () => {
+      if (document.hidden) return;
+      pollBackoff.current.reset();
+      void pollOpenFiles();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [pollOpenFiles]);
 
   // Clear all pending autosave timers on unmount.

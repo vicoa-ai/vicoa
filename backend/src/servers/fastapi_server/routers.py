@@ -1,5 +1,6 @@
 """API routes for agent operations."""
 
+import asyncio
 import logging
 from typing import Annotated
 from uuid import UUID
@@ -119,7 +120,8 @@ async def create_agent_message_endpoint(
         decoded_git_diff = _maybe_decode_base64(request.git_diff)
 
         # Use the unified send_agent_message function
-        instance_id, message_id, queued_messages = await send_agent_message(
+        instance_id, message_id, queued_messages = await asyncio.to_thread(
+            send_agent_message,
             db=db,
             agent_instance_id=request.agent_instance_id,
             content=request.content,

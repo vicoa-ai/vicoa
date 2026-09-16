@@ -30,6 +30,7 @@ import {
   LabelChips,
   ParentChip,
   PriorityIcon,
+  TaskIdentifier,
   ProjectChip,
   STATUS_ORDER,
   StatusHeading,
@@ -83,6 +84,7 @@ function TaskRow({
       onClick={dragOverlay ? undefined : () => onEdit(task)}
     >
       {display.priority && <PriorityIcon priority={task.priority} />}
+      <TaskIdentifier task={task} />
       <span className={cn('min-w-0 flex-1 truncate', isClosed && 'text-muted-foreground line-through')}>
         {task.title}
       </span>

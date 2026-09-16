@@ -22,7 +22,17 @@ from .task_models import (
     Project,
     ProjectDirectory,
     Task,
+    TaskActivity,
+    TaskComment,
     TaskLabel,
+    TaskReaction,
+    TaskSubscriber,
+    ACTIVITY_ACTIONS,
+    ACTIVITY_ACTOR_TYPES,
+    COMMENT_AUTHOR_TYPES,
+    COMMENT_KINDS,
+    REACTION_TARGET_TYPES,
+    SUBSCRIBER_REASONS,
     TASK_PRIORITIES,
     TASK_STATUSES,
 )
@@ -42,7 +52,12 @@ from .activation_models import (
     ACTIVATION_NUDGE_CHANNELS,
     ACTIVATION_NUDGE_STATUSES,
 )
+from .actor import Actor, session_actor, set_session_actor
 from .tasks import INBOX_PROJECT_NAME, get_or_create_inbox
+
+# Side-effect import: registers the after_flush listener that generates
+# `task_activity`. Importing the package is what turns task history on.
+from . import task_activity as _task_activity  # noqa: F401
 from .users import ensure_local_user
 
 __all__ = [
@@ -67,11 +82,24 @@ __all__ = [
     "Project",
     "ProjectDirectory",
     "Task",
+    "TaskActivity",
+    "TaskComment",
     "TaskLabel",
+    "TaskReaction",
+    "TaskSubscriber",
+    "ACTIVITY_ACTIONS",
+    "ACTIVITY_ACTOR_TYPES",
+    "COMMENT_AUTHOR_TYPES",
+    "COMMENT_KINDS",
+    "REACTION_TARGET_TYPES",
+    "SUBSCRIBER_REASONS",
     "TASK_PRIORITIES",
     "TASK_STATUSES",
     "INBOX_PROJECT_NAME",
     "get_or_create_inbox",
+    "Actor",
+    "session_actor",
+    "set_session_actor",
     "Automation",
     "AutomationRun",
     "AUTOMATION_RUN_STATUSES",

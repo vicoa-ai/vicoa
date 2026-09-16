@@ -44,6 +44,7 @@ import {
   type DesktopConfig,
 } from './config';
 import { DaemonManager, daemonCommandAvailable, type DaemonState } from './daemon-manager';
+import { resolveDaemonPath } from './resolve-path';
 import { startRendererServer, type RendererServer } from './renderer-server';
 import { createMainWindow } from './window';
 import { createTray, destroyTray, updateTrayDaemonState } from './tray';
@@ -223,6 +224,9 @@ function desktopConfig(): DesktopConfig {
 }
 
 function focusOrCreateWindow(): void {
+  if (isQuitting) {
+    return; // windows are hidden for teardown; a dock/tray click must not resurface them
+  }
   if (mainWindow !== null && !mainWindow.isDestroyed()) {
     if (mainWindow.isMinimized()) {
       mainWindow.restore();
@@ -641,8 +645,9 @@ function warmManagedDaemon(): void {
 function onDaemonState(state: DaemonState): void {
   updateTrayDaemonState(state);
   if (state.status === 'running') {
-    // Window creation is gated on the first healthy daemon; also covers
-    // supervisor recoveries when the window was never created.
+    // The window normally opens before the daemon is healthy (bootstrap); this
+    // covers the paths that don't — a tray "Restart daemon" or supervisor
+    // recovery when the window was never created. Idempotent.
     ensureMainWindow();
   }
   if (state.status === 'failed') {
@@ -1046,6 +1051,12 @@ function setDockIcon(): void {
 // Bootstrap
 // ---------------------------------------------------------------------------
 async function bootstrap(): Promise<void> {
+  // Probe the login shell for the daemon's PATH right away. Sourcing a real
+  // zsh/bash profile takes ~1-1.5s; started here it overlaps Electron's own
+  // init and the renderer-server boot instead of sitting between "renderer
+  // ready" and "daemon spawned" (it used to be a synchronous spawn there,
+  // stalling the main thread for that long). DaemonManager awaits it on spawn.
+  const daemonPathResolution = resolveDaemonPath(process.env);
   await app.whenReady();
   applySelfHostEnv();
   setDockIcon();
@@ -1129,6 +1140,7 @@ async function bootstrap(): Promise<void> {
     origin: new URL(effectiveRendererUrl).origin,
     bundledDaemonPath: isBundled() ? bundledDaemonPath() : null,
     managedDaemonPath: managedDaemonPathForManager(),
+    pathResolution: daemonPathResolution,
   });
   daemonManager.onState(onDaemonState);
 
@@ -1180,14 +1192,16 @@ async function bootstrap(): Promise<void> {
     return;
   }
 
-  const healthy = await daemonManager.start(false);
-  if (healthy) {
-    ensureMainWindow(); // also triggered by onDaemonState('running'); idempotent
-  } else if (isBundled()) {
-    // Packaged app: never leave the user with only a tray icon — show the
-    // window in a degraded state alongside the failure dialog.
-    ensureMainWindow();
-  }
+  // Open the window NOW, before the daemon is up. In cloud mode the dashboard
+  // is entirely cloud-backed (REST + WS go to the backend; see the renderer's
+  // runtime-config.ts) — the local daemon only serves this machine's RPC/pty
+  // side channel, and every consumer of it already tolerates "daemon still
+  // booting" (fetchLocalHealth → null, WsClient reconnect backoff). So the
+  // page load (~1s) overlaps the daemon's cold start (~2s PyInstaller import)
+  // instead of following it, and the first frame lands ~3s earlier. Also
+  // gives a failure dialog a parent window instead of a bare tray icon.
+  ensureMainWindow();
+  await daemonManager.start(false);
   // On failure onDaemonState('failed') has already surfaced the tray status +
   // dialog; the user can retry from either.
 }
@@ -1206,27 +1220,55 @@ app.on('window-all-closed', () => {
 });
 
 /**
+ * Upper bound on quit cleanup. The daemon stop escalates to SIGKILL at 5s and
+ * the renderer server dies on kill(), so a healthy teardown is well inside
+ * this; the deadline only matters when a child ignores its exit and would
+ * otherwise leave a window-less, un-quittable process behind.
+ */
+const QUIT_CLEANUP_DEADLINE_MS = 8_000;
+
+/**
  * Stop the daemon (SIGTERM -> SIGKILL after 5s) and the bundled renderer
  * server, and tear down the tray. Idempotent. Does NOT exit the process —
  * callers decide what happens next: a normal quit exits after this, while an
  * update install hands off to Squirrel via autoUpdater.quitAndInstall so the
  * bundle swap can proceed (see updater.ts onBeforeInstall).
+ *
+ * Perceived quit speed: the windows are hidden FIRST, so the app disappears
+ * the instant the user quits while the children (daemon graceful shutdown:
+ * cloud WS CLOSE round-trip, pty teardown; Next standalone server) wind down
+ * behind it. The two stops are independent, so they run in parallel.
  */
 async function runQuitCleanup(): Promise<void> {
   if (quitCleanupDone) {
     return;
   }
   quitCleanupDone = true;
-  try {
-    await daemonManager?.stop();
-  } catch (err) {
-    console.warn('[main] daemon stop during quit failed:', err);
+  isQuitting = true; // also reached via the updater's onBeforeInstall, ahead of before-quit
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.hide();
+    }
   }
-  try {
-    await rendererServer?.stop();
-  } catch (err) {
-    console.warn('[main] renderer server stop during quit failed:', err);
-  }
+  const stops = Promise.all([
+    daemonManager?.stop().catch((err: unknown) => {
+      console.warn('[main] daemon stop during quit failed:', err);
+    }),
+    rendererServer?.stop().catch((err: unknown) => {
+      console.warn('[main] renderer server stop during quit failed:', err);
+    }),
+  ]);
+  let deadline: NodeJS.Timeout | undefined;
+  await Promise.race([
+    stops,
+    new Promise<void>((resolve) => {
+      deadline = setTimeout(() => {
+        console.warn(`[main] quit cleanup exceeded ${QUIT_CLEANUP_DEADLINE_MS}ms; exiting anyway`);
+        resolve();
+      }, QUIT_CLEANUP_DEADLINE_MS);
+    }),
+  ]);
+  clearTimeout(deadline);
   destroyTray();
 }
 

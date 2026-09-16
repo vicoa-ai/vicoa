@@ -5,6 +5,32 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.9.0
+13 September, 2026
+- Add any ACP agent from a catalog of 33 — `vicoa provider catalog` lists them (Cline, Factory Droid, Qwen Code, Amp, goose, Junie, Kilo and more), `vicoa provider add <id>` makes one available on that machine with no daemon restart, and `vicoa provider check <id>` launches it and reports whether it actually works: its name and version, the models and modes it offers, or the stage it failed at and the last line it wrote to stderr
+- Add your own ACP agent, or a second profile of a built-in one with its own env and endpoint, under `agents.providers` in `~/.vicoa/config.json` — edits are picked up live, and a malformed entry is skipped and logged, never fatal
+- ACP sessions (Cursor, Gemini CLI, Copilot, Kimi and any catalog agent) now show what the agent is doing: tool calls appear the moment they start, the agent's plan renders as a checklist, token usage updates live, the agent's own slash commands reach the composer, and shell commands it runs belong to the session — bounded output, stoppable, gone when the session ends
+- Fix an unattended ACP permission prompt auto-approving after 15 minutes — it now waits a day, like Claude Code, and then declines
+- Fix resuming an ACP session appending a second copy of the transcript
+- Fix a dev server started by an ACP agent outliving the session
+- Fix "Delete worktree" failing with `not_a_repo` once the folder was already gone — removal now runs from the main checkout, a folder that is already gone counts as removed, and `vicoa.json` teardown finally runs on app-driven removals
+- Fix a just-created session showing up as a second copy of its project in the sidebar until the next reload
+
+### v1.8.1
+12 September, 2026
+- Steer a queued message into the running turn — Claude Code, Codex, Pi and Oh My Pi pick it up at the agent's next safe boundary instead of after the turn ends; a message the agent can't take mid-turn goes back to the queue (#44)
+- Fix backgrounded shell commands showing up as sub-agents — a slow `git push` no longer renders as a "Sub-agent: agent" card, it's an ordinary tool row (#49)
+- Sub-agent runs now carry the prompt they were given, the files they edited and whether the run failed
+- Fix quitting the daemon waiting 3 seconds per open terminal tab — interactive shells are now hung up the way a closing terminal window does, and tabs close concurrently (#56)
+
+### v1.8.0
+10 September, 2026
+- Save named agent presets — a provider, model, config and system prompt under one name — and start a session or an automation from one, with `vicoa agent ls|add|rm` and `vicoa session start --agent-profile <name>`
+- Give a preset's system prompt to any agent without writing a file into your repo or home directory
+- Address tasks by a short `KEY-42` identifier, and give them comments, emoji reactions and an activity log that records every change — whether it came from the app, the CLI, an agent or an automation
+- Fix worktree setup leaving the terminal parked on a half-typed command: a long setup chain now waits for the shell to actually start reading, and arrives in one piece instead of a character at a time (#42)
+- Fix Stop leaving Claude's background sub-agents running for minutes afterwards — Stop now stops them too, and pressing it again while they wind down works (#41)
+
 ### v1.7.19
 8 September, 2026
 - Fix a Codex session dying for good after a large tool result — oversized frames from the codex app-server are no longer dropped, at any size (#33)

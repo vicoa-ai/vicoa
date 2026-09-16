@@ -78,7 +78,17 @@ function detailToInstanceResponse(detail: AgentInstanceDetail): AgentInstanceRes
     latest_message_at: null,
     chat_length: detail.messages.length,
     project: detail.project,
+    // The sidebar's top-level group is keyed on `project_id` (falling back to
+    // the path basename only when unlinked). Dropping it here made every new
+    // session land in its own basename-keyed group — a second "vicoa" beside
+    // the real project — until the next REST list load replaced the row.
+    project_id: detail.project_id,
     home_dir: detail.home_dir,
+    // The worktree sub-grouping's git RPCs are addressed by machine_id and,
+    // for a project with only worktree sessions, by the daemon-stamped
+    // `repo_root` in instance_metadata — both otherwise absent until refresh.
+    machine_id: detail.machine_id,
+    instance_metadata: detail.instance_metadata,
     // Without this a session spawned into a fresh worktree would sit in the
     // project's unheadered bucket until the next REST refresh — exactly the
     // moment the user is looking for it.

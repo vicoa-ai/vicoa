@@ -60,6 +60,7 @@ def create_agent_instance(
     machine_id: Optional[UUID] = None,
     status: AgentStatus = AgentStatus.ACTIVE,
     session_config: Optional[dict] = None,
+    agent_profile_id: Optional[UUID] = None,
 ) -> AgentInstance:
     """Create and persist an agent instance with optional relay metadata."""
 
@@ -84,6 +85,7 @@ def create_agent_instance(
         home_dir=home_dir,
         machine_id=machine_id,
         session_config=session_config_payload,
+        agent_profile_id=agent_profile_id,
     )
     db.add(instance)
     db.flush()

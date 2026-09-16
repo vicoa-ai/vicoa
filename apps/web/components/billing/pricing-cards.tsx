@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import posthog from 'posthog-js';
 import useSWR from 'swr';
-import { ArrowRight, Check, Download, Loader2 } from 'lucide-react';
+import { ArrowRight, Download, Loader2 } from 'lucide-react';
 import {
   Card,
   CardHeader,
@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { getBackendAPI, type BillingInterval } from '@/lib/backend-api';
+import { IncludedGlyph } from '@/components/billing/plan-glyphs';
+import { cn } from '@/lib/utils';
 
 const fetcher = (url: string) => fetch(url).then((res) => {
   if (!res.ok) {
@@ -35,6 +37,27 @@ function CheckoutAbandonedTracker() {
   return null;
 }
 
+/**
+ * A plan's bullets: a few words each, no explanations. The comparison table
+ * below the cards carries the detail. `leadIn` names the tier this one builds
+ * on ("Everything in Free, plus:") so the bullets only list what is new.
+ */
+function FeatureList({ leadIn, features }: { leadIn?: string; features: string[] }) {
+  return (
+    <div className="space-y-3">
+      {leadIn && <p className="text-sm font-medium text-foreground">{leadIn}</p>}
+      <ul className="space-y-3">
+        {features.map((text) => (
+          <li key={text} className="flex items-start gap-3">
+            <IncludedGlyph className="mt-0.5" />
+            <span className="text-sm text-foreground/80">{text}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
   const [isAnnual, setIsAnnual] = useState(false);
   const [activeCheckoutPlan, setActiveCheckoutPlan] = useState<'pro' | null>(null);
@@ -46,35 +69,40 @@ export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
   const monthlyPrice = 12;
   const annualPrice = 108;
   const annualMonthlyEquivalent = '9';
+  const annualSaving = monthlyPrice * 12 - annualPrice;
   const discountPercentage = Math.round((1 - annualPrice / (monthlyPrice * 12)) * 100);
   const upgradeRedirect = '/dashboard/upgrade';
 
   const freeFeatures = [
-    'Unlimited desktop app (Mac, Windows, Linux)',
-    '20 messages/month on mobile',
-    'Run multiple agents in parallel',
-    'Claude Code, Codex, Cursor & more',
-    'Bring your own subscriptions & keys',
+    'Desktop app for Mac, Windows & Linux',
+    'Mobile & web remote control',
+    '40+ coding agents',
+    'Bring your own subscriptions & API keys',
+    '1 remote machine',
+    '10 automations',
     'Community support',
   ];
 
   const proFeatures = [
-    'Everything in Free',
-    'Unlimited messages everywhere',
-    ...(isAnnual ? [`${trialDays}-day free trial`] : []),
-    'No commitment, cancel anytime',
+    'Unlimited machines',
+    'Unlimited automations',
     'Priority support',
     'Early feature access',
   ];
 
-  const teamsFeatures = [
-    'Everything in Pro',
+  const enterpriseFeatures = [
     'Centralized billing & admin portal',
-    'SSO & SCIM provisioning',
+    'SSO & SCIM',
     'On-premise deployment',
-    'Usage analytics & advanced security',
+    'Usage analytics',
+    'Advanced security',
     'SLA & dedicated support',
   ];
+
+  const selectInterval = (annual: boolean) => {
+    setIsAnnual(annual);
+    posthog.capture('billing_toggle_changed', { interval: annual ? 'annual' : 'monthly' });
+  };
 
   const startCheckout = async () => {
     setCheckoutError(null);
@@ -111,6 +139,14 @@ export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
     }
   };
 
+  const toggleButton = (annual: boolean) =>
+    cn(
+      'cursor-pointer rounded-full px-5 py-2 text-sm font-medium transition-colors',
+      isAnnual === annual
+        ? 'bg-background text-foreground shadow-sm'
+        : 'text-muted-foreground hover:text-foreground'
+    );
+
   return (
     <>
       <Suspense fallback={null}>
@@ -123,27 +159,32 @@ export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
       )}
 
       {/* Billing Toggle */}
-      <div className="flex items-center justify-center gap-3 mb-16">
-        <button
-          onClick={() => { setIsAnnual(false); posthog.capture('billing_toggle_changed', { interval: 'monthly' }); }}
-          className={`px-6 py-2.5 text-sm font-medium rounded-lg transition-all ${
-            !isAnnual
-              ? 'bg-black dark:bg-white text-white dark:text-black shadow-sm'
-              : 'bg-transparent text-muted-foreground hover:text-foreground'
-          }`}
+      <div className="mb-10 flex justify-center">
+        <div
+          role="radiogroup"
+          aria-label="Billing interval"
+          className="inline-flex items-center rounded-full bg-muted p-1"
         >
-          Monthly
-        </button>
-        <button
-          onClick={() => { setIsAnnual(true); posthog.capture('billing_toggle_changed', { interval: 'annual' }); }}
-          className={`px-6 py-2.5 text-sm font-medium rounded-lg transition-all ${
-            isAnnual
-              ? 'bg-black dark:bg-white text-white dark:text-black shadow-sm'
-              : 'bg-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          Annual · Save {discountPercentage}%
-        </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={!isAnnual}
+            onClick={() => selectInterval(false)}
+            className={toggleButton(false)}
+          >
+            Monthly
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={isAnnual}
+            onClick={() => selectInterval(true)}
+            className={toggleButton(true)}
+          >
+            Annual
+            <span className="ml-1.5 text-xs text-muted-foreground">Save {discountPercentage}%</span>
+          </button>
+        </div>
       </div>
 
       <div className="grid lg:grid-cols-3 gap-8 lg:gap-16 max-w-7xl mx-auto">
@@ -151,26 +192,21 @@ export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
         <Card className="relative flex min-h-[470px] flex-col border-0 hover:shadow-xl transition-all duration-300">
           <CardHeader className="pb-0">
             <CardTitle className="text-2xl mb-0">Free</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Everything you need to run agents on your machine.
+            </p>
           </CardHeader>
 
           <CardContent className="space-y-8 flex-1">
             <div>
-              <div className="flex items-baseline gap-2 mb-3">
+              <div className="flex items-baseline gap-2">
                 <span className="text-3xl font-semibold text-foreground">$0</span>
                 <span className="text-lg text-muted-foreground">/month</span>
               </div>
+              <p className="mt-1 text-sm text-muted-foreground">Free forever</p>
             </div>
 
-            <div className="space-y-1">
-              <ul className="space-y-3">
-                {freeFeatures.map((feature, index) => (
-                  <li key={index} className="flex items-start gap-3">
-                    <Check className="h-5 w-5 text-slate-600 dark:text-slate-400 flex-shrink-0 mt-0.5" />
-                    <span className="text-sm text-foreground/80">{feature}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <FeatureList features={freeFeatures} />
           </CardContent>
 
           <CardFooter className="pt-2">
@@ -189,46 +225,48 @@ export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
         </Card>
 
         {/* Pro Tier */}
-        <Card className="relative flex min-h-[470px] flex-col border-0 ring-2 ring-blue-600 dark:ring-blue-500 shadow-lg hover:shadow-xl transition-all duration-300">
+        <Card className="relative flex min-h-[470px] flex-col border-0 ring-2 ring-blue-600 dark:ring-blue-500 shadow-lg hover:shadow-xl transition-all duration-300 bg-gradient-to-b from-blue-50/70 to-card to-40% dark:from-blue-950/30">
           <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold text-white shadow-sm dark:bg-blue-500">
             Most Popular
           </div>
           <CardHeader className="pb-0">
             <CardTitle className="text-2xl mb-0">Pro</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              All your machines, no limits.
+            </p>
           </CardHeader>
 
           <CardContent className="space-y-8 flex-1">
             <div>
-              <div className="flex items-baseline gap-2 mb-3">
-                {isAnnual ? (
-                  <>
+              {isAnnual ? (
+                <>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-lg text-muted-foreground line-through">
+                      ${monthlyPrice}
+                    </span>
                     <span className="text-3xl font-semibold text-foreground">
                       ${annualMonthlyEquivalent}
                     </span>
-                    <span className="text-lg text-muted-foreground">/month, </span>
-                    <span className="text-base text-muted-foreground">billed yearly</span>
-                  </>
-                ) : (
-                  <>
+                    <span className="text-lg text-muted-foreground">/month</span>
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Billed ${annualPrice} yearly · save ${annualSaving}/year
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-baseline gap-2">
                     <span className="text-3xl font-semibold text-foreground">
                       ${monthlyPrice}
                     </span>
                     <span className="text-lg text-muted-foreground">/month</span>
-                  </>
-                )}
-              </div>
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">Billed monthly</p>
+                </>
+              )}
             </div>
 
-            <div className="space-y-1">
-              <ul className="space-y-3">
-                {proFeatures.map((feature, index) => (
-                  <li key={index} className="flex items-start gap-3">
-                    <Check className="h-5 w-5 text-slate-600 dark:text-slate-400 flex-shrink-0 mt-0.5" />
-                    <span className="text-sm text-foreground/80">{feature}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <FeatureList leadIn="Everything in Free, plus:" features={proFeatures} />
           </CardContent>
 
           <CardFooter className="pt-2">
@@ -257,29 +295,24 @@ export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
           </CardFooter>
         </Card>
 
-        {/* Teams Tier */}
+        {/* Enterprise Tier */}
         <Card className="relative flex min-h-[470px] flex-col border-0 hover:shadow-xl transition-all duration-300">
           <CardHeader className="pb-0">
-            <CardTitle className="text-2xl mb-0">Teams</CardTitle>
+            <CardTitle className="text-2xl mb-0">Enterprise</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Pro for your whole org, with admin controls.
+            </p>
           </CardHeader>
 
           <CardContent className="space-y-8 flex-1">
             <div>
-              <div className="flex items-baseline gap-2 mb-3">
+              <div className="flex items-baseline gap-2">
                 <span className="text-3xl font-semibold text-foreground">Custom</span>
               </div>
+              <p className="mt-1 text-sm text-muted-foreground">Tailored to your organization</p>
             </div>
 
-            <div className="space-y-1">
-              <ul className="space-y-3">
-                {teamsFeatures.map((feature, index) => (
-                  <li key={index} className="flex items-start gap-3">
-                    <Check className="h-5 w-5 text-slate-600 dark:text-slate-400 flex-shrink-0 mt-0.5" />
-                    <span className="text-sm text-foreground/80">{feature}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <FeatureList leadIn="Everything in Pro, plus:" features={enterpriseFeatures} />
           </CardContent>
 
           <CardFooter className="pt-2">
@@ -287,7 +320,7 @@ export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
               variant="outline"
               className="h-12 w-full rounded-full"
               onClick={() => {
-                posthog.capture('pricing_cta_clicked', { plan: 'teams' });
+                posthog.capture('pricing_cta_clicked', { plan: 'enterprise' });
                 window.location.assign('mailto:hi@vicoa.ai');
               }}
             >

@@ -9,7 +9,12 @@ engine = create_engine(
     settings.database_url,
     pool_size=20,
     max_overflow=20,
-    pool_timeout=30,
+    # Fail fast when the pool is exhausted. Every checkout happens on a
+    # worker thread; a 30s wait pinned that thread (and, before the ingest
+    # path moved off the loop, the loop itself) for the whole stall. A
+    # request that cannot get a connection in 5s is better failed than
+    # queued behind a saturated pool.
+    pool_timeout=5,
     # Recycle every 5 min. Flycast drops idle TCP at 60s; keepalives below
     # keep connections alive in the meantime, and recycle ensures no
     # connection lives long enough to drift into trouble.

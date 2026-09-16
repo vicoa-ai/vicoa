@@ -11,6 +11,16 @@ from servers.shared.models import (
 )
 
 
+class MarkMessageConsumedRequest(BaseModel):
+    """Optional body for `PATCH /messages/{id}/consumed`.
+
+    `steered` records that the wrapper delivered the message into the
+    agent's running turn (a user Steer request) instead of as its own turn.
+    """
+
+    steered: bool = False
+
+
 class RegisterMachineRequest(BaseModel):
     machine_id: str | None = Field(
         default=None,
@@ -55,6 +65,15 @@ class RegisterMachineResponse(BaseModel):
     metadata: dict | None = Field(
         default=None, description="Metadata stored on the machine record"
     )
+    next_interval_seconds: int | None = Field(
+        default=None,
+        description=(
+            "Heartbeat cadence the server asks the daemon to use next; set on "
+            "the heartbeat endpoint only. A daemon whose WebSocket the server "
+            "can see is told to tick rarely (the socket is the liveness "
+            "signal). Older daemons ignore it."
+        ),
+    )
 
 
 class HeartbeatMachineRequest(BaseModel):
@@ -70,6 +89,28 @@ class UpdateMachineRecentDirectoryRequest(BaseModel):
     )
     python_version: str | None = Field(
         default=None, description="Python version associated with this directory update"
+    )
+
+
+class AgentModelEntry(BaseModel):
+    id: str = Field(..., min_length=1, max_length=256)
+    label: str | None = Field(default=None, max_length=256)
+
+
+class PutMachineAgentModelsRequest(BaseModel):
+    """Body of the agent-facing ``PUT /machines/{id}/agent-models/{agent}``:
+    what a daemon ``provider-probe`` learned from the agent's ``session/new``.
+    Same write-on-change upsert as the session PATCH's ``available_models``;
+    ``modes`` is optional and merge-only (absent keeps the row's current)."""
+
+    models: list[AgentModelEntry] = Field(..., min_length=1, max_length=500)
+    modes: list[AgentModelEntry] | None = Field(default=None, max_length=100)
+
+
+class PutMachineAgentModelsResponse(BaseModel):
+    agent_type: str
+    updated: bool = Field(
+        ..., description="False when the cached lists were already identical"
     )
 
 
@@ -122,9 +163,8 @@ class SpawnSessionRequest(BaseModel):
 
         normalized = str(value).strip().lower()
 
-        # Valid ids come from the shared agent catalog (claude/codex/opencode
-        # plus the generic ACP agents) so a new agent ships without touching
-        # this validator. "claude code" stays as a legacy alias.
+        # Catalog ids (claude/codex/opencode plus the generic ACP agents) are
+        # always valid, and "claude code" stays as a legacy alias.
         from shared.agent_catalog import AGENT_CATALOG
 
         known = {agent["id"] for agent in AGENT_CATALOG["agents"]}
@@ -132,7 +172,23 @@ class SpawnSessionRequest(BaseModel):
             return normalized
         if normalized == "claude code":
             return "claude"
-        raise ValueError(f"agent must be one of: {', '.join(sorted(known))}")
+
+        # Anything else is checked for *shape* only. A user-defined provider
+        # lives in that user's ~/.vicoa/config.json on their own machine, so the
+        # backend cannot hold a list of them — and the daemon is the real
+        # authority regardless: it refuses an id it does not recognise, with the
+        # list it does. Clients pick from the machine row's `available_agents`,
+        # which the daemon publishes including custom providers. Rejecting
+        # unknown ids here would only mean a custom agent 422s before the
+        # machine that owns it ever sees the request.
+        from protocol.provider_overrides import is_valid_provider_id
+
+        if is_valid_provider_id(normalized):
+            return normalized
+        raise ValueError(
+            "agent must be a catalog id "
+            f"({', '.join(sorted(known))}) or a lowercase provider slug"
+        )
 
 
 class SpawnSessionResponse(BaseModel):

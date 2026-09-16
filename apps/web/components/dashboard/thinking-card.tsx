@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Brain, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { isTextSelectionClick } from '@/lib/text-selection';
 import { MessageMarkdown } from '@/components/ui/message-markdown';
 import { HighlightedText, useFindHighlight } from '@/components/dashboard/chat-find-context';
 import type { MessageResponse } from '@/lib/backend-api';
@@ -70,9 +71,11 @@ export function ThinkingCard({
     <div>
       <button
         type="button"
-        onClick={onToggle}
+        onClick={(e) => {
+          if (!isTextSelectionClick(e)) onToggle();
+        }}
         aria-expanded={expanded}
-        className="flex w-full min-w-0 items-center gap-1.5 rounded -mx-0.5 px-0.5 py-0.5 text-left cursor-pointer hover:bg-muted/40"
+        className="flex w-full min-w-0 items-center gap-1.5 rounded -mx-0.5 px-0.5 py-0.5 text-left cursor-pointer hover:bg-muted/40 select-text"
       >
         <Brain className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden="true" />
         <span className="min-w-0 shrink-0 text-muted-foreground">Thinking</span>

@@ -72,6 +72,9 @@ class _StatefulFakeClaudeClient:
         self._park_when_exhausted = park_when_exhausted
         self.queries: List[Any] = []
         self.interrupts = 0
+        # ``stop_task`` ids, in call order — the per-sub-agent stop an
+        # interrupt fires at background Task work.
+        self.stopped_tasks: List[str] = []
         # Optional hook fired on every ``query()`` — lets a test model the
         # CLI *responding* to a prompt (extend the script causally, the way
         # the real CLI only answers after being asked).
@@ -88,6 +91,9 @@ class _StatefulFakeClaudeClient:
 
     async def interrupt(self) -> None:
         self.interrupts += 1
+
+    async def stop_task(self, task_id: str) -> None:
+        self.stopped_tasks.append(task_id)
 
     async def receive_messages(self):
         while True:
@@ -307,3 +313,110 @@ async def test_message_after_interrupt_gets_its_own_reply(make_runner):
     assert forwarded[1:] == ["answer to turn two"]
     assert "What would you like me to do next?" not in forwarded
     await runner._stop_stream_reader()
+
+
+# ---------------------------------------------------------------------------
+# Bug 3 - Stop left background sub-agents running.
+#
+# ``interrupt()`` aborts the *turn*; a sub-agent launched with
+# ``run_in_background`` outlives it and the CLI only stops one on an explicit
+# ``stop_task``. Session 4c77b787-… (2026-09-09 09:13): the Stop landed with 20
+# sub-agents in flight and they kept reporting for another 7 minutes, each
+# report waking the parent for a follow-up turn. Worse, the second Stop the
+# user pressed was swallowed by the "already requested" early-return, and the
+# post-Stop turns were suppressed as if they were the aborted one - so the work
+# was neither stopped nor shown.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_interrupt_stops_running_background_subagents(make_runner):
+    """Stop must reach each in-flight sub-agent, not just the turn."""
+    fake = FakeAsyncVicoaClient()
+    runner = make_runner(vicoa_client=fake)
+    client = _StatefulFakeClaudeClient([])
+    runner.claude_client = client
+    runner._pending_background_tasks = {"task-1", "task-2"}
+
+    await runner._handle_interrupt()
+    await asyncio.wait_for(runner._stop_tasks_task, timeout=5)
+
+    assert client.interrupts == 1
+    assert sorted(client.stopped_tasks) == ["task-1", "task-2"]
+    # Dropped from the ledger: a task we asked to stop must not keep the
+    # session pinned ACTIVE if its terminal frame never lands.
+    assert runner._pending_background_tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_repeat_stop_reaches_the_cli_while_work_survives(make_runner):
+    """A second Stop must act when something is still running.
+
+    ``interrupt_requested`` stays set until the next user turn, so the old
+    early-return made every later press a no-op — exactly when the user was
+    pressing again *because* sub-agents were still going.
+    """
+    fake = FakeAsyncVicoaClient()
+    runner = make_runner(vicoa_client=fake)
+    client = _StatefulFakeClaudeClient([])
+    runner.claude_client = client
+
+    await runner._handle_interrupt()
+    # Nothing was running, so a double tap is still a no-op.
+    await runner._handle_interrupt()
+    assert client.interrupts == 1
+
+    # A background sub-agent outlived the Stop and is reporting in.
+    runner._pending_background_tasks = {"task-9"}
+    runner._open_turns.append("autonomous")
+
+    await runner._handle_interrupt()
+    await asyncio.wait_for(runner._stop_tasks_task, timeout=5)
+
+    assert client.interrupts == 2
+    assert client.stopped_tasks == ["task-9"]
+    # One notice per interrupt episode — the repeat presses stop work, they
+    # don't spam the chat.
+    assert len(fake.sent_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_work_that_outlived_the_stop_is_still_forwarded(make_runner):
+    """Suppression covers the aborted turn, not everything after it.
+
+    Gated on ``interrupt_requested`` (never cleared until the next user turn),
+    a background sub-agent's report turn opened, was marked ACTIVE, and then
+    had every message silently dropped.
+    """
+    fake = FakeAsyncVicoaClient()
+    runner = make_runner(vicoa_client=fake)
+    _prime_for_turn(runner)
+    runner.claude_client = _StatefulFakeClaudeClient([])
+
+    forwarded: List[str] = []
+
+    async def _capture(content, message_metadata=None):
+        forwarded.append(content)
+
+    runner.send_to_vicoa = _capture  # type: ignore[assignment]
+
+    # A background sub-agent's report turn is open when the Stop lands.
+    runner._open_turns.append("autonomous")
+    await runner._handle_interrupt()
+
+    # Its tail is suppressed, and its result closes the unwind.
+    await runner._process_sdk_message(_assistant("cut off mid-report"))
+    await runner._process_sdk_message(_result())
+    assert forwarded == []
+    assert runner._interrupt_unwind_turns == 0
+
+    # A sub-agent that outlived the Stop reports afterwards: new autonomous
+    # turn, rendered normally. The whole turn, not just its first message —
+    # the old gate let the message that *opened* the turn through and then
+    # dropped every one after it, which is what made the dashboard flip to
+    # ACTIVE and show nothing.
+    await runner._process_sdk_message(_assistant("late sub-agent report"))
+    await runner._process_sdk_message(_assistant("and its conclusion"))
+
+    assert forwarded == ["late sub-agent report", "and its conclusion"]
+    assert list(runner._open_turns) == ["autonomous"]

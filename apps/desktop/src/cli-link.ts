@@ -224,8 +224,8 @@ async function registerUnixRuntime(daemonDir: string, version: string): Promise<
 }
 
 /** Is `dir` on the user's *login shell* PATH (not the app's launchd PATH)? */
-function binDirOnPath(dir: string): boolean {
-  const shellPath = readLoginShellPath() ?? process.env.PATH ?? '';
+async function binDirOnPath(dir: string): Promise<boolean> {
+  const shellPath = (await readLoginShellPath()) ?? process.env.PATH ?? '';
   return shellPath.split(path.delimiter).includes(dir);
 }
 
@@ -300,7 +300,7 @@ export async function installCliLink(): Promise<CliLinkResult> {
     await fsp.writeFile(linkPath, unixLauncher(), { mode: 0o755 });
     await fsp.chmod(linkPath, 0o755);
 
-    const onPath = binDirOnPath(binDir());
+    const onPath = await binDirOnPath(binDir());
     return {
       ok: true,
       path: linkPath,

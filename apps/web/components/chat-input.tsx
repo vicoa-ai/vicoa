@@ -16,7 +16,7 @@ import {
 } from '@/components/plugins/plugin-composer-actions';
 import type { ComposerContext } from '@/lib/plugins/composer';
 import { ChatUsageIndicator } from '@/components/chat-usage-indicator';
-import { fetchClaudeUsageWindows } from '@/lib/claude-usage';
+import { fetchProviderUsageWindows, providerHasUsageFetcher } from '@/lib/provider-usage';
 import type { SessionUsage } from '@/lib/backend-api';
 import { SlashCommandSuggestions } from '@/components/dashboard/slash-command-suggestions';
 import { QueuedMessagesBar, type QueuedMessageItem } from '@/components/dashboard/queue-status';
@@ -25,6 +25,7 @@ import { shouldShowStopButton } from '@/lib/chat-composer';
 import { getDesktopConfig } from '@/lib/runtime-config';
 import { comboInline, getShortcutCombo, matchesShortcut } from '@/lib/desktop-shortcuts';
 import { folderPathToMention } from '@/lib/chat-drop';
+import { collectComposerPaste, pasteTargetIsEditable } from '@/lib/chat-paste';
 import { FolderRefChip } from '@/components/folder-ref-chip';
 import { getDesktopShellBridge } from '@/lib/desktop-shell';
 
@@ -92,6 +93,10 @@ interface ChatInputProps {
   // is narrowed to the big-3 for behavior gating, which collapses ACP agents to
   // the Claude logo; this keeps the chip showing the real agent's mark.
   agentLogoName?: string | null;
+  // Catalog agent id (`session_config.agent`, e.g. 'copilot') for the usage
+  // indicator's out-of-band rate-limit refresh — `agentType` collapses ACP
+  // agents to 'claude', which would ask the daemon for the wrong account.
+  usageProviderId?: string | null;
   projectPath?: string;
   // Machine the project lives on. Lets `@` mentions read the live daemon index
   // instead of the CLI-synced DB copy; null falls back to the DB.
@@ -123,6 +128,9 @@ interface ChatInputProps {
   // Not-yet-sent messages the agent will consume in order, oldest → newest.
   // Rendered as a stack attached to the top of the input; empty hides it.
   queuedItems?: QueuedMessageItem[];
+  // The session's agent can take a queued message mid-turn (catalog
+  // `supports_steer`); shows the Steer button on each queued row.
+  canSteer?: boolean;
 }
 
 export type PermissionModeValue = 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions' | 'auto';
@@ -158,6 +166,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
   instanceId = null,
   agentType = 'claude',
   agentLogoName,
+  usageProviderId = null,
   projectPath,
   machineId = null,
   sessionPermissionModes,
@@ -179,6 +188,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
   singleColumnModels = false,
   usage = null,
   queuedItems = [],
+  canSteer = false,
 }: ChatInputProps, ref) {
   const { draft: message, setDraft: setMessage, clearDraft } = useMessageDraft({
     instanceId,
@@ -197,12 +207,14 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
   // via ~/.agents & ~/.codex/skills) alongside commands through the slash
   // trigger. Drives the Add-to-chat menu's label.
   const hasSkills = agentType === 'claude' || agentType === 'opencode' || agentType === 'codex';
-  // Live rate-limit refresh is Claude-only: the daemon reads the Claude Code
-  // OAuth credential. Codex windows arrive in-band from its app-server stream.
+  // Live rate-limit refresh for the providers the daemon can read a credential
+  // for (Claude, Codex, Copilot — see lib/provider-usage.ts). Others keep the
+  // in-band windows their wrapper stamps, if any.
   const usageFetchLimits = useMemo(() => {
-    if (agentType !== 'claude' || !machineId) return undefined;
-    return () => fetchClaudeUsageWindows(machineId);
-  }, [agentType, machineId]);
+    const provider = usageProviderId ?? agentType;
+    if (!providerHasUsageFetcher(provider) || !machineId) return undefined;
+    return () => fetchProviderUsageWindows(machineId, provider);
+  }, [usageProviderId, agentType, machineId]);
   // Bumped by the Add-to-chat "+" menu's "Mention files" action to make the
   // MentionTextarea insert "@" and open the file panel.
   const [mentionSignal, setMentionSignal] = useState(0);
@@ -312,6 +324,36 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
     // Allow re-picking the same file later.
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [addFilesToPending]);
+
+  // Ctrl/⌘+V of a screenshot attaches it, through the same caps and the same
+  // eager upload as the picker. A clipboard carrying text still pastes text —
+  // `collectComposerPaste` owns that call; here we only honour its verdict.
+  const handlePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const { files, handled } = collectComposerPaste(event.clipboardData);
+    if (!handled) return;
+    event.preventDefault();
+    addFilesToPending(files);
+  }, [addFilesToPending]);
+
+  // The screenshot was taken in another app, so the user comes back to a window
+  // where nothing is focused and hits paste. Catch that at the document level
+  // and route it to the composer — but never over a field that takes typing
+  // (the terminal's helper textarea, a search box), and never over a paste some
+  // other handler already consumed.
+  const pasteAcceptEnabled = !disabled && canSendMessage && !isSending;
+  useEffect(() => {
+    if (!pasteAcceptEnabled) return;
+    const onDocumentPaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented || pasteTargetIsEditable(event.target)) return;
+      const { files, handled } = collectComposerPaste(event.clipboardData);
+      if (!handled) return;
+      event.preventDefault();
+      addFilesToPending(files);
+      focusTextarea();
+    };
+    document.addEventListener('paste', onDocumentPaste);
+    return () => document.removeEventListener('paste', onDocumentPaste);
+  }, [pasteAcceptEnabled, addFilesToPending, focusTextarea]);
 
   // "Add folder" / desktop folder-drop: add the folder(s) as chips (deduped by
   // absolute path). They become `@path/` text in `handleSendMessage`.
@@ -683,6 +725,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
         <QueuedMessagesBar
           instanceId={instanceId}
           items={queuedItems}
+          canSteer={canSteer}
           onRetrieve={(text) => {
             // Drop the queued text back into the composer (append below any
             // in-progress draft so it's never clobbered), then focus so the
@@ -818,6 +861,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
               scrollbarColor: 'hsl(var(--border)) transparent',
             }}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             rows={1}
           />
         </div>
@@ -865,10 +909,10 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
             />
           )}
 
-          {/* Context-window + rate-limit usage (Claude + Codex); self-hides
-              when the session has no usage to show. Opening the popover on a
-              Claude session refreshes the rate-limit windows from the
-              machine's daemon (Codex limits stay in-band only). */}
+          {/* Context-window + rate-limit usage; self-hides when the session
+              has no usage to show. Opening the popover on a Claude / Codex /
+              Copilot session refreshes the rate-limit windows from the
+              machine's daemon (`fetch-provider-usage`). */}
           <ChatUsageIndicator usage={usage} fetchLimits={usageFetchLimits} />
 
           {/* Standalone toolbar buttons contributed by plugins (Tier 1). */}

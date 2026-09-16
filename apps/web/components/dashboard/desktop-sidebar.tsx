@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Plus, Loader2, LogIn, LogOut, PanelLeft, ListTodo, CalendarClock, BookOpen, Cog, ArrowUpCircle, Smartphone, Flag, Search } from 'lucide-react';
+import { Plus, Loader2, LogIn, LogOut, PanelLeft, ListTodo, CalendarClock, BookOpen, Bot, Settings, ArrowUpCircle, Smartphone, Flag, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -250,6 +250,21 @@ export function DesktopSidebar({
           Automations
         </Button>
 
+        {/* Saved agent presets (provider + model + instructions). Distinct from
+            the session list below, which is what those agents are doing. */}
+        <Button
+          variant="subtle"
+          className={cn(
+            'w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal',
+            pathname === '/dashboard/agents' && ITEM_SELECTED,
+          )}
+          onClick={() => router.push('/dashboard/agents')}
+          title="Agents"
+        >
+          <Bot className="h-4 w-4 mr-1.5" />
+          Agents
+        </Button>
+
         {/* Agent skills installed per machine. */}
         <Button
           variant="subtle"
@@ -357,7 +372,7 @@ function LocalAccountArea() {
           onClick={() => router.push('/dashboard/settings')}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground"
         >
-          <Cog className="h-4 w-4" />
+          <Settings className="h-4 w-4" />
         </button>
       </div>
       <p className="mt-1 px-2 text-[10px] text-muted-foreground/60">
@@ -401,6 +416,7 @@ function CloudAccountArea() {
     id: userId ?? profile?.id,
     name: profile?.name || email,
     avatarImageUri: profile?.avatarImageUri,
+    emoji: profile?.avatarEmoji,
     updatedAt: profile?.updatedAt,
   };
 
@@ -457,7 +473,7 @@ function CloudAccountArea() {
         </div>
         <DropdownMenuItem asChild className="cursor-pointer gap-2 text-xs text-foreground/80">
           <Link href="/dashboard/settings" className="flex w-full items-center gap-2">
-            <Cog className="h-4 w-4" />
+            <Settings className="h-4 w-4" />
             <span>Settings</span>
           </Link>
         </DropdownMenuItem>
@@ -496,7 +512,7 @@ function CloudAccountArea() {
       aria-label="Settings"
       className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground"
     >
-      <Cog className="h-4 w-4" />
+      <Settings className="h-4 w-4" />
     </Link>
     </div>
     {/* Sibling of the menu, not a child: the dialog must outlive the dropdown

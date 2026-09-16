@@ -109,6 +109,23 @@ Map<String, bool>? parseAvailableAgents(dynamic machine) {
   return result;
 }
 
+/// Display names the daemon publishes beside `available_agents`
+/// (`metadata.agent_labels`), for ids no client catalog can know — a provider
+/// added from the catalog or hand-written into that machine's config. Empty
+/// when the daemon hasn't reported any (older daemon).
+Map<String, String> parseAgentLabels(dynamic machine) {
+  final meta = machineMetadata(machine);
+  final raw = meta?['agent_labels'];
+  if (raw is! Map) return const {};
+  final result = <String, String>{};
+  raw.forEach((key, value) {
+    if (key != null && value is String && value.isNotEmpty) {
+      result[key.toString()] = value;
+    }
+  });
+  return result;
+}
+
 /// Whether the machine's daemon advertises git-worktree support via
 /// `metadata.capabilities` (e.g. `["worktree"]`).
 ///

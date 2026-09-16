@@ -188,10 +188,9 @@ function TasksPageInner() {
     };
   }, [api, refresh]);
 
-  // Deep link from the ⌘K palette: /dashboard/tasks?task={id} opens that
-  // task's dialog once its row is available (cached rows immediately, else
-  // after the fetch lands), then strips the param so refresh/back doesn't
-  // reopen it. An unknown id (e.g. deleted task) just leaves the board as-is.
+  // `?task=new` still opens the create dialog. `?task={id}` is the old deep
+  // link shape — it now forwards to the task's own route so older links (and
+  // anything still generating them) land on the same surface as a click.
   useEffect(() => {
     const taskId = searchParams?.get('task');
     if (!taskId) return;
@@ -200,11 +199,8 @@ function TasksPageInner() {
       router.replace('/dashboard/tasks', { scroll: false });
       return;
     }
-    const target = tasks.find((t) => t.id === taskId);
-    if (!target) return;
-    setDialog({ open: true, task: target });
-    router.replace('/dashboard/tasks', { scroll: false });
-  }, [searchParams, tasks, router]);
+    router.replace(`/dashboard/tasks/${taskId}`, { scroll: false });
+  }, [searchParams, router]);
 
   // Keep the in-memory cache warm from the current rows — seeds the next visit.
   // Gated on !isLoading so the pre-load empty state is never cached; every
@@ -587,9 +583,13 @@ function TasksPageInner() {
       setDialog({ open: true, task: null, defaults }),
     [],
   );
+  // Opening an existing task goes to its page, not to the dialog: that page is
+  // where comments, history and the full property set live, and a task the
+  // ⌘K palette or a "VIC-42" reference resolves to has to land somewhere
+  // deep-linkable. The dialog stays the fast *create* path.
   const openEditDialog = useCallback(
-    (task: TaskResponse) => setDialog({ open: true, task }),
-    [],
+    (task: TaskResponse) => router.push(`/dashboard/tasks/${task.id}`),
+    [router],
   );
   const closeDialog = useCallback(() => setDialog({ open: false, task: null }), []);
 

@@ -251,12 +251,57 @@ async def test_events_become_chat_rows():
 async def test_steer_only_applies_while_a_turn_is_running():
     session, transport, _client = make_session("omp")
     assert session.steer("hurry") is False
+    assert session.turn_active is False
     task = asyncio.create_task(session.prompt("go"))
     await asyncio.sleep(0)
+    assert session.turn_active is True
     assert session.steer("hurry") is True
     assert transport.sends[-1] == ("steer", {"message": "hurry"})
     await transport.emit({"type": "agent_end", "isTerminal": True, "messages": []})
     await asyncio.wait_for(task, timeout=2)
+    assert session.turn_active is False
+
+
+async def test_steer_carries_images_in_the_prompt_shape():
+    session, transport, _client = make_session("omp")
+    task = asyncio.create_task(session.prompt("go"))
+    await asyncio.sleep(0)
+    image = {"type": "image", "data": "AAAA", "mimeType": "image/png"}
+    assert session.steer("look", [image]) is True
+    assert transport.sends[-1] == ("steer", {"message": "look", "images": [image]})
+    await transport.emit({"type": "agent_end", "isTerminal": True, "messages": []})
+    await asyncio.wait_for(task, timeout=2)
+
+
+async def test_steer_user_message_resolves_attachments_like_prompt(monkeypatch):
+    from vicoa.attachments import AttachmentRef
+
+    session, transport, _client = make_session("omp")
+
+    seen: list[list[str]] = []
+
+    async def fake_payload(text, attachments):
+        seen.append([a.id for a in attachments])
+        if not attachments:
+            return text, []
+        return text, [{"type": "image", "data": "QUJD", "mimeType": "image/png"}]
+
+    monkeypatch.setattr(session, "_build_prompt_payload", fake_payload)
+    assert await session.steer_user_message("look", ()) is False  # no turn
+    task = asyncio.create_task(session.prompt("go"))
+    await asyncio.sleep(0)
+    ref = AttachmentRef("att-1", "image/png", "shot.png")
+    assert await session.steer_user_message("look", (ref,)) is True
+    assert transport.sends[-1] == (
+        "steer",
+        {
+            "message": "look",
+            "images": [{"type": "image", "data": "QUJD", "mimeType": "image/png"}],
+        },
+    )
+    await transport.emit({"type": "agent_end", "isTerminal": True, "messages": []})
+    await asyncio.wait_for(task, timeout=2)
+    assert seen[-1] == ["att-1"]
 
 
 async def test_interrupt_with_no_turn_still_settles_a_stale_active_row():

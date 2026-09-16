@@ -1,10 +1,14 @@
-"""``vicoa task`` — list, read, create, update, and delete Vicoa tasks.
+"""``vicoa task`` — list, read, create, update, comment on, and delete tasks.
 
 Built so a running AI agent can manage its user's task backlog without leaving
 the terminal (``vicoa task create "Fix the flaky test"``). Talks to the
 agent-facing server (``agents.vicoa.ai``) with the same Bearer API key every
 other ``vicoa`` command uses, hitting the ``/api/v1/tasks`` endpoints added in
 ``servers/api/tasks.py``.
+
+Every task reference — the positional ``task_id`` on ``get``/``update``/
+``delete``/``comment(s)``, and ``--parent`` — accepts either the identifier the
+user actually sees (``VIC-42``) or a full UUID.
 
 Human-readable tables by default; ``--json`` on every subcommand for agents (or
 scripts) that want to parse the result. Kept dependency-light — no
@@ -17,6 +21,7 @@ import json as _json
 import os
 import sys
 from typing import Any, Optional
+from uuid import UUID
 
 from vicoa.constants import DEFAULT_API_URL
 
@@ -147,12 +152,16 @@ def _print_task_table(tasks: list[dict]) -> None:
     if not tasks:
         print("No tasks found.")
         return
-    header = f"{'ID':<8}  {'STATUS':<12} {'PRIO':<7} {'TITLE':<{_TITLE_W}}"
+    # Both an id and an identifier: the short id is what the other subcommands
+    # take (truncated, so it is a browsing aid either way), while "VIC-42" is
+    # what an agent quotes back to its user and what the web deep-links to.
+    header = f"{'ID':<8}  {'KEY':<9} {'STATUS':<12} {'PRIO':<7} {'TITLE':<{_TITLE_W}}"
     print(header)
     print("-" * len(header))
     for t in tasks:
         print(
             f"{_short(t.get('id')):<8}  "
+            f"{str(t.get('identifier') or '—'):<9} "
             f"{str(t.get('status', '')):<12} "
             f"{str(t.get('priority', '')):<7} "
             f"{_fit(t.get('title', ''), _TITLE_W):<{_TITLE_W}}"
@@ -164,6 +173,10 @@ def _print_task_detail(t: dict) -> None:
     labels = ", ".join(lbl.get("name", "") for lbl in t.get("labels", [])) or "—"
     lines = [
         f"id:          {t.get('id')}",
+        # The speakable identifier ("VIC-42"). Absent for a task that predates
+        # the backfill; print nothing rather than a placeholder that would look
+        # like a real reference someone could quote back.
+        *([f"identifier:  {t['identifier']}"] if t.get("identifier") else []),
         f"title:       {t.get('title')}",
         f"status:      {t.get('status')}",
         f"priority:    {t.get('priority')}",
@@ -179,6 +192,84 @@ def _print_task_detail(t: dict) -> None:
     description = t.get("description")
     if description:
         print(f"\ndescription:\n{description}")
+
+
+def _principal_name(principal: Optional[dict]) -> str:
+    if not principal:
+        return "someone"
+    name = principal.get("name") or "Unknown"
+    # The agent tag matters here in a way it doesn't on the web, where an avatar
+    # already says it: in a terminal "Claude" and "Nick" look identical.
+    return f"{name} (agent)" if principal.get("type") == "agent" else name
+
+
+def _print_comment(c: dict, indent: str = "") -> None:
+    header = f"{indent}{_principal_name(c.get('author'))}  {c.get('created_at', '')}"
+    if c.get("edited_at"):
+        header += "  (edited)"
+    print(header)
+    print(f"{indent}  id: {c.get('id')}")
+    body = c.get("body")
+    if body is None:
+        print(f"{indent}  (deleted)")
+    else:
+        for line in body.splitlines() or [""]:
+            print(f"{indent}  {line}")
+    reactions = c.get("reactions") or []
+    if reactions:
+        print(
+            f"{indent}  "
+            + "  ".join(f"{r.get('emoji')} {r.get('count')}" for r in reactions)
+        )
+    print()
+
+
+def _print_thread(comments: list[dict]) -> None:
+    """Print the thread. Replies are indented under the root they answer.
+
+    The server sends the list already in thread order (each root followed by its
+    replies), so this only has to decide the indent — it never has to sort or
+    walk a tree, and neither does any other client.
+    """
+    if not comments:
+        print("No comments yet.")
+        return
+    for c in comments:
+        _print_comment(c, indent="    " if c.get("parent_comment_id") else "")
+
+
+def _print_activity(activity: list[dict]) -> None:
+    print("--- activity ---")
+    if not activity:
+        print("No activity yet.")
+        return
+    for row in activity:
+        details = row.get("details") or {}
+        change = ""
+        if "from" in details or "to" in details:
+            change = f" ({details.get('from')} -> {details.get('to')})"
+        print(
+            f"{row.get('created_at', '')}  "
+            f"{_principal_name(row.get('actor'))}  "
+            f"{str(row.get('action', '')).replace('_', ' ')}{change}"
+        )
+
+
+def _resolve_parent(args, api_key: str, ref: str) -> str:
+    """Turn a ``--parent`` reference into the UUID the request body needs.
+
+    Path parameters accept "VIC-42" server-side, but ``parent_task_id`` travels
+    in the body as a typed UUID. Rather than loosen that field for every client,
+    the one client that lets a *person* type a parent resolves it here — one
+    extra GET, and only when the value isn't already a UUID.
+    """
+    try:
+        UUID(ref)
+        return ref
+    except (ValueError, AttributeError):
+        pass
+    task = _request(args, api_key, "GET", f"/api/v1/tasks/{ref}")
+    return task["id"]
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +313,7 @@ def _cmd_create(args, api_key: str) -> int:
     if getattr(args, "priority", None):
         body["priority"] = args.priority
     if getattr(args, "parent", None):
-        body["parent_task_id"] = args.parent
+        body["parent_task_id"] = _resolve_parent(args, api_key, args.parent)
     if getattr(args, "start", None):
         body["start_date"] = args.start
     if getattr(args, "due", None):
@@ -250,8 +341,11 @@ def _cmd_update(args, api_key: str) -> int:
         ("due", "due_date"),
     ):
         value = getattr(args, flag, None)
-        if value is not None:
-            body[field] = value
+        if value is None:
+            continue
+        body[field] = (
+            _resolve_parent(args, api_key, value) if flag == "parent" else value
+        )
     if not body:
         print(
             "Nothing to update — pass at least one field "
@@ -264,6 +358,56 @@ def _cmd_update(args, api_key: str) -> int:
         print(_json.dumps(task, indent=2))
     else:
         print(f"Updated task {task.get('id')}: {task.get('title')}")
+    return 0
+
+
+def _cmd_comments(args, api_key: str) -> int:
+    timeline = _request(args, api_key, "GET", f"/api/v1/tasks/{args.task_id}/timeline")
+    if getattr(args, "json", False):
+        print(_json.dumps(timeline, indent=2))
+        return 0
+    _print_thread(timeline.get("comments", []))
+    if getattr(args, "activity", False):
+        _print_activity(timeline.get("activity", []))
+    return 0
+
+
+def _cmd_comment(args, api_key: str) -> int:
+    body = args.body
+    # '-' reads stdin, so an agent can pipe a multi-line markdown report in
+    # rather than fighting its own shell over quoting and newlines.
+    if body == "-":
+        body = sys.stdin.read()
+    body = body.strip()
+    if not body:
+        print("Refusing to post an empty comment.", file=sys.stderr)
+        return 2
+
+    payload: dict[str, Any] = {"body": body}
+    if getattr(args, "reply_to", None):
+        payload["parent_comment_id"] = args.reply_to
+    # When this runs inside a Vicoa session, tell the server which one: if that
+    # session was started from an agent profile the comment is authored by the
+    # agent ("Claude commented"), not by the human whose API key it is.
+    self_id = os.environ.get("VICOA_AGENT_INSTANCE_ID")
+    if self_id:
+        payload["agent_instance_id"] = self_id
+
+    timeline = _request(
+        args,
+        api_key,
+        "POST",
+        f"/api/v1/tasks/{args.task_id}/comments",
+        json=payload,
+    )
+    if getattr(args, "json", False):
+        print(_json.dumps(timeline, indent=2))
+        return 0
+    # Not `comments[-1]`: the list comes back in thread order, so a reply is
+    # spliced under its root rather than appended at the end.
+    comments = timeline.get("comments", [])
+    posted = max(comments, key=lambda c: c.get("created_at") or "", default=None)
+    print(f"Posted comment {posted.get('id')}" if posted else "Posted comment.")
     return 0
 
 
@@ -289,6 +433,8 @@ _HANDLERS = {
     "get": _cmd_get,
     "create": _cmd_create,
     "update": _cmd_update,
+    "comments": _cmd_comments,
+    "comment": _cmd_comment,
     "delete": _cmd_delete,
 }
 
@@ -299,7 +445,7 @@ def run_task_command(args) -> int:
     handler = _HANDLERS.get(sub) if sub else None
     if handler is None:
         print(
-            "usage: vicoa task {ls,get,create,update,delete} ...\n"
+            "usage: vicoa task {ls,get,create,update,comments,comment,delete} ...\n"
             "Run `vicoa task --help` for details.",
             file=sys.stderr,
         )

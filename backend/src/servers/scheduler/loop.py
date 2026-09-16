@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
+from shared.agent_profile_resolution import resolve_automation_config
 from shared.config import settings
 from shared.database import Automation, AgentInstance, AutomationRun
 from shared.database.session import SessionLocal
@@ -51,6 +52,18 @@ def _claim_due_blocking() -> list[dict]:
             .all()
         )
         for row in rows:
+            # A referenced profile is resolved HERE — at claim time, moments
+            # before the spawn — which is what makes "edit the agent, the next
+            # run picks it up" true. The row's own session_config doubles as the
+            # fallback snapshot; refresh it whenever the live profile answered,
+            # so an automation stays runnable if the profile is later archived.
+            resolved = resolve_automation_config(
+                db,
+                agent_profile_id=row.agent_profile_id,
+                session_config=row.session_config,
+            )
+            if resolved.from_profile and resolved.session_config != row.session_config:
+                row.session_config = resolved.session_config
             claimed.append(
                 {
                     "id": row.id,
@@ -58,7 +71,8 @@ def _claim_due_blocking() -> list[dict]:
                     "machine_id": row.machine_id,
                     "directory": row.directory,
                     "worktree": dict(row.worktree) if row.worktree else None,
-                    "session_config": dict(row.session_config or {}),
+                    "session_config": resolved.session_config,
+                    "system_prompt": resolved.system_prompt,
                     "prompt": row.prompt,
                     "planned_at": row.next_run_at,
                 }
@@ -167,6 +181,7 @@ class AutomationScheduler:
             worktree=row["worktree"],
             session_config=row["session_config"],
             prompt=row["prompt"],
+            system_prompt=row.get("system_prompt"),
         )
         linked = None
         if result.status == "fired" and result.agent_instance_id:

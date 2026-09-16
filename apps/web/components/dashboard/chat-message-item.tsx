@@ -12,6 +12,7 @@ import { StandaloneThinkingCard, parseThinkingPayload } from '@/components/dashb
 import { CollapsibleUserMessage } from '@/components/dashboard/collapsible-user-message';
 import { MessageActions } from '@/components/dashboard/message-actions';
 import { stripPermissionModeCommandTokens } from '@/lib/session-control-messages';
+import { isTextSelectionClick } from '@/lib/text-selection';
 import { CONTROL_COMMAND_JSON_REGEX, isControlEnvelope } from '@/lib/control-messages';
 import { HighlightedText, useFindHighlight } from '@/components/dashboard/chat-find-context';
 
@@ -228,8 +229,12 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
                   {options.map((option, index) => (
                     <button
                       key={index}
-                      onClick={() => onOptionClick?.(option)}
-                      className="group block w-full text-left px-3 py-2 text-xs bg-card border-2 border-border/50 rounded-lg cursor-pointer hover:border-muted-foreground/40 hover:bg-muted hover:shadow-sm transition-colors duration-150 focus:outline-none focus:ring-1"
+                      // Selectable so a long option can be copied; a
+                      // drag-select must not send it (lib/text-selection.ts).
+                      onClick={(e) => {
+                        if (!isTextSelectionClick(e)) onOptionClick?.(option);
+                      }}
+                      className="group block w-full text-left px-3 py-2 text-xs bg-card border-2 border-border/50 rounded-lg cursor-pointer hover:border-muted-foreground/40 hover:bg-muted hover:shadow-sm transition-colors duration-150 focus:outline-none focus:ring-1 select-text"
                     >
                       <span className="font-medium text-muted-foreground font-mono text-xs group-hover:text-foreground transition-colors duration-150">{index + 1}.</span>{' '}
                       <span className="text-foreground font-mono text-xs">{option}</span>

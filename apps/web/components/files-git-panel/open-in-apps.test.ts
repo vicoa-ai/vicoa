@@ -7,6 +7,7 @@ vi.mock('./rpc', () => ({ rpcListOpenApps: listOpenApps }));
 
 const {
   FAILURE_TTL_MS,
+  appsForTarget,
   groupOpenApps,
   loadOpenApps,
   openErrorMessage,
@@ -14,7 +15,8 @@ const {
 } = await import('./open-in-apps');
 
 function app(id: string, kind: OpenApp['kind']): OpenApp {
-  return { id, label: id, kind, target: kind === 'terminal' ? 'dir' : 'path' };
+  const target = kind === 'terminal' ? 'dir' : kind === 'default' ? 'file' : 'path';
+  return { id, label: id, kind, target };
 }
 
 beforeEach(() => {
@@ -46,12 +48,35 @@ describe('groupOpenApps', () => {
   it('returns nothing for an empty app list', () => {
     expect(groupOpenApps([])).toEqual([]);
   });
+
+  it('puts the default app first, on its own', () => {
+    const groups = groupOpenApps([app('finder', 'file-manager'), app('default', 'default')]);
+
+    expect(groups.map((g) => g.kind)).toEqual(['default', 'file-manager']);
+  });
+});
+
+describe('appsForTarget', () => {
+  const apps = [app('default', 'default'), app('finder', 'file-manager'), app('zed', 'editor')];
+
+  it('offers everything for a file', () => {
+    expect(appsForTarget(apps, 'report.xlsx').map((a) => a.id)).toEqual([
+      'default',
+      'finder',
+      'zed',
+    ]);
+  });
+
+  it('drops file-only apps for the project root', () => {
+    expect(appsForTarget(apps, '').map((a) => a.id)).toEqual(['finder', 'zed']);
+  });
 });
 
 describe('openErrorMessage', () => {
   it('maps a known RPC code to actionable copy', () => {
     expect(openErrorMessage(new RpcError('app_not_found'))).toMatch(/no longer installed/);
     expect(openErrorMessage(new RpcError('target_disconnected'))).toMatch(/offline/);
+    expect(openErrorMessage(new RpcError('not_openable'))).toMatch(/executable/);
   });
 
   it('falls back for an unrecognised failure', () => {

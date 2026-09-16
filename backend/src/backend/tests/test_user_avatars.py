@@ -302,3 +302,40 @@ class TestAvatarEndpoints:
             authenticated_client.get(f"/api/v1/users/{uuid4()}/avatar").status_code
             == 404
         )
+
+
+class TestAvatarEmoji:
+    """A picked emoji is an alternative to uploading a photo — the same option
+    projects and agent profiles already have."""
+
+    def test_set_clear_and_roundtrip_on_the_profile(self, authenticated_client):
+        set_resp = authenticated_client.put(
+            "/api/v1/me/avatar-emoji", json={"emoji": "🦊"}
+        )
+        assert set_resp.status_code == 200, set_resp.text
+        assert set_resp.json()["avatar_emoji"] == "🦊"
+        assert (
+            authenticated_client.get("/api/v1/auth/me").json()["avatar_emoji"] == "🦊"
+        )
+
+        cleared = authenticated_client.put("/api/v1/me/avatar-emoji", json={})
+        assert cleared.json()["avatar_emoji"] is None
+
+    def test_emoji_and_image_coexist(self, authenticated_client, fake_avatar_storage):
+        """Removing a photo reveals the emoji chosen earlier rather than
+        silently discarding it — they are independent fields, and the image
+        simply wins while it exists."""
+        authenticated_client.put("/api/v1/me/avatar-emoji", json={"emoji": "🚀"})
+        authenticated_client.put(
+            "/api/v1/me/avatar",
+            files={"file": ("me.png", _png_bytes(), "image/png")},
+        )
+        removed = authenticated_client.delete("/api/v1/me/avatar").json()
+        assert removed["avatar_image_uri"] is None
+        assert removed["avatar_emoji"] == "🚀"
+
+    def test_oversized_value_is_rejected(self, authenticated_client):
+        resp = authenticated_client.put(
+            "/api/v1/me/avatar-emoji", json={"emoji": "x" * 17}
+        )
+        assert resp.status_code == 422

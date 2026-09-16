@@ -85,6 +85,18 @@ type EventMap = {
   desktop_onboarding_intro_step_viewed: { step_index: number; step_id: string };
   desktop_onboarding_intro_completed: { skipped: boolean; steps_completed: number };
   desktop_onboarding_signin_started: { method: 'browser_handoff' };
+  /**
+   * The waiting screen mounted — i.e. the browser handoff got as far as "we are
+   * now waiting for the deep link". Without it, `signin_started` with no
+   * `signin_returned` is a single undifferentiated hole (29 people in the first
+   * seven weeks): it cannot distinguish "the browser never opened" from "the
+   * browser opened and they gave up". This event splits that hole in two.
+   */
+  desktop_onboarding_signin_waiting: Record<string, never>;
+  /** "Browser didn't open? Try again" / "Try again" pressed. */
+  desktop_onboarding_signin_retried: { after_error: boolean };
+  /** "Cancel sign-in" pressed — an explicit abandon, as opposed to vanishing. */
+  desktop_onboarding_signin_cancelled: Record<string, never>;
   desktop_onboarding_signin_returned: { outcome: SignInOutcome };
   desktop_onboarding_scan_viewed: Record<string, never>;
   desktop_onboarding_scan_completed: ScanPayload & { phase: 'found' | 'empty' };
@@ -101,6 +113,35 @@ type EventMap = {
   checkout_failed: { plan: 'pro'; interval: BillingInterval; status: number | null };
   first_web_message_sent: Record<string, never>;
   first_desktop_message_sent: Record<string, never>;
+
+  // ── The new-session screen (the stretch between onboarding and activation) ─
+  //
+  // Half of everyone who finishes desktop onboarding never creates a session,
+  // and until these events there was NOTHING emitted between
+  // `desktop_onboarding_completed` and `session_created` — the largest leak in
+  // the product had no diagnostic surface at all. Unprefixed on purpose: the
+  // screen and its failure modes are identical on web, so `source` splits them
+  // (same doctrine as `session_created` / `checkout_started`).
+  /**
+   * The new-session screen resolved its machine list. Fires once per mount,
+   * AFTER the first `listMachines` settles — a mount-time capture would report
+   * `none` for everyone, since the list is always empty on the first render.
+   */
+  new_session_viewed: { machine_state: MachineState; machine_count: number };
+  /**
+   * The user pressed send and nothing happened. `handleSubmit` returns early
+   * when there is no machine / no directory / no prompt, with no toast and no
+   * disabled-state explanation — which is exactly what a rageclick looks like
+   * from the inside (17 desktop users rage-clicked this screen's dead zone in
+   * the first seven weeks). Fires at most once per reason per mount, so a
+   * five-click burst is one event, not five.
+   */
+  session_submit_blocked: { reason: SubmitBlockedReason; machine_state: MachineState };
+  /**
+   * Session creation was attempted and failed. `reason` is a stable code, never
+   * the user-facing copy, so the shape survives message rewording.
+   */
+  session_create_failed: { reason: SessionCreateFailure };
 
   // ── Desktop-only ──────────────────────────────────────────────────────────
   /**
@@ -157,6 +198,18 @@ export function trackIntroCompleted(skipped: boolean, stepsCompleted: number): v
 // ── Sign-in handoff ─────────────────────────────────────────────────────────
 
 export type SignInOutcome = 'success' | 'mismatch' | 'error';
+
+export function trackSignInWaiting(): void {
+  capture('desktop_onboarding_signin_waiting');
+}
+
+export function trackSignInRetried(afterError: boolean): void {
+  capture('desktop_onboarding_signin_retried', { after_error: afterError });
+}
+
+export function trackSignInCancelled(): void {
+  capture('desktop_onboarding_signin_cancelled');
+}
 
 export function trackSignInStarted(): void {
   // `method` is a constant today, but the browser handoff is not the only
@@ -260,6 +313,70 @@ export function trackCheckoutStarted(interval: BillingInterval): void {
  */
 export function trackCheckoutFailed(interval: BillingInterval, status: number | null): void {
   capture('checkout_failed', { plan: 'pro', interval, status });
+}
+
+// ── New-session screen ──────────────────────────────────────────────────────
+
+/**
+ * What the machine picker resolved to.
+ *
+ * `none` — the account has no machine at all. On desktop this is the damning
+ * one: the daemon is bundled and supervised by Electron, so a desktop user in
+ * this state is looking at copy that tells them to run `vicoa daemon`, a
+ * command they do not have and should never need.
+ * `offline` — machines exist but none is connected.
+ * `online` — at least one machine is reachable.
+ */
+export type MachineState = 'none' | 'offline' | 'online';
+
+/**
+ * Why the composer cannot submit. Ordered by precedence: the first one that
+ * applies is the one the user is shown and the one that is captured, so a
+ * machine that is both absent and offline reports the actionable reason.
+ */
+export type SubmitBlockedReason =
+  | 'no_api'
+  | 'no_machine'
+  | 'machine_offline'
+  | 'no_directory';
+
+/** Stable failure codes for session creation — never the user-facing string. */
+export type SessionCreateFailure =
+  | 'spawn_error'
+  | 'machine_offline'
+  | 'daemon_timeout'
+  | 'daemon_disconnected'
+  | 'unknown';
+
+/**
+ * Once-per-mount guards. The point of these events is "did this person hit this
+ * wall", not "how many times did they click it" — and a rageclick is by
+ * definition a burst, so an ungated capture would report the loudest user
+ * rather than the widest problem.
+ */
+let newSessionViewFired = false;
+const submitBlockedFired = new Set<SubmitBlockedReason>();
+
+/** Call from the new-session screen's unmount so a revisit re-arms the guards. */
+export function resetNewSessionGuards(): void {
+  newSessionViewFired = false;
+  submitBlockedFired.clear();
+}
+
+export function trackNewSessionViewed(state: MachineState, machineCount: number): void {
+  if (newSessionViewFired) return;
+  newSessionViewFired = true;
+  capture('new_session_viewed', { machine_state: state, machine_count: machineCount });
+}
+
+export function trackSubmitBlocked(reason: SubmitBlockedReason, state: MachineState): void {
+  if (submitBlockedFired.has(reason)) return;
+  submitBlockedFired.add(reason);
+  capture('session_submit_blocked', { reason, machine_state: state });
+}
+
+export function trackSessionCreateFailed(reason: SessionCreateFailure): void {
+  capture('session_create_failed', { reason });
 }
 
 // ── Onboarding complete ─────────────────────────────────────────────────────

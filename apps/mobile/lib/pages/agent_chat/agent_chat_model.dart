@@ -524,6 +524,15 @@ String? latestWebPreviewUrl;
 
   bool isAcpAgent() => acpAgentId() != null;
 
+  /// Catalog id the usage indicator's out-of-band refresh asks the daemon
+  /// about (`fetch-provider-usage {provider}`): 'claude' / 'codex' / the ACP
+  /// id ('copilot', …). Null when the session's agent can't be told.
+  String? usageProviderId() {
+    if (supportsControlSettings()) return 'claude';
+    if (isCodexAgent()) return 'codex';
+    return acpAgentId();
+  }
+
   Map<String, dynamic>? get _sessionConfigMap {
     final sc = instanceData?['session_config'];
     return sc is Map ? Map<String, dynamic>.from(sc) : null;

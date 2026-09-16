@@ -22,15 +22,25 @@ import hashlib
 import json
 from typing import Any
 
+from protocol.acp_catalog import ACP_CATALOG
+
 
 AGENT_CATALOG: dict[str, Any] = {
-    "version": "2026-09-05-1",
+    "version": "2026-09-12-1",
     "min_cli_version": "1.20.0",
     "min_client_version": "0.42.0",
     "agents": [
         {
             "id": "claude",
             "label": "Claude Code",
+            # `supports_steer`: the wrapper can deliver a queued message into
+            # the *running* turn (the queue bar's Steer button). Claude Code's
+            # streaming stdin picks a mid-turn user message up at the next
+            # tool boundary (verified on claude 2.1.261); Codex has a native
+            # `turn/steer` RPC; pi/omp have a `steer` RPC. Omitted (false) for
+            # ACP agents — the protocol is one prompt turn at a time — and
+            # OpenCode, which only queues.
+            "supports_steer": True,
             "models": [
                 # Per-model `thinking_efforts` / `permission_modes` arrays list
                 # ONLY the opt-in ids this model adds beyond the common set.
@@ -143,6 +153,7 @@ AGENT_CATALOG: dict[str, Any] = {
         {
             "id": "codex",
             "label": "Codex",
+            "supports_steer": True,
             # Refresh per docs/agents/agent-catalog.md. Do NOT source from
             # ~/.codex/models_cache.json — that file is per-user / per-account
             # (filtered by entitlements) and doesn't reflect the canonical
@@ -219,6 +230,7 @@ AGENT_CATALOG: dict[str, Any] = {
         {
             "id": "omp",
             "label": "Oh My Pi",
+            "supports_steer": True,
             "models": [{"id": "default", "label": "Default", "is_default": True}],
             "thinking_efforts": [
                 {"id": "max", "label": "Max"},
@@ -244,6 +256,7 @@ AGENT_CATALOG: dict[str, Any] = {
         {
             "id": "pi",
             "label": "Pi",
+            "supports_steer": True,
             "models": [{"id": "default", "label": "Default", "is_default": True}],
             "thinking_efforts": [
                 {"id": "max", "label": "Max"},
@@ -353,6 +366,11 @@ AGENT_CATALOG: dict[str, Any] = {
             ],
         },
     ],
+    # Agents a user can add with one click (Settings → Providers, or
+    # `vicoa provider add`). Not in `agents`: the daemon does not know them
+    # until they are installed into the machine's config, and they carry no
+    # model/mode lists — an ACP agent reports those at session/new.
+    "acp_catalog": ACP_CATALOG,
 }
 
 
@@ -385,6 +403,53 @@ def _build_enum_indices(
 PERMISSION_MODES, THINKING_EFFORTS, REASONING_EFFORTS = _build_enum_indices(
     AGENT_CATALOG
 )
+
+#: The exact key set of ``apps/web/lib/agent-catalog.ts::SessionConfig``. Three
+#: tables store this shape verbatim — ``agent_instances.session_config``,
+#: ``automations.session_config`` and ``agent_profiles.config`` — which is what
+#: lets the web client run ``reconcileAgainst(config, catalog)`` over any of them
+#: and get stale-model repair for free. Keep in sync with that interface.
+SESSION_CONFIG_KEYS: frozenset[str] = frozenset(
+    {
+        "agent",
+        "model",
+        "thinking_effort",
+        "reasoning_effort",
+        "permission_mode",
+        "opencode_mode",
+    }
+)
+
+
+def known_agent_ids() -> set[str]:
+    """Catalog agent ids ('claude', 'codex', 'opencode', …)."""
+    return {agent["id"] for agent in AGENT_CATALOG["agents"]}
+
+
+def normalize_session_config(config: Any, agent: str) -> dict[str, Any]:
+    """Coerce arbitrary input to a clean ``SessionConfig`` dict.
+
+    Drops unknown keys and null/empty values, and forces ``agent`` to the caller's
+    authoritative value — for ``agent_profiles`` that is the indexed column, which
+    must never disagree with the copy inside the JSON blob.
+
+    Deliberately does NOT validate model/effort ids against the catalog: those go
+    stale on their own (a provider retires a model), and the clients already repair
+    them silently via ``reconcileAgainst``. Rejecting them here would turn a
+    self-healing case into a 422 on a profile the user cannot fix.
+    """
+    out: dict[str, Any] = {}
+    if isinstance(config, dict):
+        for key, value in config.items():
+            if (
+                key in SESSION_CONFIG_KEYS
+                and key != "agent"
+                and value not in (None, "")
+            ):
+                out[key] = value
+    out["agent"] = agent
+    return out
+
 
 # JSON-encoded once at import: stable bytes for ETag computation and direct
 # Response body without per-request `json.dumps`.

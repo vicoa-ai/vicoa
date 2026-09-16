@@ -1,8 +1,9 @@
 // Collapsed sub-agent (Task tool) rendering for the agent chat. Child
 // messages carry `message_metadata.subagent = { tool_use_id, subagent_type,
-// description, role }` (see `src/integrations/headless/subagent.py` in
-// vicoa-backend); every message sharing a `tool_use_id` groups under one
-// "Sub-agent: <type>" collapsible header, indented like `ToolUseGroup`.
+// description, role }` — plus `status` on the settled report — (see
+// `backend/src/integrations/headless/subagent.py`); every message sharing a
+// `tool_use_id` groups under one "Sub-agent: <type>" collapsible header,
+// indented like `ToolUseGroup`.
 //
 // Unlike `ToolUseGroup`'s consecutive-run grouping, sub-agent grouping is
 // ANCHORED AT FIRST OCCURRENCE of each `tool_use_id`: Claude can run parallel
@@ -18,6 +19,8 @@ import '/custom_code/widgets/markdown_text_builder.dart'
         buildCollapsibleToolRow,
         buildToolGroupHeader,
         sanitizeToolContent;
+import '/custom_code/widgets/tool_use_group.dart'
+    show describeToolRun, summarizeToolMessage;
 
 /// Reads a message's `message_metadata.subagent.tool_use_id`, or null when
 /// [message] isn't tagged as sub-agent activity (not a Map, no metadata, or a
@@ -56,6 +59,20 @@ String? subagentDescriptionOf(dynamic message) {
   if (subagent is! Map) return null;
   final desc = subagent['description']?.toString().trim();
   return (desc == null || desc.isEmpty) ? null : desc;
+}
+
+/// Reads `message_metadata.subagent.status` — how the run ended (`completed`
+/// / `failed` / `stopped`), or null while it is unsettled or on a client
+/// talking to a backend that predates the field. Only the settled report
+/// carries one, so a run's status is the last non-null value across it.
+String? subagentStatusOf(dynamic message) {
+  if (message is! Map) return null;
+  final metadata = message['message_metadata'];
+  if (metadata is! Map) return null;
+  final subagent = metadata['subagent'];
+  if (subagent is! Map) return null;
+  final status = subagent['status']?.toString().trim();
+  return (status == null || status.isEmpty) ? null : status;
 }
 
 /// Precomputed, anchor-at-first-occurrence bucketing of sub-agent messages by
@@ -146,6 +163,7 @@ class SubagentGroup extends StatefulWidget {
     required this.subagentType,
     this.description,
     required this.contents,
+    this.status,
     required this.expanded,
     required this.onToggle,
     this.onBeforeToggle,
@@ -159,6 +177,10 @@ class SubagentGroup extends StatefulWidget {
 
   /// Sanitized message contents belonging to this sub-agent run, in chat order.
   final List<String> contents;
+
+  /// The run's terminal status (`completed` / `failed` / `stopped`), or null
+  /// while it is still running.
+  final String? status;
   final bool expanded;
   final VoidCallback onToggle;
 
@@ -192,11 +214,25 @@ class _SubagentGroupState extends State<SubagentGroup> {
     });
   }
 
-  String get _label {
+  /// The collapsed header line. Same vocabulary a collapsed [ToolUseGroup]
+  /// uses ("Run 2 commands, edit 2 files"), because a sub-agent that rewrote
+  /// three files otherwise announced itself as one line naming neither the
+  /// work nor the files. [toolContents] is the run's tool-use members only —
+  /// prose and thinking cards aren't actions and would inflate the counts.
+  String _label(List<String> toolContents) {
     final type = widget.subagentType.trim();
-    final header = 'Sub-agent: ${type.isEmpty ? 'agent' : type}';
+    var header = 'Sub-agent: ${type.isEmpty ? 'agent' : type}';
+    // 'completed' is the normal ending and needs no marker; anything else does.
+    final status = widget.status?.trim();
+    if (status != null && status.isNotEmpty && status != 'completed') {
+      header = '$header ($status)';
+    }
     final desc = widget.description?.trim();
-    return (desc == null || desc.isEmpty) ? header : '$header — $desc';
+    if (desc != null && desc.isNotEmpty) header = '$header — $desc';
+    if (toolContents.isEmpty) return header;
+    final runLabel =
+        describeToolRun([for (final c in toolContents) summarizeToolMessage(c)]);
+    return runLabel.isEmpty ? header : '$header · $runLabel';
   }
 
   @override
@@ -214,10 +250,13 @@ class _SubagentGroupState extends State<SubagentGroup> {
       filterProjectRoot: widget.filterProjectRoot,
     );
 
+    final label =
+        _label([for (final c in contents) if (_isToolUseContent(c)) c]);
+
     if (!widget.expanded) {
       return buildToolGroupHeader(
         context,
-        _label,
+        label,
         isLast: true,
         expanded: false,
         onToggle: _toggleRun,
@@ -237,7 +276,7 @@ class _SubagentGroupState extends State<SubagentGroup> {
       children: [
         buildToolGroupHeader(
           context,
-          _label,
+          label,
           isLast: !firstIsTool,
           expanded: true,
           onToggle: _toggleRun,

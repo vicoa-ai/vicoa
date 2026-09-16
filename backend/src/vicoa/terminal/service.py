@@ -277,7 +277,24 @@ class TerminalService:
             sessions = list(self._sessions.values())
         for session in sessions:
             session.stop_requested.set()
-            self._close_session(session, context="shutdown")
+        # Close the tabs concurrently: each close() waits up to 3s for a
+        # stubborn foreground job before SIGKILL, and a quit with several tabs
+        # open must pay that once, not once per tab. _close_session is already
+        # serialized per session, so parallelism across sessions is safe.
+        closers = [
+            threading.Thread(
+                target=self._close_session,
+                args=(session,),
+                kwargs={"context": "shutdown"},
+                name=f"vicoa-pty-close-{session.pty_id[:8]}",
+                daemon=True,
+            )
+            for session in sessions
+        ]
+        for closer in closers:
+            closer.start()
+        for closer in closers:
+            closer.join(timeout=6.0)
         for session in sessions:
             if session.reader is not None:
                 session.reader.join(timeout=2.0)

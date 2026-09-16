@@ -24,6 +24,7 @@ class SelfAvatar extends StatefulWidget {
 
 class _SelfAvatarState extends State<SelfAvatar> {
   String? _avatarImageUri;
+  String? _avatarEmoji;
   String? _updatedAt;
 
   @override
@@ -38,6 +39,7 @@ class _SelfAvatarState extends State<SelfAvatar> {
       if (!mounted || profile is! Map) return;
       setState(() {
         _avatarImageUri = profile['avatar_image_uri'] as String?;
+        _avatarEmoji = profile['avatar_emoji'] as String?;
         _updatedAt = profile['updated_at'] as String?;
       });
     } catch (_) {
@@ -55,6 +57,7 @@ class _SelfAvatarState extends State<SelfAvatar> {
       // renders it.
       name: user.name.isNotEmpty ? user.name : user.email,
       avatarImageUri: _avatarImageUri,
+      emoji: _avatarEmoji,
       updatedAt: _updatedAt,
       size: widget.size,
     );

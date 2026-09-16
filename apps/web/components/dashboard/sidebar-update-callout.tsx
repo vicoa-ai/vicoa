@@ -1,14 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { Gift, Loader2, RotateCw, TriangleAlert, X } from 'lucide-react';
+import { Gift, TriangleAlert, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { getDesktopAuthBridge } from '@/lib/desktop-auth';
 import {
   bannerViewForStatus,
   checkForUpdates,
-  downloadUpdate,
   quitAndInstallUpdate,
   useDesktopUpdateStatus,
   type UpdateBannerView,
@@ -44,10 +43,11 @@ function openChangelog() {
 
 /**
  * Sidebar callout for the desktop auto-updater, styled after Paseo's sidebar
- * card and mounted just above the account row. Reuses the exact status/logic of
- * the former top-of-window banner (see lib/desktop-updates): detect → Install &
- * Restart → progress → Restart, with a user-triggered error/retry path. Renders
- * nothing on web/SSR (null bridge → idle status) or in non-actionable states.
+ * card and mounted just above the account row. The main process downloads a
+ * newer version on its own, so this only appears once the update is ready and
+ * asks for a single click: Install & Restart. A user-triggered failure (the
+ * install itself, or a retry check) shows an error/retry card. Renders nothing
+ * on web/SSR (null bridge → idle status) or in non-actionable states.
  */
 export function SidebarUpdateCallout() {
   const status = useDesktopUpdateStatus();
@@ -58,30 +58,27 @@ export function SidebarUpdateCallout() {
   if (!view) return null;
 
   const handleDismiss = () => {
-    // A failed check hides by clearing the user-acted flag; available/downloaded
-    // snooze this exact version for the session (a newer one re-shows).
+    // A failed action hides by clearing the user-acted flag; a ready update
+    // snoozes this exact version for the session (a newer one re-shows).
     if (view.kind === 'error') {
       setUserActed(false);
       return;
     }
-    if (status.state === 'available' || status.state === 'downloaded') {
-      setDismissedVersion(status.version);
-    }
+    setDismissedVersion(view.version);
   };
 
-  const startDownload = () => {
+  const install = () => {
     setUserActed(true);
-    void downloadUpdate();
+    void quitAndInstallUpdate();
   };
 
   const retry = () => {
+    // Re-check; main auto-downloads again on a hit.
     setUserActed(true);
     void checkForUpdates();
   };
 
   const isError = view.kind === 'error';
-  const dismissible = view.kind !== 'downloading';
-  const descriptionLines = descriptionLinesFor(view);
 
   return (
     <div
@@ -94,95 +91,45 @@ export function SidebarUpdateCallout() {
     >
       <div className="flex items-start gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <CalloutIcon kind={view.kind} />
-          <span className="truncate text-xs text-foreground">{titleFor(view)}</span>
-        </div>
-        {dismissible && (
-          <button
-            type="button"
-            aria-label="Dismiss"
-            onClick={handleDismiss}
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground"
-          >
-            <X className="h-3 w-3" />
-          </button>
-        )}
-      </div>
-
-      {descriptionLines.length > 0 && (
-        <div className="flex flex-col gap-1">
-          {descriptionLines.map((line) => (
-            <p key={line} className="text-[11px] leading-relaxed text-muted-foreground">
-              {line}
-            </p>
-          ))}
-        </div>
-      )}
-
-      {view.kind === 'downloading' && (
-        <div className="flex items-center gap-2">
-          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-foreground/15">
-            <div
-              className="h-full rounded-full bg-foreground transition-[width] duration-300"
-              style={{ width: `${view.percent}%` }}
-            />
-          </div>
-          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-            {Math.round(view.percent)}%
+          {isError ? (
+            <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-warning" />
+          ) : (
+            <Gift className="h-3.5 w-3.5 shrink-0 text-foreground" />
+          )}
+          <span className="truncate text-xs text-foreground">
+            {isError ? 'Update failed' : 'Update available'}
           </span>
         </div>
-      )}
+        <button
+          type="button"
+          aria-label="Dismiss"
+          onClick={handleDismiss}
+          className="flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </div>
 
-      {view.kind === 'available' && (
-        <CalloutActions primaryLabel="Install & Restart" onPrimary={startDownload} />
+      <div className="flex flex-col gap-1">
+        {descriptionLinesFor(view).map((line) => (
+          <p key={line} className="text-[11px] leading-relaxed text-muted-foreground">
+            {line}
+          </p>
+        ))}
+      </div>
+
+      {isError ? (
+        <CalloutActions primaryLabel="Retry" onPrimary={retry} />
+      ) : (
+        <CalloutActions primaryLabel="Install & Restart" onPrimary={install} />
       )}
-      {view.kind === 'downloaded' && (
-        <CalloutActions primaryLabel="Restart" onPrimary={() => void quitAndInstallUpdate()} />
-      )}
-      {view.kind === 'error' && <CalloutActions primaryLabel="Retry" onPrimary={retry} />}
     </div>
   );
 }
 
-function CalloutIcon({ kind }: { kind: UpdateBannerView['kind'] }) {
-  const className = 'h-3.5 w-3.5 shrink-0';
-  switch (kind) {
-    case 'downloading':
-      return <Loader2 className={cn(className, 'animate-spin text-muted-foreground')} />;
-    case 'downloaded':
-      return <RotateCw className={cn(className, 'text-foreground')} />;
-    case 'error':
-      return <TriangleAlert className={cn(className, 'text-warning')} />;
-    default:
-      return <Gift className={cn(className, 'text-foreground')} />;
-  }
-}
-
-function titleFor(view: UpdateBannerView): string {
-  switch (view.kind) {
-    case 'downloading':
-      return 'Downloading update';
-    case 'downloaded':
-      return 'Update ready';
-    case 'error':
-      return 'Update failed';
-    default:
-      return 'Update available';
-  }
-}
-
 function descriptionLinesFor(view: UpdateBannerView): string[] {
-  switch (view.kind) {
-    case 'downloading':
-      // Progress is conveyed by the bar + percentage, not prose.
-      return [];
-    case 'downloaded':
-      return [`${formatVersion(view.version)} is ready to install.`, UPGRADE_WARNING];
-    case 'error':
-      return [simplifyErrorMessage(view.message)];
-    default:
-      return [`${formatVersion(view.version)} is ready to install.`, UPGRADE_WARNING];
-  }
+  if (view.kind === 'error') return [simplifyErrorMessage(view.message)];
+  return [`${formatVersion(view.version)} is ready to install.`, UPGRADE_WARNING];
 }
 
 /** What's New (bordered secondary) + the state's primary action, two equal columns. */

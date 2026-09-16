@@ -21,6 +21,7 @@ from shared.pg_listener import start_hub, stop_hub
 from shared.hooks import run_app_setup, start_lifespan_hooks, stop_lifespan_hooks
 from .api import (
     activity,
+    agent_profiles,
     agents,
     attachments,
     deepgram,
@@ -161,6 +162,7 @@ async def _on_db_disconnect(request: Request, exc: SAOperationalError):
 app.include_router(auth_routes.router, prefix=settings.api_v1_prefix)
 app.include_router(activity.router, prefix=settings.api_v1_prefix)
 app.include_router(agents.router, prefix=settings.api_v1_prefix)
+app.include_router(agent_profiles.router, prefix=settings.api_v1_prefix)
 app.include_router(attachments.router, prefix=settings.api_v1_prefix)
 app.include_router(deepgram.router, prefix=settings.api_v1_prefix)
 app.include_router(user_agents.router, prefix=settings.api_v1_prefix)

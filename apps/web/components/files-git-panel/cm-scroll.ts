@@ -50,3 +50,16 @@ export function scrollToAnchor(view: EditorView, anchor: ScrollAnchor): void {
     effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: -Math.max(0, anchor.offset) }),
   });
 }
+
+/** Put `line` (1-based, clamped) in the middle of the viewport and drop the
+ *  cursor on it — "jump to line 42" from a file link in the chat, as opposed to
+ *  {@link scrollToAnchor}'s "put me back where I was". Centring is what makes
+ *  the jump readable: the cited line arrives with its context around it. */
+export function revealLine(view: EditorView, line: number): void {
+  const total = view.state.doc.lines;
+  const pos = view.state.doc.line(Math.max(1, Math.min(line, total))).from;
+  view.dispatch({
+    selection: { anchor: pos },
+    effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+  });
+}

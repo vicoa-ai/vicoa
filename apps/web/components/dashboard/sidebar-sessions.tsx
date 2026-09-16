@@ -33,6 +33,8 @@ import { cn } from '@/lib/utils';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { useSessionOperations, useCopyToClipboard } from '@/lib/hooks/use-session-operations';
 import { AgentTypeIcon } from '@/components/dashboard/agent-type-icon';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { agentPrincipal, useAgentProfiles } from '@/lib/use-agent-profiles';
 import { SnakeLoader } from '@/components/dashboard/snake-loader';
 import {
   SessionActionsMenu,
@@ -57,6 +59,7 @@ import {
   filterWantsActiveOnly,
   groupSessions,
   splitProjectByWorktree,
+  worktreeSessionPaths,
   GROUP_BY_STORAGE_KEY,
   PROJECT_ORDER_STORAGE_KEY,
   STATUS_FILTER_OPTIONS,
@@ -101,10 +104,16 @@ const GROUP_BY_OPTIONS: { value: GroupBy; label: string }[] = [
 ];
 
 /** Per-project git view backing worktree display: the live worktree list plus
-    the main checkout's current branch (the "main folder" header). */
+    the main checkout's current branch (the "main folder" header). `worktrees`
+    is null when the list could not be fetched (machine offline, old daemon,
+    cwd gone) — "unknown", which must never read as "no worktrees": that is
+    what would flag every session's worktree as deleted. */
 interface ProjectGitView {
   branch: string | null;
-  worktrees: WorktreeInfo[];
+  worktrees: WorktreeInfo[] | null;
+  /** Session folders that existed when `worktrees` was fetched — the only ones
+      the list can vouch for (see `splitProjectByWorktree`'s `judgeable`). */
+  judgeable: ReadonlySet<string>;
   /** This repo's open/merged/closed PRs keyed by head branch, for the branch
       icons. Empty when the repo has no GitHub remote or `gh` is unavailable. */
   prs: Record<string, PrInfo>;
@@ -119,22 +128,33 @@ interface RenderedSubGroup {
   directory: string | null;
   /** Preselect this worktree on the new-session page; absent for main. */
   worktreeBranch?: string;
-  /** Right-click delete target, or null when not removable (main / unmanaged). */
-  remove: { machineId: string; path: string; branch: string } | null;
+  /** Git no longer has a checkout at this folder (see WorktreeSessionGroup). */
+  missing: boolean;
+  /** Right-click delete target, or null when not removable (main / unmanaged).
+      `repoDir` is the main checkout every worktree RPC runs from. */
+  remove: { machineId: string; repoDir: string; path: string; branch: string } | null;
   /** This group's branch PR, when it has one — colors the branch icon. */
   pr: PrInfo | null;
 }
 
 /**
  * Fetch, per project, its `git worktree list` and its main-checkout branch.
- * Keyed by the caller's group key. `listPath` is any session's cwd (git lists a
- * repo's worktrees from any of them); `mainPath` is a main-checkout session's
- * cwd, needed because git-status on a worktree path would return that worktree's
- * branch, not the repo's.
+ * Keyed by the caller's group key. `listPath` is a cwd that still exists —
+ * the main checkout when known (git lists a repo's worktrees from any of
+ * them, but not from a folder that is gone); `mainPath` is a main-checkout
+ * session's cwd, needed because git-status on a worktree path would return
+ * that worktree's branch, not the repo's.
  *
  * Refetched on window focus since worktrees can be created/removed and branches
- * switched outside the app. Failures resolve to an empty view rather than an
- * error — the sidebar falls back to its session-derived baseline.
+ * switched outside the app, and whenever a session shows up in a folder the
+ * last fetch didn't know (`worktreePaths` changes) — a "new worktree" session
+ * arrives over the WebSocket right after the daemon created its folder, so
+ * the list on hand predates the folder. Each view remembers the folders it was
+ * fetched against; only those may be judged missing, which is what keeps that
+ * new session from flashing `deleted` until the refetch lands. A failed list
+ * resolves to `null` ("unknown") rather than an error — the sidebar falls back
+ * to its session-derived baseline and makes no claim about which worktrees
+ * still exist.
  */
 function useProjectWorktrees(
   targets: ReadonlyArray<{
@@ -142,13 +162,20 @@ function useProjectWorktrees(
     machineId: string | null;
     listPath: string;
     mainPath: string | null;
+    worktreePaths: string[];
   }>,
   refreshNonce: number,
 ): Map<string, ProjectGitView> {
   const [views, setViews] = useState<Map<string, ProjectGitView>>(new Map());
   // Primitive dep: only re-run when the target set changes, not every render.
   const signature = JSON.stringify(
-    targets.map((t) => [t.key, t.machineId ?? '', t.listPath, t.mainPath ?? '']),
+    targets.map((t) => [
+      t.key,
+      t.machineId ?? '',
+      t.listPath,
+      t.mainPath ?? '',
+      t.worktreePaths,
+    ]),
   );
 
   useEffect(() => {
@@ -158,8 +185,11 @@ function useProjectWorktrees(
         targets.map(async (t): Promise<readonly [string, ProjectGitView] | null> => {
           if (!t.machineId || !t.listPath) return null;
           const machineId = t.machineId;
+          // Captured before the RPCs go out: a folder that appears while they
+          // are in flight is not something this list can speak for either.
+          const judgeable = new Set(t.worktreePaths);
           const [worktrees, branch, prs] = await Promise.all([
-            rpcGitWorktreeList(machineId, t.listPath).catch(() => [] as WorktreeInfo[]),
+            rpcGitWorktreeList(machineId, t.listPath).catch(() => null),
             t.mainPath
               ? rpcGitStatus(machineId, t.mainPath)
                   .then((s) => s.branch)
@@ -172,7 +202,7 @@ function useProjectWorktrees(
               () => ({}) as Record<string, PrInfo>,
             ),
           ]);
-          return [t.key, { branch, worktrees, prs }] as const;
+          return [t.key, { branch, worktrees, judgeable, prs }] as const;
         }),
       );
       if (cancelled) return;
@@ -455,12 +485,22 @@ export function SidebarSessions({
         ? []
         : sidebarGroups
             .filter((g) => g.key !== 'PINNED' && g.label !== null && g.instances.length > 0)
-            .map((g) => ({
-              key: g.key,
-              machineId: g.instances[0]?.machine_id ?? null,
-              listPath: g.instances[0]?.project ?? '',
-              mainPath: g.instances.find((i) => !i.worktree_name)?.project ?? null,
-            })),
+            .map((g) => {
+              const mainPath = g.instances.find((i) => !i.worktree_name)?.project ?? null;
+              // List from the main checkout (or the stamped repo root) rather
+              // than the newest session's cwd: that cwd may be a worktree whose
+              // folder is gone, and git can't list from a folder that isn't there.
+              const repoRoot = g.instances
+                .map((i) => i.instance_metadata?.repo_root)
+                .find((r): r is string => typeof r === 'string' && r.length > 0);
+              return {
+                key: g.key,
+                machineId: g.instances[0]?.machine_id ?? null,
+                listPath: mainPath ?? repoRoot ?? g.instances[0]?.project ?? '',
+                mainPath,
+                worktreePaths: worktreeSessionPaths(g.instances),
+              };
+            }),
     [sidebarGroups, worktreesOn, groupBy],
   );
   const projectGitViews = useProjectWorktrees(worktreeTargets, gitViewNonce);
@@ -470,21 +510,39 @@ export function SidebarSessions({
   // worktree is removed immediately without this dialog.
   const [worktreeDelete, setWorktreeDelete] = useState<{
     machineId: string;
+    repoDir: string;
     path: string;
     branch: string;
     sessionIds: string[];
     hasSession: boolean;
     isDirty: boolean;
+    /** Git already has no checkout at this folder (see WorktreeSessionGroup). */
+    missing: boolean;
     busy: boolean;
     error: string | null;
   } | null>(null);
 
   // The daemon keeps the branch on remove, so commits survive; only the checkout
-  // is deleted. Bump the git-view nonce so the removed worktree drops off the
-  // list right away.
+  // is deleted. The RPC runs from the repo's main checkout (`repoDir`), never
+  // from the worktree itself — a folder that is already gone can't host git
+  // (that was the `not_a_repo` users hit after the session had been archived).
+  // When git already has no checkout there (`missing`), a refusal is not a
+  // failure: the folder is gone, which is exactly what "Delete" promised, so
+  // the user sees the same outcome either way. Bump the git-view nonce so the
+  // removed worktree drops off the list right away.
   const performWorktreeRemove = useCallback(
-    async (machineId: string, path: string, force: boolean) => {
-      await rpcGitWorktreeRemove(machineId, path, path, force);
+    async (
+      machineId: string,
+      repoDir: string,
+      path: string,
+      force: boolean,
+      missing: boolean,
+    ) => {
+      try {
+        await rpcGitWorktreeRemove(machineId, repoDir, path, force);
+      } catch (e) {
+        if (!missing) throw e;
+      }
       await refreshData();
       setGitViewNonce((n) => n + 1);
     },
@@ -494,28 +552,34 @@ export function SidebarSessions({
   const requestWorktreeDelete = useCallback(
     async (target: {
       machineId: string;
+      repoDir: string;
       path: string;
       branch: string;
+      missing: boolean;
       instances: AgentInstanceResponse[];
     }) => {
-      const { machineId, path, branch, instances } = target;
+      const { machineId, repoDir, path, branch, missing, instances } = target;
       const sessionIds = instances
         .filter((i) => !CLOSED_STATUSES.has(i.status))
         .map((i) => i.id);
       const hasSession = sessionIds.length > 0;
       let isDirty = false;
-      let statusKnown = false;
-      try {
-        const status = await rpcGitStatus(machineId, path);
-        isDirty =
-          status.staged.length + status.unstaged.length + status.untracked.length > 0;
-        statusKnown = true;
-      } catch {
-        statusKnown = false;
+      // A folder git no longer has can't be probed — and has nothing to lose,
+      // so it counts as clean and takes the same paths a clean worktree does.
+      let statusKnown = missing;
+      if (!missing) {
+        try {
+          const status = await rpcGitStatus(machineId, path);
+          isDirty =
+            status.staged.length + status.unstaged.length + status.untracked.length > 0;
+          statusKnown = true;
+        } catch {
+          statusKnown = false;
+        }
       }
       if (!hasSession && statusKnown && !isDirty) {
         try {
-          await performWorktreeRemove(machineId, path, false);
+          await performWorktreeRemove(machineId, repoDir, path, false, missing);
           return;
         } catch {
           // A race (turned dirty) or a submodule refusal — fall through to the
@@ -524,11 +588,13 @@ export function SidebarSessions({
       }
       setWorktreeDelete({
         machineId,
+        repoDir,
         path,
         branch,
         sessionIds,
         hasSession,
         isDirty,
+        missing,
         busy: false,
         error: null,
       });
@@ -538,13 +604,13 @@ export function SidebarSessions({
 
   const confirmWorktreeDelete = useCallback(async () => {
     if (!worktreeDelete) return;
-    const { machineId, path, sessionIds } = worktreeDelete;
+    const { machineId, repoDir, path, sessionIds, missing } = worktreeDelete;
     setWorktreeDelete((prev) => (prev ? { ...prev, busy: true, error: null } : prev));
     try {
       for (const id of sessionIds) {
         await markAsComplete(id);
       }
-      await performWorktreeRemove(machineId, path, true);
+      await performWorktreeRemove(machineId, repoDir, path, true, missing);
       setWorktreeDelete(null);
     } catch (e) {
       const error = e instanceof Error ? e.message : 'Failed to delete worktree';
@@ -663,10 +729,12 @@ export function SidebarSessions({
           return notSplit;
 
         const view = projectGitViews.get(key);
-        const gitWorktrees = view
-          ? view.worktrees.map((w) => ({ path: w.path, branch: w.branch, managed: w.managed }))
-          : null;
-        const { mainInstances, worktrees } = splitProjectByWorktree(instances, gitWorktrees);
+        const gitWorktrees = view?.worktrees ?? null;
+        const { mainInstances, worktrees } = splitProjectByWorktree(
+          instances,
+          gitWorktrees,
+          view?.judgeable,
+        );
 
         // No worktrees → nothing to sub-group: render the project flat rather
         // than a lone "main" bucket. This also stops a non-git folder (whose
@@ -675,6 +743,15 @@ export function SidebarSessions({
 
         const repoMachineId = instances[0]?.machine_id ?? null;
         const mainDirectory = instances.find((i) => !i.worktree_name)?.project ?? null;
+        // Every worktree RPC runs from the repo's main checkout: a main-checkout
+        // session's cwd, else the `repo_root` the daemon stamped on a worktree
+        // session at registration (a project may have only worktree sessions).
+        const repoDirectory =
+          mainDirectory ??
+          instances
+            .map((i) => i.instance_metadata?.repo_root)
+            .find((r): r is string => typeof r === 'string' && r.length > 0) ??
+          null;
         const subs: RenderedSubGroup[] = [];
         const prFor = (b: string | null | undefined): PrInfo | null =>
           (b && view?.prs[b]) || null;
@@ -684,6 +761,7 @@ export function SidebarSessions({
             label: view?.branch ?? 'main',
             instances: mainInstances,
             directory: mainDirectory,
+            missing: false,
             remove: null,
             // The default branch rarely has a PR of its own; when it does
             // (a release branch checked out as main) it labels correctly.
@@ -692,18 +770,28 @@ export function SidebarSessions({
         }
         for (const w of worktrees) {
           subs.push({
-            key: `${key}::wt::${w.branch}`,
+            // Keyed on the folder, like the group itself: a branch switch inside
+            // the worktree relabels the row without resetting its collapse state.
+            key: `${key}::wt::${w.path}`,
             label: w.branch || '(detached)',
             instances: w.instances,
-            directory: w.path,
+            // No "+" on a folder that is gone — there is nowhere to start in.
+            directory: w.missing ? null : w.path,
             worktreeBranch: w.branch || undefined,
+            missing: w.missing,
             // Any real linked worktree is removable (the daemon confines
             // removal to actual worktrees of the repo, not just managed ones);
             // we only need a reachable machine to route the RPC to — so this
             // works on web over the relay, not just desktop. An offline machine
-            // just makes the delete RPC reject, surfaced to the user.
+            // just makes the delete RPC reject, surfaced to the user. Without a
+            // known main checkout the worktree's own path is the best cwd left.
             remove: repoMachineId
-              ? { machineId: repoMachineId, path: w.path, branch: w.branch }
+              ? {
+                  machineId: repoMachineId,
+                  repoDir: repoDirectory ?? w.path,
+                  path: w.path,
+                  branch: w.branch,
+                }
               : null,
             pr: prFor(w.branch),
           });
@@ -791,6 +879,8 @@ export function SidebarSessions({
     if (container.scrollHeight <= container.clientHeight + 120) void loadMoreInstances();
   }, [enableInfiniteScroll, hasMoreInstances, isLoading, isLoadingMoreInstances, loadMoreInstances, recentInstances.length]);
 
+  const { byId: agentProfilesById } = useAgentProfiles();
+
   const renderSession = useCallback((instance: AgentInstanceResponse) => {
     const isSelected = instance.id === selectedInstanceId;
     const isNavigating = navigatingId === instance.id;
@@ -809,6 +899,9 @@ export function SidebarSessions({
     const title = getSessionTitle(instance);
     const time = formatSidebarTime(instance);
     const resumeReason = resumeBlockedReason(instance, liveState);
+    const rowAgentProfile = instance.agent_profile_id
+      ? (agentProfilesById.get(instance.agent_profile_id) ?? null)
+      : null;
 
     // One config drives both the hover three-dot (SessionActionsMenu) and the
     // right-click context menu below, so the two menus can never list different
@@ -868,10 +961,16 @@ export function SidebarSessions({
                 <SnakeLoader size={13} />
               ) : (
                 <span className="relative flex-shrink-0 flex items-center">
-                  <AgentTypeIcon
-                    agentTypeName={instance.agent_type_name ?? null}
-                    whiteForOpenAI
-                  />
+                  {/* A session started from a saved agent wears that agent's
+                      face instead of the generic provider mark (collab P1). */}
+                  {rowAgentProfile ? (
+                    <PrincipalAvatar principal={agentPrincipal(rowAgentProfile)} size="xs" />
+                  ) : (
+                    <AgentTypeIcon
+                      agentTypeName={instance.agent_type_name ?? null}
+                      whiteForOpenAI
+                    />
+                  )}
                   {stopped && !done && (
                     <span
                       className="absolute -right-0.5 -bottom-0.5 size-2 rounded-full bg-muted-foreground/50 ring-1 ring-background"
@@ -1251,6 +1350,7 @@ export function SidebarSessions({
                                     onToggleCollapsed={() => toggleGroupCollapsed(rsub.key)}
                                     newSessionDirectory={rsub.directory}
                                     worktreeBranch={rsub.worktreeBranch}
+                                    missing={rsub.missing}
                                     pr={rsub.pr}
                                     onNavigate={router.push}
                                     onRequestDelete={
@@ -1258,6 +1358,7 @@ export function SidebarSessions({
                                         ? () =>
                                             void requestWorktreeDelete({
                                               ...remove,
+                                              missing: rsub.missing,
                                               instances: rsub.instances,
                                             })
                                         : undefined

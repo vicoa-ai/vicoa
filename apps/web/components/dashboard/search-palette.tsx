@@ -402,7 +402,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
       } else if (item.kind === 'session') {
         router.push(`/dashboard/agents/${item.session.id}`);
       } else if (item.kind === 'task') {
-        router.push(`/dashboard/tasks?task=${item.task.id}`);
+        router.push(`/dashboard/tasks/${item.task.id}`);
       } else if (item.kind === 'automation') {
         router.push(`/dashboard/automation?automation=${item.automation.id}`);
       } else {

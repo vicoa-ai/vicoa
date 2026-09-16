@@ -6,7 +6,7 @@
 // status/priority vocabulary. Used by the tasks page (list + board), the
 // task dialog, and the new-session task picker.
 
-import { useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import {
   CalendarClock,
   CalendarDays,
@@ -22,6 +22,7 @@ import {
   Repeat,
   Tag,
   Trash2,
+  UserRound,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -49,6 +50,8 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 import {
+  AgentProfile,
+  PrincipalResponse,
   ProjectResponse,
   TaskLabelResponse,
   TaskPriority,
@@ -57,6 +60,13 @@ import {
   UpdateTaskRequest,
 } from '@/lib/backend-api';
 import { projectAvatarColor, projectIconSrc, projectInitial } from '@/lib/project-icons';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import {
+  principalDisplayName,
+  principalForAvatar,
+  principalFromResponse,
+  type Principal,
+} from '@/lib/principals';
 import { cn } from '@/lib/utils';
 import { pointerWithin, closestCenter, type CollisionDetection } from '@dnd-kit/core';
 
@@ -457,23 +467,81 @@ export function ProjectIcon({
   return <Icon aria-hidden="true" className={cn('text-muted-foreground', box)} />;
 }
 
+/**
+ * "VIC-42" — the task's identifier, wherever a task is listed.
+ *
+ * Always rendered, not behind the display menu that governs priority, labels
+ * and dates. Those are properties you may not care about; this is the task's
+ * name. The whole reason the key exists (D-B) is to give every task something
+ * speakable and greppable to use in chat, in an agent prompt and in a commit
+ * message — hiding it by default would defeat the feature.
+ *
+ * Renders nothing when the task has no identifier: a project only takes a key
+ * on its first task, and rows created before the backfill have no number. A
+ * placeholder there would look like a reference that doesn't resolve.
+ */
+export function TaskIdentifier({
+  task,
+  className,
+}: {
+  task: Pick<TaskResponse, 'identifier'>;
+  className?: string;
+}) {
+  if (!task.identifier) return null;
+  return (
+    <span
+      className={cn(
+        'shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground/70',
+        className,
+      )}
+    >
+      {task.identifier}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// PillButton — outlined property-pill trigger (multica common/pill-button)
+// PillButton — the trigger every property picker renders
+//
+// Two shapes, same component. `pill` is the outlined chip the create dialog
+// packs into a wrapping row. `row` is the full-width borderless line a sidebar
+// wants: under a group heading, a column of them reads as a property list, and
+// eight outlined chips stacked vertically would read as eight buttons.
+//
+// The shape travels by context rather than by a prop so the rail sets it once
+// instead of every picker growing (and forwarding) a `variant`.
 // ---------------------------------------------------------------------------
+
+type PillVariant = 'pill' | 'row';
+
+const PillVariantContext = createContext<PillVariant>('pill');
+
+/** Render every picker inside as a full-width sidebar row. */
+export function PropertyRows({ children }: { children: React.ReactNode }) {
+  return (
+    <PillVariantContext.Provider value="row">
+      <div className="space-y-0.5">{children}</div>
+    </PillVariantContext.Provider>
+  );
+}
 
 export function PillButton({
   children,
   className,
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const variant = useContext(PillVariantContext);
   return (
     <button
       type="button"
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs',
-        'hover:bg-accent/60 transition-colors cursor-pointer',
+        'inline-flex items-center gap-1.5 border transition-colors cursor-pointer',
+        'hover:bg-accent/60',
         'data-[state=open]:bg-accent data-[state=open]:text-accent-foreground',
         'disabled:cursor-not-allowed disabled:hover:bg-transparent',
+        variant === 'row'
+          ? 'w-full justify-start rounded-md border-transparent px-2 py-1.5 text-sm'
+          : 'rounded-full px-2.5 py-1 text-xs',
         className,
       )}
       {...props}
@@ -513,7 +581,7 @@ export function PickerItem({
   );
 }
 
-function PickerPopover({
+export function PickerPopover({
   open,
   onOpenChange,
   trigger,
@@ -694,6 +762,92 @@ export function collectDescendantIds(
  * `currentTaskId` and its descendants are excluded to keep the tree acyclic;
  * in create mode (`currentTaskId` null) nothing is excluded.
  */
+export function AssigneePickerPill({
+  assignee,
+  viewer,
+  agentProfiles,
+  onSelect,
+}: {
+  assignee: PrincipalResponse | null;
+  /** The signed-in user — the only human assignable until P3 adds grants. */
+  viewer: Principal | null;
+  agentProfiles: AgentProfile[];
+  onSelect: (next: { type: 'user' | 'agent'; id: string } | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = principalFromResponse(assignee);
+  return (
+    <PickerPopover
+      open={open}
+      onOpenChange={setOpen}
+      width="w-52"
+      trigger={
+        <PillButton>
+          {current ? (
+            <>
+              <PrincipalAvatar principal={principalForAvatar(current, viewer)} size="xs" />
+              <span className="truncate">{principalDisplayName(current, viewer)}</span>
+            </>
+          ) : (
+            <>
+              <UserRound className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="truncate text-muted-foreground">Assign</span>
+            </>
+          )}
+        </PillButton>
+      }
+    >
+      <PickerItem
+        selected={!assignee}
+        onClick={() => {
+          onSelect(null);
+          setOpen(false);
+        }}
+      >
+        <UserRound className="h-3.5 w-3.5 text-muted-foreground" />
+        <span className="text-muted-foreground">Unassigned</span>
+      </PickerItem>
+      {viewer?.id && (
+        <PickerItem
+          selected={assignee?.type === 'user' && assignee.id === viewer.id}
+          onClick={() => {
+            onSelect({ type: 'user', id: viewer.id! });
+            setOpen(false);
+          }}
+        >
+          <PrincipalAvatar principal={principalForAvatar(viewer, viewer)} size="xs" />
+          <span className="truncate">{principalDisplayName(viewer, viewer)}</span>
+        </PickerItem>
+      )}
+      {/* Agents are assignable principals, not just runners (§2 layer 1) —
+          "Claude owns this one" is the single-player half of assignment. */}
+      {agentProfiles.map((profile) => (
+        <PickerItem
+          key={profile.id}
+          selected={assignee?.type === 'agent' && assignee.id === profile.id}
+          onClick={() => {
+            onSelect({ type: 'agent', id: profile.id });
+            setOpen(false);
+          }}
+        >
+          <PrincipalAvatar
+            principal={{
+              type: 'agent',
+              id: profile.id,
+              name: profile.name,
+              avatarImageUri: profile.avatar_image_uri,
+              emoji: profile.emoji,
+              updatedAt: profile.updated_at,
+            }}
+            size="xs"
+          />
+          <span className="truncate">{profile.name}</span>
+        </PickerItem>
+      ))}
+    </PickerPopover>
+  );
+}
+
 export function ParentPickerPill({
   tasks,
   currentTaskId,
@@ -1077,7 +1231,7 @@ export function LabelPickerPill({
               </span>
             </span>
           ) : (
-            <span>Labels</span>
+            <span>Add label</span>
           )}
         </PillButton>
       </PopoverTrigger>

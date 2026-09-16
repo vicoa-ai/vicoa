@@ -26,17 +26,24 @@ from shared.database.session import get_db
 from shared.images import InvalidImageError, process_image
 
 from ..auth.dependencies import get_current_user
-from ..db import task_queries
+from ..db import task_queries, task_timeline_queries
 from ..db.queries import list_task_instances
+from ..db.task_serializers import serialize_task, serialize_tasks
 from ..db.task_queries import (
+    AssigneeNotFoundError,
     InboxImmutableError,
     LabelNotFoundError,
+    ProjectKeyTakenError,
     MachineNotFoundError,
     ParentTaskError,
     ProjectNotFoundError,
 )
 from ..models import (
     AgentInstanceResponse,
+    CreateTaskCommentRequest,
+    ToggleTaskReactionRequest,
+    TaskTimelineResponse,
+    UpdateTaskCommentRequest,
     CreateProjectRequest,
     CreateTaskLabelRequest,
     CreateTaskRequest,
@@ -120,6 +127,10 @@ def update_project_endpoint(
     except InboxImmutableError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    except ProjectKeyTakenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
     if project is None:
         raise HTTPException(
@@ -358,7 +369,9 @@ def delete_label_endpoint(
 
 def _raise_task_ref_errors(exc: Exception) -> None:
     """Map task-reference validation errors onto HTTP statuses."""
-    if isinstance(exc, ProjectNotFoundError) or isinstance(exc, LabelNotFoundError):
+    if isinstance(
+        exc, (ProjectNotFoundError, LabelNotFoundError, AssigneeNotFoundError)
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
@@ -387,7 +400,7 @@ def list_tasks_endpoint(
         status=task_status,
         priority=task_priority,
     )
-    return [TaskResponse.model_validate(t) for t in tasks]
+    return serialize_tasks(db, tasks)
 
 
 @router.post(
@@ -414,68 +427,220 @@ def create_task_endpoint(
             label_ids=request.label_ids,
             start_date=request.start_date,
             due_date=request.due_date,
+            assignee_type=request.assignee_type,
+            assignee_id=request.assignee_id,
         )
-    except (ProjectNotFoundError, LabelNotFoundError, ParentTaskError) as exc:
+    except (
+        ProjectNotFoundError,
+        LabelNotFoundError,
+        ParentTaskError,
+        AssigneeNotFoundError,
+    ) as exc:
         _raise_task_ref_errors(exc)
         raise  # unreachable; keeps the type checker satisfied
-    return TaskResponse.model_validate(task)
+    return serialize_task(db, task)
 
 
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
 def get_task_endpoint(
-    task_id: UUID,
+    task_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TaskResponse:
-    task = task_queries.get_task(db, current_user.id, task_id)
-    if task is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
-        )
-    return TaskResponse.model_validate(task)
+    return serialize_task(db, _require_task(db, current_user.id, task_id))
 
 
 @router.get("/tasks/{task_id}/sessions", response_model=list[AgentInstanceResponse])
 def list_task_sessions_endpoint(
-    task_id: UUID,
+    task_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[AgentInstanceResponse]:
     """Agent sessions started from this task, most recent first."""
-    if task_queries.get_task(db, current_user.id, task_id) is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
-        )
-    return list_task_instances(db, current_user.id, task_id)
+    task = _require_task(db, current_user.id, task_id)
+    return list_task_instances(db, current_user.id, task.id)
 
 
 @router.patch("/tasks/{task_id}", response_model=TaskResponse)
 def update_task_endpoint(
-    task_id: UUID,
+    task_id: str,
     request: UpdateTaskRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TaskResponse:
     fields = request.model_dump(exclude_unset=True)
+    existing = _require_task(db, current_user.id, task_id)
     try:
-        task = task_queries.update_task(db, current_user.id, task_id, fields)
-    except (ProjectNotFoundError, LabelNotFoundError, ParentTaskError) as exc:
+        task = task_queries.update_task(db, current_user.id, existing.id, fields)
+    except (
+        ProjectNotFoundError,
+        LabelNotFoundError,
+        ParentTaskError,
+        AssigneeNotFoundError,
+    ) as exc:
         _raise_task_ref_errors(exc)
         raise  # unreachable; keeps the type checker satisfied
     if task is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
         )
-    return TaskResponse.model_validate(task)
+    return serialize_task(db, task)
 
 
 @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_task_endpoint(
-    task_id: UUID,
+    task_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
-    if not task_queries.delete_task(db, current_user.id, task_id):
+    task = _require_task(db, current_user.id, task_id)
+    if not task_queries.delete_task(db, current_user.id, task.id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
         )
+
+
+# ---------------------------------------------------------------------------
+# Task timeline — comments, reactions, activity (collaboration §3.5)
+#
+# There is no WebSocket channel for tasks in this phase, by decision (§9):
+# comments ride refresh-on-focus plus a short SWR interval on an open task.
+# Polling hits this stateless, horizontally scalable app; the relay is pinned to
+# workers=1 and already carries every daemon socket.
+# ---------------------------------------------------------------------------
+
+
+def _require_task(db: Session, user_id: UUID, task_id: str):
+    """The user-scoped resolve every task route starts from.
+
+    Takes the reference as it arrived — a UUID *or* a "VIC-42" identifier, since
+    that is the only handle a person can read off the screen and say out loud.
+
+    It is also what keeps the timeline scoped: those tables carry no `user_id`
+    of their own, so nothing below reaches a comment or activity row except
+    through a task this user owns.
+    """
+    task = task_queries.resolve_task(db, user_id, task_id)
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
+        )
+    return task
+
+
+@router.get("/tasks/{task_id}/timeline", response_model=TaskTimelineResponse)
+def get_task_timeline_endpoint(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TaskTimelineResponse:
+    """Comments and activity together — one round trip, one SWR key."""
+    task = _require_task(db, current_user.id, task_id)
+    return task_timeline_queries.build_timeline(db, task, current_user.id)
+
+
+@router.post(
+    "/tasks/{task_id}/comments",
+    response_model=TaskTimelineResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_task_comment_endpoint(
+    task_id: str,
+    request: CreateTaskCommentRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TaskTimelineResponse:
+    """Post a comment — or a reply to one — and return the whole timeline.
+
+    Returning the timeline rather than the one new comment costs nothing (the
+    caller was about to revalidate anyway) and closes the window where an
+    optimistic append and a background poll disagree about ordering. With
+    threads it also saves the client from having to splice a reply into the
+    right place itself.
+    """
+    task = _require_task(db, current_user.id, task_id)
+    try:
+        task_timeline_queries.create_comment(
+            db,
+            task,
+            current_user.id,
+            request.body,
+            parent_comment_id=request.parent_comment_id,
+        )
+    except task_timeline_queries.CommentNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    return task_timeline_queries.build_timeline(db, task, current_user.id)
+
+
+@router.patch(
+    "/tasks/{task_id}/comments/{comment_id}", response_model=TaskTimelineResponse
+)
+def update_task_comment_endpoint(
+    task_id: str,
+    comment_id: UUID,
+    request: UpdateTaskCommentRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TaskTimelineResponse:
+    task = _require_task(db, current_user.id, task_id)
+    try:
+        task_timeline_queries.update_comment(
+            db, task, comment_id, current_user.id, request.body
+        )
+    except task_timeline_queries.CommentNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    return task_timeline_queries.build_timeline(db, task, current_user.id)
+
+
+@router.delete(
+    "/tasks/{task_id}/comments/{comment_id}", response_model=TaskTimelineResponse
+)
+def delete_task_comment_endpoint(
+    task_id: str,
+    comment_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TaskTimelineResponse:
+    task = _require_task(db, current_user.id, task_id)
+    try:
+        task_timeline_queries.delete_comment(db, task, comment_id, current_user.id)
+    except task_timeline_queries.CommentNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    return task_timeline_queries.build_timeline(db, task, current_user.id)
+
+
+@router.put("/tasks/{task_id}/reactions", response_model=TaskTimelineResponse)
+def toggle_task_reaction_endpoint(
+    task_id: str,
+    request: ToggleTaskReactionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TaskTimelineResponse:
+    """Add or remove one emoji. PUT, not POST: the operation is idempotent per
+    (user, target, emoji) — clicking twice lands back where it started."""
+    task = _require_task(db, current_user.id, task_id)
+    if request.target_type == "task" and request.target_id != task.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="target_id must be this task",
+        )
+    try:
+        task_timeline_queries.toggle_reaction(
+            db,
+            current_user.id,
+            request.target_type,
+            request.target_id,
+            request.emoji,
+        )
+    except task_timeline_queries.UnknownReactionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported reaction",
+        ) from exc
+    return task_timeline_queries.build_timeline(db, task, current_user.id)

@@ -64,3 +64,16 @@ export function cancelQueuedMessage(
 ): Promise<{ cancelled: boolean }> {
   return getBackendAPI(true).cancelQueuedMessage(instanceId, messageId);
 }
+
+/**
+ * `POST /api/v1/agent-instances/{id}/messages/{messageId}/steer` — deliver a
+ * still-queued user message into the running turn (the queue bar's Steer
+ * button). Resolves to `{ steered: false }` if the message was no longer
+ * plainly queued when the request landed.
+ */
+export function steerQueuedMessage(
+  instanceId: string,
+  messageId: string,
+): Promise<{ steered: boolean }> {
+  return getBackendAPI(true).steerQueuedMessage(instanceId, messageId);
+}

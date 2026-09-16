@@ -9,6 +9,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from fastapi import BackgroundTasks, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from shared.database.models import User
+from shared.database.actor import Actor, set_session_actor
 from shared.database.session import get_db
 from shared.database.users import ensure_local_user
 from sqlalchemy.orm import Session
@@ -161,6 +162,12 @@ async def get_current_user(
     if created:
         _schedule_signup_side_effects(background_tasks, user)
     _maybe_seed_avatar(background_tasks, user, claims.avatar_url)
+    # Attribution for anything this request's session flushes (collaboration
+    # §3.5): the task-activity listener has no request context of its own, and
+    # this dependency is the one place every authenticated dashboard route
+    # already passes through. Stamping it here means no endpoint has to
+    # remember to.
+    set_session_actor(db, Actor(type="user", id=user.id))
     return user
 
 

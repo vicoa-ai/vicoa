@@ -15,6 +15,7 @@ from servers.api.models import RegisterAgentInstanceRequest
 from servers.api.routers import register_agent_instance_endpoint
 from shared.database.agent_instances import create_agent_instance
 from shared.database.models import AgentInstance, Machine, User, AgentType
+from shared.database.task_models import Project
 from shared.database.session import SessionLocal
 
 pytestmark = pytest.mark.integration
@@ -37,6 +38,7 @@ def user_and_machine() -> Iterator[tuple[UUID, UUID]]:
         with SessionLocal() as db:
             db.query(AgentInstance).filter(AgentInstance.user_id == uid).delete()
             db.query(AgentType).filter(AgentType.user_id == uid).delete()
+            db.query(Project).filter(Project.user_id == uid).delete()
             db.query(Machine).filter(Machine.user_id == uid).delete()
             db.query(User).filter(User.id == uid).delete()
             db.commit()
@@ -214,6 +216,40 @@ def test_app_facing_detail_exposes_machine_id(
 
     assert detail is not None
     assert detail.machine_id == str(machine_id)
+
+
+def test_app_facing_detail_exposes_project_id(
+    user_and_machine: tuple[UUID, UUID],
+) -> None:
+    """The detail also carries the session ↔ project link. The web sidebar
+    composes a just-created session's row from this detail (the WS
+    `instance-created` body is the bare column set), and groups on
+    `project_id` — without it the new session sat in its own basename-keyed
+    group, a second copy of the project, until the next list load."""
+    from backend.db.queries import get_agent_instance_detail
+
+    user_id, machine_id = user_and_machine
+    project_id = uuid4()
+    instance_id = uuid4()
+    with SessionLocal() as db:
+        db.add(Project(id=project_id, user_id=user_id, name="vicoa"))
+        db.flush()
+        create_agent_instance(
+            db,
+            user_id,
+            agent_name="claude",
+            instance_id=instance_id,
+            machine_id=machine_id,
+            project="~/projects/vicoa",
+            project_id=project_id,
+        )
+        db.commit()
+
+    with SessionLocal() as db:
+        detail = get_agent_instance_detail(db, instance_id, user_id, message_limit=0)
+
+    assert detail is not None
+    assert detail.project_id == str(project_id)
 
 
 def test_app_facing_list_exposes_machine_id(

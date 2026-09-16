@@ -745,6 +745,30 @@ def _print_models(catalog: dict, agent_filter: Optional[str]) -> int:
     return 0
 
 
+def _apply_profile_defaults(args, profile: dict) -> None:
+    """Fill unset session-start flags from a saved agent profile.
+
+    Only *unset* ones: an explicit `--model` on the command line beats the
+    preset, which is the same "shortcut, never a cage" rule the web pickers
+    follow. The profile's `config` is stored in the SessionConfig shape, so the
+    keys map across with no translation.
+    """
+    config = profile.get("config") or {}
+    if not getattr(args, "agent", None):
+        args.agent = profile.get("agent")
+    if not getattr(args, "model", None) and config.get("model"):
+        args.model = config["model"]
+    if not getattr(args, "effort", None):
+        # One flag, two per-agent keys — whichever the profile's agent uses.
+        args.effort = config.get("thinking_effort") or config.get("reasoning_effort")
+    if not getattr(args, "permission_mode", None) and config.get("permission_mode"):
+        args.permission_mode = config["permission_mode"]
+    if not getattr(args, "opencode_mode", None) and config.get("opencode_mode"):
+        args.opencode_mode = config["opencode_mode"]
+    if not getattr(args, "machine", None) and profile.get("default_machine_id"):
+        args.machine = profile["default_machine_id"]
+
+
 def _validate_and_build_metadata(args, agent: str) -> dict:
     """Validate the picked config against the catalog and build spawn metadata.
 
@@ -925,6 +949,17 @@ def _cmd_start(args, api_key: str) -> int:
         )
         return 2
 
+    # A saved agent supplies the provider/model/config; any flag the caller
+    # typed still wins, because a preset is a shortcut, not a cage. The server
+    # is what actually applies the profile's instructions — it re-reads them
+    # from `agent_profile_id` rather than trusting anything sent here.
+    profile = None
+    if getattr(args, "agent_profile", None):
+        from vicoa.commands.agent import resolve_profile_by_name
+
+        profile = resolve_profile_by_name(args, api_key, args.agent_profile)
+        _apply_profile_defaults(args, profile)
+
     agent = (getattr(args, "agent", None) or "claude").strip().lower()
     metadata = _validate_and_build_metadata(args, agent)
 
@@ -955,6 +990,8 @@ def _cmd_start(args, api_key: str) -> int:
             return 1
 
     body: dict[str, Any] = {"directory": directory, "agent": agent}
+    if profile is not None:
+        body["agent_profile_id"] = profile["id"]
     prompt = getattr(args, "prompt", None)
     if prompt and prompt.strip():
         body["prompt"] = prompt

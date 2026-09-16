@@ -29,6 +29,7 @@ import {
   LabelChips,
   ParentChip,
   PriorityIcon,
+  TaskIdentifier,
   ProjectChip,
   STATUS_CONFIG,
   STATUS_ORDER,
@@ -95,9 +96,12 @@ function TaskCard({
       )}
       onClick={dragOverlay ? undefined : () => onEdit(task)}
     >
-      {/* Row 1: priority (left) + actions (right, on hover) */}
+      {/* Row 1: identity + priority (left) + actions (right, on hover) */}
       <div className="flex items-center justify-between gap-2">
-        {display.priority ? <PriorityIcon priority={task.priority} /> : <span />}
+        <span className="flex min-w-0 items-center gap-1.5">
+          {display.priority && <PriorityIcon priority={task.priority} />}
+          <TaskIdentifier task={task} />
+        </span>
         {!dragOverlay && (
           <span
             onClick={(e) => e.stopPropagation()}

@@ -57,12 +57,15 @@ def get_project_path(path: str | None = None) -> str:
 def get_worktree_name(path: str | None = None) -> str | None:
     """Name of the linked git worktree ``path`` sits in, or ``None``.
 
-    Sessions report this at registration so the sidebar can sub-group a
-    project's sessions by worktree (see
-    ``plans/todos/sidebar-worktree-grouping.md``). Deliberately ``None`` for a
-    repo's *main* checkout and for non-git directories: a plain session has no
-    worktree, and the UI renders those directly under the project rather than
-    inventing a "main" bucket.
+    Sessions report this at registration so the sidebar can tell worktree
+    sessions from main-checkout ones and label a worktree group when no live
+    ``git worktree list`` is at hand (see
+    ``plans/todos/sidebar-worktree-grouping.md``). The group itself is keyed on
+    the session's cwd, not on this name: a worktree's branch can change while
+    its folder cannot. Deliberately ``None`` for a repo's *main* checkout and
+    for non-git directories: a plain session has no worktree, and the UI
+    renders those directly under the project rather than inventing a "main"
+    bucket.
 
     Detection is ``git-dir != git-common-dir``, which is the only reliable
     signal. Comparing the worktree root against the parent of the common dir

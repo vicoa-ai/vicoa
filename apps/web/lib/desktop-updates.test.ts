@@ -13,36 +13,29 @@ describe('bannerViewForStatus', () => {
     }
   });
 
-  it('surfaces an available update', () => {
-    expect(bannerViewForStatus({ state: 'available', version: '1.2.0' }, null, false)).toEqual({
-      kind: 'available',
-      version: '1.2.0',
-    });
-  });
-
-  it('hides an available update once that version is dismissed', () => {
-    expect(bannerViewForStatus({ state: 'available', version: '1.2.0' }, '1.2.0', false)).toBeNull();
-  });
-
-  it('re-shows when a newer version arrives after a dismissal', () => {
-    expect(bannerViewForStatus({ state: 'available', version: '1.3.0' }, '1.2.0', false)).toEqual({
-      kind: 'available',
-      version: '1.3.0',
-    });
-  });
-
-  it('shows download progress and clamps is not needed here (main clamps)', () => {
+  it('stays hidden while main auto-downloads (available / downloading)', () => {
+    expect(bannerViewForStatus({ state: 'available', version: '1.2.0' }, null, false)).toBeNull();
     expect(
       bannerViewForStatus({ state: 'downloading', percent: 42, version: '1.2.0' }, null, false),
-    ).toEqual({ kind: 'downloading', percent: 42 });
+    ).toBeNull();
   });
 
-  it('shows a downloaded update, dismissible per version', () => {
+  it('surfaces a downloaded update as the one-click install card', () => {
     expect(bannerViewForStatus({ state: 'downloaded', version: '1.2.0' }, null, false)).toEqual({
       kind: 'downloaded',
       version: '1.2.0',
     });
+  });
+
+  it('hides a downloaded update once that version is dismissed', () => {
     expect(bannerViewForStatus({ state: 'downloaded', version: '1.2.0' }, '1.2.0', false)).toBeNull();
+  });
+
+  it('re-shows when a newer version arrives after a dismissal', () => {
+    expect(bannerViewForStatus({ state: 'downloaded', version: '1.3.0' }, '1.2.0', false)).toEqual({
+      kind: 'downloaded',
+      version: '1.3.0',
+    });
   });
 
   it('only surfaces errors the user triggered (never background checks)', () => {

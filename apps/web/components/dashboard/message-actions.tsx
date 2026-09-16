@@ -27,7 +27,10 @@ const ACTION_BUTTON_CLASS =
  *
  * The row is always in the layout and only fades in, so hovering never changes
  * a row's height — Virtuoso would otherwise re-measure and shift the transcript
- * under the cursor.
+ * under the cursor. It is `select-none`: a drag that overshoots the bubble's
+ * last line by a few pixels lands here (the row is hit-testable while the
+ * message is hovered), and without it the timestamp rode along into the
+ * selection and the clipboard.
  */
 export const MessageActions = memo(function MessageActions({
   timestamp,
@@ -97,7 +100,7 @@ export const MessageActions = memo(function MessageActions({
 
   return (
     <div
-      className={`-mt-1 flex items-center gap-0.5 pointer-events-none opacity-0 transition-opacity duration-150 group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 ${
+      className={`-mt-1 flex items-center gap-0.5 select-none pointer-events-none opacity-0 transition-opacity duration-150 group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 ${
         align === 'right' ? 'justify-end pr-3' : 'justify-start pl-3'
       }`}
     >

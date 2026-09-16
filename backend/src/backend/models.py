@@ -5,6 +5,7 @@ This module contains all Pydantic models used for API request/response serializa
 Models are organized by functional area: questions, agents, billing, and detailed views.
 """
 
+import re
 from datetime import datetime
 from typing import Literal, Optional
 from uuid import UUID
@@ -108,6 +109,13 @@ class AgentInstanceResponse(BaseModel):
     last_heartbeat_at: datetime | None = None
     instance_metadata: dict | None = None
     session_config: dict | None = None
+    # Agent profile this session was started from (collab P1). PROVENANCE ONLY:
+    # `session_config` above is what the session is actually running, and the
+    # two legitimately diverge the moment the user switches model mid-session.
+    # Clients render the profile's name/avatar by looking the id up in the list
+    # they already hold for the picker — deliberately not joined here, so list
+    # endpoints stay a single query.
+    agent_profile_id: str | None = None
     project: str | None = None
     # Formal projects-entity id, auto-matched from the working directory (the
     # session ↔ project link). Null when no project is set up for that checkout;
@@ -253,7 +261,13 @@ class AgentInstanceDetail(BaseModel):
     is_owner: bool = False
     instance_metadata: dict | None = None
     session_config: dict | None = None
+    agent_profile_id: str | None = None
     project: str | None = None
+    # See AgentInstanceResponse.project_id. The web sidebar composes a
+    # just-created session's row from this detail (the WS `instance-created`
+    # body is the bare column set), so without it the new session groups by
+    # path basename and shows as a second "project" until the next list load.
+    project_id: str | None = None
     home_dir: str | None = None
     machine_id: str | None = None
     # See AgentInstanceResponse.worktree_name.
@@ -315,11 +329,14 @@ class AgentModelEntry(BaseModel):
 
 
 class MachineAgentModelsResponse(BaseModel):
-    """Cached available model lists per agent for a machine — keyed by catalog
-    agent id (e.g. 'cursor', 'opencode'). Empty until an ACP agent has run at
-    least once on the machine."""
+    """Cached available model (and mode) lists per agent for a machine — keyed
+    by catalog agent id (e.g. 'cursor', 'opencode'). Empty until an ACP agent
+    has run at least once on the machine or a daemon probe has cached it.
+    ``agent_modes`` only has keys for agents whose source reported modes; a
+    client keeps its catalog placeholder for the rest."""
 
     agent_models: dict[str, list[AgentModelEntry]] = Field(default_factory=dict)
+    agent_modes: dict[str, list[AgentModelEntry]] = Field(default_factory=dict)
 
 
 class RenameMachineRequest(BaseModel):
@@ -343,6 +360,15 @@ class SpawnSessionRequest(BaseModel):
     metadata: dict | None = Field(
         default=None, description="Additional request metadata"
     )
+    agent_profile_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Agent profile this session is started from (collab P1). Recorded on "
+            "the instance for display, and the source of the session's "
+            "system_prompt — which is resolved server-side rather than trusted "
+            "from `metadata`, so the two can never disagree."
+        ),
+    )
 
     @field_validator("agent", mode="before")
     @classmethod
@@ -352,9 +378,8 @@ class SpawnSessionRequest(BaseModel):
 
         normalized = str(value).strip().lower()
 
-        # Valid ids come from the shared agent catalog (claude/codex/opencode
-        # plus the generic ACP agents) so a new agent ships without touching
-        # this validator. "claude code" stays as a legacy alias.
+        # Catalog ids (claude/codex/opencode plus the generic ACP agents) are
+        # always valid, and "claude code" stays as a legacy alias.
         from shared.agent_catalog import AGENT_CATALOG
 
         known = {agent["id"] for agent in AGENT_CATALOG["agents"]}
@@ -362,7 +387,23 @@ class SpawnSessionRequest(BaseModel):
             return normalized
         if normalized == "claude code":
             return "claude"
-        raise ValueError(f"agent must be one of: {', '.join(sorted(known))}")
+
+        # Anything else is checked for *shape* only. A user-defined provider
+        # lives in that user's ~/.vicoa/config.json on their own machine, so the
+        # backend cannot hold a list of them — and the daemon is the real
+        # authority regardless: it refuses an id it does not recognise, with the
+        # list it does. Clients pick from the machine row's `available_agents`,
+        # which the daemon publishes including custom providers. Rejecting
+        # unknown ids here would only mean a custom agent 422s before the
+        # machine that owns it ever sees the request.
+        from protocol.provider_overrides import is_valid_provider_id
+
+        if is_valid_provider_id(normalized):
+            return normalized
+        raise ValueError(
+            "agent must be a catalog id "
+            f"({', '.join(sorted(known))}) or a lowercase provider slug"
+        )
 
 
 class SpawnSessionResponse(BaseModel):
@@ -605,6 +646,8 @@ class ProjectDirectoryResponse(BaseModel):
 class ProjectResponse(BaseModel):
     id: UUID
     name: str
+    # Task-identifier prefix; None until the project's first task allocates one.
+    key: str | None = None
     git_remote_url: str | None = None
     color: str | None = None
     icon: str | None = None
@@ -643,17 +686,61 @@ class UpdateProjectRequest(BaseModel):
     icon: str | None = Field(default=None, max_length=64)
     git_remote_url: str | None = None
     is_archived: bool | None = None
+    # The task-identifier prefix ("VIC" → tasks read "VIC-42"). Auto-derived on
+    # a project's first task; editable here. Uppercased and validated against
+    # the same shape the deriver produces.
+    key: str | None = Field(default=None, min_length=2, max_length=8)
+
+    @field_validator("key")
+    @classmethod
+    def validate_key(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        upper = v.strip().upper()
+        if not re.fullmatch(r"[A-Z][A-Z0-9]{1,7}", upper):
+            raise ValueError(
+                "key must be 2-8 characters, letters and digits, starting with a letter"
+            )
+        return upper
+
+
+class PrincipalResponse(BaseModel):
+    """A user or an agent, in the one shape every surface renders (§2 layer 1).
+
+    Never carries an email: a principal may show a display name and a picture on
+    a shared or public surface, and nothing else (§10.4).
+    """
+
+    type: Literal["user", "agent", "system"]
+    id: UUID | None = None
+    name: str | None = None
+    avatar_image_uri: str | None = None
+    emoji: str | None = None
+    # Cache-buster for the avatar proxy; the URL itself is stable.
+    updated_at: datetime | None = None
 
 
 class TaskResponse(BaseModel):
     id: UUID
     project_id: UUID
+    # Per-project sequential number and the rendered "VIC-42". Both are None for
+    # a task whose project has no key yet (or that predates the backfill), and
+    # clients must render such a task without an identifier rather than
+    # inventing one.
+    number: int | None = None
+    identifier: str | None = None
     title: str
     description: str | None = None
     status: TaskStatusLiteral
     priority: TaskPriorityLiteral
     position: float
     parent_task_id: UUID | None = None
+    # Denormalized so a sub-task's session prompt can say "Part of: <title>"
+    # without a second fetch (§8.3).
+    parent_title: str | None = None
+    assignee_type: Literal["user", "agent"] | None = None
+    assignee_id: UUID | None = None
+    assignee: PrincipalResponse | None = None
     labels: list["TaskLabelResponse"] = Field(default_factory=list)
     start_date: datetime | None = None
     due_date: datetime | None = None
@@ -663,7 +750,22 @@ class TaskResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class CreateTaskRequest(BaseModel):
+class TaskAssigneeFields(BaseModel):
+    """Shared assignee validation: the pair moves together or not at all."""
+
+    assignee_type: Literal["user", "agent"] | None = None
+    assignee_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def check_assignee_pair(self):
+        if (self.assignee_type is None) != (self.assignee_id is None):
+            raise ValueError(
+                "assignee_type and assignee_id must be set or cleared together"
+            )
+        return self
+
+
+class CreateTaskRequest(TaskAssigneeFields):
     title: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
     # Omitted → the user's Inbox ("No project" bucket).
@@ -677,7 +779,7 @@ class CreateTaskRequest(BaseModel):
     due_date: datetime | None = None
 
 
-class UpdateTaskRequest(BaseModel):
+class UpdateTaskRequest(TaskAssigneeFields):
     """PATCH body — only explicitly sent fields are applied, so date fields
     can be cleared by sending null."""
 
@@ -721,6 +823,107 @@ class UpdateTaskLabelRequest(BaseModel):
         return None if v is None else _normalize_label_color(v)
 
 
+TaskReactionTargetLiteral = Literal["task", "comment"]
+
+# Bounded so one comment cannot be a document. Generous enough for a pasted
+# stack trace, small enough that the timeline stays a timeline.
+MAX_COMMENT_BODY_CHARS = 20_000
+
+
+# How many reactors a summary names before it stops. A tooltip that lists forty
+# people is not more informative than one that lists eight and says "and 32
+# others", and the payload grows with every reaction on a shared board.
+MAX_NAMED_REACTORS = 8
+
+
+class TaskReactionSummary(BaseModel):
+    """One emoji on one target, collapsed across users."""
+
+    emoji: str
+    count: int
+    # Whether the requesting user is one of them — drives the pill's filled state.
+    reacted: bool
+    # Who reacted, oldest first, capped at MAX_NAMED_REACTORS. `count` is the
+    # true total, so a client can render "and N others" from the difference.
+    # Display names only, never emails (§10.4) — this feeds public pages in P4.
+    reactors: list[PrincipalResponse] = Field(default_factory=list)
+
+
+class TaskCommentResponse(BaseModel):
+    id: UUID
+    task_id: UUID
+    # The root this answers, or None when it is one. Threads are one level deep,
+    # so this always names a root and no client walks a chain. The list arrives
+    # already in thread order — each root followed by its replies.
+    parent_comment_id: UUID | None = None
+    author: PrincipalResponse
+    # None once soft-deleted: the row stays so the thread keeps its shape, but
+    # the text does not travel to the client.
+    body: str | None = None
+    kind: Literal["comment", "system"]
+    reactions: list[TaskReactionSummary] = Field(default_factory=list)
+    created_at: datetime
+    edited_at: datetime | None = None
+    deleted_at: datetime | None = None
+
+
+class TaskActivityResponse(BaseModel):
+    id: UUID
+    # None when the change had no request context (a background sweep). Rendered
+    # as an unattributed line rather than dropped.
+    actor: PrincipalResponse | None = None
+    action: str
+    details: dict = Field(default_factory=dict)
+    created_at: datetime
+
+
+class TaskTimelineResponse(BaseModel):
+    """Comments and activity in one fetch.
+
+    One round trip, one cache key, and — because reactions and principals are
+    resolved server-side across the whole page — no N+1 from the client
+    hydrating each row.
+    """
+
+    comments: list[TaskCommentResponse] = Field(default_factory=list)
+    activity: list[TaskActivityResponse] = Field(default_factory=list)
+    # Reactions on the task itself, not on any comment — the task body is a
+    # reactable target too, the same way a GitHub issue's opening post is.
+    reactions: list[TaskReactionSummary] = Field(default_factory=list)
+
+
+class CreateTaskCommentRequest(BaseModel):
+    body: str = Field(..., min_length=1, max_length=MAX_COMMENT_BODY_CHARS)
+    # Reply to this comment. Threads are one level deep: passing a reply's id
+    # attaches to that reply's root rather than nesting further.
+    parent_comment_id: UUID | None = None
+
+
+class CreateAgentTaskCommentRequest(CreateTaskCommentRequest):
+    """The agent-facing body — the human one plus an authorship channel.
+
+    An API key identifies a *user*, so a comment posted through it is the user's
+    unless the caller says otherwise. `vicoa task comment` run inside a Vicoa
+    session passes that session's id (it has it as `VICOA_AGENT_INSTANCE_ID`),
+    and the server authors the comment as the session's agent profile — the only
+    way a comment ever gets `author_type='agent'`. A session with no profile, or
+    one belonging to another user, falls back to the user rather than failing:
+    losing the byline is a better outcome than losing the comment.
+    """
+
+    agent_instance_id: UUID | None = None
+
+
+class UpdateTaskCommentRequest(BaseModel):
+    body: str = Field(..., min_length=1, max_length=MAX_COMMENT_BODY_CHARS)
+
+
+class ToggleTaskReactionRequest(BaseModel):
+    target_type: TaskReactionTargetLiteral
+    target_id: UUID
+    emoji: str = Field(..., min_length=1, max_length=16)
+
+
 def _normalize_label_color(value: str) -> str:
     """Pin label colors to #rrggbb — the web injects them into inline styles
     (multica's LabelChip invariant), so anything looser is an injection
@@ -762,6 +965,10 @@ class AutomationResponse(BaseModel):
     directory: str
     worktree: dict | None = None
     session_config: dict
+    # Live reference to an agent profile (collab P1). When set, the scheduler
+    # resolves the profile at dispatch and `session_config` is the fallback
+    # snapshot rather than the source of truth.
+    agent_profile_id: UUID | None = None
     schedule_kind: AutomationScheduleKindLiteral
     frequency: dict | None = None
     timezone: str
@@ -792,6 +999,7 @@ class CreateAutomationRequest(BaseModel):
     # {"mode": "none"|"new"|"existing", "path"?: str}
     worktree: dict | None = None
     session_config: dict
+    agent_profile_id: UUID | None = None
     schedule_kind: AutomationScheduleKindLiteral
     # One-time: absolute instant (client sends a UTC-anchored ISO datetime).
     run_at: datetime | None = None
@@ -825,6 +1033,7 @@ class UpdateAutomationRequest(BaseModel):
     directory: str | None = Field(default=None, min_length=1)
     worktree: dict | None = None
     session_config: dict | None = None
+    agent_profile_id: UUID | None = None
     schedule_kind: AutomationScheduleKindLiteral | None = None
     run_at: datetime | None = None
     frequency: dict | None = None

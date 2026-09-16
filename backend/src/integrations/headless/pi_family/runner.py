@@ -39,9 +39,14 @@ from integrations.headless.pi_family.spec import (
 )
 from integrations.headless.session_lifecycle import instance_update_requests_stop
 from integrations.utils.heartbeat import AsyncSessionHeartbeat
+from integrations.utils.registration import (
+    REGISTRATION_ATTEMPT_TIMEOUT_SECONDS,
+    register_with_retry,
+)
 from vicoa.attachments import AttachmentRef, extract_attachment_refs
 from vicoa.sdk.async_client import AsyncVicoaClient
 from vicoa.sdk.exceptions import AuthenticationError
+from vicoa.session_markers import clear_session_registered, mark_session_registered
 from vicoa.session_ws_client import SessionMessagesWsClient
 from vicoa.utils import derive_ws_url, get_project_path
 
@@ -105,6 +110,7 @@ class PiFamilyRunner:
         model: Optional[str] = None,
         thinking_effort: Optional[str] = None,
         permission_mode: Optional[str] = None,
+        system_prompt: Optional[str] = None,
         agent_command: Optional[str] = None,
         is_resuming: bool = False,
     ) -> None:
@@ -120,6 +126,7 @@ class PiFamilyRunner:
         self.model = model
         self.thinking_effort = thinking_effort
         self.permission_mode = permission_mode
+        self.system_prompt = system_prompt
         self.agent_command = agent_command
         self.is_resuming = is_resuming
 
@@ -132,6 +139,9 @@ class PiFamilyRunner:
         self._ws_client: Optional[SessionMessagesWsClient] = None
         self._ws_thread: Optional[threading.Thread] = None
         self._heartbeat: Optional[AsyncSessionHeartbeat] = None
+        # Set once the instance row is known to exist (registered, or reopened
+        # on resume). Gates every write that would otherwise create the row.
+        self._registered = False
         #: Serialized turn pipeline: one consumer runs turns one at a time and
         #: coalesces a burst sent during a turn into a single follow-up.
         self._turn_queue: "asyncio.Queue[tuple[str, tuple[AttachmentRef, ...], Optional[str]]]" = asyncio.Queue()
@@ -140,6 +150,16 @@ class PiFamilyRunner:
         #: cancel arrives as a ``message-update`` after the row was enqueued, so
         #: it can only be honored at drain time.
         self._cancelled_message_ids: set[str] = set()
+        #: Steer support (queue bar's Steer button) — same shape as
+        #: ``codex_native``: ``_pending_by_id`` mirrors ``_turn_queue`` by id so
+        #: a steer request can find its message without draining the queue;
+        #: ``_steer_requested_ids`` holds requests that overtook their message
+        #: on the WS; ``_steer_in_flight`` carries each attempt's outcome so
+        #: the drain drops a message delivered mid-turn and keeps one that
+        #: was not.
+        self._pending_by_id: Dict[str, tuple[str, tuple[AttachmentRef, ...]]] = {}
+        self._steer_requested_ids: set[str] = set()
+        self._steer_in_flight: Dict[str, "asyncio.Future[bool]"] = {}
 
     # ------------------------------------------------------------------
     # Launch
@@ -173,6 +193,12 @@ class PiFamilyRunner:
             flag_value = self.spec.approval_modes.get(self.permission_mode)
             if flag_value:
                 command.extend([self.spec.approval_mode_arg, flag_value])
+
+        # Agent-profile instructions. Appended (not replacing) so the agent
+        # keeps its own baseline prompt; see protocol/system_prompt.py.
+        system_prompt = (self.system_prompt or "").strip()
+        if self.spec.system_prompt_arg and system_prompt:
+            command.extend([self.spec.system_prompt_arg, system_prompt])
 
         if self.spec.session_arg and self.agent_session_id:
             command.extend([self.spec.session_arg, self.agent_session_id])
@@ -226,6 +252,10 @@ class PiFamilyRunner:
                 api_key=self.api_key, base_url=self.base_url
             )
             await self._register()
+            # The row exists (registered, or reopened on resume). Tell the
+            # daemon, which holds the spawn RPC until this lands.
+            self._registered = True
+            mark_session_registered(self.session_id)
 
             self._heartbeat = AsyncSessionHeartbeat(
                 agent_instance_id=self.session_id,
@@ -278,28 +308,24 @@ class PiFamilyRunner:
             except Exception:
                 logger.warning("pi_family: failed to reopen instance", exc_info=True)
             return
-        # Bounded, and fatal on timeout: a registration that only succeeds after
-        # the app's spawn wait has elapsed leaves an orphan agent running
-        # unregistered — burning the user's quota — while the app has already
-        # told them the spawn failed.
-        try:
-            await asyncio.wait_for(
-                self.vicoa_client.register_agent_instance(
-                    agent_type=self.spec.catalog_id,
-                    agent_instance_id=self.session_id,
-                    name=self.agent_name,
-                    project=self.project_path,
-                    home_dir=str(Path.home()),
-                    session_config=self._build_session_config(),
-                ),
-                timeout=10.0,
-            )
-        except asyncio.TimeoutError:
-            logger.error(
-                "pi_family: registration timed out for session %s — aborting",
-                self.session_id,
-            )
-            raise
+        # Bounded retry inside a fixed budget, idempotent by instance id
+        # (integrations/utils/registration.py). A registration that only
+        # succeeds after every caller has stopped waiting would leave an orphan
+        # agent burning the user's quota, so a miss past the budget is fatal.
+        client = self.vicoa_client
+        await register_with_retry(
+            lambda: client.register_agent_instance(
+                agent_type=self.spec.catalog_id,
+                agent_instance_id=self.session_id,
+                name=self.agent_name,
+                project=self.project_path,
+                home_dir=str(Path.home()),
+                session_config=self._build_session_config(),
+                timeout=int(REGISTRATION_ATTEMPT_TIMEOUT_SECONDS),
+            ),
+            log=logger,
+            label="pi_family",
+        )
 
     async def _bring_up_agent(self) -> None:
         assert self.vicoa_client is not None
@@ -373,7 +399,16 @@ class PiFamilyRunner:
         return self.subprocess.stderr_tail() if self.subprocess is not None else ""
 
     async def _report_startup_failure(self, message: str) -> None:
-        """Post a user-visible reason for a failed bring-up. Never raises."""
+        """Post a user-visible reason for a failed bring-up. Never raises.
+
+        Only once the row exists: posting before registration would itself
+        create the instance (`/messages/agent` creates-or-retrieves) — the
+        orphan "fatal error" session this runner must never mint. Before
+        registration the reason goes to stderr for the daemon to report.
+        """
+        if not self._registered:
+            print(f"Fatal error before registration: {message}", file=sys.stderr)
+            return
         if self.vicoa_client is None:
             return
         try:
@@ -419,14 +454,17 @@ class PiFamilyRunner:
             except Exception:
                 logger.exception("pi_family: subprocess aclose failed")
         if self.vicoa_client is not None:
-            try:
-                await self.vicoa_client.end_session(self.session_id)
-            except Exception:
-                logger.exception("pi_family: end_session failed")
+            # Only a row that exists gets closed (see _report_startup_failure).
+            if self._registered:
+                try:
+                    await self.vicoa_client.end_session(self.session_id)
+                except Exception:
+                    logger.exception("pi_family: end_session failed")
             try:
                 await self.vicoa_client.close()
             except Exception:
                 pass
+        clear_session_registered(self.session_id)
 
     # ------------------------------------------------------------------
     # WebSocket plumbing
@@ -497,6 +535,13 @@ class PiFamilyRunner:
             message_id = body.get("id")
             if status == "cancelled" and message_id:
                 self._cancelled_message_ids.add(str(message_id))
+            elif status == "steer" and message_id:
+                loop = self._loop
+                if loop is None or loop.is_closed():
+                    return
+                asyncio.run_coroutine_threadsafe(
+                    self._steer_queued_message(str(message_id)), loop
+                )
         except Exception:
             logger.exception("pi_family: message-update callback raised")
 
@@ -551,7 +596,55 @@ class PiFamilyRunner:
         if content and session.try_resolve_pending_reply(content):
             await self._mark_message_consumed(message_id)
             return
+        if message_id:
+            self._pending_by_id[message_id] = (content, attachments)
         self._turn_queue.put_nowait((content, attachments, message_id))
+        if message_id and message_id in self._steer_requested_ids:
+            # The Steer request overtook its own message on the WS.
+            self._steer_requested_ids.discard(message_id)
+            await self._steer_queued_message(message_id)
+
+    async def _steer_queued_message(self, message_id: str) -> None:
+        """Deliver a queued message into the running turn (user pressed Steer).
+
+        pi's ``steer`` RPC is the native primitive: the message lands after
+        the current tool calls, before the next model call. On success the
+        message is stamped consumed (``steered``) and the consumer drops it
+        at the next drain; with no running turn the consumer is about to run
+        it anyway, so nothing is done.
+        """
+        session = self.session
+        if session is None or message_id in self._steer_in_flight:
+            return
+        pending = self._pending_by_id.get(message_id)
+        if pending is None:
+            self._steer_requested_ids.add(message_id)
+            return
+        if not session.turn_active:
+            logger.info("pi_family: steer for %s with no running turn", message_id)
+            return
+        content, attachments = pending
+        outcome: "asyncio.Future[bool]" = asyncio.get_running_loop().create_future()
+        self._steer_in_flight[message_id] = outcome
+        steered = False
+        try:
+            steered = await session.steer_user_message(content, attachments)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("pi_family: steer failed")
+        finally:
+            outcome.set_result(steered)
+        if steered:
+            self._pending_by_id.pop(message_id, None)
+            await self._mark_message_consumed(message_id, steered=True)
+            return
+        self._steer_in_flight.pop(message_id, None)
+        if self.vicoa_client is not None:
+            try:
+                await self.vicoa_client.requeue_message(message_id)
+            except Exception:
+                logger.debug("pi_family: requeue_message failed", exc_info=True)
 
     async def _handle_control(self, parsed: Dict[str, str]) -> None:
         session = self.session
@@ -644,9 +737,19 @@ class PiFamilyRunner:
             kept = []
             for item in batch:
                 message_id = item[2]
+                if message_id:
+                    self._pending_by_id.pop(message_id, None)
                 if message_id and message_id in self._cancelled_message_ids:
                     self._cancelled_message_ids.discard(message_id)
                     logger.info("pi_family: dropping cancelled message %s", message_id)
+                    continue
+                # Steered messages were delivered mid-turn; the attempt may
+                # still be out, so wait for its outcome rather than guessing.
+                outcome = (
+                    self._steer_in_flight.pop(message_id, None) if message_id else None
+                )
+                if outcome is not None and await outcome:
+                    logger.info("pi_family: dropping steered message %s", message_id)
                     continue
                 kept.append(item)
             if not kept:
@@ -674,12 +777,14 @@ class PiFamilyRunner:
         )
         return text, attachments
 
-    async def _mark_message_consumed(self, message_id: Optional[str]) -> None:
+    async def _mark_message_consumed(
+        self, message_id: Optional[str], *, steered: bool = False
+    ) -> None:
         """Clear a message's queued badge. Best-effort; never aborts a turn."""
         if not message_id or self.vicoa_client is None:
             return
         try:
-            await self.vicoa_client.mark_message_consumed(message_id)
+            await self.vicoa_client.mark_message_consumed(message_id, steered=steered)
         except Exception:
             logger.debug("pi_family: mark_message_consumed failed", exc_info=True)
 
@@ -764,6 +869,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Vicoa permission mode; translated to the agent's approval flag",
     )
+    parser.add_argument(
+        "--system-prompt",
+        dest="system_prompt",
+        default=None,
+        help="Custom instructions, appended via the agent's system-prompt flag",
+    )
     parser.add_argument("--agent-command", default=None, help="Explicit binary path")
     parser.add_argument("--prompt", default=None, help="Initial prompt")
     parser.add_argument("--debug", action="store_true")
@@ -797,6 +908,7 @@ def main() -> int:
         model=args.model,
         thinking_effort=args.thinking_effort,
         permission_mode=args.permission_mode,
+        system_prompt=args.system_prompt,
         agent_command=args.agent_command,
         is_resuming=bool(args.resume),
     )

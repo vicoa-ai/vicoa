@@ -22,18 +22,21 @@ from uuid import uuid4
 import requests
 from requests import Response
 
+from integrations.utils.heartbeat import next_interval_from_response
+from vicoa.session_markers import clear_session_registered, registered_marker_path
 from vicoa.spawn_ws_client import SpawnRequestWsClient
 from vicoa.terminal.coalescer import TerminalOutputCoalescer
 from vicoa.terminal.rpc import PTY_ORDERED_METHODS, PTY_RPC_METHODS, handle_pty_rpc
 from vicoa.terminal.service import TerminalService
 from requests.exceptions import RequestException, Timeout
 
+from protocol.system_prompt import SYSTEM_PROMPT_CAPABILITY
 from protocol.agent_catalog import (
     PERMISSION_MODES,
     REASONING_EFFORTS,
     THINKING_EFFORTS,
 )
-from integrations.headless.generic_acp import GENERIC_ACP_AGENTS
+from integrations.headless.generic_acp import effective_acp_agents
 from integrations.headless.pi_family.spec import PI_FAMILY_AGENTS
 from vicoa.utils import derive_ws_url, get_project_path
 from vicoa.machine_identity import (
@@ -59,6 +62,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_POLL_INTERVAL_SECONDS = 5
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30
+# How long `spawn-session` waits for the child to register before reporting
+# failure. The runner's own retry budget is 20s
+# (integrations/utils/registration.py); the rest is process-start slack. Must
+# stay under the server's 30s RPC timeout (shared/websocket/rpc.py), or a slow
+# but successful spawn reads as a timeout to the caller.
+REGISTRATION_WAIT_SECONDS = 24.0
 REQUEST_TIMEOUT_SECONDS = 15
 
 # Opaque CLI keys expire in ~90 days; the server only extends one with <7 days
@@ -537,6 +546,8 @@ class MachineDaemon:
         # on fatal auth; None (the default) everywhere else.
         self.on_cloud_status: Callable[[str], None] | None = None
         self._last_heartbeat_sent: float = 0.0
+        # Cadence for the next tick; the server adjusts it per response.
+        self._heartbeat_interval_next: float = float(self.heartbeat_interval)
         # Set by any REST 401 (see ``_raise_for_auth``). The cross-thread
         # signal that the credential is dead: a background heartbeat thread
         # sets it, the main loop watches it to stop the stream and exit.
@@ -707,13 +718,30 @@ class MachineDaemon:
         """
         return {
             agent: self._check_agent_installation(agent) is None
-            for agent in (
-                "claude",
-                "codex",
-                "opencode",
-                *GENERIC_ACP_AGENTS,
-                *PI_FAMILY_AGENTS,
-            )
+            for agent in self._known_agent_ids()
+        }
+
+    @staticmethod
+    def _known_agent_ids() -> tuple[str, ...]:
+        """Every agent id this daemon can spawn, built-ins and config alike."""
+        return (
+            "claude",
+            "codex",
+            "opencode",
+            *effective_acp_agents(),
+            *PI_FAMILY_AGENTS,
+        )
+
+    def _agent_labels(self) -> dict[str, str]:
+        """Display name per agent id, for ids no client catalog can know.
+
+        A provider from `agents.providers` exists only in this machine's
+        config, so its label has to travel with `available_agents` or the
+        apps are left prettifying the id. Published alongside it, with the
+        same wholesale-replace semantics.
+        """
+        return {
+            agent: self._agent_display_name(agent) for agent in self._known_agent_ids()
         }
 
     def _capabilities(self) -> list[str]:
@@ -726,6 +754,11 @@ class MachineDaemon:
         `agent-scan` tells the app the `scan-agents` RPC is routable here,
         so the desktop agent scan can offer a Rescan button. An old daemon
         omits it and the button stays hidden rather than failing `no_handler`.
+
+        `provider-config` tells the app the `provider-*` RPCs are routable
+        here, so Settings → Providers can offer Add / Remove / Check for THIS
+        machine. An old daemon omits it and the page falls back to the
+        copy-the-install-command text.
 
         `file-index` tells the client the `scan-files` RPC is routable here,
         so `@`-mentions can read the live project index off this machine
@@ -763,10 +796,26 @@ class MachineDaemon:
         routable here, so the Files panel and the session header can show the
         "Open in…" menu. An old daemon omits it and the menu stays hidden
         rather than rendering an empty dropdown while `no_handler` resolves.
+
+        `provider-usage` tells the client the `fetch-provider-usage` RPC is
+        routable here — the account's rate-limit windows for any provider in
+        `rpc/provider_usage.py`'s registry (Claude, Codex, Copilot), with no
+        session running. An old daemon only knows `fetch-claude-usage`; the
+        clients keep using that name for Claude and simply don't ask about
+        the others, rather than paying the router's `no_handler` grace window.
+
+        `system-prompt` tells the client this daemon forwards the spawn-metadata
+        `system_prompt` to the agent, so an agent profile carrying custom
+        instructions can be offered for this machine. This one matters more than
+        most: an old daemon drops unknown metadata *silently*, so without the
+        flag the agent would spawn with none of its instructions while the UI
+        went on showing the profile's name — the user would just experience it
+        as "this agent doesn't listen".
         """
         return [
             "worktree",
             "agent-scan",
+            "provider-config",
             "file-index",
             "command-index",
             "terminal",
@@ -775,6 +824,8 @@ class MachineDaemon:
             "git-write",
             "skill-manage",
             "open-in",
+            "provider-usage",
+            SYSTEM_PROMPT_CAPABILITY,
         ]
 
     def register_machine(self) -> MachineRegistration:
@@ -815,6 +866,7 @@ class MachineDaemon:
                 "python_version": platform.python_version(),
                 "cwd": get_project_path(),
                 "available_agents": self._detect_available_agents(),
+                "agent_labels": self._agent_labels(),
                 "capabilities": self._capabilities(),
             },
         }
@@ -866,8 +918,20 @@ class MachineDaemon:
             )
             response.raise_for_status()
             self._last_heartbeat_sent = time.time()
+            # Server-driven cadence: while the server can see this daemon's
+            # WebSocket it asks for a slow tick (the socket is the liveness
+            # signal); an older server sends no field and the configured
+            # interval stands. See integrations/utils/heartbeat.py.
+            try:
+                self._heartbeat_interval_next = next_interval_from_response(
+                    response.json(), float(self.heartbeat_interval)
+                )
+            except ValueError:
+                self._heartbeat_interval_next = float(self.heartbeat_interval)
         except RequestException as exc:
             logger.debug(f"Heartbeat failed (will retry): {exc}")
+            # A failed tick is a reason to try again soon, not to wait long.
+            self._heartbeat_interval_next = float(self.heartbeat_interval)
 
     # ------------------------------------------------------------------
     # Spawn handling
@@ -1057,7 +1121,8 @@ class MachineDaemon:
         args = ["--resume", session_id]
         if agent_session_id:
             flag = self._AGENT_SESSION_FLAG.get(
-                agent, "--acp-session-id" if agent in GENERIC_ACP_AGENTS else ""
+                agent,
+                "--acp-session-id" if agent in effective_acp_agents() else "",
             )
             if flag:
                 args.extend([flag, agent_session_id])
@@ -1079,6 +1144,14 @@ class MachineDaemon:
             session_id=session_id,
             metadata=metadata,
         )
+        # Appended once here rather than inside each of the ten per-agent branches
+        # in the base builder (five frozen, five source): every wrapper takes the
+        # same `--system-prompt` flag, and *how* it delivers the text is decided
+        # per-agent inside the wrapper via protocol.system_prompt. Adding it here
+        # means a new agent branch cannot forget it.
+        system_prompt = self._extract_system_prompt(metadata)
+        if system_prompt:
+            cmd.extend(["--system-prompt", system_prompt])
         if is_resuming:
             cmd.extend(
                 self._resume_args(
@@ -1155,7 +1228,7 @@ class MachineDaemon:
                 prompt = self._extract_prompt(metadata)
                 if prompt:
                     cmd.extend(["--prompt", prompt])
-            elif normalized_agent in GENERIC_ACP_AGENTS:
+            elif normalized_agent in effective_acp_agents():
                 model = self._extract_generic_model(metadata)
                 if model:
                     cmd.extend(["--model", model])
@@ -1295,8 +1368,8 @@ class MachineDaemon:
                 cmd.extend(["--prompt", prompt])
             return cmd
 
-        if normalized_agent in GENERIC_ACP_AGENTS:
-            spec = GENERIC_ACP_AGENTS[normalized_agent]
+        if normalized_agent in effective_acp_agents():
+            spec = effective_acp_agents()[normalized_agent]
             cmd = [
                 sys.executable,
                 "-m",
@@ -1317,7 +1390,7 @@ class MachineDaemon:
             model = self._extract_generic_model(metadata)
             if model:
                 cmd.extend(["--model", model])
-            permission_mode = self._extract_permission_mode(
+            permission_mode = self._extract_acp_session_mode(
                 metadata, agent=normalized_agent
             )
             if permission_mode:
@@ -1379,7 +1452,7 @@ class MachineDaemon:
             "claude code": "claude",
             "codex": "codex",
             "opencode": "opencode",
-            **{agent_id: agent_id for agent_id in GENERIC_ACP_AGENTS},
+            **{agent_id: agent_id for agent_id in effective_acp_agents()},
             **{agent_id: agent_id for agent_id in PI_FAMILY_AGENTS},
             # Display-name spellings clients may send instead of the id.
             "oh my pi": "omp",
@@ -1393,7 +1466,7 @@ class MachineDaemon:
                     "claude",
                     "codex",
                     "opencode",
-                    *GENERIC_ACP_AGENTS,
+                    *effective_acp_agents(),
                     *PI_FAMILY_AGENTS,
                 ]
             )
@@ -1443,7 +1516,7 @@ class MachineDaemon:
                 pi_spec, which=_find_cli_in_common_locations
             )
 
-        spec = GENERIC_ACP_AGENTS.get(agent)
+        spec = effective_acp_agents().get(agent)
         if spec is not None:
             from integrations.headless.generic_acp import resolve_agent_binary
 
@@ -1464,7 +1537,7 @@ class MachineDaemon:
             return "Codex"
         if agent == "opencode":
             return "OpenCode"
-        spec = GENERIC_ACP_AGENTS.get(agent)
+        spec = effective_acp_agents().get(agent)
         if spec is not None:
             return spec.display_name
         pi_spec = PI_FAMILY_AGENTS.get(agent)
@@ -1496,6 +1569,20 @@ class MachineDaemon:
             return prompt
         return None
 
+    def _extract_system_prompt(self, metadata: dict[str, Any] | None) -> str | None:
+        """Custom instructions from an agent profile (collaboration P1).
+
+        Agent-agnostic on purpose: every wrapper takes the same flag and picks its
+        own delivery channel (``protocol.system_prompt``), so nothing here needs to
+        know which agent is being spawned.
+        """
+        if not metadata:
+            return None
+        value = metadata.get("system_prompt")
+        if isinstance(value, str) and value.strip():
+            return value
+        return None
+
     def _extract_generic_model(self, metadata: dict[str, Any] | None) -> str | None:
         """Model id passthrough for the generic ACP agents.
 
@@ -1508,6 +1595,31 @@ class MachineDaemon:
         if isinstance(value, str) and value.strip():
             return value.strip()
         return None
+
+    def _extract_acp_session_mode(
+        self, metadata: dict[str, Any] | None, *, agent: str
+    ) -> str | None:
+        """Initial ACP session mode for a generic ACP agent.
+
+        Agents the catalog describes (cursor, gemini) keep the enum validation
+        of `_extract_permission_mode`. Agents it cannot describe — a
+        machine-local provider from `~/.vicoa/config.json`, or a built-in with
+        no static mode list (copilot, kimi, hermes) — only advertise their
+        modes at session/new, so the id is passed through and the wrapper
+        validates it against the live `availableModes`
+        (`acp_base._apply_initial_mode`), logging rather than failing on a
+        miss. Without this, a mode picked from the machine's cached list
+        (`machine_agent_models.modes`) would be dropped here silently.
+        """
+        if agent in PERMISSION_MODES:
+            return self._extract_permission_mode(metadata, agent=agent)
+        if not metadata:
+            return None
+        value = metadata.get("permission_mode")
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        return normalized or None
 
     def _extract_permission_mode(
         self, metadata: dict[str, Any] | None, *, agent: str
@@ -2004,10 +2116,50 @@ class MachineDaemon:
             return open_ops.open_path(**(frame.get("params") or {}))
         if method == "scan-agents":
             return self.scan_agents_rpc()
-        if method == "fetch-claude-usage":
-            from vicoa.rpc import claude_usage
+        if method == "provider-list":
+            from vicoa.rpc import provider_ops
 
-            return claude_usage.fetch_claude_usage(**(frame.get("params") or {}))
+            return provider_ops.provider_list()
+        if method == "provider-add":
+            from vicoa.rpc import provider_ops
+
+            result = self._after_provider_change(
+                provider_ops.provider_add(**(frame.get("params") or {}))
+            )
+            if "error" not in result:
+                # Warm the picker's model/mode cache for the agent just added.
+                # Add is an explicit click, so paying the agent's cold start
+                # here is fine — but in the background: the row comes back
+                # first, the picker fills in once the probe answers.
+                self._probe_and_cache_agent_models_background(str(result.get("id")))
+            return result
+        if method == "provider-remove":
+            from vicoa.rpc import provider_ops
+
+            return self._after_provider_change(
+                provider_ops.provider_remove(**(frame.get("params") or {}))
+            )
+        if method == "provider-set-enabled":
+            from vicoa.rpc import provider_ops
+
+            return self._after_provider_change(
+                provider_ops.provider_set_enabled(**(frame.get("params") or {}))
+            )
+        if method == "provider-probe":
+            from vicoa.rpc import provider_ops
+
+            result = provider_ops.provider_probe(**(frame.get("params") or {}))
+            self._cache_agent_models_from_probe(result)
+            return result
+        if method == "fetch-provider-usage":
+            from vicoa.rpc import provider_usage
+
+            return provider_usage.fetch_provider_usage(**(frame.get("params") or {}))
+        if method == "fetch-claude-usage":
+            # Pre-registry name; same code path (see rpc/provider_usage.py).
+            from vicoa.rpc import provider_usage
+
+            return provider_usage.fetch_claude_usage(**(frame.get("params") or {}))
         return {"error": f"unknown RPC method: {method}"}
 
     def _supported_rpc_methods(self) -> list[str]:
@@ -2050,6 +2202,12 @@ class MachineDaemon:
             "list-open-apps",
             "open-path",
             "scan-agents",
+            "provider-list",
+            "provider-add",
+            "provider-remove",
+            "provider-set-enabled",
+            "provider-probe",
+            "fetch-provider-usage",
             "fetch-claude-usage",
             *PTY_RPC_METHODS,
         ]
@@ -2073,6 +2231,74 @@ class MachineDaemon:
         agents = self._detect_available_agents()
         self.push_available_agents(agents)
         return {"available_agents": agents}
+
+    def _after_provider_change(self, result: dict[str, Any]) -> dict[str, Any]:
+        """Re-publish `available_agents` once the config file changed.
+
+        The new (or removed) provider is spawnable the moment the file is
+        written — `effective_acp_agents` is keyed on its mtime — but every
+        client's picker reads the cloud machine row, so push the fresh map
+        the same way the Rescan button does. Failed ops (`error` key) change
+        nothing and skip the push.
+        """
+        if "error" not in result:
+            result["available_agents"] = self.scan_agents_rpc()["available_agents"]
+        return result
+
+    def _cache_agent_models_from_probe(self, probe: dict[str, Any]) -> None:
+        """Persist a successful probe's model/mode lists as the machine's
+        `machine_agent_models` row, so the new-session picker can offer them
+        before a session has ever run (plans/todos/agent-integration-followups.md
+        §2b). The daemon cannot write that table itself; the agent-facing
+        `PUT /machines/{id}/agent-models/{agent}` in the servers process does,
+        with the same write-on-change upsert the session PATCH uses.
+
+        Best-effort and silent: a cache miss only means the picker keeps its
+        catalog placeholders, which is where it was before the probe.
+        """
+        if not probe.get("ok") or not self.machine_id:
+            return
+        agent_id = str(probe.get("id") or "").strip()
+        models = probe.get("models") or []
+        if not agent_id or not models:
+            return
+        payload: dict[str, Any] = {"models": models}
+        modes = probe.get("modes") or []
+        if modes:
+            payload["modes"] = modes
+        try:
+            self._put(
+                f"/api/v1/machines/{self.machine_id}/agent-models/{agent_id}",
+                payload,
+            ).raise_for_status()
+        except Exception as exc:
+            # Includes a 401: the probe itself succeeded, and a dead credential
+            # is the heartbeat loop's to act on, not this side effect's.
+            logger.debug(
+                "[daemon] agent-models cache for %s not written: %s", agent_id, exc
+            )
+
+    def _probe_and_cache_agent_models_background(self, agent_id: str) -> None:
+        """Probe `agent_id` on a worker thread and cache the result (see
+        `_cache_agent_models_from_probe`). Fire-and-forget: nothing waits on
+        it, and a failed probe is the Providers page's Check button's job to
+        explain."""
+        if not agent_id or not self.machine_id:
+            return
+
+        def _run() -> None:
+            from vicoa.rpc import provider_ops
+
+            try:
+                self._cache_agent_models_from_probe(
+                    provider_ops.provider_probe(agent_id)
+                )
+            except Exception:
+                logger.debug(
+                    "[daemon] background probe for %s failed", agent_id, exc_info=True
+                )
+
+        Thread(target=_run, name=f"vicoa-probe-{agent_id}", daemon=True).start()
 
     def push_available_agents(self, agents: dict[str, bool]) -> None:
         """Refresh `available_agents` in the cloud machine row.
@@ -2104,6 +2330,7 @@ class MachineDaemon:
                     "home_dir": str(Path.home()),
                     "metadata": {
                         "available_agents": agents,
+                        "agent_labels": self._agent_labels(),
                         "capabilities": self._capabilities(),
                     },
                 },
@@ -2234,6 +2461,9 @@ class MachineDaemon:
             # the child still outlives a daemon/app exit) so a startup crash is
             # captured instead of lost. The wrapper logs to its own file too.
             stderr_log = self._open_session_stderr(session_id)
+            # A resume reuses the id; make sure no stale marker from a previous
+            # run can satisfy the wait below.
+            clear_session_registered(session_id)
             try:
                 process = subprocess.Popen(
                     command,
@@ -2268,6 +2498,17 @@ class MachineDaemon:
             },
             daemon=True,
         ).start()
+        # Hold the RPC until the agent's instance row exists. Returning at
+        # Popen time told the caller "spawned" for a process that might still
+        # fail to register — it then navigated to a row that never appeared,
+        # with the real reason buried in a log file. This is the same shape
+        # the SSE spawn path already has (`_wait_for_process_ready` +
+        # "started"); the RPC path never got it.
+        failure = self._wait_for_registration(session_id, process)
+        if failure is not None:
+            self._rollback_worktree(params.get("directory"), worktree_info)
+            print(f"[daemon] RPC spawn-session {normalized_agent} failed: {failure}")
+            return {"error": failure}
         print(f"[daemon] RPC spawn-session launched {normalized_agent}: {session_id}")
         result: dict[str, Any] = {"agent_instance_id": session_id}
         if worktree_info is not None:
@@ -2585,6 +2826,72 @@ class MachineDaemon:
             if not _handed_off:
                 self._active_request_ids.discard(request_id)
 
+    def _wait_for_registration(
+        self,
+        session_id: str,
+        process: subprocess.Popen[bytes],
+        *,
+        timeout: float = REGISTRATION_WAIT_SECONDS,
+        interval: float = 0.1,
+    ) -> str | None:
+        """Block until the child's registered marker appears.
+
+        Returns None once the row exists, else a one-line reason for the RPC
+        error: the child's last stderr line if it exited, or a timeout. A
+        child that is still alive at the deadline is terminated — a runner
+        that has not registered inside its own budget is either wedged or
+        about to give up, and letting it run on would recreate the invisible
+        zombie this wait exists to prevent.
+        """
+        marker = registered_marker_path(session_id)
+        deadline = time.time() + timeout
+        while True:
+            if marker.exists():
+                clear_session_registered(session_id)
+                return None
+            code = process.poll()
+            if code is not None:
+                # The child died before registering. Its last stderr line is
+                # usually the actionable reason (not logged in, bad model, a
+                # missing dependency) — surface it verbatim, since "try again"
+                # would not help. Only when there is nothing to show do we fall
+                # back to the generic, retry-friendly message.
+                tail = self._read_session_stderr_tail(session_id)
+                reason = tail.splitlines()[-1][:300] if tail else ""
+                if reason:
+                    return f"Couldn't start the session: {reason}"
+                return (
+                    "Couldn't start the session. The agent exited "
+                    "unexpectedly, please try again."
+                )
+            if time.time() >= deadline:
+                if marker.exists():
+                    clear_session_registered(session_id)
+                    return None
+                try:
+                    process.terminate()
+                except Exception:  # noqa: BLE001 - best effort
+                    pass
+                # Timed out waiting for the agent to come online — almost always
+                # a transient slow/unreachable server, so retry is the right
+                # advice. The stderr tail here is just the runner's last log
+                # line (rarely actionable) and would clutter the message, so it
+                # goes to the daemon log, not to the user.
+                tail = self._read_session_stderr_tail(session_id)
+                if tail:
+                    logger.warning(
+                        "[daemon] session %s registration timed out after %.0fs; "
+                        "stderr tail:\n%s",
+                        session_id,
+                        timeout,
+                        tail,
+                    )
+                return (
+                    "Couldn't start the session. It didn't come online in "
+                    "time, please try again."
+                )
+            time.sleep(interval)
+
     def _wait_for_process_ready(
         self,
         process: subprocess.Popen[bytes],
@@ -2668,7 +2975,10 @@ class MachineDaemon:
 
         def _heartbeat_loop() -> None:
             while not stop_heartbeat.wait(1):
-                if time.time() - self._last_heartbeat_sent >= self.heartbeat_interval:
+                if (
+                    time.time() - self._last_heartbeat_sent
+                    >= self._heartbeat_interval_next
+                ):
                     try:
                         self.send_heartbeat()
                     except AuthenticationError:
@@ -2724,7 +3034,7 @@ class MachineDaemon:
                 if stop_heartbeat:
                     break
                 now = time.time()
-                if now - self._last_heartbeat_sent >= self.heartbeat_interval:
+                if now - self._last_heartbeat_sent >= self._heartbeat_interval_next:
                     self.send_heartbeat()
 
         hb_thread = Thread(target=_heartbeat_loop, daemon=True)

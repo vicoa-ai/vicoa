@@ -14,6 +14,20 @@ import '/flutter_flow/app_locale.dart';
 /// don't fight camelCase-vs-hyphenation edge cases ("acceptEdits" → "AcceptEdits").
 String _labelFallback(String id) => id.isEmpty ? id : '${id[0].toUpperCase()}${id.substring(1)}';
 
+/// A display label for an agent id the catalog has never heard of.
+///
+/// User-defined providers (`agents.providers` in `~/.vicoa/config.json`) exist
+/// only on the user's own machine, so the catalog shipped with this build
+/// cannot describe them — that is the point of the feature. The daemon reports
+/// them in `available_agents`; this makes a readable label out of the id, which
+/// is all we have. `kimi-work` -> `Kimi Work`. Mirrors `customAgentLabel` in
+/// `apps/web/lib/agent-catalog.ts`.
+String customAgentLabel(String agentId) => agentId
+    .split('-')
+    .where((part) => part.isNotEmpty)
+    .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+    .join(' ');
+
 /// Per-agent permission_mode / thinking_effort / reasoning_effort / opencode mode entries.
 ///
 /// `optIn: true` marks an entry as model-specific — only visible when the
@@ -181,10 +195,12 @@ class SessionConfig {
       // one); anything else is an explicit provider/model the user picked.
       if (model != null && model != 'default' && model != 'auto') m['model'] = model;
     } else {
-      // Generic ACP agents (cursor/gemini/copilot/kimi/hermes): model +
-      // permission_mode pass through; the wrapper applies them best-effort
-      // against the agent's live ACP session state.
-      if (model != null) m['model'] = model;
+      // Generic ACP agents (cursor/gemini/copilot/kimi/hermes and any
+      // catalog-added or synthesized one): model + permission_mode pass
+      // through; the wrapper applies them best-effort against the agent's live
+      // ACP session state. `default`/`auto` is the "keep the agent's own
+      // model" sentinel and is not sent (the wrapper would skip it anyway).
+      if (model != null && model != 'default' && model != 'auto') m['model'] = model;
       if (permissionMode != null) m['permission_mode'] = permissionMode;
     }
     return m;
@@ -629,20 +645,87 @@ String? modelSublabel(String id, String label) {
 
 AgentCatalog agentCatalogFallback() => AgentCatalog.fromJson(json.decode(_agentCatalogFallbackJson) as Map<String, dynamic>);
 
+/// An ACP agent's cached session modes as a `permissionModes` enum. The
+/// agent's first advertised mode is its own default (what `session/new`
+/// starts in), so it carries `isDefault`. Null when nothing is cached.
+List<CatalogEnumEntry>? _cachedModesAsPermissionModes(List<Map<String, String>>? modes) {
+  if (modes == null || modes.isEmpty) return null;
+  return [
+    for (var i = 0; i < modes.length; i++)
+      CatalogEnumEntry(
+        id: modes[i]['id']!,
+        label: (modes[i]['label']?.isNotEmpty ?? false) ? modes[i]['label']! : modes[i]['id']!,
+        isDefault: i == 0,
+      ),
+  ];
+}
+
 /// Return [base] with each agent's model list replaced by the machine's cached
 /// real models when present (keyed by agent id, `{agentId: [{id,label}]}`).
 /// Agents without a cached entry keep their static catalog defaults. Used so
 /// the new-session picker shows a machine's actual models once an agent has
-/// run there once (the catalog only ships placeholders for ACP agents, and for
-/// Claude it can't know the machine's own custom slugs).
+/// run there once — or, since a daemon `provider-probe` also fills the cache,
+/// once it has been Checked/Added from the desktop's Providers page (the
+/// catalog only ships placeholders for ACP agents, and for Claude it can't
+/// know the machine's own custom slugs).
+///
+/// [cachedModes] is the agent's ACP session modes (`{agentId: [{id,label}]}`,
+/// only for agents whose source reported them); [agentLabels] the daemon's
+/// `agent_labels` map. Cached ids the static catalog cannot describe (a
+/// catalog-added agent such as Qwen Code, or a provider hand-written into
+/// the machine's config) get a synthesized entry appended — the `default`
+/// sentinel (never sent as a model) plus the cached models, and the cached
+/// modes as `permissionModes`, the field the generic ACP spawn path forwards
+/// as the initial session mode. Without this the sheet had no model/mode
+/// picker at all for such an agent. A static entry with no curated mode list
+/// (Copilot, Kimi, Hermes) takes the cached modes too.
 ///
 /// Keep in sync with `vicoa-web/lib/agent-catalog.ts` `catalogWithCachedModels`.
 AgentCatalog catalogWithCachedModels(
-    AgentCatalog base, Map<String, List<Map<String, String>>> cachedByAgent) {
+  AgentCatalog base,
+  Map<String, List<Map<String, String>>> cachedByAgent, {
+  Map<String, List<Map<String, String>>> cachedModes = const {},
+  Map<String, String> agentLabels = const {},
+}) {
   if (cachedByAgent.isEmpty) return base;
+  final known = {for (final a in base.agents) a.id};
+  final synthesizedIds = cachedByAgent.keys
+      .where((id) => !known.contains(id) && (cachedByAgent[id]?.isNotEmpty ?? false))
+      .toList()
+    ..sort();
+  final synthesized = synthesizedIds.map((id) {
+    final models = <CatalogModel>[
+      CatalogModel(id: 'default', label: 'Default', isDefault: true),
+      for (final e in cachedByAgent[id]!)
+        if (e['id'] != 'default')
+          CatalogModel(id: e['id']!, label: normalizeModelLabel(e['id']!, e['label'] ?? e['id']!)),
+    ];
+    final label = agentLabels[id];
+    return CatalogAgent(
+      id: id,
+      label: (label != null && label.isNotEmpty) ? label : customAgentLabel(id),
+      models: models,
+      thinkingEfforts: const [],
+      reasoningEfforts: const [],
+      permissionModes: _cachedModesAsPermissionModes(cachedModes[id]) ?? const [],
+      modes: const [],
+    );
+  }).toList();
   final agents = base.agents.map((a) {
     final cached = cachedByAgent[a.id];
-    if (cached == null || cached.isEmpty) return a;
+    final modesForA = a.permissionModes.isNotEmpty ? null : _cachedModesAsPermissionModes(cachedModes[a.id]);
+    if (cached == null || cached.isEmpty) {
+      if (modesForA == null) return a;
+      return CatalogAgent(
+        id: a.id,
+        label: a.label,
+        models: a.models,
+        thinkingEfforts: a.thinkingEfforts,
+        reasoningEfforts: a.reasoningEfforts,
+        permissionModes: modesForA,
+        modes: a.modes,
+      );
+    }
     // A machine reports only `{id, label}` — no capability metadata. Carry the
     // catalog entry's fields over for ids we already know (isDefault,
     // permissionModes, defaultThinkingEffort, …); without this, the opt-in
@@ -689,9 +772,14 @@ AgentCatalog catalogWithCachedModels(
       models: models,
       thinkingEfforts: a.thinkingEfforts,
       reasoningEfforts: a.reasoningEfforts,
-      permissionModes: a.permissionModes,
+      permissionModes: modesForA ?? a.permissionModes,
       modes: a.modes,
     );
   }).toList();
-  return AgentCatalog(version: base.version, minCliVersion: base.minCliVersion, minClientVersion: base.minClientVersion, agents: agents);
+  return AgentCatalog(
+    version: base.version,
+    minCliVersion: base.minCliVersion,
+    minClientVersion: base.minClientVersion,
+    agents: [...agents, ...synthesized],
+  );
 }

@@ -86,6 +86,12 @@ class PiFamilySpec:
     #: catalog carries no ``permission_modes`` either.
     approval_mode_arg: Optional[str] = None
     approval_modes: Mapping[str, str] = field(default_factory=dict)
+    #: Flag that appends to the agent's system prompt (pi/omp:
+    #: ``--append-system-prompt <text>``). This is the ``CLI_FLAG`` transport in
+    #: ``protocol/system_prompt.py`` — a real system prompt, appended rather than
+    #: replacing, so the agent keeps its own baseline instructions. ``None`` means
+    #: the CLI has no such knob and the caller must fall back to a prompt prefix.
+    system_prompt_arg: Optional[str] = "--append-system-prompt"
     #: Resume flag. Hidden on omp but real: it *resolves* an existing session
     #: and exits 1 with ``Session "<id>" not found.`` for an unknown one — it
     #: never creates. So the first launch carries no session flag, the id is

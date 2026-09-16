@@ -1,11 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ChevronDown, ExternalLink } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -18,9 +19,9 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { rpcOpenPath, type OpenApp } from './rpc';
-import { groupOpenApps, loadOpenApps, openErrorMessage } from './open-in-apps';
+import { groupOpenApps } from './open-in-apps';
 import { OpenAppIcon } from './open-in-app-icons';
+import { useOpenIn, type OpenInTarget } from './use-open-in';
 
 /**
  * "Open in Finder / VS Code / Ghostty…" for a project path.
@@ -31,70 +32,18 @@ import { OpenAppIcon } from './open-in-app-icons';
  * platform branching here), and `open-path` launches it. The client never
  * sends a command — only an app id the daemon looks up in its own catalog.
  *
- * Two presentations share all of that: {@link OpenInMenu}, a menu of its own
- * for the files panel's toolbar, and {@link OpenInSubMenu}, a submenu to nest
- * inside the session's three-dot menu. Both render nothing when the machine
- * can't be reached or its daemon predates the `open-in` RPCs, so an old daemon
- * shows no dead affordance.
+ * Two presentations share all of that (via {@link useOpenIn}): {@link OpenInMenu},
+ * a menu of its own for the files panel's toolbar, and {@link OpenInSubMenu}, a
+ * submenu to nest inside the session's three-dot menu. Both render nothing
+ * when the machine can't be reached or its daemon predates the `open-in`
+ * RPCs, so an old daemon shows no dead affordance.
  */
 
-export interface OpenInTarget {
-  machineId: string | null;
-  /** The session's project directory (the daemon expands a leading `~`). */
-  cwd: string | null;
-  /** Project-relative path to open. `''` (the default) is the project root. */
-  path?: string;
-}
+export type { OpenInTarget } from './use-open-in';
 
-/**
- * Loads the machine's app list and launches one. `apps` is null while loading
- * and when there is nothing to offer — callers render nothing in both cases.
- *
- * `onOpened` fires only on a confirmed launch, so a caller that controls menu
- * state can leave the menu open to show `error` instead of closing on failure.
- */
-function useOpenIn({ machineId, cwd, path = '' }: OpenInTarget, onOpened: () => void) {
-  const [apps, setApps] = useState<OpenApp[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // Survives the async open: a menu unmounted mid-flight must not setState.
-  const mounted = useRef(true);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    setApps(null);
-    if (!machineId || !cwd) return;
-    let cancelled = false;
-    void loadOpenApps(machineId).then((loaded) => {
-      if (!cancelled) setApps(loaded);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [machineId, cwd]);
-
-  const openWith = useCallback(
-    (appId: string) => {
-      if (!machineId || !cwd) return;
-      rpcOpenPath(machineId, cwd, path, appId)
-        .then(() => {
-          if (mounted.current) onOpened();
-        })
-        .catch((err: unknown) => {
-          if (mounted.current) setError(openErrorMessage(err));
-        });
-    },
-    [machineId, cwd, path, onOpened],
-  );
-
-  const groups = useMemo(() => groupOpenApps(apps ?? []), [apps]);
-  const ready = !!machineId && !!cwd && !!apps && apps.length > 0;
-  return { groups, ready, error, setError, openWith };
+function basename(path: string): string {
+  const i = path.lastIndexOf('/');
+  return i < 0 ? path : path.slice(i + 1);
 }
 
 /** The app rows themselves, identical in a menu and in a submenu. */
@@ -208,6 +157,15 @@ export function OpenInMenu({
         </Tooltip>
       </TooltipProvider>
       <DropdownMenuContent align="end" className="min-w-[8.5rem] font-mono">
+        {/* Name the target: the same button opens the project root from the
+            tree and the current file from a tab, and "Open in" alone reads as
+            the former — which is how a user with a .xlsx open went looking
+            for "open this file" somewhere else. */}
+        {path && (
+          <DropdownMenuLabel className="truncate px-2 py-1 text-[11px] font-normal text-muted-foreground">
+            {basename(path)}
+          </DropdownMenuLabel>
+        )}
         <OpenInRows groups={groups} error={error} openWith={openWith} />
       </DropdownMenuContent>
     </DropdownMenu>

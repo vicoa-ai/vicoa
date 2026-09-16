@@ -9,10 +9,26 @@
 // at a half-typed command that never runs, e.g. `... && echo '--- ` with an
 // unclosed quote.
 //
-// Two guards, both needed: wait for the shell's line editor to be reading
-// (`isLineEditorReady`), then feed the input in sub-queue-sized chunks
-// (`chunkPtyInput`) so a shell that stalls mid-write can only ever have a
-// fraction of a queue outstanding.
+// Three guards, all needed:
+//  1. wait for the shell's line editor to be reading (`isLineEditorReady`);
+//  2. hand the text over as a BRACKETED PASTE (`prepareInitialInput`) — see
+//     below, this is what actually keeps the queue drained;
+//  3. feed it in sub-queue-sized chunks (`chunkPtyInput`) so a shell that
+//     stalls mid-write can only ever have a fraction of a queue outstanding.
+//
+// (2) is not cosmetic. Typed character-by-character, every byte runs the full
+// ZLE widget stack, and a stock oh-my-zsh has plenty on it: `url-quote-magic`
+// on self-insert, zsh-autosuggestions' history query, zsh-syntax-highlighting
+// re-highlighting the whole buffer on each redraw — O(n) work per character
+// over a growing line. On a 1.5KB setup chain that is far slower than a writer
+// pushing 256 bytes every 20ms, so the queue fills, the tail is dropped, and
+// the user is left at a `cmdsubst>` continuation prompt that never returns:
+// the "setup hangs" bug. Inside `ESC[200~ … ESC[201~` the shell's paste widget
+// instead slurps the whole run out of the tty in one go and inserts it as
+// literal text, no per-character widgets — the queue drains as fast as we can
+// write. The submitting CR must stay OUTSIDE the markers: inside a paste it is
+// literal text (a newline in the buffer), so the chain would sit there, typed
+// but never run.
 
 /** Per-write ceiling, well under the 1024-byte macOS tty input queue so a
  *  couple of un-drained chunks still can't overflow it. */
@@ -59,4 +75,39 @@ export function isLineEditorReady(bytes: Uint8Array): boolean {
     return true;
   }
   return false;
+}
+
+/** Bracketed-paste delimiters. A shell that emitted `ESC[?2004h` has told us it
+ *  understands these; anything else must be typed raw (the markers would land
+ *  in the command line as literal `[200~` garbage). */
+const PASTE_START = '\x1b[200~';
+const PASTE_END = '\x1b[201~';
+
+/** Split trailing CR/LF — what submits the command — from the text itself. */
+function splitSubmit(data: string): [body: string, submit: string] {
+  const match = /[\r\n]+$/.exec(data);
+  if (match === null) return [data, ''];
+  return [data.slice(0, match.index), match[0]];
+}
+
+/** The exact sequence of pty writes that types `data` into a live shell.
+ *
+ *  With `bracketedPaste` the body is wrapped in paste markers and the trailing
+ *  CR follows as its own write (a CR inside the markers is literal text, and
+ *  would leave the command typed but unexecuted). Without it — a shell that
+ *  never advertised bracketed paste — the same chunks go out raw, which is the
+ *  best we can do for a line editor that has no fast paste path.
+ */
+export function prepareInitialInput(
+  data: string,
+  { bracketedPaste }: { bracketedPaste: boolean },
+): string[] {
+  const [body, submit] = splitSubmit(data);
+  const chunks = chunkPtyInput(body);
+  if (bracketedPaste && chunks.length > 0) {
+    chunks[0] = PASTE_START + chunks[0];
+    chunks[chunks.length - 1] += PASTE_END;
+  }
+  if (submit !== '') chunks.push(submit);
+  return chunks;
 }

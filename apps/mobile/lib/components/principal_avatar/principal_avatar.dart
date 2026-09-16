@@ -22,17 +22,21 @@ enum PrincipalType { user, team, agent }
 /// Web's `xs | sm | md | lg | xl`, in logical pixels.
 enum PrincipalAvatarSize { xs, sm, md, lg, xl }
 
-/// Box size and the initial's type size, mirroring the SIZES table in
+/// Box size, plus the initial's and the emoji's type sizes, mirroring the SIZES
+/// table in
 /// apps/web/components/ui/principal-avatar.tsx one-for-one. The letter runs
 /// ~0.25-0.30 of the box (higher at the small end only because 16px has a
 /// legibility floor) so the monogram reads as a mark rather than filling the
 /// circle. Change one table, change the other.
-const Map<PrincipalAvatarSize, ({double box, double text})> _metrics = {
-  PrincipalAvatarSize.xs: (box: 16.0, text: 8.0),
-  PrincipalAvatarSize.sm: (box: 24.0, text: 9.0),
-  PrincipalAvatarSize.md: (box: 32.0, text: 11.0),
-  PrincipalAvatarSize.lg: (box: 56.0, text: 16.0),
-  PrincipalAvatarSize.xl: (box: 80.0, text: 20.0),
+/// An emoji is a picture, not a letter: it reads at roughly twice the type size
+/// a monogram wants, so it gets its own column.
+const Map<PrincipalAvatarSize, ({double box, double text, double emoji})>
+    _metrics = {
+  PrincipalAvatarSize.xs: (box: 16.0, text: 8.0, emoji: 10.0),
+  PrincipalAvatarSize.sm: (box: 24.0, text: 9.0, emoji: 14.0),
+  PrincipalAvatarSize.md: (box: 32.0, text: 11.0, emoji: 18.0),
+  PrincipalAvatarSize.lg: (box: 56.0, text: 16.0, emoji: 30.0),
+  PrincipalAvatarSize.xl: (box: 80.0, text: 20.0, emoji: 48.0),
 };
 
 /// paseo's IDENTITY_COLORS — muted tones tuned for a white letter on top.
@@ -81,6 +85,7 @@ class PrincipalAvatar extends StatelessWidget {
     this.id,
     this.name,
     this.avatarImageUri,
+    this.emoji,
     this.updatedAt,
     this.size = PrincipalAvatarSize.md,
   });
@@ -99,6 +104,11 @@ class PrincipalAvatar extends StatelessWidget {
   /// Backend-relative served URL (e.g. `users.avatar_image_uri`), or null.
   final String? avatarImageUri;
 
+  /// A picked emoji, rendered when there is no image — between the image and
+  /// the generated initial, so clearing a photo reveals an emoji chosen
+  /// earlier rather than discarding it.
+  final String? emoji;
+
   /// Cache-buster — the row's `updated_at`; the avatar URL itself is stable.
   final String? updatedAt;
 
@@ -106,11 +116,13 @@ class PrincipalAvatar extends StatelessWidget {
 
   double get _px => _metrics[size]!.box;
   double get _textPx => _metrics[size]!.text;
+  double get _emojiPx => _metrics[size]!.emoji;
 
-  /// Agents are square-ish (a thing, not a face); people and teams are round.
-  BorderRadius get _radius => type == PrincipalType.agent
-      ? BorderRadius.circular(_px * 0.22)
-      : BorderRadius.circular(_px / 2);
+  /// Every principal is a circle. Agents used to be square-ish ("a thing, not a
+  /// face"), but every editor affordance drawn on an avatar is round, so the
+  /// distinction only produced a hover state that did not fit. Web made the
+  /// same change — keep the two in step.
+  BorderRadius get _radius => BorderRadius.circular(_px / 2);
 
   IconData get _glyph {
     switch (type) {
@@ -156,6 +168,19 @@ class PrincipalAvatar extends StatelessWidget {
   }
 
   Widget _fallback(BuildContext context) {
+    final pickedEmoji = (emoji ?? '').trim();
+    if (pickedEmoji.isNotEmpty) {
+      // Neutral, not the hash-palette colour the initial uses: an emoji already
+      // carries its own colour. Matches the web.
+      return Container(
+        color: FlutterFlowTheme.of(context).alternate.withValues(alpha: 0.4),
+        alignment: Alignment.center,
+        child: Text(
+          pickedEmoji,
+          style: TextStyle(height: 1.0, fontSize: _emojiPx),
+        ),
+      );
+    }
     final initial = principalInitial(name);
     if (initial != null) {
       return Container(

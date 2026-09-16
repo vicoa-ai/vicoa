@@ -12,6 +12,8 @@ Map<String, dynamic> _subagentMsg(
   String toolUseId, {
   String type = 'Explore',
   String? description,
+  String role = 'step',
+  String? status,
 }) =>
     {
       'sender_type': 'AGENT',
@@ -21,7 +23,8 @@ Map<String, dynamic> _subagentMsg(
           'tool_use_id': toolUseId,
           'subagent_type': type,
           'description': description ?? '',
-          'role': 'step',
+          'role': role,
+          if (status != null) 'status': status,
         },
       },
     };
@@ -228,6 +231,21 @@ void main() {
         ),
         isEmpty,
       );
+    });
+  });
+
+  group('subagentStatusOf', () {
+    test('reads the settled report\'s status', () {
+      expect(
+        subagentStatusOf(_subagentMsg('tu-1', role: 'result', status: 'failed')),
+        'failed',
+      );
+    });
+
+    test('is null on a step, an untagged message, and a non-Map', () {
+      expect(subagentStatusOf(_subagentMsg('tu-1')), isNull);
+      expect(subagentStatusOf(_plainMsg('hi')), isNull);
+      expect(subagentStatusOf(null), isNull);
     });
   });
 }

@@ -35,7 +35,13 @@ Future<Map<String, dynamic>?> showAutomationEditSheet({
   required List<dynamic> machines,
   required AgentCatalog catalog,
   ValueChanged<String>? onOpenInstance,
-}) {
+}) async {
+  // Resolve the device's real IANA zone (cached after the first call) before the
+  // sheet builds its draft: every time in the editor is wall-clock in that zone,
+  // so a new automation must carry the user's own — not the stand-in the offset
+  // scan would pick.
+  await autils.loadDeviceIanaTimezone();
+  if (!context.mounted) return null;
   return showModalBottomSheet<Map<String, dynamic>>(
     context: context,
     isScrollControlled: true,

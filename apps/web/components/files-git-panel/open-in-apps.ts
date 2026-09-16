@@ -7,7 +7,7 @@
 import { rpcListOpenApps, type OpenApp, type OpenAppKind } from './rpc';
 
 /** Menu order; also where the separators go. */
-export const KIND_ORDER: OpenAppKind[] = ['file-manager', 'editor', 'terminal'];
+export const KIND_ORDER: OpenAppKind[] = ['default', 'file-manager', 'editor', 'terminal'];
 
 export interface OpenAppGroup {
   kind: OpenAppKind;
@@ -25,9 +25,21 @@ export function groupOpenApps(apps: readonly OpenApp[]): OpenAppGroup[] {
   );
 }
 
+/**
+ * The apps that apply to `path`. `''` is the project root — a directory — and
+ * file-only apps (the default app) are meaningless for it: a folder's "default
+ * app" is the file manager, which has its own row. Every other target the
+ * menus are given is an open file tab.
+ */
+export function appsForTarget(apps: readonly OpenApp[], path: string): OpenApp[] {
+  return path ? [...apps] : apps.filter((app) => app.target !== 'file');
+}
+
 const ERROR_MESSAGES: Record<string, string> = {
   path_not_found: 'That path no longer exists on the machine.',
   outside_project: 'That path is outside the project.',
+  not_a_file: 'Only files can be opened with the default app.',
+  not_openable: 'That file is executable, so it can\'t be opened from here.',
   app_not_found: 'That app is no longer installed on the machine.',
   unknown_app: 'That app is not supported.',
   launch_failed: 'The machine could not launch that app.',

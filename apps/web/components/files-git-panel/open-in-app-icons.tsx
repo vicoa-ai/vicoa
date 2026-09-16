@@ -1,6 +1,6 @@
 import Image from 'next/image';
 import type { LucideIcon } from 'lucide-react';
-import { Code, FolderOpen, Terminal } from 'lucide-react';
+import { AppWindow, Code, FolderOpen, Terminal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { OpenApp, OpenAppKind } from './rpc';
 
@@ -23,6 +23,8 @@ import type { OpenApp, OpenAppKind } from './rpc';
  */
 
 const KIND_FALLBACK: Record<OpenAppKind, LucideIcon> = {
+  // The default app is whatever the OS picks — no single mark can stand for it.
+  default: AppWindow,
   'file-manager': FolderOpen,
   editor: Code,
   terminal: Terminal,

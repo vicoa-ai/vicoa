@@ -72,6 +72,8 @@ def test_acp_cleanup_marks_failed_sessions_without_ending():
     # fixture doesn't ``AttributeError`` before reaching the assertions.
     wrapper._ws_client = None
     wrapper._ws_thread = None
+    # The row exists — a terminal status is only written for a registered id.
+    wrapper._registered = True
 
     ACPWrapperBase._cleanup(wrapper, final_status="FAILED")
 

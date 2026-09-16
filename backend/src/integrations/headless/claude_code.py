@@ -41,11 +41,20 @@ from vicoa.attachments import (
     unavailable_note,
 )
 from vicoa.sdk.async_client import AsyncVicoaClient
+from vicoa.session_markers import clear_session_registered, mark_session_registered
 from vicoa.session_ws_client import SessionMessagesWsClient
 from vicoa.utils import derive_ws_url, get_project_path
 from integrations.headless.session_lifecycle import instance_update_requests_stop
 from integrations.utils.heartbeat import AsyncSessionHeartbeat
-from integrations.headless.format_tools import format_tool_use
+from integrations.utils.registration import (
+    REGISTRATION_ATTEMPT_TIMEOUT_SECONDS,
+    register_with_retry,
+)
+from integrations.headless.format_tools import (
+    format_background_task_notification,
+    format_tool_use,
+    subagent_label,
+)
 from integrations.headless import auq
 from integrations.headless import permission as permission_module
 from integrations.headless import control_command
@@ -59,7 +68,11 @@ from integrations.headless.claude_model_catalog import build_claude_available_mo
 from integrations.headless.permission import (
     format_dict_as_markdown as _format_dict_as_markdown,  # re-exported for tests
 )
-from integrations.headless.subagent import SubAgentTracker, build_metadata
+from integrations.headless.subagent import (
+    AGENT_TASK_TYPES as _AGENT_TASK_TYPES,
+    SubAgentTracker,
+    build_metadata,
+)
 from integrations.headless.thinking import build_thinking_metadata
 
 try:
@@ -88,6 +101,8 @@ try:
         RateLimitInfo,
         TaskStartedMessage,
         TaskNotificationMessage,
+        TaskUpdatedMessage,
+        TERMINAL_TASK_STATUSES,
     )
 except ImportError as e:
     print(
@@ -120,6 +135,21 @@ _CLAUDE_LIMITS_FETCH_INTERVAL = 60.0
 # closes the turn can't wedge the session. The stream reader itself keeps
 # running either way — this only bounds how long the run loop stays parked.
 _INTERRUPT_RESULT_TIMEOUT = 15.0
+
+# ``_AGENT_TASK_TYPES`` (imported above from ``integrations.headless.subagent``)
+# names the task types that mean delegated *agent* work. Those are the ones a
+# Stop has to reach and the ones whose completion wakes the parent for a
+# follow-up turn. A background shell (``Bash(run_in_background=True)`` on a dev
+# server) rides the same frames but may never reach a terminal status, so
+# tracking one would defer the awaiting-input settle forever — and a Stop would
+# kill the user's dev server. A missing ``task_type`` (older CLI) stays tracked,
+# i.e. the previous behaviour.
+
+# Overall budget for the ``stop_task`` sweep an interrupt fires at the
+# background sub-agents. Each stop is a control round-trip to the CLI; they go
+# out concurrently and the sweep as a whole is bounded so a wedged CLI can't
+# leave it hanging.
+_STOP_TASKS_TIMEOUT = 10.0
 
 # Status-only watchdog (``_run_status_watchdog``): when autonomous work
 # (background sub-agents, CLI-initiated turns) goes silent for this long with
@@ -374,6 +404,7 @@ class HeadlessClaudeRunner:
         enable_thinking: bool = True,
         model: Optional[str] = None,
         thinking_effort: Optional[str] = None,
+        system_prompt: Optional[str] = None,
         debug: bool = False,
         is_resuming: bool = False,
     ):
@@ -392,6 +423,10 @@ class HeadlessClaudeRunner:
         # enable_thinking boolean (plan §3.6 dual-write contract). `off`
         # maps to ThinkingConfigDisabled; everything else to adaptive thinking.
         self.thinking_effort = thinking_effort
+        # Custom instructions from an agent profile. Claude is the SDK_APPEND
+        # transport: the text layers onto the stock claude_code preset rather
+        # than replacing it, so the agent keeps its normal tooling behaviour.
+        self.system_prompt = system_prompt
         self.permission_mode = permission_mode
         self.allowed_tools = allowed_tools
         self.disallowed_tools = disallowed_tools
@@ -422,6 +457,9 @@ class HeadlessClaudeRunner:
         self.vicoa_client: Optional[AsyncVicoaClient] = None
         self.claude_client: Optional[ClaudeSDKClient] = None
         self._heartbeat: Optional[AsyncSessionHeartbeat] = None
+        # Set once the instance row is known to exist (registered, or reopened
+        # on resume). Gates every write that would otherwise create the row.
+        self._registered = False
         self.running = True
         # Set when the session is closed from another client; suppresses the
         # turn-end AWAITING_INPUT write so a racing turn can't re-open the row.
@@ -460,6 +498,18 @@ class HeadlessClaudeRunner:
         # handling); initialised here (harmless, always empty pre-B5) so
         # ``_enqueue_already_queued`` can reference it now.
         self._cancelled_message_ids: set[str] = set()
+
+        # Steer support (queue bar's Steer button) — same shape as
+        # ``codex_native``: ``_pending_by_id`` mirrors ``_user_message_queue``
+        # by id so a steer request can find the message without draining the
+        # queue (added at enqueue, removed at dequeue); ``_steer_requested_ids``
+        # holds requests that overtook their own message on the WS;
+        # ``_steer_in_flight`` carries each attempt's outcome so the dequeue
+        # path drops a message that was delivered mid-turn and keeps one that
+        # was not.
+        self._pending_by_id: Dict[str, tuple[str, tuple[AttachmentRef, ...]]] = {}
+        self._steer_requested_ids: set[str] = set()
+        self._steer_in_flight: Dict[str, "asyncio.Future[bool]"] = {}
 
         # User-message transport: session-scoped /ws connection, mirroring
         # ``codex_native.py``. ``SessionMessagesWsClient`` runs a sync
@@ -552,6 +602,9 @@ class HeadlessClaudeRunner:
         # own turn without waiting — the awaiting-input settle is then
         # deferred to the autonomous close (``_settle_after_autonomous_turn``).
         self._pending_background_tasks: set[str] = set()
+        # Keeps the interrupt's ``stop_task`` sweep referenced so the
+        # background task isn't GC'd mid-flight.
+        self._stop_tasks_task: "Optional[asyncio.Task[None]]" = None
 
         # ------------------------------------------------------------------
         # Session-lifetime stream reader + event-derived turn state.
@@ -569,6 +622,14 @@ class HeadlessClaudeRunner:
         # Modeled on Paseo's ``runQueryPump`` / autonomous-turn design.
         # ------------------------------------------------------------------
         self._open_turns: deque[str] = deque()
+        # How many of the open turns an interrupt is still unwinding: set from
+        # the FIFO's depth when the Stop lands, decremented by each close.
+        # Forwarding is suppressed while it is non-zero — and ONLY while:
+        # ``interrupt_requested`` stays set until the next user turn, so gating
+        # suppression on it swallowed every later autonomous turn (a background
+        # sub-agent reporting after the Stop) too. Session 4c77b787-…: content
+        # from ~7 minutes of post-Stop work never reached the dashboard.
+        self._interrupt_unwind_turns: int = 0
         # Set by the reader when it closes the current foreground turn;
         # ``run_conversation_turn`` parks on it instead of reading the stream.
         self._foreground_turn_done: Optional[asyncio.Event] = None
@@ -625,6 +686,8 @@ class HeadlessClaudeRunner:
             thinking_config = ThinkingConfigDisabled(type="disabled")
             self.logger.info("Building options with thinking disabled")
 
+        system_prompt_option = self._build_system_prompt_option()
+
         # Pass Vicoa's session_id through to the Claude SDK so the transcript
         # at ~/.claude/projects/<cwd>/<session_id>.jsonl shares the same id
         # the dashboard shows. The SDK requires a valid UUID and reads this
@@ -663,7 +726,7 @@ class HeadlessClaudeRunner:
             can_use_tool=self._handle_tool_use,
             cwd=self.cwd,
             extra_args=self.extra_args or {},
-            system_prompt={"type": "preset", "preset": "claude_code"},
+            system_prompt=system_prompt_option,
             setting_sources=["user", "project", "local"],
             thinking=thinking_config,
             session_id=sdk_session_id,
@@ -675,6 +738,20 @@ class HeadlessClaudeRunner:
         if effort_for_options is not None:
             options_kwargs["effort"] = effort_for_options
         return ClaudeAgentOptions(**options_kwargs)
+
+    def _build_system_prompt_option(self) -> Dict[str, Any]:
+        """The SDK ``system_prompt`` option, with an agent profile's text appended.
+
+        Claude is the ``SDK_APPEND`` transport (``protocol/system_prompt.py``):
+        the profile's instructions layer *onto* the stock ``claude_code`` preset
+        instead of replacing it, so the agent keeps its normal tooling behaviour
+        and only gains the extra guidance. With no profile this is byte-identical
+        to what the wrapper sent before.
+        """
+        option: Dict[str, Any] = {"type": "preset", "preset": "claude_code"}
+        if self.system_prompt and self.system_prompt.strip():
+            option["append"] = self.system_prompt.strip()
+        return option
 
     # ------------------------------------------------------------------
     # Tool-use callback (replaces the MCP `approve` tool)
@@ -1055,16 +1132,24 @@ class HeadlessClaudeRunner:
                 )
         else:
             try:
-                registration = await asyncio.wait_for(
-                    self.vicoa_client.register_agent_instance(
+                # Bounded retry, idempotent by instance id (see
+                # integrations/utils/registration.py): a server that is slow
+                # rather than down gets three tries inside a budget the daemon
+                # and the app are both still waiting on. A late success on an
+                # abandoned attempt is picked up by the next one as 409/200.
+                client = self.vicoa_client
+                registration = await register_with_retry(
+                    lambda: client.register_agent_instance(
                         agent_type=self.agent_name,
                         agent_instance_id=self.session_id,
                         project=self.project_path,
                         home_dir=str(Path.home()),
                         session_config=self._build_session_config(),
                         source="app",
+                        timeout=int(REGISTRATION_ATTEMPT_TIMEOUT_SECONDS),
                     ),
-                    timeout=10.0,
+                    log=self.logger,
+                    label="claude",
                 )
                 updated_session_id = registration.agent_instance_id
                 if updated_session_id and updated_session_id != self.session_id:
@@ -1076,17 +1161,6 @@ class HeadlessClaudeRunner:
                     self.logger.info(
                         "Rebuilt Claude options with updated session ID for MCP server"
                     )
-            except asyncio.TimeoutError:
-                # Re-raise so the headless process exits immediately. The
-                # daemon's _wait_for_process_ready will detect the early exit
-                # and mark the spawn request as error — preventing a 30-second
-                # retry loop that would keep the request "pending" long enough
-                # for _catchup_poll to re-dispatch it to a second session.
-                self.logger.error(
-                    "Agent instance registration timed out for session %s — aborting",
-                    self.session_id,
-                )
-                raise
             except Exception as exc:
                 # Previously logged-and-continued, which left the process
                 # running as an invisible zombie: the daemon's spawn RPC had
@@ -1107,7 +1181,10 @@ class HeadlessClaudeRunner:
                 raise
 
         # Session id is settled now (registration can hand back a different
-        # one). Keep the session reading as alive while it sits idle awaiting
+        # one). Tell the daemon, which holds the spawn RPC until this lands.
+        self._registered = True
+        mark_session_registered(self.session_id)
+        # Keep the session reading as alive while it sits idle awaiting
         # user input — see integrations/utils/heartbeat.py.
         self._heartbeat = AsyncSessionHeartbeat(
             agent_instance_id=self.session_id,
@@ -1316,25 +1393,51 @@ class HeadlessClaudeRunner:
             return
         for block in message.content:
             if isinstance(block, ToolUseBlock) and block.name in ("Task", "Agent"):
+                block_input = block.input or {}
                 self._subagent_tracker.remember_task(
                     block.id,
-                    (block.input or {}).get("subagent_type", "agent"),
-                    (block.input or {}).get("description", ""),
+                    # Same label the launching tool row shows, so the row and
+                    # the group header beneath it agree.
+                    subagent_label(block_input) or "agent",
+                    block_input.get("description", ""),
                 )
 
     def _track_task_lifecycle(self, message) -> None:
         """Maintain ``_pending_background_tasks`` from the CLI's task events.
 
-        ``task_started`` fires when any sub-agent launches; ``task_notification``
-        fires once it settles (``completed`` / ``failed`` / ``stopped``). For a
-        *foreground* sub-agent both land before the turn's ``ResultMessage``, so
-        the set is empty by then and nothing changes. For a background one the
-        notification arrives *after* it.
+        ``task_started`` fires when a sub-agent launches; it settles on a
+        ``task_notification`` (``completed`` / ``failed`` / ``stopped``) *or* on
+        a ``task_updated`` patch carrying a terminal status. Both are handled
+        because a background task's terminal state can arrive as either — one
+        stopped via ``TaskStop`` (or by our own ``stop_task`` sweep) reports
+        ``killed`` through ``task_updated`` and the matching notification is
+        sometimes suppressed. Tracking only the notification leaked those ids,
+        and a leaked id defers the awaiting-input settle indefinitely.
+
+        Only delegated agent work is tracked (``_AGENT_TASK_TYPES``); a
+        background shell rides the same frames but may never settle.
+
+        For a *foreground* sub-agent both frames land before the turn's
+        ``ResultMessage``, so the set is empty by then and nothing changes. For
+        a background one the terminal frame arrives *after* it.
         """
         if isinstance(message, TaskStartedMessage):
+            task_type = getattr(message, "task_type", None)
+            # Remember the announcement either way: the matching
+            # ``task_notification`` carries no ``task_type``, and it is the
+            # frame that has to decide whether it's a sub-agent report or a
+            # backgrounded shell finishing (see ``_send_subagent_result``).
+            self._subagent_tracker.observe_task_started(
+                message.task_id, task_type, getattr(message, "tool_use_id", None)
+            )
+            if task_type is not None and task_type not in _AGENT_TASK_TYPES:
+                return
             self._pending_background_tasks.add(message.task_id)
         elif isinstance(message, TaskNotificationMessage):
             self._pending_background_tasks.discard(message.task_id)
+        elif isinstance(message, TaskUpdatedMessage):
+            if getattr(message, "status", None) in TERMINAL_TASK_STATUSES:
+                self._pending_background_tasks.discard(message.task_id)
 
     # ------------------------------------------------------------------
     # Session-lifetime stream reader (Paseo's "query pump") + turn state
@@ -1482,6 +1585,7 @@ class HeadlessClaudeRunner:
         """Drop all turn state and unblock the run loop (stream loss/reconnect)."""
         self._open_turns.clear()
         self._pending_background_tasks.clear()
+        self._interrupt_unwind_turns = 0
         event = self._foreground_turn_done
         if event is not None and not event.is_set():
             event.set()
@@ -1525,6 +1629,11 @@ class HeadlessClaudeRunner:
             self.logger.info("ResultMessage with no open turn; dropping as stale")
             return
         kind = self._open_turns.popleft()
+        # Was this close part of an interrupt unwind? Snapshot before the
+        # decrement — the settle below branches on it.
+        unwinding = self._interrupt_unwind_turns > 0
+        if unwinding:
+            self._interrupt_unwind_turns -= 1
         if kind == "foreground":
             # Snapshot the deferral decision NOW — by the time the run loop
             # wakes, this reader may already have consumed the notifications
@@ -1536,15 +1645,21 @@ class HeadlessClaudeRunner:
                 event.set()
             return
         self.logger.info("Autonomous turn completed")
-        await self._settle_after_autonomous_turn()
+        await self._settle_after_autonomous_turn(interrupted=unwinding)
 
-    async def _settle_after_autonomous_turn(self) -> None:
-        """Decide whether an autonomous close should settle the session."""
+    async def _settle_after_autonomous_turn(self, interrupted: bool = False) -> None:
+        """Decide whether an autonomous close should settle the session.
+
+        ``interrupted`` marks a turn the Stop aborted, whose output was
+        suppressed. A turn that merely *started after* the Stop (a background
+        sub-agent that outlived it, reporting in) is not one of those: it
+        settles normally, so its content is announced like any other.
+        """
         if self._open_turns:
             # A foreground turn is queued behind this one; its own close
             # settles the session.
             return
-        if self.interrupt_requested:
+        if interrupted:
             # The interrupt path already posted its notice; just re-assert
             # the idle status it wrote (a racing agent POST re-opens ACTIVE).
             await self._settle_awaiting_input_after_interrupt()
@@ -1696,8 +1811,10 @@ class HeadlessClaudeRunner:
         # Mirror the old drain-and-discard: while an interrupt is unwinding
         # (Stop pressed, closing ResultMessage not yet seen) nothing is
         # forwarded — anything worth showing already streamed before the
-        # Stop. ResultMessages still close turns and bank usage below.
-        suppressing = self.interrupt_requested and bool(self._open_turns)
+        # Stop. ResultMessages still close turns and bank usage below. Scoped
+        # to the turns that were open when the Stop landed, so work that
+        # outlived it still renders (see ``_interrupt_unwind_turns``).
+        suppressing = self._interrupt_unwind_turns > 0
 
         if (
             not self._open_turns
@@ -1844,19 +1961,44 @@ class HeadlessClaudeRunner:
         We forward this copy rather than the tool_result because it carries the
         ``task_id``/``status`` and none of the tool_result's internal plumbing
         (the "agentId: … use SendMessage to continue" block).
+
+        Not every settled task is a sub-agent, though: a backgrounded shell
+        settles through the very same frame as ``local_bash``. Those used to
+        land here too and, with no ``Task`` block to label them, fell back to
+        the ``("agent", "")`` sentinel — so a slow ``git push`` rendered as a
+        "Sub-agent: agent" card holding the Bash call's one-line description.
+        They're routed to a plain background-task tool row instead.
         """
         tool_use_id = message.tool_use_id
         summary = (message.summary or "").strip()
-        if not tool_use_id or not summary:
+        if not summary:
+            return
+
+        if not self._subagent_tracker.is_agent_task(message.task_id, tool_use_id):
+            await self.send_to_vicoa(
+                format_background_task_notification(summary, message.status)
+            )
+            return
+
+        if not tool_use_id:
             return
 
         subagent_type, description = self._subagent_tracker.label_for(tool_use_id)
+        # The status also rides the metadata (new clients mark the group header
+        # with it), but it stays in the body too: a client that predates the
+        # metadata field would otherwise show a failed run as a normal one.
         if message.status != "completed":
             summary = f"⚠️ Sub-agent {message.status}\n\n{summary}"
 
         await self.send_to_vicoa(
             summary,
-            build_metadata(tool_use_id, subagent_type, description, role="result"),
+            build_metadata(
+                tool_use_id,
+                subagent_type,
+                description,
+                role="result",
+                status=message.status,
+            ),
         )
 
     async def _maybe_handle_subagent_message(self, message) -> bool:
@@ -1923,11 +2065,24 @@ class HeadlessClaudeRunner:
            ``receive_response`` loop and ``_wait_for_user_input`` poll.
         2. ``claude_client.interrupt()`` — SDK-level cancel of the
            in-flight response stream.
-        3. ``cancel_all()`` on the AUQ + permission registries — needed
+        3. ``stop_task()`` for every tracked in-flight sub-agent —
+           ``interrupt()`` aborts the *turn*, and a background sub-agent
+           (``Task`` with ``run_in_background``) outlives it: the CLI only
+           stops one on an explicit ``stop_task`` control request. Without
+           this a Stop left them running, each report waking the parent for
+           another turn — session 4c77b787-… kept 20 sub-agents working for
+           7 minutes after the Stop, with no way to stop them.
+        4. ``cancel_all()`` on the AUQ + permission registries — needed
            because ``claude_client.interrupt()`` alone can't reach a
            runner that's blocked inside ``can_use_tool`` awaiting a
            pending permission/AUQ reply. Without this, an interrupt
            sent while a permission prompt was open did nothing.
+
+        Re-entrant while anything is still running: ``interrupt_requested``
+        stays set until the next user turn, so the old "already requested"
+        early-return made every later Stop a no-op — exactly when the user
+        was pressing it again because work was still going. A repeat press
+        re-sends the stop; only the notice is posted once per episode.
 
         The user-facing feedback message goes out BEFORE the status
         write, and the status write is repeated by ``run_conversation_turn``
@@ -1945,10 +2100,15 @@ class HeadlessClaudeRunner:
         them is noise. ``update_agent_instance_status`` is a pure DB
         field write.
         """
-        if self.interrupt_requested:
+        stoppable = bool(self._open_turns) or bool(self._pending_background_tasks)
+        if self.interrupt_requested and not stoppable:
             return
 
+        first_press = not self.interrupt_requested
         self.interrupt_requested = True
+        # Only the turns open right now are being unwound; anything that
+        # outlives this Stop reports normally afterwards.
+        self._interrupt_unwind_turns = len(self._open_turns)
         self.logger.info("Interrupt command received; stopping current task")
 
         if self.claude_client:
@@ -1958,13 +2118,76 @@ class HeadlessClaudeRunner:
             except Exception as exc:
                 self.logger.error(f"Failed to interrupt Claude client: {exc}")
 
+        self._schedule_background_task_stop()
+
         self._auq_registry.cancel_all()
         self._permission_registry.cancel_all()
 
-        await self._send_feedback_message(
-            "Interrupted · What should Claude do instead?"
-        )
+        if first_press:
+            await self._send_feedback_message(
+                "Interrupted · What should Claude do instead?"
+            )
         await self._settle_awaiting_input_after_interrupt()
+
+    def _schedule_background_task_stop(self) -> None:
+        """Ask the CLI to stop every sub-agent we know is still in flight.
+
+        Non-blocking on purpose: an interrupt runs inline on the WS routing
+        path (see ``_maybe_route_control_command``) and each stop is a control
+        round-trip to the CLI, so the sweep goes to a background task rather
+        than delaying the Stop's own feedback message.
+
+        The ids are taken off ``_pending_background_tasks`` here: the CLI
+        confirms each stop with a terminal ``task_updated`` / ``task_notification``
+        anyway, and a task we asked to stop must not keep the session pinned
+        ACTIVE if that frame never lands.
+        """
+        task_ids = sorted(self._pending_background_tasks)
+        if not task_ids:
+            return
+        self._pending_background_tasks.clear()
+        if self.claude_client is None:
+            return
+        if getattr(self.claude_client, "stop_task", None) is None:
+            # Older SDK without per-task stop; the turn-level interrupt is all
+            # we have.
+            self.logger.warning(
+                "Claude SDK has no stop_task(); %d background sub-agent(s) may "
+                "keep running after the interrupt",
+                len(task_ids),
+            )
+            return
+        self._stop_tasks_task = asyncio.create_task(
+            self._stop_background_tasks(task_ids)
+        )
+
+    async def _stop_background_tasks(self, task_ids: List[str]) -> None:
+        """Send ``stop_task`` for each id, concurrently and time-boxed."""
+        stop = getattr(self.claude_client, "stop_task", None)
+        if stop is None:
+            return
+
+        async def _stop_one(task_id: str) -> None:
+            try:
+                await stop(task_id)
+                self.logger.info("Stopped background sub-agent %s", task_id)
+            except Exception as exc:
+                # Usually the task settled between us reading the set and the
+                # request landing — the CLI answers ``invalid_task_id``.
+                self.logger.info("stop_task(%s) did not apply: %s", task_id, exc)
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*(_stop_one(task_id) for task_id in task_ids)),
+                timeout=_STOP_TASKS_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            self.logger.warning(
+                "stop_task sweep for %d background sub-agent(s) did not finish "
+                "within %.0fs",
+                len(task_ids),
+                _STOP_TASKS_TIMEOUT,
+            )
 
     async def _settle_awaiting_input_after_interrupt(self) -> None:
         """Write status=AWAITING_INPUT so the dashboard shows the runner idle.
@@ -2444,6 +2667,16 @@ class HeadlessClaudeRunner:
         if status == "cancelled" and mid:
             self._cancelled_message_ids.add(mid)
             self.logger.info(f"User cancelled queued message {mid}")
+        elif status == "steer" and mid:
+            # Runs on the loop thread (``_schedule_message_update`` hopped);
+            # delivery awaits the SDK, so spin it off as a task.
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = self._loop
+            if loop is None or loop.is_closed():
+                return
+            loop.create_task(self._steer_queued_message(str(mid)))
 
     def _remember_message_id(self, message_id: Optional[str]) -> bool:
         """Return True if newly seen; False if a duplicate. Unidentified
@@ -2472,6 +2705,8 @@ class HeadlessClaudeRunner:
             attachments = tuple(extract_attachment_refs(msg.get("message_metadata")))
             if not content and not attachments:
                 continue
+            if mid:
+                self._pending_by_id[mid] = (content, attachments)
             await self._user_message_queue.put(
                 InboundUserMessage(content, attachments, mid)
             )
@@ -2516,9 +2751,75 @@ class HeadlessClaudeRunner:
                 return
         if not self._remember_message_id(message_id):
             return
+        if message_id:
+            self._pending_by_id[message_id] = (content, attachments)
         await self._user_message_queue.put(
             InboundUserMessage(content, attachments, message_id)
         )
+        if message_id and message_id in self._steer_requested_ids:
+            # The Steer request overtook its own message on the WS.
+            self._steer_requested_ids.discard(message_id)
+            await self._steer_queued_message(message_id)
+
+    async def _steer_queued_message(self, message_id: str) -> None:
+        """Deliver a queued message into the running turn (user pressed Steer).
+
+        The backend flipped the row to ``queue.status=steer``; this is the
+        delivery. Claude Code's streaming stdin has no separate steer
+        primitive: a user message written while a turn is open is picked up
+        at the next tool boundary inside that turn (verified on 2.1.261 —
+        the turn changes course and no extra ``result`` is emitted), and one
+        that lands after the last tool call runs as an automatic follow-up
+        turn, which the reader already handles as an autonomous turn. So the
+        only precondition is an open turn; with none, the run loop is about
+        to dequeue the message as the next turn anyway and nothing is done.
+        On success the message is stamped consumed (``steered``) and dropped
+        at dequeue.
+        """
+        if message_id in self._steer_in_flight:
+            return
+        pending = self._pending_by_id.get(message_id)
+        if pending is None:
+            self._steer_requested_ids.add(message_id)
+            return
+        if not self._open_turns or not self.claude_client:
+            self.logger.info(
+                "Steer requested for %s with no open turn; it runs next", message_id
+            )
+            return
+        content, attachments = pending
+        outcome: "asyncio.Future[bool]" = asyncio.get_running_loop().create_future()
+        self._steer_in_flight[message_id] = outcome
+        steered = False
+        try:
+            query_input = await self._build_query_input(
+                InboundUserMessage(content, attachments, message_id)
+            )
+            await self.claude_client.query(query_input)
+            steered = True
+            self.logger.info("Steered message %s into the open turn", message_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.exception("Steer delivery failed; message stays queued")
+        finally:
+            outcome.set_result(steered)
+        if steered:
+            self._pending_by_id.pop(message_id, None)
+            if self.vicoa_client:
+                try:
+                    await self.vicoa_client.mark_message_consumed(
+                        message_id, steered=True
+                    )
+                except Exception as e:
+                    self.logger.warning(f"mark_message_consumed failed: {e}")
+            return
+        self._steer_in_flight.pop(message_id, None)
+        if self.vicoa_client:
+            try:
+                await self.vicoa_client.requeue_message(message_id)
+            except Exception as e:
+                self.logger.warning(f"requeue_message failed: {e}")
 
     async def _wait_for_user_input(self) -> Optional[InboundUserMessage]:
         """Wait for the next non-control user message from the inbound queue.
@@ -2563,8 +2864,17 @@ class HeadlessClaudeRunner:
         by the blocking wait and the non-blocking coalesce drain so both apply
         identical filtering.
         """
-        if message.message_id in self._cancelled_message_ids:
-            self._cancelled_message_ids.discard(message.message_id)
+        mid = message.message_id
+        if mid:
+            self._pending_by_id.pop(mid, None)
+        if mid in self._cancelled_message_ids:
+            self._cancelled_message_ids.discard(mid)
+            return None
+        # A message the user steered was delivered mid-turn already. Its
+        # attempt may still be out (the turn ended under it), so wait for the
+        # outcome rather than guessing.
+        outcome = self._steer_in_flight.pop(mid, None) if mid else None
+        if outcome is not None and await outcome:
             return None
         if message.content and await self._handle_control_command(message.content):
             return None
@@ -3136,11 +3446,13 @@ class HeadlessClaudeRunner:
                 self.logger.info(
                     "Skipping input request because current task was interrupted"
                 )
-                # Background sub-agents from the aborted turn are abandoned
-                # with it. Re-assert AWAITING_INPUT — any message POSTed
-                # between the Stop and the closing Result set the row back
-                # to ACTIVE.
-                self._pending_background_tasks.clear()
+                # The unwind is over. Anything the CLI still has running
+                # outlived the Stop (``_handle_interrupt`` already asked it to
+                # stop those sub-agents), so its output must render normally
+                # instead of staying suppressed behind a force-closed turn.
+                self._interrupt_unwind_turns = 0
+                # Re-assert AWAITING_INPUT — any message POSTed between the
+                # Stop and the closing Result set the row back to ACTIVE.
                 await self._settle_awaiting_input_after_interrupt()
                 return None
 
@@ -3237,6 +3549,7 @@ class HeadlessClaudeRunner:
         # so ``run_coroutine_threadsafe`` can schedule ``_route(content)``.
         self._loop = asyncio.get_running_loop()
         self._install_signal_handlers()
+        fatal: Exception | None = None
         try:
             await self.initialize()
 
@@ -3257,10 +3570,17 @@ class HeadlessClaudeRunner:
             self.running = False
         except Exception as e:
             self.logger.error(f"Fatal error in headless runner: {e}")
-            if self.vicoa_client and self.session_id:
+            fatal = e
+            if self._registered and self.vicoa_client and self.session_id:
                 await self.send_to_vicoa(
                     f"Headless Claude encountered a fatal error: {e}"
                 )
+            else:
+                # Never registered: posting the error would itself mint the
+                # instance row (`/messages/agent` creates-or-retrieves), which
+                # is exactly the orphan "fatal error" session this guards
+                # against. The daemon reads stderr instead.
+                print(f"Fatal error before registration: {e}", file=sys.stderr)
         finally:
             self.running = False
             self._auq_registry.cancel_all()
@@ -3322,15 +3642,20 @@ class HeadlessClaudeRunner:
                 except Exception as e:
                     self.logger.error(f"Error closing Claude client: {e}")
 
-            if self.vicoa_client and self.session_id:
+            if self._registered and self.vicoa_client and self.session_id:
                 try:
                     await self.vicoa_client.end_session(self.session_id)
                     self.logger.info("Session ended successfully")
                 except Exception as e:
                     self.logger.error(f"Error ending session: {e}")
+            clear_session_registered(self.session_id)
 
             if self.vicoa_client:
                 await self.vicoa_client.close()
+        if fatal is not None:
+            # Surface as a non-zero exit so the daemon's monitor (and a
+            # terminal user) sees the failure instead of "ended successfully".
+            raise fatal
 
 
 def parse_list_argument(value: str) -> List[str]:
@@ -3382,6 +3707,13 @@ def main():
         "--cwd",
         type=str,
         help="Working directory for Claude (defaults to current directory)",
+    )
+    parser.add_argument(
+        "--system-prompt",
+        dest="system_prompt",
+        type=str,
+        default=None,
+        help="Custom instructions appended to the claude_code system preset",
     )
     parser.add_argument(
         "--session-id",
@@ -3499,6 +3831,7 @@ def main():
         enable_thinking=args.enable_thinking,
         model=args.model,
         thinking_effort=args.thinking_effort,
+        system_prompt=args.system_prompt,
         debug=args.debug,
         is_resuming=bool(resume_session_id),
     )

@@ -14,7 +14,8 @@ export 'subagent_group.dart'
         computeSubagentGrouping,
         subagentToolUseIdOf,
         subagentTypeOf,
-        subagentDescriptionOf;
+        subagentDescriptionOf,
+        subagentStatusOf;
 export 'thinking_group.dart'
     show ThinkingGroup, isThinkingMessage, thinkingDisplayBody;
 export 'custom_date_range_sheet.dart' show CustomDateRangeSheet;

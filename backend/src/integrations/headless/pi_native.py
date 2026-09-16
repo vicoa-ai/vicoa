@@ -6,7 +6,7 @@ One module, two agents — which one is selected by ``--agent``::
     python -m integrations.headless.pi_native --agent omp \
         --api-key ... --base-url ... --project-path ... [--session-id ...]
         [--model ...] [--thinking-effort ...] [--permission-mode ...]
-        [--prompt ...]
+        [--prompt ...] [--system-prompt ...]
 
 Everything lives in ``integrations.headless.pi_family``; this file only exists
 so the daemon has a stable module to spawn, mirroring ``codex_native.py`` and

@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from servers.api.models import (
     EndSessionRequest,
@@ -189,3 +190,72 @@ def test_register_broadcasts_instance_created(
         assert frame["payload"]["body"]["t"] == "instance-created"
     finally:
         connection_manager.unregister(web)
+
+
+def test_register_is_idempotent_for_the_same_owner(
+    user_instance: tuple[UUID, UUID],
+) -> None:
+    """A retry of a registration that already landed answers 200 with the row.
+
+    The first attempt can succeed server-side after the client gave up on it
+    (a slow server, not a down one); the retry must then read as success, or
+    a late success becomes a guaranteed failure.
+    """
+    user_id, _ = user_instance
+    new_id = uuid4()
+    with SessionLocal() as db:
+        first = register_agent_instance_endpoint(
+            request=RegisterAgentInstanceRequest(
+                agent_type="claude", agent_instance_id=str(new_id), name="first"
+            ),
+            user_id=str(user_id),
+            db=db,
+        )
+    with SessionLocal() as db:
+        second = register_agent_instance_endpoint(
+            request=RegisterAgentInstanceRequest(
+                agent_type="claude", agent_instance_id=str(new_id), name="retry"
+            ),
+            user_id=str(user_id),
+            db=db,
+        )
+    assert second.agent_instance_id == first.agent_instance_id == str(new_id)
+    # The first attempt's fields stand; the retry does not rewrite the row.
+    assert second.name == "first"
+
+
+def test_register_still_conflicts_on_a_terminal_row(
+    user_instance: tuple[UUID, UUID],
+) -> None:
+    user_id, instance_id = user_instance
+    with SessionLocal() as db:
+        row = db.get(AgentInstance, instance_id)
+        assert row is not None
+        row.status = AgentStatus.COMPLETED
+        db.commit()
+    with SessionLocal() as db:
+        with pytest.raises(HTTPException) as exc:
+            register_agent_instance_endpoint(
+                request=RegisterAgentInstanceRequest(
+                    agent_type="claude", agent_instance_id=str(instance_id)
+                ),
+                user_id=str(user_id),
+                db=db,
+            )
+    assert exc.value.status_code == 409
+
+
+def test_register_refuses_another_users_row(
+    user_instance: tuple[UUID, UUID],
+) -> None:
+    _, instance_id = user_instance
+    with SessionLocal() as db:
+        with pytest.raises(HTTPException) as exc:
+            register_agent_instance_endpoint(
+                request=RegisterAgentInstanceRequest(
+                    agent_type="claude", agent_instance_id=str(instance_id)
+                ),
+                user_id=str(uuid4()),
+                db=db,
+            )
+    assert exc.value.status_code == 403

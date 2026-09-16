@@ -9,6 +9,8 @@ import threading
 import time
 from typing import Callable, Optional, TYPE_CHECKING
 
+from integrations.utils.heartbeat import next_interval_from_response
+
 if TYPE_CHECKING:
     from vicoa.sdk.client import VicoaClient
 
@@ -82,19 +84,26 @@ class HeartbeatManager:
         time.sleep(jitter)
 
         while self.running:
+            interval = self.interval
             try:
                 resp = session.post(url, timeout=10)
                 if resp.status_code >= 400:
                     self.log(
                         f"[WARN] Heartbeat failed {resp.status_code}: {resp.text[:120]}"
                     )
+                else:
+                    # Server-driven cadence (integrations/utils/heartbeat.py).
+                    try:
+                        interval = next_interval_from_response(resp.json(), interval)
+                    except ValueError:
+                        pass
             except Exception as e:
                 self.log(f"[WARN] Heartbeat error: {e}")
 
             # Wait for next heartbeat with interruptible sleep
             # Sleep in small increments so we can respond quickly to shutdown
             elapsed = 0.0
-            while elapsed < self.interval and self.running:
+            while elapsed < interval and self.running:
                 time.sleep(0.1)
                 elapsed += 0.1
 

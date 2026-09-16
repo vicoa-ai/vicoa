@@ -1231,6 +1231,13 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
           _model.sanitizeMessageContent(
               _model.messages[i]['content']?.toString() ?? ''),
       ];
+      // Only the settled report carries a status, so the run's is the last
+      // non-null one across its members — it marks the header when the run
+      // ended as anything other than a clean completion.
+      String? runStatus;
+      for (final i in runIndices) {
+        runStatus = custom_widgets.subagentStatusOf(_model.messages[i]) ?? runStatus;
+      }
       final groupKey = custom_widgets.subagentToolUseIdOf(message) ??
           'idx_$messageIndex';
       final agentType = _model.instanceData?['agent_type_name'] ??
@@ -1264,6 +1271,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
                       subagentType: custom_widgets.subagentTypeOf(message),
                       description: custom_widgets.subagentDescriptionOf(message),
                       contents: runContents,
+                      status: runStatus,
                       expanded: _expandedSubagentGroups.contains(groupKey),
                       // Fires before any expand/collapse in this group so the
                       // tapped line stays put instead of being pushed up by

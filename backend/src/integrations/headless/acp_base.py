@@ -27,18 +27,31 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from integrations.headless.control_command import is_control_envelope
+from integrations.headless import usage as usage_mod
 from integrations.headless.acp_client import (
     ACPClient,
     ACPError,
     ACPMethodNotFound,
     ACPResponse,
 )
+from integrations.headless.acp_handshake import (
+    initialize_payloads,
+    is_auth_required_error,
+    normalize_models,
+)
+from integrations.headless.acp_terminal import TerminalManager
+from integrations.headless.command_index import build_command_index
 from integrations.headless.thinking import build_thinking_metadata
+from integrations.headless.usage import UsageState
 from integrations.headless.session_lifecycle import (
     WRAPPER_STOP_STATUSES,
     instance_update_requests_stop,
 )
 from integrations.utils.heartbeat import SessionHeartbeat
+from integrations.utils.registration import (
+    REGISTRATION_ATTEMPT_TIMEOUT_SECONDS,
+    register_with_retry_sync,
+)
 from vicoa.attachments import (
     AttachmentRef,
     attachment_note,
@@ -48,13 +61,26 @@ from vicoa.attachments import (
     save_attachment,
     unavailable_note,
 )
+from protocol.system_prompt import format_prompt_prefix
 from vicoa.sdk.client import VicoaClient
 from vicoa.sdk.exceptions import AuthenticationError
+from vicoa.session_markers import clear_session_registered, mark_session_registered
 from vicoa.session_ws_client import SessionMessagesWsClient
 from vicoa.utils import derive_ws_url
 
-
 logger = logging.getLogger(__name__)
+
+
+def _coerce_optional_int(value: Any) -> Optional[int]:
+    """``int(value)`` when it is a real number, else ``None``."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 FILE_DUMP_BLOCK_PATTERN = re.compile(
     r"<path>.*?</path>\s*<type>\s*file\s*</type>\s*<content>.*?</content>",
     re.IGNORECASE | re.DOTALL,
@@ -103,6 +129,11 @@ class ACPWrapperConfig(ABC):
     # Catalog id persisted in session_config PATCHes ("cursor", "gemini", …).
     # Falls back to agent_type.lower() when unset.
     catalog_agent_id: Optional[str] = None
+    # Custom instructions from an agent profile. ACP agents are the
+    # PROMPT_PREFIX transport (protocol/system_prompt.py): ACP has no
+    # system-prompt slot in v1 or v2, so the text rides as a leading content
+    # block on EVERY turn. See _build_prompt_blocks.
+    system_prompt: Optional[str] = None
 
     @abstractmethod
     def get_acp_command(self) -> list[str]:
@@ -141,12 +172,17 @@ class ACPWrapperBase(ABC):
     - _prompt_timeout_seconds: Timeout for session/prompt requests
     - _prompt_cancel_grace_period_seconds: Grace period after cancellation
     - _hard_interrupt_fallback_delay_seconds: Delay before SIGINT fallback
-    - _select_default_permission_option(): Which option to default to
+    - _select_denied_permission_option(): Which option answers an unattended prompt
     - _parse_permission_reply(): How to parse user permission responses
     """
 
     _permission_wait_poll_interval_seconds: float = 1.0
-    _permission_wait_timeout_minutes: int = 15
+    # 24 hours, matching the Claude runner's ASK_USER_QUESTION_TIMEOUT_SECONDS.
+    # A permission prompt is answered from whatever device the user picks up
+    # next, so the wait must outlive a night's sleep; the previous 15 minutes
+    # was only survivable because the timeout auto-*approved* (see
+    # ``_select_denied_permission_option`` for why it no longer does).
+    _permission_wait_timeout_minutes: int = 24 * 60
     _prompt_timeout_seconds: float = 3600.0
     _prompt_cancel_grace_period_seconds: float = 10.0
     _hard_interrupt_fallback_delay_seconds: float = 0.0
@@ -182,6 +218,8 @@ class ACPWrapperBase(ABC):
         self._prompt_cancel_event = threading.Event()
         self._interrupt_active = False
         self._permission_request_active = False
+        # One user-facing prompt at a time — see _handle_permission_request.
+        self._permission_lock = threading.Lock()
 
         # Session state
         # False until _setup() finishes. Lets run()'s fatal-error handler tell a
@@ -190,6 +228,9 @@ class ACPWrapperBase(ABC):
         # post the reason to the session instead of dying into a bare FAILED row
         # that the UI can only describe as "not accepting input".
         self._startup_complete = False
+        # Set once the instance row is known to exist (registered, or reopened
+        # on resume). Gates every write that would otherwise create the row.
+        self._registered = False
         # Set when the session is closed from another client. Guards against a
         # racing in-flight turn re-opening the row after we were told to stop.
         self._stopping = False
@@ -280,6 +321,22 @@ class ACPWrapperBase(ABC):
             os.environ.get("VICOA_ACP_SHOW_TOOL_UPDATES", "")
         ).strip().lower() in {"1", "true", "yes", "on"}
         self._last_tool_change_signature: Optional[str] = None
+        # toolCallId -> the body its start card already showed, so the
+        # completion frame that repeats an unchanged diff is not posted twice.
+        # Insertion-ordered (plain dict) for FIFO eviction past the cap.
+        self._announced_tool_calls: Dict[str, str] = {}
+        # Last rendered plan checklist; agents re-send the whole plan on every
+        # step change, so an unchanged one is dropped.
+        self._last_plan_signature: Optional[str] = None
+        # Last command index published to /api/v1/commands/sync.
+        self._last_synced_commands: Dict[str, Dict[str, str]] = {}
+        # Context/token meter, fed by the session/prompt response and by
+        # ``usage_update`` on the agents that send it.
+        self._usage = UsageState()
+        self._usage_last_core: Optional[dict] = None
+        # Lazily created on the first terminal/create — most turns never open
+        # one. Torn down in _cleanup so no command outlives the session.
+        self._terminals: Optional[TerminalManager] = None
         self._tool_output_max_lines: int = int(
             os.environ.get("VICOA_ACP_TOOL_OUTPUT_MAX_LINES", "80")
         )
@@ -373,6 +430,13 @@ class ACPWrapperBase(ABC):
         """
         if not (self.vicoa_client and self.config.agent_instance_id):
             return
+        if not self._registered:
+            # Posting before registration would itself create the instance
+            # (`/messages/agent` creates-or-retrieves) — the orphan "fatal
+            # error" session this runner must never mint. The daemon reads
+            # stderr for the reason it reports instead.
+            print(f"Fatal error before registration: {error}", file=sys.stderr)
+            return
         try:
             self._send_feedback_message(self._startup_failure_message(error))
         except Exception as exc:
@@ -422,14 +486,27 @@ class ACPWrapperBase(ABC):
             try:
                 from vicoa.utils import get_project_path
 
-                registration = self.vicoa_client.register_agent_instance(
-                    agent_type=self.config.agent_type,
-                    transport="local",
-                    agent_instance_id=self.config.agent_instance_id,
-                    project=get_project_path(),
-                    home_dir=str(Path.home()),
-                    session_config=self.build_session_config(),
-                    source="app",
+                client = self.vicoa_client
+                project_path = get_project_path()
+                session_config = self.build_session_config()
+                # Bounded retry inside a fixed budget, idempotent by instance
+                # id (integrations/utils/registration.py). A registration that
+                # only succeeds after every caller has stopped waiting would
+                # leave an orphan agent running unregistered, so a miss past
+                # the budget is fatal (re-raised below).
+                registration = register_with_retry_sync(
+                    lambda: client.register_agent_instance(
+                        agent_type=self.config.agent_type,
+                        transport="local",
+                        agent_instance_id=self.config.agent_instance_id,
+                        project=project_path,
+                        home_dir=str(Path.home()),
+                        session_config=session_config,
+                        source="app",
+                        timeout=int(REGISTRATION_ATTEMPT_TIMEOUT_SECONDS),
+                    ),
+                    log=self.log,
+                    label=self.config.agent_type,
                 )
 
                 self.config.agent_instance_id = registration.agent_instance_id
@@ -471,6 +548,11 @@ class ACPWrapperBase(ABC):
         # headless session looks dead to the liveness indicator — see
         # integrations/utils/heartbeat.py.
         self._start_heartbeat()
+        # The row exists (registered, or reopened on resume). Tell the daemon,
+        # which holds the spawn RPC until this lands.
+        if self.vicoa_client and self.config.agent_instance_id:
+            self._registered = True
+            mark_session_registered(self.config.agent_instance_id)
 
         # Start ACP client
         self._start_acp_client()
@@ -569,9 +651,9 @@ class ACPWrapperBase(ABC):
         """Initialize the ACP protocol session (ACP v1 handshake).
 
         Sends a spec-compliant ``initialize`` first — integer
-        ``protocolVersion: 1``, ``clientCapabilities`` with explicit
-        fs/terminal flags (all false: agents then use their own internal
-        tools and we only see ``tool_call`` updates), and ``clientInfo`` —
+        ``protocolVersion: 1``, ``clientCapabilities`` declaring terminal
+        support (fs stays off, so the agent keeps using its own file tools),
+        and ``clientInfo`` —
         and retains the agent's advertised ``agentCapabilities`` and
         ``authMethods`` for later gating (session/load support, the
         authenticate-on-auth-required retry in :py:meth:`create_session`).
@@ -589,28 +671,7 @@ class ACPWrapperBase(ABC):
             getattr(self.config, "initialize_timeout_seconds", 60.0) or 60.0
         )
 
-        init_payloads: list[Dict[str, Any]] = [
-            {
-                "protocolVersion": 1,
-                "clientCapabilities": {
-                    "fs": {"readTextFile": False, "writeTextFile": False},
-                    "terminal": False,
-                },
-                "clientInfo": {"name": "vicoa", "title": "Vicoa", "version": "1.0.0"},
-            },
-            {
-                # Legacy pre-v1 shape (older OpenCode builds).
-                "protocolVersion": 1,
-                "capabilities": {"supports": ["streaming", "tools", "permissions"]},
-                "clientInfo": {"name": "vicoa", "version": "1.0.0"},
-            },
-            {
-                # Backward-compatible fallback for agents that accept date-style versions.
-                "protocolVersion": "2024-11-01",
-                "capabilities": {"supports": ["streaming", "tools", "permissions"]},
-                "clientInfo": {"name": "vicoa", "version": "1.0.0"},
-            },
-        ]
+        init_payloads = initialize_payloads()
 
         last_error: ACPError | None = None
         for payload in init_payloads:
@@ -855,9 +916,7 @@ class ACPWrapperBase(ABC):
 
     @staticmethod
     def _is_auth_required_error(error: Exception) -> bool:
-        """Spec error code -32000 = Authentication required."""
-        text = str(error)
-        return "-32000" in text or "authentication required" in text.lower()
+        return is_auth_required_error(error)
 
     def _authenticate(self) -> None:
         """Run the ACP ``authenticate`` flow with an advertised auth method."""
@@ -903,6 +962,14 @@ class ACPWrapperBase(ABC):
             model_value = self._current_model_config_value()
             if model_value:
                 self.current_model_id = model_value
+        # Some agents answer session/new with their command list instead of
+        # waiting to push an available_commands_update.
+        available_commands = result.get("availableCommands")
+        if isinstance(available_commands, list):
+            self.available_commands = [
+                c for c in available_commands if isinstance(c, dict)
+            ]
+            self._sync_available_commands()
 
     def _current_model_config_value(self) -> Optional[str]:
         """currentValue of the model config option, if the agent exposes one."""
@@ -924,35 +991,7 @@ class ACPWrapperBase(ABC):
         Prefers the dedicated ``models.availableModels`` block; falls back to
         the ``model`` configOption's ``options`` list.
         """
-        if self.available_models:
-            return [
-                {
-                    "id": str(m.get("modelId")),
-                    "label": str(m.get("name") or m.get("modelId")),
-                }
-                for m in self.available_models
-                if m.get("modelId")
-            ]
-        option = next(
-            (
-                o
-                for o in self.session_config_options
-                if str(o.get("category") or "") == "model"
-            ),
-            None,
-        )
-        if option:
-            out: list[Dict[str, str]] = []
-            for o in option.get("options") or []:
-                if isinstance(o, dict) and o.get("value") is not None:
-                    out.append(
-                        {
-                            "id": str(o.get("value")),
-                            "label": str(o.get("name") or o.get("value")),
-                        }
-                    )
-            return out
-        return []
+        return normalize_models(self.available_models, self.session_config_options)
 
     def _live_session_state_config(self) -> Dict[str, Any]:
         """session_config additions describing the agent's live ACP pickers.
@@ -1708,7 +1747,22 @@ class ACPWrapperBase(ABC):
 
         full_text = "\n".join(part for part in [message, *notes] if part)
         blocks: list[Dict[str, Any]] = []
-        if full_text:
+        # Agent-profile instructions, re-sent on every turn. ACP offers no
+        # system-prompt slot (v1 and v2 alike), so this prefix IS the transport.
+        # Every turn, not just the first: once the agent compacts, a first-turn
+        # -only injection is silently gone and the session quietly reverts to a
+        # plain agent while the UI still shows the profile's name.
+        #
+        # Invisible to the user: the transcript is the `messages` row the client
+        # POSTed, a separate write from this wire payload.
+        prefix = (self.config.system_prompt or "").strip()
+        if prefix:
+            full_text = format_prompt_prefix(prefix) + full_text
+        # `or not image_blocks` preserves the behaviour of the non-attachment
+        # path this builder replaced, which always emitted exactly one text
+        # block even for an empty message. Without it a bare empty prompt would
+        # now produce an empty `prompt` array, which agents reject.
+        if full_text or not image_blocks:
             blocks.append({"type": "text", "text": full_text})
         blocks.extend(image_blocks)
         return blocks
@@ -1724,9 +1778,11 @@ class ACPWrapperBase(ABC):
 
             payload = {
                 "sessionId": self.session_id,
-                "prompt": self._build_prompt_blocks(message, attachments)
-                if attachments
-                else [{"type": "text", "text": message}],
+                # Always via _build_prompt_blocks. It used to be bypassed when
+                # there were no attachments (the common case), which would mean
+                # only attachment-bearing turns carried the system-prompt prefix
+                # added there — a near-impossible bug to notice.
+                "prompt": self._build_prompt_blocks(message, attachments),
             }
             response = acp.send_request(
                 "session/prompt",
@@ -1737,6 +1793,9 @@ class ACPWrapperBase(ABC):
             )
             response.raise_for_error()
             result = response.result or {}
+            # The authoritative usage reading for the turn: ACP puts it on the
+            # prompt *response*, not the notification stream.
+            self._record_acp_usage(result.get("usage"))
             stop_reason = str(result.get("stopReason") or "")
             self._handle_stop_reason(stop_reason)
             self._awaiting_after_next_agent_output = True
@@ -1846,11 +1905,16 @@ class ACPWrapperBase(ABC):
     def handle_request(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Handle agent-originated ACP requests.
 
-        Permission requests get the interactive flow; anything else is
-        offered to :py:meth:`handle_extension_request` (vendor extensions
-        like ``cursor/ask_question``) and otherwise rejected with JSON-RPC
-        method-not-found, as the spec requires — we advertise no fs/terminal
-        capabilities, so conformant agents never call those here.
+        Permission and ``terminal/*`` requests get real implementations;
+        anything else is offered to :py:meth:`handle_extension_request` (vendor
+        extensions like ``cursor/ask_question``) and otherwise rejected with
+        JSON-RPC method-not-found, as the spec requires — we advertise no fs
+        capability, so conformant agents never call those here.
+
+        Called on a per-request thread (see ``ACPClient._answer_request``), so
+        the blocking handlers below — a permission prompt waiting on the user,
+        ``terminal/wait_for_exit`` waiting on a process — do not stall the
+        stdout reader.
         """
         if method in {"permission/request", "session/request_permission"}:
             option_id = self._handle_permission_request(params)
@@ -1858,11 +1922,40 @@ class ACPWrapperBase(ABC):
                 return {"outcome": {"outcome": "cancelled"}}
             return {"outcome": {"outcome": "selected", "optionId": option_id}}
 
+        if method.startswith("terminal/"):
+            return self._handle_terminal_request(method, params)
+
         extension_result = self.handle_extension_request(method, params)
         if extension_result is not None:
             return extension_result
 
         raise ACPMethodNotFound(method)
+
+    def _handle_terminal_request(
+        self, method: str, params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Route one ``terminal/*`` request to the terminal manager.
+
+        The manager is created on first use rather than at startup: most turns
+        never open a terminal, and an agent that ignores the capability should
+        not pay for one.
+        """
+        if self._terminals is None:
+            self._terminals = TerminalManager(
+                default_cwd=self.config.project_path, log=self.log
+            )
+
+        handlers = {
+            "terminal/create": self._terminals.create,
+            "terminal/output": self._terminals.output,
+            "terminal/wait_for_exit": self._terminals.wait_for_exit,
+            "terminal/kill": self._terminals.kill,
+            "terminal/release": self._terminals.release,
+        }
+        handler = handlers.get(method)
+        if handler is None:
+            raise ACPMethodNotFound(method)
+        return handler(params)
 
     def handle_extension_request(
         self, method: str, params: Dict[str, Any]
@@ -1875,7 +1968,20 @@ class ACPWrapperBase(ABC):
         return None
 
     def _handle_permission_request(self, params: Dict[str, Any]) -> str:
-        """Present a permission request to the user and return the chosen option ID."""
+        """Present a permission request to the user and return the chosen option ID.
+
+        Serialized: agents may run tools in parallel, and each parallel tool can
+        raise its own permission request. Since these are now answered on
+        per-request threads, two prompts could otherwise be live at once —
+        competing for the same queued-user-message stream and clobbering the
+        shared ``_permission_request_active`` / ``_suspend_vicoa_polling``
+        flags. One at a time; the rest queue, exactly as they did when the
+        stdout reader answered them inline.
+        """
+        with self._permission_lock:
+            return self._handle_permission_request_locked(params)
+
+    def _handle_permission_request_locked(self, params: Dict[str, Any]) -> str:
         # Asking the user to approve a tool is real turn activity, so this turn
         # is not an empty/failed one even if it later ends with no text.
         self._turn_produced_output = True
@@ -1942,11 +2048,11 @@ class ACPWrapperBase(ABC):
         self, prompt_message: str, options: list[dict[str, str]]
     ) -> str:
         """Request permission choice from UI and parse user response."""
-        fallback_option = self._select_default_permission_option(
+        denied_option = self._select_denied_permission_option(
             [{"optionId": opt["option_id"], "kind": opt.get("kind")} for opt in options]
         )
         if not self.vicoa_client:
-            return fallback_option
+            return denied_option
 
         self._set_agent_status("AWAITING_INPUT")
         self._suspend_vicoa_polling = True
@@ -1988,14 +2094,13 @@ class ACPWrapperBase(ABC):
                     return selected
 
             self._send_feedback_message(
-                f"No valid permission response received. Defaulting to '{fallback_option}'."
+                "No permission response received — denying the request. "
+                "Send the tool again if you meant to allow it."
             )
-            return fallback_option
+            return denied_option
         except Exception as e:
-            self.log(
-                f"[WARNING] Permission request failed, defaulting to {fallback_option}: {e}"
-            )
-            return fallback_option
+            self.log(f"[WARNING] Permission request failed, denying: {e}")
+            return denied_option
         finally:
             self._suspend_vicoa_polling = False
 
@@ -2036,11 +2141,23 @@ class ACPWrapperBase(ABC):
 
         return None
 
-    def _select_default_permission_option(self, options: list[Dict[str, Any]]) -> str:
-        """Pick default permission option, preferring one-time allow."""
-        if not options:
-            return "once"
+    def _select_denied_permission_option(self, options: list[Dict[str, Any]]) -> str:
+        """Pick the option to answer with when the user never replies.
 
+        **Fail closed.** This is the answer for a prompt nobody attended: a
+        timeout, or an exception on the way to asking. It previously preferred
+        ``allow_once``, so an unattended ACP session auto-approved every file
+        write and shell command once the wait elapsed — with no one watching.
+        The Claude runner has always denied on timeout
+        (``claude_code.ASK_USER_QUESTION_TIMEOUT_SECONDS`` → ``PermissionResultDeny``);
+        this brings the ACP agents in line.
+
+        Prefers the agent's own reject option so the agent can distinguish a
+        refusal from an aborted turn. When it offers none — the ACP spec does
+        not require one — returns the cancelled sentinel, which
+        :py:meth:`handle_request` turns into ``outcome: cancelled`` and the
+        agent unwinds the tool call.
+        """
         normalized: list[tuple[str, str]] = []
         for opt in options:
             option_id = str(opt.get("optionId") or "").strip()
@@ -2048,20 +2165,22 @@ class ACPWrapperBase(ABC):
             if option_id:
                 normalized.append((option_id, kind))
 
+        # ACP v1 PermissionOptionKind, most-specific first. `reject`/`deny` are
+        # not spec kinds but appear as option *ids* on some agents.
         preferred_order = [
-            "once",
-            "allow_once",
-            "always",
-            "allow_always",
-            "reject",
             "reject_once",
+            "reject_always",
+            "reject",
+            "deny",
         ]
         for target in preferred_order:
             for option_id, kind in normalized:
                 if option_id == target or kind == target:
                     return option_id
 
-        return normalized[0][0] if normalized else "once"
+        # Nothing rejection-shaped on offer: cancel rather than pick an
+        # arbitrary option, which on most agents is an allow.
+        return self._permission_cancelled_option_id
 
     def _handle_acp_notification(self, method: str, params: Dict[str, Any]) -> None:
         """Handle ACP notifications from agent.
@@ -2119,35 +2238,17 @@ class ACPWrapperBase(ABC):
     def _handle_session_update(self, params: Dict[str, Any]) -> None:
         """Handle ACP session/update notifications.
 
-        OpenCode primarily streams assistant output through this notification.
+        Split in two: control-plane updates carry session state and are honored
+        even while ``session/load`` replays, so a resumed session comes back
+        with the agent's real modes, models, slash commands and usage. Only the
+        transcript-producing updates below the replay guard are suppressed.
         """
-        if self._replaying_session:
-            # ``session/load`` replays the whole prior conversation through this
-            # same notification, so the client can rebuild its UI. Vicoa already
-            # has that transcript in the database — forwarding the replay would
-            # append a second copy of the conversation on every resume (observed
-            # with Cursor: one more agent reply each time Resume was clicked).
-            return
-
         update = params.get("update") or {}
         update_type = update.get("sessionUpdate")
 
-        # Real agent activity this turn (streamed text or a tool run). Recorded
-        # even for tool updates we don't render, so a turn that did work but
-        # emitted no user-visible text is not mistaken for an empty/failed turn.
-        if update_type in {"agent_message_chunk", "tool_call", "tool_call_update"}:
-            self._turn_produced_output = True
-
-        if update_type == "agent_thought_chunk":
-            # Model reasoning: accumulate and surface as a collapsed "thinking"
-            # card (flushed ahead of the answer), rather than hiding it or
-            # letting it flood the transcript as flat text.
-            content = update.get("content")
-            for text in self._extract_text_fragments_from_content_payload(content):
-                if text:
-                    self._thought_chunk_buffer += text
-            return
-
+        # ------------------------------------------------------------------
+        # Control plane — session state, not transcript.
+        # ------------------------------------------------------------------
         if update_type == "current_mode_update":
             # Agent-initiated mode change (e.g. a plan-mode exit tool).
             new_mode = update.get("currentModeId")
@@ -2168,6 +2269,10 @@ class ACPWrapperBase(ABC):
                 for c in (update.get("availableCommands") or [])
                 if isinstance(c, dict)
             ]
+            # The agent just told us its real slash commands over the protocol.
+            # Publish them so the composer's "/" menu is this agent's, instead
+            # of the filesystem scan of Claude's ~/.claude/commands.
+            self._sync_available_commands()
             return
 
         if update_type == "config_option_update":
@@ -2183,17 +2288,50 @@ class ACPWrapperBase(ABC):
                 self._report_live_session_state()
             return
 
-        if update_type in {
-            "plan",
-            "session_info_update",
-            "usage_update",
-            "user_message_chunk",
-            "tool_call",
-        }:
-            # Known v1 updates we deliberately don't render: plans and the
-            # initial tool_call announcement (tool output lands via
-            # tool_call_update on completion), echoes of our own prompt,
-            # titles, and context-usage meters.
+        if update_type == "usage_update":
+            # Agents that push usage mid-turn. The authoritative reading is the
+            # session/prompt response (see _run_prompt_request); this keeps the
+            # meter live during a long turn on agents that send it.
+            self._record_acp_usage(update.get("usage") or update)
+            return
+
+        if update_type == "session_info_update":
+            # Agent-proposed session title. Vicoa names sessions itself.
+            return
+
+        if self._replaying_session:
+            # ``session/load`` replays the whole prior conversation through this
+            # same notification, so the client can rebuild its UI. Vicoa already
+            # has that transcript in the database — forwarding the replay would
+            # append a second copy of the conversation on every resume (observed
+            # with Cursor: one more agent reply each time Resume was clicked).
+            return
+
+        # ------------------------------------------------------------------
+        # Transcript.
+        # ------------------------------------------------------------------
+        # Real agent activity this turn (streamed text or a tool run). Recorded
+        # even for tool updates we don't render, so a turn that did work but
+        # emitted no user-visible text is not mistaken for an empty/failed turn.
+        if update_type in {"agent_message_chunk", "tool_call", "tool_call_update"}:
+            self._turn_produced_output = True
+
+        if update_type == "agent_thought_chunk":
+            # Model reasoning: accumulate and surface as a collapsed "thinking"
+            # card (flushed ahead of the answer), rather than hiding it or
+            # letting it flood the transcript as flat text.
+            content = update.get("content")
+            for text in self._extract_text_fragments_from_content_payload(content):
+                if text:
+                    self._thought_chunk_buffer += text
+            return
+
+        if update_type == "plan":
+            self._emit_plan_card(update)
+            return
+
+        if update_type == "user_message_chunk":
+            # An echo of the prompt we just sent; the row already exists.
             return
 
         if update_type == "agent_message_chunk":
@@ -2203,12 +2341,22 @@ class ACPWrapperBase(ABC):
                     self._append_assistant_chunk(text)
             return
 
+        if update_type == "tool_call":
+            # Announce the tool the moment it starts. Waiting for completion
+            # meant a three-minute `npm test` showed nothing at all while it
+            # ran and the session looked hung. Matches the Claude runner, which
+            # cards a tool at invocation and never forwards its result.
+            self._emit_tool_call_start(update)
+            return
+
         # Shell and tool executions are often surfaced as completed tool updates.
         if update_type == "tool_call_update":
-            if not self._show_tool_updates:
-                if update.get("status") not in {"completed", "failed"}:
-                    return
+            if update.get("status") not in {"completed", "failed"}:
+                return
 
+            tool_call_id = str(update.get("toolCallId") or "").strip()
+
+            if not self._show_tool_updates:
                 rendered_parts: list[str] = []
                 change_preview = self._extract_tool_change_preview(update)
                 if change_preview:
@@ -2233,12 +2381,17 @@ class ACPWrapperBase(ABC):
 
                 rendered = "\n\n".join(part for part in rendered_parts if part.strip())
                 signature = rendered.strip()
-                if signature and signature != self._last_tool_change_signature:
-                    self._emit_acp_tool_card(update, rendered)
-                    self._last_tool_change_signature = signature
-                return
-
-            if update.get("status") not in {"completed", "failed"}:
+                if not signature:
+                    return
+                # Two dedupes: against the card this same tool call already
+                # posted at start, and against the previous tool's card (agents
+                # re-send an unchanged diff on every update of a batch).
+                if self._tool_card_already_shown(tool_call_id, signature):
+                    return
+                if signature == self._last_tool_change_signature:
+                    return
+                self._emit_acp_tool_card(update, rendered)
+                self._last_tool_change_signature = signature
                 return
 
             extracted_chunks: list[str] = []
@@ -2262,9 +2415,163 @@ class ACPWrapperBase(ABC):
                 extracted_chunks.append(change_preview)
 
             body = "\n\n".join(chunk for chunk in extracted_chunks if chunk)
+            if body.strip() and self._tool_card_already_shown(
+                tool_call_id, body.strip()
+            ):
+                return
             self._emit_acp_tool_card(update, body)
 
             return
+
+    # ------------------------------------------------------------------
+    # Tool call announcement
+    # ------------------------------------------------------------------
+
+    #: How many tool-call signatures to remember for start/completion dedupe.
+    #: One entry per tool call in the session; a few hundred covers a long
+    #: session and the map is FIFO-evicted past this.
+    _MAX_ANNOUNCED_TOOL_CALLS = 512
+
+    def _emit_tool_call_start(self, update: Dict[str, Any]) -> None:
+        """Post the "Using tool" card when the agent *starts* a tool.
+
+        The diff usually rides the start frame (ACP ``ToolCallContent`` of type
+        ``diff``), so an edit is shown in full here and the completion frame
+        that repeats it is deduped away by :py:meth:`_tool_card_already_shown`.
+        """
+        tool_call_id = str(update.get("toolCallId") or "").strip()
+        parts: list[str] = []
+        change_preview = self._extract_tool_change_preview(update)
+        if change_preview:
+            file_target = self._extract_tool_target_file(update)
+            parts.append(
+                f"Updated `{file_target}`.\n\n{change_preview}"
+                if file_target
+                else change_preview
+            )
+        body = "\n\n".join(part for part in parts if part.strip())
+
+        self._flush_assistant_chunk_buffer()
+        header = self._acp_tool_header(update)
+        self._forward_agent_text(f"{header}\n{body}" if body else header)
+        if body:
+            self._record_tool_card(tool_call_id, body.strip())
+            self._last_tool_change_signature = body.strip()
+
+    def _record_tool_card(self, tool_call_id: str, signature: str) -> None:
+        """Remember what a tool call already showed, for completion dedupe."""
+        if not tool_call_id or not signature:
+            return
+        self._announced_tool_calls[tool_call_id] = signature
+        while len(self._announced_tool_calls) > self._MAX_ANNOUNCED_TOOL_CALLS:
+            self._announced_tool_calls.pop(next(iter(self._announced_tool_calls)))
+
+    def _tool_card_already_shown(self, tool_call_id: str, signature: str) -> bool:
+        """Whether this tool call's start card already carried ``signature``."""
+        if not tool_call_id:
+            return False
+        return self._announced_tool_calls.get(tool_call_id) == signature
+
+    # ------------------------------------------------------------------
+    # Plan
+    # ------------------------------------------------------------------
+
+    #: ACP ``PlanEntryStatus`` -> checkbox, so a plan reads as a task list.
+    _ACP_PLAN_STATUS_MARK = {
+        "completed": "[x]",
+        "in_progress": "[~]",
+        "pending": "[ ]",
+    }
+
+    def _emit_plan_card(self, update: Dict[str, Any]) -> None:
+        """Render an ACP ``plan`` update as a markdown checklist.
+
+        Agents re-send the whole plan on every change, so an unchanged plan is
+        dropped rather than re-posted after each completed step.
+        """
+        entries = [e for e in (update.get("entries") or []) if isinstance(e, dict)]
+        if not entries:
+            return
+
+        lines: list[str] = []
+        for entry in entries:
+            content = str(entry.get("content") or "").strip()
+            if not content:
+                continue
+            status = str(entry.get("status") or "pending").strip().lower()
+            mark = self._ACP_PLAN_STATUS_MARK.get(status, "[ ]")
+            lines.append(f"- {mark} {content}")
+        if not lines:
+            return
+
+        rendered = "\n".join(lines)
+        if rendered == self._last_plan_signature:
+            return
+        self._last_plan_signature = rendered
+
+        self._flush_assistant_chunk_buffer()
+        self._forward_agent_text(f"📋 Plan\n{rendered}")
+
+    # ------------------------------------------------------------------
+    # Usage
+    # ------------------------------------------------------------------
+
+    def _record_acp_usage(self, usage: Any) -> None:
+        """Merge an ACP ``Usage`` reading into the session's usage meter."""
+        context = usage_mod.acp_context(usage)
+        if context is None:
+            return
+        changed = self._usage.latch_context_max(
+            _coerce_optional_int(context.get("max_tokens"))
+        )
+        changed |= self._usage.set_context_usage(
+            _coerce_optional_int(context.get("used_tokens")),
+            context.get("cost_usd"),
+        )
+        if changed:
+            self._flush_usage()
+
+    def _flush_usage(self) -> None:
+        """PATCH the merged usage blob onto ``instance_metadata.usage``.
+
+        Best-effort: dedupes no-op flushes and swallows errors, so a usage
+        stamp can never break a turn.
+        """
+        if not (self.vicoa_client and self.config.agent_instance_id):
+            return
+        core = self._usage.core()
+        if core is None or core == self._usage_last_core:
+            return
+        blob = self._usage.blob()
+        if blob is None:
+            return
+        try:
+            self.vicoa_client.patch_agent_instance(
+                self.config.agent_instance_id, instance_metadata={"usage": blob}
+            )
+            self._usage_last_core = core
+        except Exception as exc:
+            self.log(f"[WARNING] usage flush failed: {exc}")
+
+    # ------------------------------------------------------------------
+    # Slash commands
+    # ------------------------------------------------------------------
+
+    def _sync_available_commands(self) -> None:
+        """Publish the agent's own slash commands to Vicoa's command index."""
+        if not self.vicoa_client:
+            return
+        index = build_command_index(self.available_commands)
+        if not index or index == self._last_synced_commands:
+            return
+        self._last_synced_commands = index
+        try:
+            self.vicoa_client.sync_commands(
+                agent_type=self.config.agent_type, commands=index
+            )
+            self.log(f"[ACP] Synced {len(index)} slash commands")
+        except Exception as exc:
+            self.log(f"[WARNING] slash command sync failed: {exc}")
 
     def _extract_tool_update_text(self, update: Dict[str, Any]) -> str:
         """Extract raw text payloads from tool_call_update structures."""
@@ -2883,6 +3190,15 @@ class ACPWrapperBase(ABC):
             except Exception as exc:
                 self.log(f"[ERROR] Heartbeat stop failed: {exc}")
 
+        # Kill any command the agent left running. Without this a `npm run dev`
+        # the agent never released outlives the session it belonged to.
+        terminals = getattr(self, "_terminals", None)
+        if terminals is not None:
+            try:
+                terminals.close_all()
+            except Exception as exc:
+                self.log(f"[ERROR] Terminal cleanup failed: {exc}")
+
         # Stop WS subscriber first so the callback thread can't try to push
         # into the queue (or call into vicoa_client) while the rest tears
         # down. Daemon thread will be reaped on process exit even if join
@@ -2901,7 +3217,10 @@ class ACPWrapperBase(ABC):
             self.acp.stop()
 
         # Mark the instance with a terminal status before closing the session.
-        if self.vicoa_client and self.config.agent_instance_id:
+        # Only a row that exists gets a terminal status: `end_session` and the
+        # status PATCH both 400/404 on an unregistered id, a wasted round-trip
+        # at a server that is already struggling.
+        if self.vicoa_client and self.config.agent_instance_id and self._registered:
             try:
                 if final_status == "COMPLETED":
                     self.vicoa_client.end_session(self.config.agent_instance_id)
@@ -2913,6 +3232,9 @@ class ACPWrapperBase(ABC):
                 self.log(
                     f"[ERROR] Failed to finalize Vicoa session with status {final_status}: {e}"
                 )
+
+        if self.config.agent_instance_id:
+            clear_session_registered(self.config.agent_instance_id)
 
         # Close Vicoa client
         if self.vicoa_client:

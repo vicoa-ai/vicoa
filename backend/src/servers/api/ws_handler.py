@@ -50,12 +50,15 @@ from shared.websocket.protocol import (
     terminal_room,
 )
 from shared.websocket.rpc import RpcError, rpc_router
+from servers.presence import broadcast_session_connected, presence
 from servers.shared.db.queries import (
     FetchMessagesResult,
     fetch_session_messages,
     fetch_user_instances,
     fetch_user_machines,
     push_recent_directory_after_spawn,
+    resolve_spawn_agent_profile,
+    stamp_instance_agent_profile,
 )
 
 logger = logging.getLogger(__name__)
@@ -162,6 +165,21 @@ def is_owned(db: Session, resolved: ResolvedHello, user_id: str) -> bool:
             .first()
         )
     return row is not None
+
+
+def _check_ownership_blocking(
+    resolved: ResolvedHello, user_id: str
+) -> tuple[bool, bool]:
+    """(owned, user_alive) for a session/machine hello, on its own session.
+
+    When ownership fails, distinguish "user gone" from "wrong owner" so the
+    daemon's WS client can stop reconnecting on 4401 (credential revoked)
+    without misinterpreting a real ownership mistake (4403) as fatal-auth.
+    The extra PK lookup only runs on the failure path.
+    """
+    with SessionLocal() as db:
+        owned = is_owned(db, resolved, user_id)
+        return owned, (True if owned else _user_exists(db, user_id))
 
 
 def _user_exists(db: Session, user_id: str) -> bool:
@@ -320,6 +338,30 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
     machine_id = str(frame.get("machine_id"))
     method = str(frame.get("method"))
     params = frame.get("params") or {}
+    # An agent profile's instructions are resolved from its id HERE, server-side
+    # and scoped to the caller, and written into the metadata the daemon is about
+    # to receive — never taken from what the client sent, so a hand-crafted
+    # `system_prompt` cannot ride along and the two can never disagree.
+    agent_profile: dict | None = None
+    if method == "spawn-session" and isinstance(params, dict):
+        raw_profile_id = params.pop("agent_profile_id", None)
+        if isinstance(raw_profile_id, str) and raw_profile_id:
+            agent_profile = await asyncio.to_thread(
+                resolve_spawn_agent_profile, conn.user_id, raw_profile_id
+            )
+        metadata = params.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata.pop("system_prompt", None)
+        # Provider is identity: a profile whose agent no longer matches what is
+        # being spawned is not this session's agent, so nothing of it follows.
+        if agent_profile and agent_profile["agent"] != params.get("agent"):
+            agent_profile = None
+        if agent_profile and (agent_profile["system_prompt"] or "").strip():
+            metadata["system_prompt"] = agent_profile["system_prompt"]
+        if metadata:
+            params["metadata"] = metadata
+
     try:
         result = await rpc_router.call(conn.user_id, machine_id, method, params)
         conn.enqueue({"type": "rpc-result", "request_id": request_id, "result": result})
@@ -335,13 +377,28 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
             directory = params.get("directory")
             if isinstance(directory, str) and directory.strip():
                 try:
-                    push_recent_directory_after_spawn(
-                        conn.user_id, machine_id, directory.strip()
+                    await asyncio.to_thread(
+                        push_recent_directory_after_spawn,
+                        conn.user_id,
+                        machine_id,
+                        directory.strip(),
                     )
                 except Exception:  # noqa: BLE001 — best-effort post-spawn update
                     logger.exception(
                         "failed to update recent_directories after spawn-session"
                     )
+            instance_id = result.get("agent_instance_id")
+            if agent_profile and isinstance(instance_id, str) and instance_id:
+                # Held in `_stamp_tasks` until it finishes: the event loop only
+                # references a task weakly, so a detached one that waits this
+                # long can be garbage-collected mid-flight.
+                task = asyncio.create_task(
+                    _stamp_agent_profile_when_registered(
+                        conn.user_id, instance_id, agent_profile["id"]
+                    )
+                )
+                _stamp_tasks.add(task)
+                task.add_done_callback(_stamp_tasks.discard)
     except RpcError as exc:
         if exc.code == "no_handler":
             logger.warning(
@@ -352,6 +409,53 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
                 method,
             )
         conn.enqueue({"type": "rpc-error", "request_id": request_id, "code": exc.code})
+
+
+# How long to wait for a spawned session to register before giving up on its
+# provenance. A constant rather than a literal in the loop so a test can shorten
+# it, and so the budget is visible in one place: the daemon returns as soon as
+# the agent process is *launched*, so anything here shorter than a cold agent
+# start silently drops the stamp — and a dropped stamp looks to the user exactly
+# like the session never ran.
+_STAMP_DELAYS: tuple[float, ...] = (0.5, 1.0, 2.0, 4.0, 8.0)
+
+# Detached tasks are referenced only weakly by the event loop, so one that waits
+# minutes can be collected mid-flight. Same guard the local server keeps over its
+# RPC tasks.
+_stamp_tasks: set[asyncio.Task] = set()
+
+
+async def _stamp_agent_profile_when_registered(
+    user_id: str, instance_id: str, agent_profile_id: str
+) -> None:
+    """Record the session's originating agent profile once its row exists.
+
+    The daemon mints the instance id locally and returns it as soon as the agent
+    process is *launched*; the row itself only appears when that agent boots and
+    registers, so a write inside the spawn would race it. Same bounded-wait shape
+    the automation sweeper uses to link a run to its instance.
+
+    A failure is silent for the spawn — this is display-only provenance and must
+    never break a launch — but it is not harmless: the stamp is what the Agents
+    page reads as "Run history", so giving up early looks to the user exactly
+    like the session never ran. See `_STAMP_DELAYS`.
+    """
+    for delay in _STAMP_DELAYS:
+        try:
+            if await asyncio.to_thread(
+                stamp_instance_agent_profile, user_id, instance_id, agent_profile_id
+            ):
+                return
+        except Exception:  # noqa: BLE001 — provenance must never break a spawn
+            logger.exception("failed to stamp agent_profile_id on %s", instance_id)
+            return
+        await asyncio.sleep(delay)
+    logger.warning(
+        "instance %s never registered within %.0fs; agent profile provenance "
+        "not recorded (its Run history will not show this session)",
+        instance_id,
+        sum(_STAMP_DELAYS),
+    )
 
 
 async def _serve_connection(websocket: WebSocket, conn: Connection) -> None:
@@ -529,16 +633,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     # --- ownership check for session/machine scopes (§2.9) ---
     if resolved.scope in ("session-scoped", "machine-scoped"):
-        with SessionLocal() as db:
-            owned = is_owned(db, resolved, user_id)
-            # When ownership fails, distinguish "user gone" from "wrong
-            # owner" so the daemon's WS client can stop reconnecting on
-            # 4401 (credential revoked) without misinterpreting a real
-            # ownership mistake (4403) as fatal-auth. Extra PK lookup
-            # only runs on the failure path — same one-time cost as
-            # Phase 1b would have charged on heartbeats, but at WS
-            # handshake frequency instead of every-30s heartbeat.
-            user_alive = True if owned else _user_exists(db, user_id)
+        # Off the event loop: after a deploy every daemon and runner
+        # reconnects at once, and this lookup ran inline for each of them.
+        owned, user_alive = await asyncio.to_thread(
+            _check_ownership_blocking, resolved, user_id
+        )
         if not owned:
             if user_alive:
                 logger.info("WS ownership check failed for %s", resolved.scope)
@@ -595,10 +694,18 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         scope=resolved.scope,
         rooms=frozenset({resolved.room}),
         machine_id=resolved.machine_id,
+        instance_id=resolved.instance_id,
         on_overflow=_on_overflow,
         on_revoked=_on_revoked,
     )
     connection_manager.register(conn)
+    # The socket is the liveness signal (servers/presence.py): its presence
+    # keeps the row's lease renewed and, for a dashboard watching, a connect
+    # is the moment the session reads as live again — say so right away
+    # rather than on the next refresh sweep.
+    presence.note_connected(conn)
+    if conn.scope == "session-scoped":
+        await asyncio.to_thread(broadcast_session_connected, conn)
     try:
         await websocket.send_json(
             {
@@ -613,6 +720,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         logger.info("WS %s client disconnected before server_info", conn.connection_id)
     finally:
         connection_manager.unregister(conn)
+        presence.note_disconnected(conn)
         # Drop this daemon's RPC handlers and fail its in-flight calls (§2.8).
         # A no-op for non-daemon connections.
         rpc_router.unregister(conn)

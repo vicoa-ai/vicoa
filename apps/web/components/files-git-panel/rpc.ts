@@ -420,12 +420,17 @@ export async function rpcGitCommit(
 }
 
 /** One git worktree of a repo (`git-worktree-list`). `managed` means the daemon
- * created it under `~/vicoa/workspaces/` — only those are removable. */
+ * created it under `~/vicoa/workspaces/` — only those are removable.
+ * `display_path` is the home-collapsed `~/…` form a session registers as its
+ * `project`; `prunable` is git's verdict that the folder is gone while the
+ * registration lingers. Both are absent from an older daemon. */
 export interface WorktreeInfo {
   path: string;
+  display_path?: string;
   branch: string;
   head: string;
   managed: boolean;
+  prunable?: boolean;
 }
 
 export async function rpcGitWorktreeList(
@@ -439,6 +444,13 @@ export async function rpcGitWorktreeList(
   return (result.worktrees as WorktreeInfo[]) ?? [];
 }
 
+/**
+ * `git-worktree-remove`. `cwd` must be the repo's MAIN checkout, not the
+ * worktree: a worktree whose folder is already gone can't host the git call
+ * (the daemon answers `not_a_repo`), whereas from the main checkout git also
+ * clears a stale registration, and a path that is gone on both counts comes
+ * back `{ok, already_removed}` rather than as an error.
+ */
 export async function rpcGitWorktreeRemove(
   machineId: string,
   cwd: string,
@@ -582,16 +594,20 @@ export async function rpcGitCommitDiff(
 // the `open-in` capability — older ones fail `no_handler`, which is why
 // `open-in-menu.tsx` hides the whole menu instead of showing an empty one.
 
-/** What an app does with the path it is handed. */
-export type OpenAppKind = 'file-manager' | 'editor' | 'terminal';
+/** What an app does with the path it is handed. `default` is the OS's own
+ * handler for the file's type (Excel for `.xlsx`) — one row, resolved by the
+ * machine, never a catalog of viewers. */
+export type OpenAppKind = 'default' | 'file-manager' | 'editor' | 'terminal';
 
 /** One app the daemon's machine can actually open a path with. */
 export interface OpenApp {
   id: string;
   label: string;
   kind: OpenAppKind;
-  /** `dir` apps (terminals) always get a directory — a file resolves to its parent. */
-  target: 'path' | 'dir';
+  /** `dir` apps (terminals) always get a directory — a file resolves to its
+   * parent. `file` apps (the default app) take files only: the daemon refuses
+   * a directory, so the client hides them when the target is one. */
+  target: 'path' | 'dir' | 'file';
 }
 
 export interface ListOpenAppsResult {

@@ -289,6 +289,9 @@ def format_agent_instance(
     payload = {
         "instance_metadata": metadata,
         "session_config": session_config,
+        "agent_profile_id": str(instance.agent_profile_id)
+        if instance.agent_profile_id
+        else None,
         "id": str(instance.id),
         "agent_type_id": str(instance.agent_type_id) if instance.agent_type_id else "",
         "agent_type_name": instance.agent_type.name
@@ -454,6 +457,9 @@ def get_all_agent_types_with_instances(
             payload = {
                 "instance_metadata": metadata,
                 "session_config": session_config,
+                "agent_profile_id": str(instance.agent_profile_id)
+                if instance.agent_profile_id
+                else None,
                 "id": str(instance.id),
                 "agent_type_id": str(instance.agent_type_id)
                 if instance.agent_type_id
@@ -839,6 +845,39 @@ def get_agent_type_instances(
     return [format_agent_instance(instance, message_stats) for instance in instances]
 
 
+def get_agent_profile_instances(
+    db: Session, profile_id: UUID, user_id: UUID, limit: int = 50
+) -> list[AgentInstanceResponse]:
+    """An agent preset's run history: the sessions it started, newest first.
+
+    ``agent_instances.agent_profile_id`` is provenance stamped at spawn, so this
+    is a true history — it keeps listing runs whose preset has since been
+    edited, and editing the preset never rewrites what already ran.
+
+    The caller has already proven it owns the profile; the ``user_id`` filter
+    here is the house rule, and load-bearing — a session must never be readable
+    through a second door that skips the instance's own scoping.
+    """
+    instances = (
+        db.query(AgentInstance)
+        .filter(
+            AgentInstance.agent_profile_id == profile_id,
+            AgentInstance.user_id == user_id,
+            AgentInstance.status != AgentStatus.DELETED,
+        )
+        .options(
+            joinedload(AgentInstance.agent_type),
+            # live_state compares against the machine heartbeat.
+            joinedload(AgentInstance.machine),
+        )
+        .order_by(desc(AgentInstance.started_at))
+        .limit(limit)
+        .all()
+    )
+    message_stats = _get_instance_message_stats(db, [i.id for i in instances])
+    return [format_agent_instance(instance, message_stats) for instance in instances]
+
+
 def get_agent_instance_detail(
     db: Session,
     instance_id: UUID,
@@ -925,6 +964,7 @@ def get_agent_instance_detail(
         instance_metadata=metadata,
         session_config=session_config,
         project=instance.project,
+        project_id=str(instance.project_id) if instance.project_id else None,
         home_dir=instance.home_dir,
         machine_id=str(instance.machine_id) if instance.machine_id else None,
         live_state=_live_state_for(instance),
@@ -1587,6 +1627,49 @@ def cancel_user_message(db: Session, message_id: UUID) -> bool:
                 ),
                 "{queue}",
                 cast({"status": "cancelled", "cancelled_at": now}, JSONB),
+            )
+        )
+    )
+    result = db.execute(stmt)
+    db.flush()
+    return result.rowcount > 0
+
+
+def steer_user_message(db: Session, message_id: UUID) -> bool:
+    """Stamp `message_metadata["queue"]` as steer-requested, only while queued.
+
+    The user asked for a message still waiting in the queue to be delivered
+    into the agent's *running* turn instead of after it. This only flips the
+    status (`queued` -> `steer`); the daemon owns the actual delivery and
+    settles the row afterwards — `consumed` (with `steered: true`) once the
+    agent took it mid-turn, or back to `queued` via
+    `servers.shared.db.queries.requeue_user_message` when the turn could not
+    be steered. The strict `== "queued"` guard (rather than the cancel path's
+    `is distinct from "consumed"`) is deliberate: a message the daemon already
+    picked up, cancelled, or is already steering must not be re-stamped.
+
+    Same `jsonb_typeof` guard as `cancel_user_message` — see that docstring
+    for why `coalesce()` is not enough. Returns True iff a row was updated.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    stmt = (
+        update(Message)
+        .where(
+            Message.id == message_id,
+            Message.sender_type == SenderType.USER,
+            Message.message_metadata[("queue", "status")].astext == "queued",
+        )
+        .values(
+            message_metadata=func.jsonb_set(
+                case(
+                    (
+                        func.jsonb_typeof(Message.message_metadata) == "object",
+                        Message.message_metadata,
+                    ),
+                    else_=cast({}, JSONB),
+                ),
+                "{queue}",
+                cast({"status": "steer", "steer_requested_at": now}, JSONB),
             )
         )
     )

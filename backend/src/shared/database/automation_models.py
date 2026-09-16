@@ -76,7 +76,22 @@ class Automation(Base):
     # User-visible spawn config (agent / model / effort / permission-mode),
     # mirroring the web SessionConfig / toSpawnMetadata shape. The scheduler
     # rebuilds spawn metadata from this + `prompt` at dispatch time.
+    #
+    # When `agent_profile_id` is set this doubles as the **fallback snapshot**:
+    # it always holds the last-resolved config, so a 3am run still has something
+    # to spawn with if the profile was archived or deleted in the meantime. That
+    # is why it stays NOT NULL even though a referenced automation normally
+    # ignores it. See plans/todos/agent-profiles-p1.md §4.
     session_config: Mapped[dict] = mapped_column(JSONB)
+    # Live reference to an agent profile (collab P1), resolved at *dispatch* time
+    # — unlike a session, an automation has not launched yet, so editing the agent
+    # should change what the next run does. Resolution order at dispatch:
+    # profile (if it exists and is not archived) → `session_config` fallback.
+    agent_profile_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_profiles.id", ondelete="SET NULL"),
+        type_=PostgresUUID(as_uuid=True),
+        default=None,
+    )
 
     schedule_kind: Mapped[str] = mapped_column(String(20))
     # Structured recurring schedule (see shared/scheduling/frequency.py for the

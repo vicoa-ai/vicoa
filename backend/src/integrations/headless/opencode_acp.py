@@ -31,6 +31,7 @@ class OpenCodeACPConfig(ACPWrapperConfig):
         acp_session_id: Optional[str] = None,
         opencode_command: str = "opencode",
         initial_prompt: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ):
         self.api_key = api_key
         self.base_url = base_url
@@ -47,6 +48,7 @@ class OpenCodeACPConfig(ACPWrapperConfig):
         self.is_resuming = is_resuming
         self.acp_session_id = acp_session_id
         self.initial_prompt = initial_prompt
+        self.system_prompt = system_prompt
 
     def get_acp_command(self) -> list[str]:
         return [self.agent_command, "acp"]
@@ -80,6 +82,7 @@ class OpenCodeACPConfig(ACPWrapperConfig):
         model: Optional[str] = None,
         opencode_command: str = "opencode",
         initial_prompt: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ) -> "OpenCodeACPConfig":
         final_api_key = api_key or os.environ.get("VICOA_API_KEY")
         if not final_api_key:
@@ -118,6 +121,7 @@ class OpenCodeACPConfig(ACPWrapperConfig):
             model=final_model,
             opencode_command=opencode_command,
             initial_prompt=initial_prompt,
+            system_prompt=system_prompt,
         )
 
 
@@ -330,6 +334,12 @@ def main() -> int:
             "the agent does not advertise loadSession."
         ),
     )
+    parser.add_argument(
+        "--system-prompt",
+        dest="system_prompt",
+        default=None,
+        help="Custom instructions, prefixed onto every turn (ACP has no system-prompt slot)",
+    )
     parser.add_argument("--opencode-api-key", help="Anthropic API key for OpenCode")
     parser.add_argument(
         "--model", help="Model override (e.g., 'anthropic/claude-sonnet-4')"
@@ -365,6 +375,7 @@ def main() -> int:
             model=args.model,
             opencode_command=args.opencode_command,
             initial_prompt=args.prompt,
+            system_prompt=args.system_prompt,
         )
         wrapper = OpenCodeACPWrapper(config)
         return wrapper.run()

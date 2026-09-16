@@ -39,6 +39,13 @@ def project_icon_key(project_id: str) -> str:
     return f"project-icons/{project_id}"
 
 
+def agent_profile_avatar_key(agent_profile_id: str) -> str:
+    # Third of the same family (project icons / user avatars / agent avatars):
+    # keyed by id alone so a profile can move to a team without rekeying, and no
+    # extension so one key survives png<->jpeg re-encodes.
+    return f"agent-avatars/{agent_profile_id}"
+
+
 def user_avatar_key(user_id: str) -> str:
     # Same shape as project_icon_key: keyed by id alone, no extension — the
     # served Content-Type comes from the stored object's own metadata

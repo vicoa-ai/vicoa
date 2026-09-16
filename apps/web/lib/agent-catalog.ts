@@ -38,6 +38,11 @@ export interface CatalogModel {
 export interface CatalogAgent {
   id: string;
   label: string;
+  /** The wrapper can deliver a queued message into the *running* turn (the
+   *  queue bar's Steer button). Codex (`turn/steer`), Claude Code (streaming
+   *  stdin, picked up at the next tool boundary) and pi/omp (`steer` RPC);
+   *  absent for ACP agents and OpenCode, which only queue. */
+  supports_steer?: boolean;
   models: CatalogModel[] | null;
   thinking_efforts?: CatalogEnumEntry[];
   reasoning_efforts?: CatalogEnumEntry[];
@@ -45,11 +50,33 @@ export interface CatalogAgent {
   modes?: CatalogEnumEntry[];
 }
 
+/**
+ * One ACP agent a machine can add with one click (backend
+ * `protocol/acp_catalog.py`). `command` is the whole launch argv; it goes
+ * into the machine's `~/.vicoa/config.json` verbatim.
+ */
+export interface AcpCatalogEntry {
+  id: string;
+  label: string;
+  description: string;
+  command: string[];
+  env?: Record<string, string>;
+  install_url: string;
+  version?: string;
+}
+
 export interface AgentCatalog {
   version: string;
   min_cli_version: string;
   min_client_version: string;
   agents: CatalogAgent[];
+  /**
+   * Agents a machine can add from Settings → Providers. Not in `agents`: a
+   * daemon only knows them once they are in its config, and they carry no
+   * model/mode lists — an ACP agent reports those at session/new. Absent
+   * from the baked-in fallback; the server fills it.
+   */
+  acp_catalog?: AcpCatalogEntry[];
 }
 
 export function agentById(catalog: AgentCatalog, id: string): CatalogAgent | undefined {
@@ -59,6 +86,23 @@ export function agentById(catalog: AgentCatalog, id: string): CatalogAgent | und
 /** Picker label for an agent — every agent renders with its plain label. */
 export function agentPickerLabel(_agentId: string, label: string): string {
   return label;
+}
+
+/**
+ * A display label for an agent id the catalog has never heard of.
+ *
+ * User-defined providers (`agents.providers` in `~/.vicoa/config.json`) exist
+ * only on the user's own machine, so the catalog shipped with this client
+ * cannot describe them — that is the point of the feature. The daemon reports
+ * them in `available_agents`; this makes a readable label out of the id, which
+ * is all we have. `kimi-work` -> `Kimi Work`.
+ */
+export function customAgentLabel(agentId: string): string {
+  return agentId
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 /**
@@ -82,22 +126,79 @@ export function normalizeModelLabel(id: string, label: string): string {
   return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
 }
 
+/** One cached `{id, label}` entry as the machine's `machine_agent_models` row stores it. */
+export interface CachedAgentEntry {
+  id: string;
+  label: string;
+}
+
+/**
+ * What the machine's `machine_agent_models` cache knows besides the model
+ * lists. `modes` is the agent's ACP session modes (only for agents whose
+ * source reported them); `labels` is the daemon's `agent_labels` map, the
+ * only display name a client can have for a provider that exists solely in
+ * that machine's config.
+ */
+export interface CachedAgentExtras {
+  modes?: Record<string, CachedAgentEntry[]>;
+  labels?: Record<string, string>;
+}
+
+/** The "defer to the agent's own model" sentinel a synthesized entry gets. */
+const SYNTHESIZED_DEFAULT_MODEL: CatalogModel = { id: 'default', label: 'Default', is_default: true };
+
 /**
  * Return `base` with each agent's model list replaced by the machine's cached
  * real models when present (keyed by agent id). Agents without a cached entry
  * keep their static catalog defaults. Lets the new-session picker show a
- * machine's actual models once an ACP agent has run there once.
+ * machine's actual models once an ACP agent has run there once — or, since a
+ * daemon `provider-probe` also fills the cache, once it has been Checked or
+ * Added from Settings → Providers.
+ *
+ * Cached ids the static catalog has never heard of (a catalog agent such as
+ * Qwen Code, or a provider hand-written into the machine's config) get a
+ * synthesized entry appended, so the picker can render a real model / mode
+ * dropdown for them instead of nothing at all. It carries the `default`
+ * sentinel (never sent as a model — `toSpawnMetadata`'s rule) plus the cached
+ * models, and the cached modes as `permission_modes` — the field the generic
+ * ACP spawn path forwards as the initial session mode. No efforts: nothing
+ * the cache knows maps to them.
  */
 export function catalogWithCachedModels(
   base: AgentCatalog,
-  cachedByAgent: Record<string, { id: string; label: string }[]>,
+  cachedByAgent: Record<string, CachedAgentEntry[]>,
+  extras: CachedAgentExtras = {},
 ): AgentCatalog {
   if (!cachedByAgent || Object.keys(cachedByAgent).length === 0) return base;
+  const known = new Set(base.agents.map((a) => a.id));
+  const synthesized: CatalogAgent[] = Object.keys(cachedByAgent)
+    .filter((id) => !known.has(id) && (cachedByAgent[id]?.length ?? 0) > 0)
+    .sort()
+    .map((id) => {
+      const models: CatalogModel[] = [
+        { ...SYNTHESIZED_DEFAULT_MODEL },
+        ...cachedByAgent[id]
+          .filter((m) => m.id !== SYNTHESIZED_DEFAULT_MODEL.id)
+          .map((m) => ({ id: m.id, label: normalizeModelLabel(m.id, m.label || m.id) })),
+      ];
+      const entry: CatalogAgent = {
+        id,
+        label: extras.labels?.[id] || customAgentLabel(id),
+        models,
+      };
+      const modes = cachedModesAsPermissionModes(extras.modes?.[id]);
+      if (modes) entry.permission_modes = modes;
+      return entry;
+    });
   return {
     ...base,
-    agents: base.agents.map((a) => {
+    agents: [...base.agents.map((a) => {
       const cached = cachedByAgent[a.id];
-      if (!cached || cached.length === 0) return a;
+      // A static entry with no curated mode list (Copilot, Kimi, Hermes: "source
+      // modes from the live session") takes the machine's cached ones. Cursor
+      // and Gemini keep their verified catalog lists.
+      const cachedModes = a.permission_modes?.length ? undefined : cachedModesAsPermissionModes(extras.modes?.[a.id]);
+      if (!cached || cached.length === 0) return cachedModes ? { ...a, permission_modes: cachedModes } : a;
       // A machine reports only `{id, label}` — no capability metadata. Carry the
       // catalog entry's fields over for ids we already know (`is_default`,
       // `permission_modes`, `default_thinking_effort`, …); without this, the
@@ -122,9 +223,23 @@ export function catalogWithCachedModels(
       const models = sentinel && !cachedModels.some((m) => m.id === sentinel.id)
         ? [{ ...sentinel }, ...cachedModels]
         : cachedModels;
-      return { ...a, models };
-    }),
+      return cachedModes ? { ...a, models, permission_modes: cachedModes } : { ...a, models };
+    }), ...synthesized],
   };
+}
+
+/**
+ * An ACP agent's cached session modes as a `permission_modes` enum. The
+ * agent's first advertised mode is its own default (that is what `session/new`
+ * starts in), so it carries `is_default`. `undefined` when nothing is cached.
+ */
+function cachedModesAsPermissionModes(modes: CachedAgentEntry[] | undefined): CatalogEnumEntry[] | undefined {
+  if (!modes || modes.length === 0) return undefined;
+  return modes.map((m, i) => ({
+    id: m.id,
+    label: m.label || m.id,
+    ...(i === 0 ? { is_default: true } : {}),
+  }));
 }
 
 /**
@@ -272,10 +387,14 @@ export function toSpawnMetadata(config: SessionConfig, prompt?: string): Record<
       m.model = config.model;
     }
   } else {
-    // Generic ACP agents (cursor/gemini/copilot/kimi/hermes): model +
-    // permission_mode pass through; the wrapper applies them best-effort
-    // against the agent's live ACP session state.
-    if (config.model) m.model = config.model;
+    // Generic ACP agents (cursor/gemini/copilot/kimi/hermes and any
+    // catalog-added or synthesized one): model + permission_mode pass through;
+    // the wrapper applies them best-effort against the agent's live ACP
+    // session state. `default`/`auto` is the "keep the agent's own model"
+    // sentinel and is not sent (the wrapper would skip it anyway).
+    if (config.model && config.model !== "default" && config.model !== "auto") {
+      m.model = config.model;
+    }
     if (config.permission_mode) m.permission_mode = config.permission_mode;
   }
   return m;
@@ -410,13 +529,14 @@ export function savePersistedSelection(payload: Partial<PersistedSelection>): vo
 // ---------------------------------------------------------------------------
 
 export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
-  version: "2026-09-05-1",
+  version: "2026-09-11-1",
   min_cli_version: "1.20.0",
   min_client_version: "0.42.0",
   agents: [
     {
       id: "claude",
       label: "Claude Code",
+      supports_steer: true,
       models: [
         // Opus 4.7+ default to xhigh via `default_thinking_effort` (per-model
         // override of the agent-level `high` is_default).
@@ -459,6 +579,7 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
     {
       id: "codex",
       label: "Codex",
+      supports_steer: true,
       // Refresh per docs/agents/agent-catalog.md. Do NOT source from
       // ~/.codex/models_cache.json — that file is per-user / per-account
       // and reflects entitlements rather than the canonical slug list.
@@ -517,6 +638,7 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
     {
       id: "omp",
       label: "Oh My Pi",
+      supports_steer: true,
       models: [{ id: "default", label: "Default", is_default: true }],
       thinking_efforts: [
         { id: "max", label: "Max" },
@@ -538,6 +660,7 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
     {
       id: "pi",
       label: "Pi",
+      supports_steer: true,
       models: [{ id: "default", label: "Default", is_default: true }],
       thinking_efforts: [
         { id: "max", label: "Max" },

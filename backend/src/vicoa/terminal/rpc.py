@@ -67,6 +67,11 @@ def handle_pty_rpc(
         return _pty_heartbeat(terminal, params)
     except KeyError as exc:
         return {"error": f"unknown pty_id: {exc.args[0] if exc.args else exc}"}
+    except TimeoutError as exc:
+        # A tty whose reader stopped draining (see PTY_WRITE_TIMEOUT_S). The
+        # remainder of that one write is lost; the worker stays free for the
+        # other terminals' input rather than blocking on it forever.
+        return {"error": str(exc)}
     except (ValueError, RuntimeError) as exc:
         return {"error": str(exc)}
 

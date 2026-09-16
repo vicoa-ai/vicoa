@@ -54,6 +54,13 @@ def connections_closed_slow_count() -> int:
     return _connections_closed_slow
 
 
+def _running_loop_or_none() -> "asyncio.AbstractEventLoop | None":
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
 @dataclass(slots=True, eq=False)
 class Connection:
     """One WebSocket client: its identity, scope, joined rooms, and outbox.
@@ -69,6 +76,9 @@ class Connection:
     # Set for machine-scoped connections — the daemon's own machine. RPC
     # handler registration keys on it (§2.8); `rpc-register` does not carry it.
     machine_id: str | None = None
+    # Set for session-scoped connections — the agent process driving that
+    # instance. Its presence here IS the session's liveness (servers/presence).
+    instance_id: str | None = None
     # Fired when the outbox overflows. The handler registers a closure that
     # schedules `websocket.close(code=1008)`; kept as a callback rather than a
     # direct WebSocket reference so this shared module stays FastAPI-free.
@@ -94,14 +104,39 @@ class Connection:
     outbox: "asyncio.Queue[dict]" = field(
         default_factory=lambda: asyncio.Queue(maxsize=_OUTBOX_MAXSIZE)
     )
+    # The event loop that owns `outbox` — the one the WS endpoint's writer
+    # task runs on. Captured at construction; None when built outside a
+    # running loop (unit tests), in which case enqueue is a direct put.
+    loop: "asyncio.AbstractEventLoop | None" = field(
+        default_factory=lambda: _running_loop_or_none()
+    )
 
     def enqueue(self, frame: dict) -> None:
         """Queue a frame for the endpoint's writer task to send.
+
+        Safe to call from any thread. Broadcasts fire from `after_commit`
+        listeners, and a commit made in a worker thread (every sync endpoint,
+        and the ingest path's `run_in_threadpool` block) fires them there —
+        but `asyncio.Queue` is not thread-safe, and a `put_nowait` from a
+        foreign thread wakes the writer through a plain `call_soon`, which
+        does not kick the loop's selector: the frame then waits for whatever
+        next wakes the loop. Hop to the owning loop when we are not on it.
 
         On a full outbox the connection is shed exactly once: counter
         incremented, warning logged, `on_overflow` callback invoked. Further
         enqueues are silent no-ops until the socket actually closes.
         """
+        if self.overflowed:
+            return
+        loop = self.loop
+        if loop is not None and _running_loop_or_none() is not loop:
+            if loop.is_closed():
+                return
+            loop.call_soon_threadsafe(self._put, frame)
+            return
+        self._put(frame)
+
+    def _put(self, frame: dict) -> None:
         if self.overflowed:
             return
         try:
@@ -140,12 +175,22 @@ class ConnectionManager:
     def __init__(self) -> None:
         self._connections: dict[str, list[Connection]] = defaultdict(list)
         self._rooms: dict[str, set[Connection]] = defaultdict(set)
+        # Presence indexes: which agent processes / daemons hold a socket
+        # right now. A session or machine id may be connected more than once
+        # for a moment (reconnect racing the old socket's teardown), hence
+        # sets of connections rather than a single reference.
+        self._sessions: dict[str, set[Connection]] = defaultdict(set)
+        self._machines: dict[str, set[Connection]] = defaultdict(set)
 
     def register(self, conn: Connection) -> None:
         """Add a connection to the user index and to each of its rooms."""
         self._connections[conn.user_id].append(conn)
         for room in conn.rooms:
             self._rooms[room].add(conn)
+        if conn.scope == "session-scoped" and conn.instance_id:
+            self._sessions[conn.instance_id].add(conn)
+        elif conn.scope == "machine-scoped" and conn.machine_id:
+            self._machines[conn.machine_id].add(conn)
 
     def unregister(self, conn: Connection) -> None:
         """Remove a connection from every index, leaving no dangling references."""
@@ -161,6 +206,52 @@ class ConnectionManager:
             members.discard(conn)
             if not members:
                 del self._rooms[room]
+        for key, index in (
+            (conn.instance_id, self._sessions),
+            (conn.machine_id, self._machines),
+        ):
+            if not key:
+                continue
+            members = index.get(key)
+            if members is None:
+                continue
+            members.discard(conn)
+            if not members:
+                del index[key]
+
+    # ----- presence (servers/presence.py reads these) -----
+
+    def is_session_connected(self, instance_id: str) -> bool:
+        """Whether the agent process for this instance holds a socket."""
+        return bool(self._sessions.get(instance_id))
+
+    def is_machine_connected(self, machine_id: str) -> bool:
+        """Whether the daemon for this machine holds a socket."""
+        return bool(self._machines.get(machine_id))
+
+    def connected_sessions(self) -> dict[str, str]:
+        """{instance_id: user_id} for every session-scoped socket present."""
+        return {
+            instance_id: next(iter(conns)).user_id
+            for instance_id, conns in self._sessions.items()
+            if conns
+        }
+
+    def connected_machines(self) -> dict[str, str]:
+        """{machine_id: user_id} for every machine-scoped socket present."""
+        return {
+            machine_id: next(iter(conns)).user_id
+            for machine_id, conns in self._machines.items()
+            if conns
+        }
+
+    def users_with_dashboards(self) -> list[str]:
+        """Users who currently hold at least one user-scoped connection."""
+        return [
+            user_id
+            for user_id, conns in self._connections.items()
+            if any(c.scope == "user-scoped" for c in conns)
+        ]
 
     def broadcast_update(self, user_id: str, payload: dict, rooms: list[str]) -> None:
         """Fan an `update` frame out to every connection in the target rooms."""

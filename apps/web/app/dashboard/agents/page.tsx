@@ -1,316 +1,324 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+/**
+ * /dashboard/agents — saved agent presets (collaboration P1).
+ *
+ * An "Agent" is a named provider + model + config + instructions with an
+ * avatar: picked in one click when starting a session, referenced by an
+ * automation, and (from P2) assignable to a task.
+ *
+ * It is a top-level page rather than a settings tab because an agent is a thing
+ * you *use*, not a preference you set once — and because it has a history. The
+ * layout is deliberately the automation page's (list column, draggable divider,
+ * detail panel with a Run history card at the bottom): the two are the same kind
+ * of object, a saved configuration with a record of what it has done.
+ *
+ * NOTE the neighbouring routes: `/dashboard/agents/[instanceId]` is a *session*
+ * and `/dashboard/agents/new-session` starts one. Those predate this page and
+ * keep their URLs; this one owns only the bare path, and selects a row through
+ * `?agent=<id>` rather than a sub-route, exactly like `?automation=<id>`.
+ */
+
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Bot, Loader2, Plus } from 'lucide-react';
+
+import { DesktopCollapsedLead } from '@/components/desktop/window-chrome';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Plus, Loader2 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  AGENT_CATALOG_FALLBACK,
+  defaultsFor,
+  type AgentCatalog,
+} from '@/lib/agent-catalog';
+import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
+import type { AgentProfile } from '@/lib/backend-api';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
-import { useDashboardNavigation } from '@/lib/contexts/dashboard-navigation-context';
-import { getAgentStatusColors } from '@/lib/agent-status-colors';
-import { UserAgentResponse } from '@/lib/backend-api';
+import { AgentDetailPanel } from './components/agent-detail-panel';
+import { AgentList } from './components/agent-list';
 
-function AgentStatusBadge({ status }: { status: string }) {
-  const config = getAgentStatusColors(status);
-
-  return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.text} ${config.badgeBg}`}>
-      <div className={`w-2 h-2 rounded-full ${config.dot} mr-1.5`} />
-      {status}
-    </span>
-  );
-}
-
-function CreateAgentDialog({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
-  const [name, setName] = useState('');
-  const [webhookUrl, setWebhookUrl] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-
-    try {
-      const response = await fetch('/api/agent-dashboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          endpoint: '/api/v1/user-agents',
-          method: 'POST',
-          data: {
-            name,
-            webhook_url: webhookUrl || null,
-            is_active: true,
-          },
-        }),
-      });
-
-      if (response.ok) {
-        onSuccess();
-        onClose();
-      } else {
-        throw new Error('Failed to create agent');
-      }
-    } catch (error) {
-      console.error('Failed to create agent:', error);
-      alert('Failed to create agent');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-background border p-6 rounded-lg max-w-md w-full mx-4">
-        <h3 className="text-lg mb-4">Create New Agent</h3>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <Label htmlFor="name">Agent Name</Label>
-            <Input
-              id="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My Agent"
-              required
-            />
-          </div>
-          <div>
-            <Label htmlFor="webhook">Webhook URL (Optional)</Label>
-            <Input
-              id="webhook"
-              type="url"
-              value={webhookUrl}
-              onChange={(e) => setWebhookUrl(e.target.value)}
-              placeholder="https://example.com/webhook"
-            />
-          </div>
-          <div className="flex gap-2 justify-end">
-            <Button type="button" variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={isLoading}>
-              {isLoading ? 'Creating...' : 'Create Agent'}
-            </Button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function AgentsContent() {
-  const { api, recentInstances, isLoading, error, refreshData } = useAgentDashboard();
-  const { openSession } = useDashboardNavigation();
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [userAgents, setUserAgents] = useState<UserAgentResponse[]>([]);
-
-  useEffect(() => {
-    if (api) {
-      api.listUserAgents().then(setUserAgents).catch(() => {});
-    }
-  }, [api]);
-
-  const handleCreateSuccess = () => {
-    refreshData();
-    if (api) {
-      api.listUserAgents().then(setUserAgents).catch(() => {});
-    }
-  };
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Loader2 className="h-5 w-5 animate-spin" />
-          <span className="text-lg">Loading agents...</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-red-600">Error: {error}</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl">Agent Dashboard</h1>
-          <p className="text-muted-foreground">Manage your AI agents and monitor their activity</p>
-        </div>
-        {/* <Button onClick={() => setShowCreateDialog(true)}>
-          <Plus className="w-4 h-4 mr-2" />
-          Create Agent
-        </Button> */}
-      </div>
-
-      {/* Overview Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Agents</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold">{userAgents.length}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Active Sessions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold">
-              {userAgents.reduce((sum, agent) => sum + agent.active_instance_count, 0)}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Waiting Sessions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold">
-              {userAgents.reduce((sum, agent) => sum + agent.waiting_instance_count, 0)}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Completed</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold">
-              {userAgents.reduce((sum, agent) => sum + agent.completed_instance_count, 0)}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* User Agents */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Your Agents</CardTitle>
-          <CardDescription>Manage your configured AI agents</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {userAgents.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-muted-foreground mb-4">No agents configured yet</p>
-              <Button onClick={() => setShowCreateDialog(true)}>
-                <Plus className="w-4 h-4 mr-2" />
-                Create Your First Agent
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {userAgents.map((agent) => (
-                <div key={agent.id} className="border rounded-lg p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="">{agent.name}</h3>
-                    <div className="flex items-center gap-2">
-                      {agent.has_webhook && (
-                        <span className="text-xs bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-400 px-2 py-1 rounded">
-                          Webhook
-                        </span>
-                      )}
-                      <span className={`text-xs px-2 py-1 rounded ${agent.is_active ? 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-400' : 'bg-muted text-muted-foreground'}`}>
-                        {agent.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-muted-foreground">
-                    <div>
-                      <span className="font-medium">Total: </span>
-                      {agent.instance_count}
-                    </div>
-                    <div>
-                      <span className="font-medium">Active: </span>
-                      {agent.active_instance_count}
-                    </div>
-                    <div>
-                      <span className="font-medium">Waiting: </span>
-                      {agent.waiting_instance_count}
-                    </div>
-                    <div>
-                      <span className="font-medium">Completed: </span>
-                      {agent.completed_instance_count}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Recent Instances */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Activity</CardTitle>
-          <CardDescription>Latest agent instances across all types</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {recentInstances.length === 0 ? (
-            <p className="text-center py-8 text-muted-foreground">No recent activity</p>
-          ) : (
-            <div className="space-y-3">
-              {recentInstances.map((instance) => (
-                <div key={instance.id} className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50">
-                  <div className="flex-1">
-                    <div className="font-medium">{instance.name || instance.agent_type_name || 'Unnamed Instance'}</div>
-                    {instance.latest_message && (
-                      <div className="text-sm text-foreground/80 mb-1 truncate max-w-md">
-                        {instance.latest_message}
-                      </div>
-                    )}
-                    <div className="text-sm text-muted-foreground">
-                      {new Date(instance.started_at).toLocaleString()}
-                    </div>
-                  </div>
-                  <div className="text-right flex items-center gap-3">
-                    <div>
-                      <AgentStatusBadge status={instance.status} />
-                      {/* {instance.chat_length > 0 && (
-                        <div className="text-sm text-muted-foreground mt-1">
-                          {instance.chat_length} messages
-                        </div>
-                      )} */}
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openSession(instance.id)}
-                    >
-                      View
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {showCreateDialog && (
-        <CreateAgentDialog 
-          onClose={() => setShowCreateDialog(false)}
-          onSuccess={handleCreateSuccess}
-        />
-      )}
-    </div>
-  );
-}
+const LIST_WIDTH_KEY = 'agents:listWidth';
 
 export default function AgentsPage() {
+  // useSearchParams needs a Suspense boundary for prerender (same pattern as
+  // the automation and new-session pages).
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 font-mono">
-      <AgentsContent />
+    <Suspense fallback={null}>
+      <AgentsPageInner />
+    </Suspense>
+  );
+}
+
+function AgentsPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { api } = useAgentDashboard();
+
+  const [profiles, setProfiles] = useState<AgentProfile[]>([]);
+  const [catalog, setCatalog] = useState<AgentCatalog>(AGENT_CATALOG_FALLBACK);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<AgentProfile | null>(null);
+
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await api.listAgentProfiles();
+        if (cancelled) return;
+        setProfiles(list);
+        // No auto-select: the list is the landing view, same as automations.
+        // At full width each row carries its config, description and run count,
+        // which is the overview you want before picking one.
+        setError(null);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to load agents.');
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+    api
+      .getAgentCatalog()
+      .then((fresh) => !cancelled && setCatalog(fresh))
+      .catch(() => {
+        /* the baked-in fallback is already in state */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  // Deep link (⌘K palette, or a link from the session picker):
+  // /dashboard/agents?agent={id} selects that row once it is loaded, then
+  // strips the param so refresh/back doesn't re-select it.
+  useEffect(() => {
+    const agentId = searchParams?.get('agent');
+    if (!agentId || !profiles.some((p) => p.id === agentId)) return;
+    setSelectedId(agentId);
+    router.replace('/dashboard/agents', { scroll: false });
+  }, [searchParams, profiles, router]);
+
+  const selected = useMemo(
+    () => profiles.find((p) => p.id === selectedId) ?? null,
+    [profiles, selectedId],
+  );
+
+  const handleCreate = useCallback(async () => {
+    if (!api) return;
+    setCreating(true);
+    setError(null);
+    try {
+      // Named "New agent 2", "New agent 3"… because the name is unique per user
+      // and a second unnamed create would otherwise 409.
+      const taken = new Set(profiles.map((p) => p.name.toLowerCase()));
+      let name = 'New agent';
+      for (let i = 2; taken.has(name.toLowerCase()); i += 1) name = `New agent ${i}`;
+      const created = await api.createAgentProfile({
+        name,
+        agent: 'claude',
+        config: defaultsFor(catalog, 'claude') as unknown as Record<string, unknown>,
+      });
+      setProfiles((prev) => [...prev, created]);
+      setSelectedId(created.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create agent.');
+    } finally {
+      setCreating(false);
+    }
+  }, [api, catalog, profiles]);
+
+  const replace = useCallback((updated: AgentProfile) => {
+    setProfiles((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+  }, []);
+
+  const confirmDelete = useCallback(async () => {
+    if (!api || !deleteTarget) return;
+    const target = deleteTarget;
+    setDeleteTarget(null);
+    const before = profiles;
+    setProfiles((prev) => prev.filter((p) => p.id !== target.id));
+    setSelectedId((current) => (current === target.id ? null : current));
+    try {
+      await api.deleteAgentProfile(target.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete agent.');
+      setProfiles(before);
+    }
+  }, [api, deleteTarget, profiles]);
+
+  const panelOpen = selected !== null;
+
+  // Draggable divider between the list and the detail panel, persisted so the
+  // split survives navigation. Same behaviour as the automation page.
+  const [listWidth, setListWidth] = useState(380);
+  const listWidthRef = useRef(listWidth);
+  listWidthRef.current = listWidth;
+
+  useEffect(() => {
+    const saved = Number(window.localStorage.getItem(LIST_WIDTH_KEY));
+    if (saved >= 280 && saved <= 720) setListWidth(saved);
+  }, []);
+
+  const startDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = listWidthRef.current;
+    let latest = startW;
+    const onMove = (ev: MouseEvent) => {
+      latest = Math.max(280, Math.min(720, startW + (ev.clientX - startX)));
+      setListWidth(latest);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+      try {
+        window.localStorage.setItem(LIST_WIDTH_KEY, String(Math.round(latest)));
+      } catch {
+        /* ignore */
+      }
+    };
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, []);
+
+  return (
+    <main className="flex h-full overflow-hidden">
+      <div
+        className="flex min-w-0 shrink-0 flex-col"
+        style={panelOpen ? { width: listWidth } : { flex: 1 }}
+      >
+        {/* On desktop this header is the window titlebar: a drag region with the
+            controls opting back out via NO_DRAG (and the collapsed-sidebar lead
+            clearing the macOS traffic lights). */}
+        <div
+          style={DRAG_REGION}
+          className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4"
+        >
+          <DesktopCollapsedLead />
+          <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <h1 className="shrink-0 text-sm font-medium">Agents</h1>
+          <div style={NO_DRAG} className="ml-auto flex items-center gap-2">
+            <Button
+              size="sm"
+              className="h-7 gap-1 text-xs"
+              onClick={() => void handleCreate()}
+              disabled={!api || creating}
+            >
+              {creating ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Plus className="size-3.5" />
+              )}
+              New agent
+            </Button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="border-b border-border bg-destructive/10 px-4 py-2 text-sm text-destructive">
+            {error}
+          </div>
+        )}
+
+        {isLoading ? (
+          <div className="flex flex-1 items-center justify-center text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+          </div>
+        ) : profiles.length === 0 ? (
+          <EmptyState onCreate={() => void handleCreate()} disabled={!api || creating} />
+        ) : (
+          <AgentList
+            profiles={profiles}
+            catalog={catalog}
+            selectedId={selectedId}
+            onSelect={(p) => setSelectedId(p.id)}
+            onDelete={(p) => setDeleteTarget(p)}
+            wide={!panelOpen}
+          />
+        )}
+      </div>
+
+      {panelOpen && api && (
+        <>
+          {/* Thin divider with a wider invisible hit area for grabbing. */}
+          <div
+            onMouseDown={startDrag}
+            className="relative w-px shrink-0 cursor-col-resize bg-border transition-colors before:absolute before:inset-y-0 before:-left-1.5 before:-right-1.5 before:content-[''] hover:bg-primary/40"
+            title="Drag to resize"
+          />
+          <div className="min-w-0 flex-1">
+            <AgentDetailPanel
+              key={selected.id}
+              api={api}
+              profile={selected}
+              catalog={catalog}
+              onReplace={replace}
+              onDelete={(p) => setDeleteTarget(p)}
+              onClose={() => setSelectedId(null)}
+            />
+          </div>
+        </>
+      )}
+
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete agent</DialogTitle>
+            <DialogDescription>
+              {/* Deleting is safe by design: an automation that referenced this
+                  agent falls back to the configuration it saved alongside the
+                  reference, so a scheduled run never lands without one. */}
+              Delete{deleteTarget ? ` “${deleteTarget.name}”` : ''}? Sessions it already
+              started are unaffected, and automations that use it keep running off
+              their saved configuration.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => void confirmDelete()}>
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </main>
+  );
+}
+
+function EmptyState({ onCreate, disabled }: { onCreate: () => void; disabled: boolean }) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+      <Bot className="size-8 text-muted-foreground/50" />
+      <h2 className="mt-4 text-sm font-medium">No agents yet</h2>
+      <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+        An agent saves a provider, model and instructions under one name, so you can
+        pick it in one click when you start a session or schedule an automation.
+      </p>
+      <Button size="sm" className="mt-4 gap-1 text-xs" onClick={onCreate} disabled={disabled}>
+        <Plus className="size-3.5" />
+        New agent
+      </Button>
     </div>
   );
 }

@@ -48,6 +48,7 @@ from vicoa.sdk.async_client import AsyncVicoaClient
 from vicoa.sdk.client import VicoaClient
 from vicoa.sdk.exceptions import AuthenticationError, APIError
 from vicoa.utils import get_project_path
+from integrations.utils.heartbeat import next_interval_from_response
 from integrations.cli_wrappers.claude_code.session_reset_handler import (
     SessionResetHandler,
 )
@@ -474,6 +475,7 @@ class ClaudeWrapper:
         jitter = random.uniform(0, 2.0)
         time.sleep(jitter)
         while self.running:
+            interval = self.heartbeat_interval
             try:
                 resp = session.post(url, timeout=10)
                 if resp.status_code == 401:
@@ -499,10 +501,16 @@ class ClaudeWrapper:
                     self.log(
                         f"[WARN] Heartbeat failed {resp.status_code}: {resp.text[:120]}"
                     )
+                else:
+                    # Server-driven cadence (integrations/utils/heartbeat.py).
+                    try:
+                        interval = next_interval_from_response(resp.json(), interval)
+                    except ValueError:
+                        pass
             except Exception as e:
                 self.log(f"[WARN] Heartbeat error: {e}")
             # Sleep interval with small jitter
-            delay = self.heartbeat_interval + random.uniform(-2.0, 2.0)
+            delay = interval + random.uniform(-2.0, 2.0)
             if delay < 5:
                 delay = 5
             for _ in range(int(delay * 10)):

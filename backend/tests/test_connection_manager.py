@@ -406,3 +406,97 @@ def test_close_user_swallows_exceptions_from_callback() -> None:
 
     assert manager.close_user("u1") == 2  # both attempted
     assert good_calls == ["good"]  # second callback still ran
+
+
+async def test_enqueue_from_a_worker_thread_lands_on_the_owning_loop() -> None:
+    """A broadcast fired inside a threadpool commit must reach the writer.
+
+    `after_commit` runs the broadcast on whichever thread committed. The
+    outbox is an asyncio.Queue owned by the endpoint's loop, so a foreign
+    thread must hop via `call_soon_threadsafe` rather than touch it directly.
+    """
+    manager = ConnectionManager()
+    conn = _conn("c1", "u1", "user-scoped", "user:u1:user-scoped")
+    assert conn.loop is asyncio.get_running_loop()
+    manager.register(conn)
+
+    def _from_thread() -> None:
+        manager.broadcast_update("u1", {"entity": "x"}, rooms=["user:u1:user-scoped"])
+
+    await asyncio.to_thread(_from_thread)
+
+    frame = await asyncio.wait_for(conn.outbox.get(), timeout=2.0)
+    assert frame == {"type": "update", "payload": {"entity": "x"}}
+
+
+async def test_enqueue_on_the_owning_loop_is_immediate() -> None:
+    conn = _conn("c1", "u1", "user-scoped", "user:u1:user-scoped")
+    conn.enqueue({"type": "ping"})
+    assert conn.outbox.get_nowait() == {"type": "ping"}
+
+
+def test_enqueue_without_a_loop_is_a_direct_put() -> None:
+    """Sync tests build connections with no running loop; that stays a plain put."""
+    conn = _conn("c1", "u1", "user-scoped", "user:u1:user-scoped")
+    assert conn.loop is None
+    conn.enqueue({"type": "ping"})
+    assert conn.outbox.get_nowait() == {"type": "ping"}
+
+
+# ----- presence indexes (servers/presence.py reads these) -----
+
+
+def _session_conn(connection_id: str, user_id: str, instance_id: str) -> Connection:
+    return Connection(
+        connection_id=connection_id,
+        user_id=user_id,
+        scope="session-scoped",
+        rooms=frozenset({f"user:{user_id}:session:{instance_id}"}),
+        instance_id=instance_id,
+    )
+
+
+def test_session_socket_presence_follows_register_and_unregister() -> None:
+    manager = ConnectionManager()
+    conn = _session_conn("c1", "u1", "inst-1")
+    assert not manager.is_session_connected("inst-1")
+
+    manager.register(conn)
+    assert manager.is_session_connected("inst-1")
+    assert manager.connected_sessions() == {"inst-1": "u1"}
+
+    manager.unregister(conn)
+    assert not manager.is_session_connected("inst-1")
+    assert manager.connected_sessions() == {}
+
+
+def test_a_reconnect_racing_the_old_socket_keeps_the_session_present() -> None:
+    """Both sockets are indexed; the id stays connected until the last leaves."""
+    manager = ConnectionManager()
+    old, new = _session_conn("c1", "u1", "inst-1"), _session_conn("c2", "u1", "inst-1")
+    manager.register(old)
+    manager.register(new)
+    manager.unregister(old)
+    assert manager.is_session_connected("inst-1")
+    manager.unregister(new)
+    assert not manager.is_session_connected("inst-1")
+
+
+def test_machine_socket_presence_and_dashboard_users() -> None:
+    manager = ConnectionManager()
+    daemon = Connection(
+        connection_id="d1",
+        user_id="u1",
+        scope="machine-scoped",
+        rooms=frozenset({"user:u1:machine:m1"}),
+        machine_id="m1",
+    )
+    web = _conn("w1", "u2", "user-scoped", "user:u2:user-scoped")
+    manager.register(daemon)
+    manager.register(web)
+    assert manager.is_machine_connected("m1")
+    assert manager.connected_machines() == {"m1": "u1"}
+    # Only a user-scoped socket counts as a dashboard.
+    assert manager.users_with_dashboards() == ["u2"]
+    manager.unregister(daemon)
+    assert not manager.is_machine_connected("m1")

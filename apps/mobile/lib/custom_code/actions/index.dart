@@ -67,7 +67,7 @@ export 'api_automations.dart'
 export 'api_get_machines.dart' show apiGetMachines;
 export 'api_get_activity.dart' show apiGetActivity;
 export 'api_get_machine_by_id.dart' show apiGetMachineById;
-export 'api_get_machine_agent_models.dart' show apiGetMachineAgentModels;
+export 'api_get_machine_agent_models.dart' show apiGetMachineAgentModels, MachineAgentModelsCache;
 export 'api_rename_machine.dart' show apiRenameMachine;
 export 'api_remove_machine.dart' show apiRemoveMachine;
 export 'api_get_instance_messages.dart' show apiGetInstanceMessages;
