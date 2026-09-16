@@ -1965,6 +1965,10 @@ class MachineDaemon:
             from vicoa.rpc import git_ops
 
             return git_ops.git_commit(**(frame.get("params") or {}))
+        if method == "github-pr-list":
+            from vicoa.rpc import github_ops
+
+            return github_ops.github_pr_list(**(frame.get("params") or {}))
         if method == "git-worktree-list":
             from vicoa.rpc import worktree_ops
 
@@ -2038,6 +2042,7 @@ class MachineDaemon:
             "git-stage",
             "git-unstage",
             "git-commit",
+            "github-pr-list",
             "git-worktree-list",
             "git-worktree-remove",
             "worktree-trust-grant",

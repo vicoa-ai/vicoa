@@ -1,4 +1,5 @@
 import { getRpcClient, RpcError } from '@/lib/ws-client';
+import type { PrInfo } from '@/components/dashboard/pr-status';
 
 export type RpcCode =
   | 'path_not_found'
@@ -628,4 +629,61 @@ export async function rpcOpenPath(
   if (typeof result.error === 'string') {
     throw new RpcError(result.error);
   }
+}
+
+/**
+ * Pull-request state for every branch of the repo containing `cwd`, keyed by
+ * branch name. Resolves to an empty map on any failure — no `gh`, not signed
+ * in, no GitHub remote, an outage — because each of those means "this repo has
+ * no PR decoration to show", never "raise an error at the user".
+ *
+ * One call covers a whole repository. Callers join it locally against branches
+ * they already know rather than asking per branch; see the daemon's
+ * `github_ops` docstring for why that batching is load-bearing.
+ */
+export async function rpcGithubPrList(
+  machineId: string,
+  cwd: string,
+): Promise<Record<string, PrInfo>> {
+  const result = await getRpcClient(machineId).callRpc(machineId, 'github-pr-list', {
+    cwd,
+  });
+  if (typeof result.error === 'string') return {};
+  return (result.prs as Record<string, PrInfo>) ?? {};
+}
+
+/** How long a repo's PR map is reused before a later focus refetches it. */
+const PR_CACHE_TTL_MS = 60_000;
+
+const prCache = new Map<string, { at: number; value: Promise<Record<string, PrInfo>> }>();
+
+/**
+ * {@link rpcGithubPrList} behind a short shared TTL, keyed by machine + repo.
+ *
+ * Two surfaces call this: the sidebar (once per project, on window focus) and
+ * the session detail header (on open). Without a cache between them, opening a
+ * session would re-fetch a repo the sidebar just fetched, and a user
+ * alt-tabbing repeatedly would fire one network call per focus event. Unlike
+ * the local-git RPCs beside it, this one spends a GitHub API request from a
+ * per-account quota shared with the `gh` calls the agent itself makes, so it
+ * must not be driven directly by an event the user can repeat at will.
+ */
+export function rpcGithubPrListCached(
+  machineId: string,
+  cwd: string,
+): Promise<Record<string, PrInfo>> {
+  // machineId is a UUID, so a colon cannot straddle the two halves of the key.
+  const key = `${machineId}:${cwd}`;
+  const hit = prCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.at < PR_CACHE_TTL_MS) return hit.value;
+
+  const value = rpcGithubPrList(machineId, cwd).catch(() => {
+    // Never cache a rejection: a transient disconnect would otherwise suppress
+    // every retry for the rest of the TTL.
+    prCache.delete(key);
+    return {} as Record<string, PrInfo>;
+  });
+  prCache.set(key, { at: now, value });
+  return value;
 }

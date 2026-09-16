@@ -77,6 +77,18 @@
   --color-warning: hsl(var(--warning));
   --color-info: hsl(var(--info));
 
+  /* Pull-request review states. Deliberately GitHub's own Primer values rather
+     than our --success/--warning: green-open and purple-merged are a vocabulary
+     a developer already reads at a glance, and only because they are the exact
+     colours GitHub uses. Re-tinting them to our palette would keep the shape
+     and throw away the meaning. Check pass/fail reuse open/closed, as Primer
+     does. */
+  --color-pr-open: hsl(var(--pr-open));
+  --color-pr-merged: hsl(var(--pr-merged));
+  --color-pr-closed: hsl(var(--pr-closed));
+  --color-pr-draft: hsl(var(--pr-draft));
+  --color-pr-pending: hsl(var(--pr-pending));
+
   /* Chat surfaces: the user message bubble and the composer container. Own
      tokens so light can be tuned (reduced bubble, distinguishable composer)
      without disturbing dark. */
@@ -182,6 +194,14 @@
     --warning: 32 95% 44%;
     --info: 221 83% 53%;
 
+    /* PR states (light) — Primer fgColor-open/-done/-closed/-muted/-attention:
+       #1a7f37, #8250df, #cf222e, #59636e, #9a6700. */
+    --pr-open: 137 66% 30%;
+    --pr-merged: 261 69% 59%;
+    --pr-closed: 356 72% 47%;
+    --pr-draft: 211 11% 39%;
+    --pr-pending: 40 100% 30%;
+
     /* Chat surfaces (light). User bubble is a gentle, reduced tint (not the
        heavier --muted); composer is pure white so it pops off the #FDFCFC
        canvas (helped by its border + shadow). */
@@ -257,6 +277,14 @@
     --success: 160 84% 39%;
     --warning: 38 92% 50%;
     --info: 213 94% 68%;
+
+    /* PR states (dark) — Primer's dark ramp: #3fb950, #a371f7, #f85149,
+       #9198a1, #d29922. */
+    --pr-open: 128 49% 49%;
+    --pr-merged: 262 89% 71%;
+    --pr-closed: 3 93% 63%;
+    --pr-draft: 214 8% 60%;
+    --pr-pending: 41 72% 48%;
 
     /* Chat surfaces (dark) — unchanged from before: user bubble = --muted
        (#212B36), composer = --menu (#2D2D2D). Pinned here so dark is identical. */

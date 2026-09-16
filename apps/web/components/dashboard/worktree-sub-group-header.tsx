@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronRight, GitBranch, MoreHorizontal, Trash2, type LucideIcon } from 'lucide-react';
+import { ChevronRight, MoreHorizontal, Trash2, type LucideIcon } from 'lucide-react';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -15,6 +15,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { NewSessionButton } from '@/components/dashboard/new-session-button';
+import { PrHoverCard } from '@/components/dashboard/pr-hover-card';
+import { prPresentation, type PrInfo } from '@/components/dashboard/pr-status';
 
 interface WorktreeAction {
   key: string;
@@ -36,6 +38,10 @@ export interface WorktreeSubGroupHeaderProps {
       hover three-dot menu wired to this *same* action. Omitted for the main
       checkout and unmanaged worktrees, which render as a plain header. */
   onRequestDelete?: () => void;
+  /** This branch's pull request, when it has one. Recolors the branch icon and
+      adds the hover card; absent (no PR, no `gh`, no GitHub) renders the plain
+      grey branch icon this row has always shown. */
+  pr?: PrInfo | null;
 }
 
 /**
@@ -53,10 +59,17 @@ export function WorktreeSubGroupHeader({
   worktreeBranch,
   onNavigate,
   onRequestDelete,
+  pr,
 }: WorktreeSubGroupHeaderProps) {
   const actions: WorktreeAction[] = onRequestDelete
     ? [{ key: 'delete', icon: Trash2, label: 'Delete', onSelect: onRequestDelete }]
     : [];
+
+  const { icon: BranchIcon, className: branchIconClassName } = prPresentation(pr);
+  // One size for every state, PR or not. PR data lands a beat after the sidebar
+  // first paints, so a size that depended on it would jog every branch row in
+  // the list a second after load; only the glyph and colour may change.
+  const branchIcon = <BranchIcon className={cn('h-3 w-3 shrink-0', branchIconClassName)} />;
 
   const header = (
     // `select-none` stops a right-click from starting a text selection on the
@@ -68,7 +81,12 @@ export function WorktreeSubGroupHeader({
         aria-expanded={!collapsed}
         className="flex min-w-0 flex-1 items-center gap-1 text-left"
       >
-        <GitBranch className="h-2.5 w-2.5 shrink-0 text-muted-foreground/50" />
+        <PrHoverCard pr={pr} branch={worktreeBranch ?? label}>
+          {/* A span, not a button: the trigger sits inside the collapse button,
+              and hover cards open on hover anyway. Its panel is portaled out, so
+              its own buttons never nest inside this one. */}
+          <span className="flex shrink-0 items-center">{branchIcon}</span>
+        </PrHoverCard>
         <span className="truncate text-[11px] font-light text-muted-foreground/60">
           {label}
         </span>
