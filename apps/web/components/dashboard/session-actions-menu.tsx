@@ -1,7 +1,7 @@
 'use client';
 
 import type React from 'react';
-import { Archive, Check, CirclePlay, Copy, Mail, MoreHorizontal, Pencil, Pin, PinOff, Trash2, type LucideIcon } from 'lucide-react';
+import { Archive, Check, CirclePlay, Copy, Mail, MoreHorizontal, Pencil, Pin, PinOff, Share2, Trash2, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -34,6 +34,9 @@ export interface SessionActionsConfig {
   resumeBlockedLabel?: string | null;
   onPin?: () => void;
   isPinned?: boolean;
+  /** Open the share dialog (a read-only link; collaboration P4). Omitted where
+   *  the caller cannot mint one — e.g. logged-out desktop, non-owners. */
+  onShare?: () => void;
   extraActions?: Array<{ label: string; onClick: () => void }>;
 }
 
@@ -51,8 +54,8 @@ export interface SessionActionDescriptor {
 }
 
 /** Resolve the config into an ordered action list. Order is the canonical one
-    shared by every menu: extras, Resume, Pin, Rename, Copy ID, Unread, Archive,
-    Delete. Items whose handler/flag is absent are omitted. */
+    shared by every menu: extras, Resume, Pin, Share, Rename, Copy ID, Unread,
+    Archive, Delete. Items whose handler/flag is absent are omitted. */
 export function buildSessionActions({
   onRename,
   onCopyId,
@@ -68,6 +71,7 @@ export function buildSessionActions({
   resumeBlockedLabel = null,
   onPin,
   isPinned = false,
+  onShare,
   extraActions = [],
 }: SessionActionsConfig): SessionActionDescriptor[] {
   const actions: SessionActionDescriptor[] = [];
@@ -93,6 +97,9 @@ export function buildSessionActions({
       label: isPinned ? 'Unpin' : 'Pin',
       onSelect: onPin,
     });
+  }
+  if (onShare) {
+    actions.push({ key: 'share', icon: Share2, label: 'Share', onSelect: onShare });
   }
   if (onRename) {
     actions.push({ key: 'rename', icon: Pencil, label: 'Rename', onSelect: onRename });

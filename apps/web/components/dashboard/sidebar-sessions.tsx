@@ -11,6 +11,7 @@ import {
   Kanban,
   MoreHorizontal,
   Settings,
+  Share2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -84,6 +85,9 @@ import {
   DeleteSessionDialog,
   WorktreeDeleteDialog,
 } from '@/components/dashboard/session-dialogs';
+import { ShareLinkDialog, type ShareTarget } from '@/components/dashboard/share-link-dialog';
+import { isDesktopLocal } from '@/lib/runtime-config';
+import { projectRoleAtLeast } from '@/lib/backend-api';
 import {
   rpcGitStatus,
   rpcGitWorktreeList,
@@ -293,6 +297,10 @@ export function SidebarSessions({
 
   // Rename/delete confirmations reuse the shared dialogs, held locally.
   const [renameDialog, setRenameDialog] = useState({ open: false, sessionId: '', currentName: '' });
+  // Share dialog (collaboration P4). Links are minted on the cloud backend, so
+  // the logged-out desktop (local daemon only) has nothing to mint them with.
+  const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
+  const canShare = !isDesktopLocal();
   const [deleteDialog, setDeleteDialog] = useState({ open: false, sessionId: '', sessionName: '' });
   const [resumingId, setResumingId] = useState<string | null>(null);
 
@@ -923,6 +931,9 @@ export function SidebarSessions({
             : null,
       onPin: () => void handleTogglePin(instance),
       isPinned: pinned,
+      onShare: canShare
+        ? () => setShareTarget({ kind: 'session', instanceId: instance.id, title })
+        : undefined,
       onRename: () =>
         setRenameDialog({ open: true, sessionId: instance.id, currentName: instance.name ?? title }),
       onCopyId: () => void copySessionId(instance.id, instance.id),
@@ -1196,6 +1207,13 @@ export function SidebarSessions({
                 const dbProject = groupBy === 'project' ? projectsById.get(key) : undefined;
                 const canArchiveProject =
                   dbProject !== undefined && !dbProject.is_inbox && !dbProject.is_archived;
+                // Share links need the DB project and admin standing on it
+                // (an absent role reads as viewer — never as owner).
+                const canShareProject =
+                  canShare &&
+                  dbProject !== undefined &&
+                  !dbProject.is_inbox &&
+                  projectRoleAtLeast(dbProject.role, 'admin');
                 // "Project settings" opens the per-project pane in Settings:
                 // Display (name/icon) keys off project_id; the worktree-config
                 // section needs a machine + repo dir to route its daemon RPC.
@@ -1254,7 +1272,7 @@ export function SidebarSessions({
                         )}
                       />
                     </button>
-                    {(projectSettingsHref || canArchiveProject) && (
+                    {(projectSettingsHref || canArchiveProject || canShareProject) && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button
@@ -1274,6 +1292,17 @@ export function SidebarSessions({
                             >
                               <Settings className="h-3.5 w-3.5" />
                               Project settings
+                            </DropdownMenuItem>
+                          )}
+                          {canShareProject && dbProject && (
+                            <DropdownMenuItem
+                              className="cursor-pointer gap-2 text-xs"
+                              onSelect={() =>
+                                setShareTarget({ kind: 'project', projectId: dbProject.id, name: dbProject.name })
+                              }
+                            >
+                              <Share2 className="h-3.5 w-3.5" />
+                              Share project…
                             </DropdownMenuItem>
                           )}
                           {canArchiveProject && dbProject && (
@@ -1401,6 +1430,13 @@ export function SidebarSessions({
         sessionId={deleteDialog.sessionId}
         sessionName={deleteDialog.sessionName}
         onDelete={(id) => void handleDelete(id)}
+      />
+      <ShareLinkDialog
+        open={shareTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setShareTarget(null);
+        }}
+        target={shareTarget}
       />
       {enableWorktrees && (
         <WorktreeDeleteDialog

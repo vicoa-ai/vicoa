@@ -313,10 +313,33 @@ export function ReactionRow({
   reactions: TaskReactionSummary[];
   /** Resolves a nameless reactor to "You" rather than "Unknown". */
   viewer: Principal | null;
-  onToggle: (emoji: string) => void;
+  /** Omitted on a read-only surface (P4's public board): pills still show
+   *  who reacted, but nothing is clickable and there is no picker. */
+  onToggle?: (emoji: string) => void;
   className?: string;
 }) {
   const [picking, setPicking] = useState(false);
+  if (!onToggle) {
+    if (reactions.length === 0) return null;
+    return (
+      <div className={cn('flex flex-wrap items-center gap-1', className)}>
+        <TooltipProvider delayDuration={200}>
+          {reactions.map((reaction) => (
+            <Tooltip key={reaction.emoji}>
+              <TooltipTrigger asChild>
+                <span className="flex items-center gap-1 rounded-full border bg-muted/50 px-1.5 py-0.5 text-[11px]">
+                  {reaction.emoji} {reaction.count}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-56">
+                {describeReactors(reaction, viewer)}
+              </TooltipContent>
+            </Tooltip>
+          ))}
+        </TooltipProvider>
+      </div>
+    );
+  }
   return (
     <div className={cn('flex flex-wrap items-center gap-1', className)}>
       <TooltipProvider delayDuration={200}>
@@ -373,7 +396,7 @@ function CommentBody({
 }: {
   comment: TaskCommentResponse;
   viewer: Principal | null;
-  onToggleReaction: (commentId: string, emoji: string) => void;
+  onToggleReaction?: (commentId: string, emoji: string) => void;
 }) {
   const author = principalFromResponse(comment.author);
   return (
@@ -412,7 +435,7 @@ function CommentBody({
             className="mt-2"
             reactions={comment.reactions}
             viewer={viewer}
-            onToggle={(emoji) => onToggleReaction(comment.id, emoji)}
+            onToggle={onToggleReaction ? (emoji) => onToggleReaction(comment.id, emoji) : undefined}
           />
         </>
       )}
@@ -428,7 +451,7 @@ function ThreadCard({
 }: {
   thread: Thread;
   viewer: Principal | null;
-  onToggleReaction: (commentId: string, emoji: string) => void;
+  onToggleReaction?: (commentId: string, emoji: string) => void;
   onReply?: (parentCommentId: string, body: string) => Promise<void>;
 }) {
   return (
@@ -604,7 +627,8 @@ export function TaskTimeline({
   sessions: AgentInstanceResponse[];
   /** The signed-in user, so a nameless principal can still read as "You". */
   viewer: Principal | null;
-  onToggleCommentReaction: (commentId: string, emoji: string) => void;
+  /** Omitted on a read-only surface (P4's public board): reactions are shown, not toggled. */
+  onToggleCommentReaction?: (commentId: string, emoji: string) => void;
   /** Omitted on a read-only surface (P4's public board): no composer, no Reply. */
   onReply?: (parentCommentId: string, body: string) => Promise<void>;
 }) {

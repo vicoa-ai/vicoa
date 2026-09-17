@@ -25,6 +25,7 @@
  * see the `name` prop on `Principal`.
  */
 
+import { useEffect, useState } from 'react';
 import { Bot, User as UserIcon, Users } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -81,7 +82,16 @@ export function PrincipalAvatar({
   const label = title ?? principal.name ?? undefined;
 
   const src = principalAvatarSrc(principal);
-  if (src) {
+  // The image rides the cookie-authed proxy, which a public share page's
+  // anonymous visitor cannot use (401) — and any image can 404 after a
+  // replacement. Either way the next rung of the chain is the right answer,
+  // not a broken-image glyph. Reset when the src changes so a fixed image
+  // gets another chance.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  useEffect(() => {
+    setFailedSrc(null);
+  }, [src]);
+  if (src && failedSrc !== src) {
     return (
       // eslint-disable-next-line @next/next/no-img-element -- authed proxy stream, not a static asset
       <img
@@ -90,6 +100,7 @@ export function PrincipalAvatar({
         aria-hidden="true"
         title={label}
         className={cn('object-cover', box)}
+        onError={() => setFailedSrc(src)}
       />
     );
   }

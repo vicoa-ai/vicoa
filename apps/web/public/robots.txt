@@ -12,6 +12,7 @@ Crawl-delay: 1
 # Block access to admin and API routes
 Disallow: /api/
 Disallow: /dashboard/
+Disallow: /s/
 Disallow: /admin/
 Disallow: /_next/
 Disallow: /private/

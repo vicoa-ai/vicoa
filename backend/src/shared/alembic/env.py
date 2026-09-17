@@ -24,6 +24,9 @@ from shared.database import agent_profile_models as _agent_profile_models  # noq
 # (collaboration P3 — the project-anchored access core).
 from shared.database import collab_models as _collab_models  # noqa: F401
 
+# Same again for share_links (collaboration P4 — public share links).
+from shared.database import share_models as _share_models  # noqa: F401
+
 # Same again for the built-in auth provider's user_credentials /
 # auth_email_codes tables (empty in a Supabase-backed deployment).
 from shared.database import auth_models as _auth_models  # noqa: F401

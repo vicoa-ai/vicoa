@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import { File as FileIcon } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 
@@ -45,13 +45,37 @@ export function formatFileSize(bytes: number): string {
   return `${size < 10 ? size.toFixed(1) : Math.round(size)} ${units[unit]}`;
 }
 
+type AttachmentUrlResolver = (attachmentId: string) => string;
+
+/** The dashboard default: the cookie-authenticated same-origin proxy. */
+const defaultAttachmentUrl: AttachmentUrlResolver = (id) => `/api/attachments/${id}`;
+
+const AttachmentUrlContext = createContext<AttachmentUrlResolver>(defaultAttachmentUrl);
+
+/**
+ * Where attachment bytes come from on this surface. The dashboard needs no
+ * provider; a public share page points at the share-scoped backend endpoint,
+ * where the link token — not a cookie — authorizes the fetch.
+ */
+export function AttachmentUrlProvider({
+  resolve,
+  children,
+}: {
+  resolve: AttachmentUrlResolver;
+  children: ReactNode;
+}) {
+  const value = useMemo(() => resolve, [resolve]);
+  return <AttachmentUrlContext.Provider value={value}>{children}</AttachmentUrlContext.Provider>;
+}
+
 /**
  * Attachments inside a chat bubble. Images load through the cookie-authenticated
- * /api/attachments/[id] proxy and open a lightbox on click; other files render
- * as a downloadable chip.
+ * /api/attachments/[id] proxy (or whatever `AttachmentUrlProvider` says) and
+ * open a lightbox on click; other files render as a downloadable chip.
  */
 export function ChatAttachments({ attachments }: { attachments: ChatAttachmentMeta[] }) {
   const [lightboxId, setLightboxId] = useState<string | null>(null);
+  const attachmentUrl = useContext(AttachmentUrlContext);
 
   if (attachments.length === 0) return null;
 
@@ -63,7 +87,7 @@ export function ChatAttachments({ attachments }: { attachments: ChatAttachmentMe
             // eslint-disable-next-line @next/next/no-img-element
             <img
               key={attachment.id}
-              src={`/api/attachments/${attachment.id}`}
+              src={attachmentUrl(attachment.id)}
               alt={attachment.filename ?? 'Image attachment'}
               width={attachment.width}
               height={attachment.height}
@@ -74,7 +98,7 @@ export function ChatAttachments({ attachments }: { attachments: ChatAttachmentMe
           ) : (
             <a
               key={attachment.id}
-              href={`/api/attachments/${attachment.id}`}
+              href={attachmentUrl(attachment.id)}
               download={attachment.filename ?? undefined}
               target="_blank"
               rel="noopener noreferrer"
@@ -101,7 +125,7 @@ export function ChatAttachments({ attachments }: { attachments: ChatAttachmentMe
           {lightboxId && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={`/api/attachments/${lightboxId}`}
+              src={attachmentUrl(lightboxId)}
               alt="Image attachment"
               className="max-h-[85vh] max-w-full w-auto h-auto object-contain rounded-md"
             />

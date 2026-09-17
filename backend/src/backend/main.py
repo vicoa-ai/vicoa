@@ -37,6 +37,7 @@ from .api import (
     tasks,
     automations,
     search,
+    shares,
     users,
 )
 from shared.auth import resolve_auth_provider_name
@@ -183,6 +184,8 @@ app.include_router(tasks.router, prefix=settings.api_v1_prefix)
 app.include_router(automations.router, prefix=settings.api_v1_prefix)
 app.include_router(search.router, prefix=settings.api_v1_prefix)
 app.include_router(users.router, prefix=settings.api_v1_prefix)
+app.include_router(shares.router, prefix=settings.api_v1_prefix)
+app.include_router(shares.public_router, prefix=settings.api_v1_prefix)
 
 # Sign-up / sign-in endpoints only exist when this deployment *is* the identity
 # provider. Mounting them against a Supabase-backed deployment would add a

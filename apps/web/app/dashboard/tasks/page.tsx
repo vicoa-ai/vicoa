@@ -13,6 +13,7 @@ import {
   List,
   ListTodo,
   Plus,
+  Share2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -51,6 +52,9 @@ import {
   TaskSettingsHandlers,
 } from './task-settings-dialog';
 import { TaskViewsBar } from './task-views-bar';
+import { ShareLinkDialog, type ShareTarget } from '@/components/dashboard/share-link-dialog';
+import { isDesktopLocal } from '@/lib/runtime-config';
+import { projectRoleAtLeast } from '@/lib/backend-api';
 import { TaskDisplayMenu } from './task-display-menu';
 import { TaskListSkeleton } from './task-skeleton';
 import { getTasksCache, setTasksCache } from './task-cache';
@@ -661,6 +665,14 @@ function TasksPageInner() {
   }, [api, dialogTaskId]);
 
   const filterProject = projects.find((p) => p.id === projectFilter);
+  // Share the board (collaboration P4): one project at a time, admin standing,
+  // cloud backend only. "All projects" has nothing to point a link at.
+  const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
+  const canShareBoard =
+    !isDesktopLocal() &&
+    filterProject !== undefined &&
+    !filterProject.is_inbox &&
+    projectRoleAtLeast(filterProject.role, 'admin');
 
   return (
     <main className="flex h-full flex-col overflow-hidden">
@@ -767,12 +779,39 @@ function TasksPageInner() {
           onSortDirectionChange={(value) => updateActiveView({ sortDirection: value })}
         />
 
+        {canShareBoard && filterProject && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 text-xs"
+            title="Share this board with a link"
+            onClick={() =>
+              setShareTarget({
+                kind: 'project',
+                projectId: filterProject.id,
+                name: filterProject.name,
+                initialKind: 'project_board',
+              })
+            }
+          >
+            <Share2 className="size-3.5" />
+            <span className="hidden md:inline">Share</span>
+          </Button>
+        )}
+
         <Button size="sm" className="h-7 gap-1 text-xs" onClick={() => openCreateDialog()} disabled={!api}>
           <Plus className="size-3.5" />
           New task
         </Button>
         </div>
       </div>
+      <ShareLinkDialog
+        open={shareTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setShareTarget(null);
+        }}
+        target={shareTarget}
+      />
 
       {/* Body */}
       {isLoading ? (

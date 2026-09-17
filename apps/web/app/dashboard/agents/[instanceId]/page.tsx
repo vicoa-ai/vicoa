@@ -13,7 +13,7 @@ import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { attachSelectionDragFix } from '@/lib/selection-drag-fix';
 import { attachSelectionDragTrace, selectionTraceEnabled } from '@/lib/selection-drag-trace';
 import { DesktopTitlebarLead, DesktopWindowControlsSpacer, useDesktopWindows } from '@/components/desktop/window-chrome';
-import { getDesktopConfig } from '@/lib/runtime-config';
+import { getDesktopConfig, isDesktopLocal } from '@/lib/runtime-config';
 import { trackFirstMessageSent } from '@/lib/desktop-telemetry';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
@@ -24,18 +24,20 @@ import { getMessageStore } from '@/lib/message-store';
 import { useMessageStream } from '@/lib/hooks/use-ws-stream';
 import { extractMessageOptions, formatTaskNotifications } from '@/components/ui/message-markdown-utils';
 import { GitBranchBadge } from '@/components/dashboard/git-branch-badge';
-import { ToolUseGroup, isToolUseContent, parseToolUse } from '@/components/dashboard/tool-use-display';
-import { SubagentGroup } from '@/components/dashboard/subagent-group';
-import { MessageItem, resolveAgentType, DateSeparator, ThinkingIndicator, vibingMessages, getMessageVisibleText } from '@/components/dashboard/chat-message-item';
+import { resolveAgentType, vibingMessages, getMessageVisibleText } from '@/components/dashboard/chat-message-item';
 import { ChatFindBar } from '@/components/dashboard/chat-find-bar';
 import { FindHighlightProvider } from '@/components/dashboard/chat-find-context';
 import { FileLinkProvider } from '@/components/dashboard/file-link-context';
 import type { WorkspaceFileLink } from '@/lib/message-links';
-import { groupSubagents } from '@/components/dashboard/subagent-grouping';
+import {
+  buildTranscriptItems,
+  computeTranscriptTurns,
+  hasTranscriptMessages,
+  TranscriptRow,
+  type TranscriptItem,
+} from '@/components/dashboard/session-transcript';
 import { getChatItemSearchText } from '@/lib/chat-search';
 import { buildForkTranscript, saveForkContext } from '@/lib/fork-session';
-import { computeTurnEnds, type TurnMessageEntry } from '@/lib/agent-turns';
-import { parseThinkingPayload } from '@/components/dashboard/thinking-card';
 import { FilesGitPanel, FilesGitPanelToggle, OpenInSubMenu, usePanelState, type PanelPendingAction } from '@/components/files-git-panel';
 import { ChatInput, PermissionModeValue, OpencodeAgentModeValue, type ChatUploadedAttachment, type ChatInputHandle } from '@/components/chat-input';
 import { collectComposerDrop } from '@/lib/chat-drop';
@@ -46,6 +48,7 @@ import { SessionActionsMenu } from '@/components/dashboard/session-actions-menu'
 import { FileSearchPalette } from '@/components/dashboard/file-search-palette';
 import { toAbsolutePath } from '@/lib/utils';
 import { RenameSessionDialog, DeleteSessionDialog, CompleteSessionDialog } from '@/components/dashboard/session-dialogs';
+import { ShareLinkDialog } from '@/components/dashboard/share-link-dialog';
 import { useSessionOperations, useCopyToClipboard } from '@/lib/hooks/use-session-operations';
 import { useNow, useSessionLiveness } from '@/lib/hooks/use-session-liveness';
 import { blocksSending, isClosedByDesign, liveStateHint } from '@/lib/session-liveness';
@@ -155,18 +158,7 @@ function buildOptimisticUserMetadata(
   };
 }
 
-type ChatItem =
-  | { type: 'separator'; date: string; key: string }
-  | { type: 'message'; message: MessageResponse; key: string }
-  | { type: 'tool-group'; messages: MessageResponse[]; key: string }
-  | {
-      type: 'subagent-group';
-      messages: MessageResponse[];
-      subagentType: string;
-      description: string;
-      key: string;
-    }
-  | { type: 'thinking'; key: string };
+type ChatItem = TranscriptItem;
 
 const USER_SENDER_TYPES = new Set(['user', 'human', 'USER', 'HUMAN']);
 
@@ -245,6 +237,9 @@ function AgentInstanceContent() {
     sessionId: string;
     sessionName: string;
   }>({ open: false, sessionId: '', sessionName: '' });
+  // Share dialog (collaboration P4). Only the owner / a project admin can mint
+  // a link, and only against the cloud backend (not the logged-out desktop).
+  const [shareOpen, setShareOpen] = useState(false);
   const panel = usePanelState(instanceId);
   const isWindows = useDesktopWindows();
   // Handed to FilesGitPanel so a ⌘T pressed while the panel is closed can still
@@ -1367,99 +1362,26 @@ function AgentInstanceContent() {
     [hasOlderMessages, isLoadingOlder],
   );
 
-  const chatItems = useMemo<ChatItem[]>(() => {
-    const itemsAgentType = resolveAgentType(instance?.agent_type_name || undefined);
-    const items: ChatItem[] = [];
-    for (const group of groupedMessages) {
-      const filtered = group.messages.filter(
-        (msg) => msg.content.trim() !== 'Waiting for your input...' && !shouldHideControlMessage(msg),
-      );
-      if (filtered.length === 0) continue;
-      const firstId = filtered[0].id;
-      items.push({ type: 'separator', date: group.date, key: `sep-${group.date}-${firstId}` });
-      // Sub-agent (Task tool) child messages are bucketed by tool_use_id,
-      // anchored at each group's first occurrence, BEFORE tool-run collapsing
-      // runs below — so interleaved parallel sub-agents form separate groups
-      // instead of their messages getting folded into the flat tool-group
-      // stream. Non-subagent messages pass through untouched, in place.
-      const subagentBucketed = groupSubagents(filtered);
-
-      // Consecutive agent tool-use messages collapse into one 'tool-group'
-      // item ("N tool uses"); a run of one renders as a single tool line.
-      // The key is the run's first message id, so a run that grows while
-      // streaming keeps its identity (and expansion state).
-      let toolRun: MessageResponse[] = [];
-      const flushToolRun = () => {
-        if (toolRun.length === 0) return;
-        items.push({ type: 'tool-group', messages: toolRun, key: `tools-${toolRun[0].id}` });
-        toolRun = [];
-      };
-      for (const bucketed of subagentBucketed) {
-        // A subagent-group is an opaque boundary for tool-run collapsing —
-        // like an interactive message, it flushes whatever run preceded it
-        // and is pushed as-is (its own children aren't re-collapsed here;
-        // they render as full messages inside the group, per the brief).
-        if (bucketed.type === 'subagent-group') {
-          flushToolRun();
-          items.push(bucketed);
-          continue;
-        }
-        const msg = bucketed.message;
-        // Interactive messages (AskUserQuestion, permission prompts) look like
-        // tool uses but must render through MessageItem so their panels /
-        // option buttons show — never fold them into a tool group.
-        // Reasoning rows render as their own collapsed "Thinking" card via
-        // MessageItem — never fold them into a tool-group (which would bypass
-        // that card and render them as a tool line).
-        const isInteractive =
-          msg.requires_user_input ||
-          parseAskUserQuestionPayload(msg) !== null ||
-          parseThinkingPayload(msg) !== null;
-        const isToolUse =
-          !isInteractive &&
-          !USER_SENDER_TYPES.has(msg.sender_type) &&
-          parseToolUse(msg.content, itemsAgentType) !== null;
-        if (isToolUse) {
-          toolRun.push(msg);
-        } else {
-          flushToolRun();
-          items.push({ type: 'message', message: msg, key: msg.id });
-        }
-      }
-      flushToolRun();
-    }
-    if (showThinking && thinkingSettingEnabled !== false) {
-      items.push({ type: 'thinking', key: 'thinking' });
-    }
-    return items;
-  }, [groupedMessages, showThinking, thinkingSettingEnabled, instance?.agent_type_name]);
+  const chatItems = useMemo<ChatItem[]>(
+    () =>
+      buildTranscriptItems(groupedMessages, {
+        agentTypeName: instance?.agent_type_name,
+        showThinking: showThinking && thinkingSettingEnabled !== false,
+      }),
+    [groupedMessages, showThinking, thinkingSettingEnabled, instance?.agent_type_name],
+  );
 
   // Turn-end lookup for the hover footer: only the last agent message of each
   // run since the previous user message carries copy/fork, and copying it
   // yields that whole turn. Derived from `chatItems` rather than the raw
   // messages so it sees exactly what renders — anything folded into a
   // tool-group or a thinking card is inside the turn but never anchors it.
-  const turnCopyText = useMemo(() => {
-    const entries: TurnMessageEntry[] = [];
-    for (const item of chatItems) {
-      if (item.type !== 'message') continue;
-      const text = getMessageVisibleText(item.message);
-      const kind: TurnMessageEntry['kind'] = USER_SENDER_TYPES.has(item.message.sender_type)
-        ? 'user'
-        : parseThinkingPayload(item.message) || isToolUseContent(text)
-          ? 'other'
-          : 'agent';
-      entries.push({ id: item.message.id, kind, text });
-    }
-    return computeTurnEnds(entries);
-  }, [chatItems]);
+  const turnCopyText = useMemo(() => computeTranscriptTurns(chatItems), [chatItems]);
 
   // Whether the list has any real message rows. A lone "thinking" item doesn't
   // count — we render the SessionEmptyState (not the virtual list) until a real
   // message arrives, so the Virtuoso-tied overlays/buttons gate on this too.
-  const hasMessageItems = chatItems.some(
-    (it) => it.type === 'message' || it.type === 'tool-group' || it.type === 'subagent-group',
-  );
+  const hasMessageItems = hasTranscriptMessages(chatItems);
 
   // Expanded tool rows/groups (and subagent-groups — same key-space, no
   // collision since their keys are prefixed distinctly: 'tools-'/message id
@@ -2333,6 +2255,9 @@ function AgentInstanceContent() {
                 }
                 onPin={handleTogglePin}
                 isPinned={!!instance.pinned_at}
+                onShare={
+                  !isDesktopLocal() && instance.is_owner !== false ? () => setShareOpen(true) : undefined
+                }
                 onRename={handleOpenRenameDialog}
                 onCopyId={() => {
                   void handleCopySessionId();
@@ -2503,95 +2428,22 @@ function AgentInstanceContent() {
             // and the only height changes left are real per-message growth.
             increaseViewportBy={{ top: 3000, bottom: 1200 }}
             computeItemKey={(_, item) => item.key}
-            itemContent={(_, item) => {
-              if (item.type === 'separator') {
-                return (
-                  <div className="max-w-4xl mx-auto px-6">
-                    <DateSeparator date={item.date} />
-                  </div>
-                );
-              }
-              if (item.type === 'thinking') {
-                return (
-                  <div className="max-w-4xl mx-auto px-6">
-                    <ThinkingIndicator vibingMessage={vibingMessage} />
-                  </div>
-                );
-              }
-              if (item.type === 'tool-group') {
-                return (
-                  <div className="max-w-4xl mx-auto px-6">
-                    <div className="flex justify-start mb-1">
-                      <div
-                        className={`rounded-xl px-4 py-0.5 flex-1 min-w-0 text-sm leading-relaxed font-mono ${
-                          findActiveKey === item.key
-                            ? 'find-active-message ring-2 ring-amber-400 dark:ring-amber-500'
-                            : ''
-                        }`}
-                      >
-                        <ToolUseGroup
-                          messages={item.messages}
-                          agentType={agentType}
-                          expanded={expandedToolItems.has(item.key)}
-                          onToggle={() => toggleToolItem(item.key)}
-                          projectPath={projectRootPath}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                );
-              }
-              if (item.type === 'subagent-group') {
-                return (
-                  <div className="max-w-4xl mx-auto px-6">
-                    <div className="flex justify-start mb-1">
-                      <div
-                        className={`rounded-xl px-4 py-0.5 flex-1 min-w-0 text-sm leading-relaxed font-mono ${
-                          findActiveKey === item.key
-                            ? 'find-active-message ring-2 ring-amber-400 dark:ring-amber-500'
-                            : ''
-                        }`}
-                      >
-                        <SubagentGroup
-                          messages={item.messages}
-                          subagentType={item.subagentType}
-                          description={item.description}
-                          expanded={expandedToolItems.has(item.key)}
-                          onToggle={() => toggleToolItem(item.key)}
-                          agentType={agentType}
-                          projectPath={projectRootPath}
-                          renderMessage={(message) => (
-                            <MessageItem
-                              message={message}
-                              onOptionClick={handleOptionClick}
-                              onAskUserQuestionSubmit={handleAskUserQuestionSubmit}
-                              onAskUserQuestionCancel={handleAskUserQuestionCancel}
-                              agentTypeName={instance.agent_type_name}
-                              projectPath={projectRootPath}
-                              compact
-                            />
-                          )}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                );
-              }
-              return (
-                <div className="max-w-4xl mx-auto px-6">
-                  <MessageItem
-                    message={item.message}
-                    onOptionClick={handleOptionClick}
-                    onAskUserQuestionSubmit={handleAskUserQuestionSubmit}
-                    onAskUserQuestionCancel={handleAskUserQuestionCancel}
-                    onFork={handleForkMessage}
-                    turnCopyText={turnCopyText.get(item.message.id)}
-                    agentTypeName={instance.agent_type_name}
-                    projectPath={projectRootPath}
-                  />
-                </div>
-              );
-            }}
+            itemContent={(_, item) => (
+              <TranscriptRow
+                item={item}
+                agentTypeName={instance.agent_type_name}
+                projectPath={projectRootPath}
+                expandedKeys={expandedToolItems}
+                onToggleExpanded={toggleToolItem}
+                findActiveKey={findActiveKey}
+                vibingMessage={vibingMessage}
+                onOptionClick={handleOptionClick}
+                onAskUserQuestionSubmit={handleAskUserQuestionSubmit}
+                onAskUserQuestionCancel={handleAskUserQuestionCancel}
+                onFork={handleForkMessage}
+                turnCopyText={turnCopyText}
+              />
+            )}
             context={virtuosoContext}
             components={VIRTUOSO_COMPONENTS}
           />
@@ -2804,6 +2656,15 @@ function AgentInstanceContent() {
       )}
 
       {/* Session Dialogs */}
+      <ShareLinkDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        target={
+          instance
+            ? { kind: 'session', instanceId: instance.id, title: instance.name || 'Untitled session' }
+            : null
+        }
+      />
       <RenameSessionDialog
         open={renameDialog.open}
         onOpenChange={(open) => setRenameDialog(prev => ({ ...prev, open }))}

@@ -296,6 +296,9 @@ export interface AgentInstanceDetail {
   worktree_name?: string | null;
   /** See AgentInstanceResponse.live_state — prefer useSessionLiveness. */
   live_state?: LiveState;
+  /** Whether the caller owns the session (vs. reaching it through a share). */
+  is_owner?: boolean;
+  access_level?: 'READ' | 'WRITE';
 }
 
 export interface UserAgentResponse {
@@ -464,6 +467,31 @@ export interface ProjectResponse {
   directories: ProjectDirectory[];
   created_at: string;
   updated_at: string;
+  /** NULL ⇒ personal; set ⇒ team-owned (collaboration §2). */
+  team_id?: string | null;
+  /**
+   * The caller's standing on this project and which areas it covers
+   * (collaboration §4). Defaults server-side to the least privilege, so a
+   * missing field must be read as "viewer", never as "owner".
+   */
+  role?: ProjectRole;
+  scopes?: GrantScope[];
+}
+
+export type ProjectRole = 'viewer' | 'commenter' | 'editor' | 'admin' | 'owner';
+export type GrantScope = 'tasks' | 'sessions';
+
+const PROJECT_ROLE_RANK: Record<ProjectRole, number> = {
+  viewer: 1,
+  commenter: 2,
+  editor: 3,
+  admin: 4,
+  owner: 5,
+};
+
+/** Whether `role` reaches `minimum` on the ladder; an absent role is a viewer. */
+export function projectRoleAtLeast(role: ProjectRole | undefined, minimum: ProjectRole): boolean {
+  return PROJECT_ROLE_RANK[role ?? 'viewer'] >= PROJECT_ROLE_RANK[minimum];
 }
 
 export interface TaskLabelResponse {
@@ -715,6 +743,127 @@ export interface WorkspaceSearchResponse {
   sessions: SearchSessionResult[];
   tasks: SearchTaskResult[];
   automations: SearchAutomationResult[];
+}
+
+// --- Share links (collaboration §3.4, P4) -----------------------------------
+
+export type ShareKind = 'session' | 'project_sessions' | 'project_board';
+export type ShareAudience = 'public' | 'authenticated';
+
+/** `filters` for a `project_board` link. Every list is optional and ANDed. */
+export interface ShareBoardFilters {
+  label_ids?: string[];
+  statuses?: TaskStatus[];
+  assignee_ids?: string[];
+}
+
+/**
+ * `filters` for a `project_sessions` link. `statuses`, when given, replaces the
+ * default (everything but archived); DELETED is never visible.
+ */
+export interface ShareSessionsFilters {
+  date_from?: string;
+  date_to?: string;
+  machine_ids?: string[];
+  agent_types?: string[];
+  statuses?: (keyof AgentStatus)[];
+}
+
+export interface CreateShareLinkRequest {
+  kind: ShareKind;
+  agent_instance_id?: string;
+  project_id?: string;
+  audience?: ShareAudience;
+  filters?: ShareBoardFilters | ShareSessionsFilters | null;
+  /** The one write a link can carry; needs `audience: 'authenticated'` and a board. */
+  allow_comments?: boolean;
+  expires_in_days?: number | null;
+}
+
+export interface ShareLinkResponse {
+  id: string;
+  /** The capability itself — the URL is `/s/<token>`. */
+  token: string;
+  kind: ShareKind;
+  agent_instance_id: string | null;
+  project_id: string | null;
+  audience: ShareAudience;
+  filters: ShareBoardFilters | ShareSessionsFilters | null;
+  allow_comments: boolean;
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_accessed_at: string | null;
+  view_count: number;
+  created_at: string;
+  created_by: PrincipalResponse | null;
+}
+
+/** A session as a link viewer sees it — no `home_dir`, machine or raw metadata. */
+export interface PublicSessionSummary {
+  id: string;
+  name: string | null;
+  agent_type_name: string;
+  agent_profile: PrincipalResponse | null;
+  status: keyof AgentStatus;
+  live_state: LiveState;
+  started_at: string;
+  ended_at: string | null;
+  updated_at: string | null;
+  worktree_name: string | null;
+  /** Display keys only: agent, model, effort, permission/mode. */
+  session_config: Record<string, unknown> | null;
+  message_count: number;
+  latest_message_at: string | null;
+}
+
+/** `MessageResponse` plus the sender's display name (never an email). */
+export interface PublicMessage extends MessageResponse {
+  sender_user_display_name: string | null;
+}
+
+export interface PublicMessagesPage {
+  messages: PublicMessage[];
+  /** More rows in the direction asked for (older for before/initial, newer for after). */
+  has_more: boolean;
+}
+
+export interface PublicProjectSummary {
+  id: string;
+  name: string;
+  key: string | null;
+  color: string | null;
+  icon: string | null;
+}
+
+export interface PublicShareResponse {
+  id: string;
+  kind: ShareKind;
+  audience: ShareAudience;
+  /** Whether THIS visitor may comment (link allows it and they are signed in). */
+  allow_comments: boolean;
+  /** The link allows comments at all — the sign-in prompt for an anonymous visitor. */
+  comments_available: boolean;
+  filters: ShareBoardFilters | ShareSessionsFilters | null;
+  created_at: string;
+  expires_at: string | null;
+  owner: PrincipalResponse;
+  viewer: PrincipalResponse | null;
+  session: PublicSessionSummary | null;
+  project: PublicProjectSummary | null;
+}
+
+export interface PublicSessionsPage {
+  items: PublicSessionSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface PublicBoardResponse {
+  project: PublicProjectSummary;
+  tasks: TaskResponse[];
+  labels: TaskLabelResponse[];
 }
 
 export interface AutomationRunResponse {
@@ -1657,6 +1806,27 @@ class BackendAPI {
       `/api/v1/automations/${id}/run`,
       { method: 'POST', body: JSON.stringify(data) },
     );
+  }
+
+  // --- Share links (collaboration §3.4, P4) --------------------------------
+
+  async createShareLink(data: CreateShareLinkRequest): Promise<ShareLinkResponse> {
+    return this.request<ShareLinkResponse>('/api/v1/shares', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  /** Live links on one target — pass exactly one of the two ids. */
+  async listShareLinks(
+    target: { agent_instance_id: string } | { project_id: string },
+  ): Promise<ShareLinkResponse[]> {
+    const params = new URLSearchParams(target);
+    return this.request<ShareLinkResponse[]>(`/api/v1/shares?${params.toString()}`);
+  }
+
+  async revokeShareLink(linkId: string): Promise<void> {
+    return this.requestVoid(`/api/v1/shares/${linkId}`, { method: 'DELETE' });
   }
 
   // --- Workspace search (cmd+K palette) -----------------------------------

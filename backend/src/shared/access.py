@@ -43,6 +43,7 @@ from shared.database.models import (
     TeamInstanceAccess,
     UserInstanceAccess,
 )
+from shared.database.share_models import ShareLink
 from shared.database.task_models import Project, Task
 
 Role = Literal["viewer", "commenter", "editor", "admin", "owner"]
@@ -460,11 +461,63 @@ def shared_instance_select(user_id: UUID) -> Select[tuple[UUID]]:
 # --- share links (P4) ---------------------------------------------------------
 
 
-def resolve_share(db: Session, token: str) -> None:
-    """Resolve a share-link token to its capability (§3.4).
+@dataclass(frozen=True)
+class ShareGrant:
+    """What a live share-link token confers (§3.4).
 
-    P4 lands `share_links`; until then every token is unknown, which is also
-    what an invalid, revoked or expired token must look like (§10.5).
+    Always a read. `allow_comments` is the single write a URL can carry, and
+    only for a signed-in visitor on an `authenticated` link — the resolver
+    hands it back as a fact; the comment endpoint is where it is enforced.
+    The visible-sessions predicate lives in `share_queries` because it needs
+    the kind-specific filters; this object just says what the link points at.
     """
-    del db, token
-    return None
+
+    link: ShareLink
+    kind: str
+    audience: str
+    allow_comments: bool
+    filters: dict
+    instance_id: UUID | None
+    project_id: UUID | None
+
+    @property
+    def id(self) -> UUID:
+        return self.link.id
+
+
+def resolve_share(
+    db: Session, token: str, *, user_id: UUID | None = None
+) -> ShareGrant | None:
+    """Resolve a share-link token to its capability, or None (§3.4, §10.5).
+
+    None for every way a token can fail — unknown, revoked, expired, wrong
+    audience for this visitor, or a target that no longer exists / is DELETED
+    — so the public API can answer one identical 404 and the token space is
+    not an oracle. `user_id` is the signed-in visitor, if any; an
+    `authenticated` link resolves to nothing for an anonymous one.
+    """
+    if not token or len(token) > 43:
+        return None
+    link = db.execute(
+        select(ShareLink).where(ShareLink.token == token)
+    ).scalar_one_or_none()
+    if link is None or not link.is_live:
+        return None
+    if link.audience == "authenticated" and user_id is None:
+        return None
+    if link.kind == "session":
+        instance = db.get(AgentInstance, link.agent_instance_id)
+        if instance is None or instance.status == AgentStatus.DELETED:
+            return None
+    else:
+        if link.project_id is None or db.get(Project, link.project_id) is None:
+            return None
+    return ShareGrant(
+        link=link,
+        kind=link.kind,
+        audience=link.audience,
+        allow_comments=bool(link.allow_comments and user_id is not None),
+        filters=dict(link.filters) if isinstance(link.filters, dict) else {},
+        instance_id=link.agent_instance_id,
+        project_id=link.project_id,
+    )

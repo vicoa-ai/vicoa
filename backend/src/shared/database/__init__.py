@@ -27,6 +27,11 @@ from .collab_models import (
     TEAM_MEMBER_STATUSES,
     TEAM_ROLES,
 )
+from .share_models import (
+    ShareLink,
+    SHARE_AUDIENCES,
+    SHARE_KINDS,
+)
 from .task_models import (
     Project,
     ProjectDirectory,
@@ -123,6 +128,9 @@ __all__ = [
     "TeamMember",
     "TeamInvite",
     "ProjectGrant",
+    "ShareLink",
+    "SHARE_AUDIENCES",
+    "SHARE_KINDS",
     "TeamInstanceAccess",
     "GRANT_PRINCIPAL_TYPES",
     "GRANT_ROLES",

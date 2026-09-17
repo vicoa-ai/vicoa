@@ -217,6 +217,18 @@ class Settings(BaseSettings):
     # open-source build ships no Vicoa address (deploy config supplies it).
     mailgun_bcc_email: str = ""
 
+    # Public share links (collaboration §10.5). The per-client bucket on the
+    # unauthenticated `/public/shares/*` router: `rate` sustained requests per
+    # minute and `burst` on top. A viewer polls every 5 s per tab (12/min).
+    public_share_rate_per_minute: int = 120
+    public_share_burst: int = 60
+    # Header carrying the real client address when this process sits behind a
+    # trusted reverse proxy. Fly's edge sets `Fly-Client-IP` and a client cannot
+    # forward it through, so that is the hosted default. A self-hosted deploy
+    # behind its own proxy sets its header (e.g. `X-Real-IP`); one with no
+    # proxy at all should set it EMPTY so a client cannot pick its own key.
+    client_ip_header: str = "Fly-Client-IP"
+
     # Inbox that receives support "report an issue" emails. Empty in the
     # open-source / self-host build — the /support/report-issue endpoint returns
     # 503 until it is configured; Vicoa's deploy sets SUPPORT_EMAIL.

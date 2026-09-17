@@ -6,6 +6,8 @@ import { ArrowUp, Columns, Loader2, MessageCircleMore, RefreshCw } from 'lucide-
 import { AskUserQuestionPanel, AskUserQuestionSubmitPayload, buildAskUserQuestionCancelPersistMessage, buildAskUserQuestionControlMessage, buildAskUserQuestionSummaryMessage, parseAskUserQuestionPayload } from '@/components/dashboard/ask-user-question-panel';
 import { DeleteSessionDialog } from '@/components/dashboard/session-dialogs';
 import { SessionActionsMenu } from '@/components/dashboard/session-actions-menu';
+import { ShareLinkDialog, type ShareTarget } from '@/components/dashboard/share-link-dialog';
+import { isDesktopLocal } from '@/lib/runtime-config';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -109,6 +111,7 @@ function InstanceCard({
   onDelete,
   onReply,
   onMarkDone,
+  onShare,
   onOptionClick,
   onAskUserQuestionSubmit,
   onAskUserQuestionCancel,
@@ -123,6 +126,7 @@ function InstanceCard({
   onDelete: (instanceId: string) => Promise<void>;
   onReply: (instanceId: string, content: string) => Promise<void>;
   onMarkDone: (instanceId: string) => Promise<void>;
+  onShare?: (instance: AgentInstanceResponse) => void;
   onOptionClick: (instanceId: string, option: string) => void;
   onAskUserQuestionSubmit: (instanceId: string, payload: AskUserQuestionSubmitPayload) => void;
   onAskUserQuestionCancel: (instanceId: string, messageId: string) => void;
@@ -249,6 +253,7 @@ function InstanceCard({
                 copied={copiedId}
                 onMarkDone={canMarkDone ? () => void onMarkDone(instance.id) : undefined}
                 showMarkDone={canMarkDone}
+                onShare={onShare ? () => onShare(instance) : undefined}
                 onDelete={() => {
                   void onDelete(instance.id);
                 }}
@@ -350,6 +355,7 @@ export default function AgentManagerPage() {
   const [loadingDetails, setLoadingDetails] = useState<Record<string, boolean>>({});
   const [busyInstanceId, setBusyInstanceId] = useState<string | null>(null);
   const [animatedInstanceId, setAnimatedInstanceId] = useState<string | null>(null);
+  const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
   const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; sessionId: string; sessionName: string }>({
     open: false,
     sessionId: '',
@@ -735,6 +741,16 @@ export default function AgentManagerPage() {
                       }}
                       onReply={postMessage}
                       onMarkDone={markDone}
+                      onShare={
+                        isDesktopLocal()
+                          ? undefined
+                          : (target) =>
+                              setShareTarget({
+                                kind: 'session',
+                                instanceId: target.id,
+                                title: target.name || target.agent_type_name || 'Untitled session',
+                              })
+                      }
                       onOptionClick={(instanceId, option) => postMessage(instanceId, option)}
                       onAskUserQuestionSubmit={handleAskUserQuestionSubmit}
                       onAskUserQuestionCancel={handleAskUserQuestionCancel}
@@ -753,6 +769,13 @@ export default function AgentManagerPage() {
         sessionId={deleteDialog.sessionId}
         sessionName={deleteDialog.sessionName}
         onDelete={deleteInstance}
+      />
+      <ShareLinkDialog
+        open={shareTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setShareTarget(null);
+        }}
+        target={shareTarget}
       />
     </div>
   );

@@ -1161,3 +1161,198 @@ class WorkspaceSearchResponse(BaseModel):
     sessions: list[SearchSessionResult]
     tasks: list[SearchTaskResult]
     automations: list[SearchAutomationResult]
+
+
+# ============================================================================
+# Share links (collaboration §3.4, P4)
+# ============================================================================
+
+ShareKindLiteral = Literal["session", "project_sessions", "project_board"]
+ShareAudienceLiteral = Literal["public", "authenticated"]
+
+
+def _z(dt: datetime | None) -> str | None:
+    """Legacy naive-UTC columns (agent_instances, messages) serialize with an
+    explicit Z so a browser does not read them as local time."""
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.isoformat()
+    return dt.isoformat() + "Z"
+
+
+class ShareBoardFilters(BaseModel):
+    """`filters` for kind='project_board'. Every list is optional and ANDed;
+    an empty/missing list means "no narrowing on that axis"."""
+
+    label_ids: list[UUID] | None = None
+    statuses: list[TaskStatusLiteral] | None = None
+    assignee_ids: list[UUID] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ShareSessionsFilters(BaseModel):
+    """`filters` for kind='project_sessions'. `statuses`, when given, replaces
+    the default (everything but archived); DELETED is never visible."""
+
+    date_from: datetime | None = None
+    date_to: datetime | None = None
+    machine_ids: list[UUID] | None = None
+    agent_types: list[str] | None = None
+    statuses: list[AgentStatus] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("statuses")
+    @classmethod
+    def _never_deleted(cls, v: list[AgentStatus] | None) -> list[AgentStatus] | None:
+        if v is not None and AgentStatus.DELETED in v:
+            raise ValueError("DELETED sessions are never shareable")
+        return v
+
+
+class CreateShareLinkRequest(BaseModel):
+    kind: ShareKindLiteral
+    agent_instance_id: UUID | None = None
+    project_id: UUID | None = None
+    audience: ShareAudienceLiteral = "public"
+    filters: dict | None = None
+    # The one write a link can carry; the model, the DB and the resolver all
+    # require `audience='authenticated'` for it.
+    allow_comments: bool = False
+    expires_in_days: int | None = Field(default=None, ge=1, le=365)
+
+    @model_validator(mode="after")
+    def _check_shape(self):
+        if self.kind == "session":
+            if self.agent_instance_id is None or self.project_id is not None:
+                raise ValueError("kind='session' takes agent_instance_id only")
+            if self.filters:
+                raise ValueError("a session link has no filters")
+        else:
+            if self.project_id is None or self.agent_instance_id is not None:
+                raise ValueError(f"kind='{self.kind}' takes project_id only")
+            if self.filters is not None:
+                # Validate against the kind's schema; store the normalised form.
+                schema = (
+                    ShareBoardFilters
+                    if self.kind == "project_board"
+                    else ShareSessionsFilters
+                )
+                self.filters = schema.model_validate(self.filters).model_dump(
+                    mode="json", exclude_none=True
+                )
+        if self.allow_comments and self.audience != "authenticated":
+            raise ValueError("allow_comments requires audience='authenticated'")
+        if self.allow_comments and self.kind != "project_board":
+            raise ValueError("Comments are only possible on a board link")
+        return self
+
+
+class ShareLinkResponse(BaseModel):
+    id: UUID
+    token: str
+    kind: ShareKindLiteral
+    agent_instance_id: UUID | None = None
+    project_id: UUID | None = None
+    audience: ShareAudienceLiteral
+    filters: dict | None = None
+    allow_comments: bool
+    expires_at: datetime | None = None
+    revoked_at: datetime | None = None
+    last_accessed_at: datetime | None = None
+    view_count: int
+    created_at: datetime
+    created_by: PrincipalResponse | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PublicSessionSummary(BaseModel):
+    """A session as a link viewer sees it (old plan D5): transcript metadata
+    plus the display subset of `session_config`. Never `home_dir`, the
+    machine, or raw `instance_metadata`."""
+
+    id: UUID
+    name: str | None = None
+    agent_type_name: str
+    agent_profile: PrincipalResponse | None = None
+    status: AgentStatus
+    live_state: LiveState = LiveState.UNKNOWN
+    started_at: datetime
+    ended_at: datetime | None = None
+    updated_at: datetime | None = None
+    worktree_name: str | None = None
+    # Only the display keys: agent, model, effort, permission/mode.
+    session_config: dict | None = None
+    message_count: int = 0
+    latest_message_at: datetime | None = None
+
+    @field_serializer("started_at", "ended_at", "updated_at", "latest_message_at")
+    def _serialize_dt(self, dt: datetime | None, _info):
+        return _z(dt)
+
+
+class PublicMessage(BaseModel):
+    id: UUID
+    content: str
+    sender_type: str
+    # Display name only — never an email on a public surface (§10.4).
+    sender_user_display_name: str | None = None
+    created_at: datetime
+    requires_user_input: bool
+    message_metadata: dict | None = None
+
+    @field_serializer("created_at")
+    def _serialize_dt(self, dt: datetime, _info):
+        return _z(dt)
+
+
+class PublicMessagesPage(BaseModel):
+    messages: list[PublicMessage]
+    # More rows exist in the direction that was asked for (older for a
+    # `before`/initial page, newer for an `after` poll).
+    has_more: bool = False
+
+
+class PublicProjectSummary(BaseModel):
+    id: UUID
+    name: str
+    key: str | None = None
+    color: str | None = None
+    icon: str | None = None
+
+
+class PublicShareResponse(BaseModel):
+    """The share meta the viewer page renders first (and the OG tags)."""
+
+    id: UUID
+    kind: ShareKindLiteral
+    audience: ShareAudienceLiteral
+    # Whether THIS visitor may comment: the link allows it and they are
+    # signed in. Anonymous visitors of a comments-enabled link get False
+    # plus `comments_available=True`, which is the sign-in prompt.
+    allow_comments: bool
+    comments_available: bool
+    filters: dict | None = None
+    created_at: datetime
+    expires_at: datetime | None = None
+    owner: PrincipalResponse
+    viewer: PrincipalResponse | None = None
+    session: PublicSessionSummary | None = None
+    project: PublicProjectSummary | None = None
+
+
+class PublicSessionsPage(BaseModel):
+    items: list[PublicSessionSummary]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+
+class PublicBoardResponse(BaseModel):
+    project: PublicProjectSummary
+    tasks: list[TaskResponse]
+    labels: list[TaskLabelResponse]
