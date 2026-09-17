@@ -112,12 +112,29 @@ def list_projects_endpoint(
 def _project_response(
     project: Project, project_access: access.ProjectAccess | None
 ) -> ProjectResponse:
-    """Serialize with the caller's standing on the project."""
+    """Serialize with the caller's standing on the project.
+
+    Every project response goes through here. `role` / `scopes` describe the
+    caller, not the row, so they have to be resolved per request — the model
+    defaults them to the least privilege precisely so that forgetting is a
+    hidden button rather than a phantom one.
+    """
     response = ProjectResponse.model_validate(project)
     if project_access is not None:
         response.role = project_access.role
         response.scopes = list(project_access.scopes)  # type: ignore[assignment]
     return response
+
+
+def _project_response_for(
+    db: Session, user_id: UUID, project: Project
+) -> ProjectResponse:
+    """`_project_response` for a single project, resolving the caller's standing.
+
+    The list endpoint batches this with `access.project_accesses`; everything
+    that returns one project uses this.
+    """
+    return _project_response(project, access.project_access(db, user_id, project))
 
 
 @router.post(
@@ -138,7 +155,7 @@ def create_project_endpoint(
         icon=request.icon,
         git_remote_url=request.git_remote_url,
     )
-    return ProjectResponse.model_validate(project)
+    return _project_response_for(db, current_user.id, project)
 
 
 @router.patch("/projects/{project_id}", response_model=ProjectResponse)
@@ -165,7 +182,7 @@ def update_project_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
         )
-    return ProjectResponse.model_validate(project)
+    return _project_response_for(db, current_user.id, project)
 
 
 @router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -217,7 +234,7 @@ def set_project_directory_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
         )
-    return ProjectResponse.model_validate(project)
+    return _project_response_for(db, current_user.id, project)
 
 
 @router.delete(
@@ -238,7 +255,7 @@ def delete_project_directory_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
         )
-    return ProjectResponse.model_validate(project)
+    return _project_response_for(db, current_user.id, project)
 
 
 @router.put("/projects/{project_id}/icon", response_model=ProjectResponse)
@@ -288,7 +305,7 @@ def upload_project_icon_endpoint(
         sharing=True,
     )
     assert updated is not None  # access re-checked above under the same session
-    return ProjectResponse.model_validate(updated)
+    return _project_response_for(db, current_user.id, updated)
 
 
 @router.get("/projects/{project_id}/icon")
@@ -351,7 +368,7 @@ def delete_project_icon_endpoint(
         db, current_user.id, project_id, sharing=True
     )
     assert updated is not None
-    return ProjectResponse.model_validate(updated)
+    return _project_response_for(db, current_user.id, updated)
 
 
 @router.get("/task-labels", response_model=list[TaskLabelResponse])

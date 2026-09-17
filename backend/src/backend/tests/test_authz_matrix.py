@@ -778,3 +778,51 @@ def test_every_dashboard_route_is_in_the_matrix_or_owner_only():
             if normalise.get(path, path) not in covered:
                 missing.append((method, path))
     assert not missing, f"routes without a matrix row: {missing}"
+
+
+class TestProjectResponseReportsTheCallersRealStanding:
+    """`role` / `scopes` are facts about the caller, not columns on the row, so
+    `ProjectResponse.model_validate(project)` cannot supply them. Six of the
+    seven project endpoints used to skip the resolution and fall through to the
+    field defaults — which defaulted to `owner` + both scopes, i.e. an
+    authorization field defaulting to the *highest* privilege. A grantee was
+    told it owned the board and rendered affordances that 403 on use.
+    """
+
+    @pytest.mark.parametrize("world", ["admin"], indirect=True)
+    def test_patch_project_reports_admin_not_owner(self, subject_client, world):
+        response = subject_client.patch(
+            f"/api/v1/projects/{world.project.id}", json={"name": "Renamed"}
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["role"] == "admin"
+        assert sorted(body["scopes"]) == ["sessions", "tasks"]
+
+    @pytest.mark.parametrize("world", ["admin"], indirect=True)
+    def test_list_and_detail_agree(self, subject_client, world):
+        listed = subject_client.get("/api/v1/projects")
+        assert listed.status_code == 200
+        from_list = next(p for p in listed.json() if p["id"] == str(world.project.id))
+        patched = subject_client.patch(
+            f"/api/v1/projects/{world.project.id}", json={"name": "Renamed"}
+        ).json()
+        assert from_list["role"] == patched["role"]
+        assert sorted(from_list["scopes"]) == sorted(patched["scopes"])
+
+    def test_bare_validate_defaults_to_least_privilege(self):
+        """The safety net: if a future call site forgets, it must under-report
+        (a hidden button) rather than claim ownership (a phantom one)."""
+        from backend.models import ProjectResponse
+
+        fields = ProjectResponse.model_fields
+        assert fields["role"].default == "viewer"
+        assert fields["scopes"].default_factory() == []  # type: ignore[misc]
+
+    @pytest.mark.parametrize("world", ["owner"], indirect=True)
+    def test_owner_still_reports_owner(self, subject_client, world):
+        body = subject_client.patch(
+            f"/api/v1/projects/{world.project.id}", json={"name": "Renamed"}
+        ).json()
+        assert body["role"] == "owner"
+        assert sorted(body["scopes"]) == ["sessions", "tasks"]

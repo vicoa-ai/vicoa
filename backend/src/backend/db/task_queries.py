@@ -876,6 +876,22 @@ def update_task(
             )
             if target is None:
                 raise ProjectNotFoundError("Project not found")
+        if target.user_id != task.user_id:
+            # The move crosses an ownership boundary, and ownership follows the
+            # project (below), so this hands the task to somebody else.
+            #
+            # `editor` is not enough. An editor grantee is trusted to
+            # reorganise tasks *within* the boards they were given — but
+            # `project_id: null` resolves to *their own* Inbox, and any project
+            # they own satisfies an `editor` floor trivially, so an editor
+            # could otherwise pull someone else's task (plus its comments and
+            # activity) onto a board the original owner cannot see. The owner's
+            # `visible_project_select` would no longer match it and the task
+            # would be gone for good.
+            access.require(
+                _role_for(db, user_id, project, sharing=sharing, grant_scope="tasks"),
+                "owner",
+            )
         if target.id != task.project_id:
             # Moving a task reassigns BOTH halves of its identifier — GitHub does
             # the same on issue transfer, and D-B accepts the cost: "VIC-42"

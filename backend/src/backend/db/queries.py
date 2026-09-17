@@ -1072,29 +1072,79 @@ def delete_user_account(db: Session, user_id: UUID) -> None:
             ProjectGrant.principal_type == "user",
             ProjectGrant.principal_id == user_id,
         ).delete(synchronize_session=False)
-        others_remain = (
+        # A team survives iff somebody *active* other than the leaver is still
+        # on it — that person can reach it and (after the promotion below)
+        # administer it. Two subtleties, both of which used to bite:
+        #
+        #  * `is_distinct_from`, not `!=`: a pending email invite has
+        #    `user_id IS NULL`, and `NULL != :me` evaluates to NULL rather than
+        #    TRUE, so plain `!=` quietly counted those rows as nobody.
+        #  * `status == "active"`, not `!= "removed"`: an *invited* member has
+        #    not accepted yet, so counting them would leave a team alive with
+        #    no active member and therefore no owner — exactly the state
+        #    `_payer_id` cannot answer for.
+        other_active_member = (
             exists()
             .where(TeamMember.team_id == Team.id)
-            .where(TeamMember.user_id != user_id)
-            .where(TeamMember.status != "removed")
+            .where(TeamMember.user_id.is_distinct_from(user_id))
+            .where(TeamMember.user_id.is_not(None))
+            .where(TeamMember.status == "active")
         )
-        sole_member_team_ids = [
+        # Teams we are actually on. A team we were *removed* from is not ours
+        # to delete.
+        my_team_ids = select(TeamMember.team_id).where(
+            TeamMember.user_id == user_id,
+            TeamMember.status != "removed",
+        )
+        orphaned_team_ids = [
             row[0]
             for row in db.query(Team.id)
-            .filter(
-                Team.id.in_(
-                    select(TeamMember.team_id).where(TeamMember.user_id == user_id)
-                ),
-                ~others_remain,
-            )
+            .filter(Team.id.in_(my_team_ids), ~other_active_member)
             .all()
         ]
-        if sole_member_team_ids:
+        surviving_team_ids = [
+            row[0]
+            for row in db.query(Team.id)
+            .filter(Team.id.in_(my_team_ids), other_active_member)
+            .all()
+        ]
+
+        # Every surviving team must keep an active owner: `_payer_id` has
+        # nobody to bill without one, and `require_team(minimum="owner")` would
+        # make the team permanently unadministerable. Promote the
+        # longest-standing active member (admins first) when the leaver was the
+        # last owner.
+        for team_id in surviving_team_ids:
+            eligible = db.query(TeamMember).filter(
+                TeamMember.team_id == team_id,
+                TeamMember.user_id.is_distinct_from(user_id),
+                TeamMember.user_id.is_not(None),
+                TeamMember.status == "active",
+            )
+            if eligible.filter(TeamMember.role == "owner").first() is not None:
+                continue
+            heir = eligible.order_by(
+                case((TeamMember.role == "admin", 0), else_=1),
+                TeamMember.created_at.asc(),
+            ).first()
+            if heir is not None:
+                logger.info(
+                    "team %s: promoting member %s to owner as %s deletes their account",
+                    team_id,
+                    heir.user_id,
+                    user_id,
+                )
+                heir.role = "owner"
+
+        if orphaned_team_ids:
+            # `principal_id` is polymorphic, so team grants have no FK to
+            # cascade through. `team_members` / `team_invites` do (CASCADE), so
+            # any outstanding invite to a team nobody is left on goes with it.
             db.query(ProjectGrant).filter(
                 ProjectGrant.principal_type == "team",
-                ProjectGrant.principal_id.in_(sole_member_team_ids),
+                ProjectGrant.principal_id.in_(orphaned_team_ids),
             ).delete(synchronize_session=False)
-            db.query(Team).filter(Team.id.in_(sole_member_team_ids)).delete(
+            db.query(Team).filter(Team.id.in_(orphaned_team_ids)).delete(
                 synchronize_session=False
             )
 

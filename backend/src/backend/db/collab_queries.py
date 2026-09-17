@@ -15,7 +15,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -60,8 +60,33 @@ class GrantError(Exception):
     """A grant request that cannot be honoured as stated (→ 400)."""
 
 
+class TeamStateError(Exception):
+    """The team is in a state no request can be served from — no active owner
+    and no surviving creator, so there is nobody to bill or to administer it
+    (→ 409). `delete_user_account` promotes a new owner rather than leaving a
+    team like this, so reaching here means an invariant broke upstream."""
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _email_key(email: str | None) -> str | None:
+    """The address to match an invite on, lowercased, or None when there is
+    nothing usable to match on.
+
+    Load-bearing: ~710 Apple-Sign-In accounts have ``users.email = ''`` (the
+    relay address was withheld at signup). An empty string compares *equal* to
+    another empty string, so matching invites on a raw email makes every one of
+    those accounts the same principal — one of them would resolve to another's
+    membership row. A blank address must therefore drop out of the predicate
+    entirely rather than compare equal to anything, and must never be stored.
+    Identity is ``users.id``; an email is only the stand-in for an account that
+    does not exist yet.
+    """
+    if email is None:
+        return None
+    return email.strip().lower() or None
 
 
 # --- Slugs (D-D) ----------------------------------------------------------------
@@ -169,6 +194,24 @@ def require_team(
 _TEAM_RANK = {"member": 1, "admin": 2, "owner": 3}
 
 
+def _require_grant_admin(db: Session, user_id: UUID, project: Project) -> None:
+    """Managing grants needs admin on *every* scope, not just one.
+
+    `project_role` answers per scope, so a grantee holding
+    `role=admin, scopes=["tasks"]` is admin as far as a single unscoped check
+    can tell — and could therefore write itself a second grant with
+    `scopes=["sessions"]` and read every session on the board. That is the
+    boundary the two-lens design rests on, so grant administration is not a
+    per-scope power: you cannot hand out, list, or revoke access on a scope you
+    do not yourself administer. Owners and team members cover both scopes and
+    are unaffected.
+    """
+    for scope in GRANT_SCOPES:
+        access.require(
+            access.project_role(db, user_id, project, grant_scope=scope), "admin"
+        )
+
+
 def _seat_count(db: Session, team_id: UUID) -> int:
     """Members who occupy a seat: everyone not removed, pending invites
     included — an invite is a promise of a seat."""
@@ -196,8 +239,12 @@ def _payer_id(db: Session, team: Team) -> UUID:
     )
     if owner is not None and owner[0] is not None:
         return owner[0]
-    assert team.created_by_user_id is not None
-    return team.created_by_user_id
+    if team.created_by_user_id is not None:
+        return team.created_by_user_id
+    # Never `assert`: under `python -O` the check vanishes and this returns
+    # None, which would reach `check_capability` as the payer id and silently
+    # meter the wrong account. Fail loudly instead.
+    raise TeamStateError("Team has no owner to bill")
 
 
 def list_user_teams(db: Session, user_id: UUID) -> list[tuple[Team, str, int]]:
@@ -249,7 +296,10 @@ def create_team(db: Session, owner: User, name: str) -> Team:
         TeamMember(
             team_id=team.id,
             user_id=owner.id,
-            invited_email=owner.email,
+            # `_email_key`, not the raw address: an Apple-relay account has
+            # `email = ''`, and storing that blank here is what let one such
+            # account resolve to another's membership row.
+            invited_email=_email_key(owner.email),
             role="owner",
             status="active",
             joined_at=_utcnow(),
@@ -360,10 +410,14 @@ def invite_member(
 
 
 def _pending_filter(user: User):
-    return or_(
-        TeamMember.user_id == user.id,
-        func.lower(TeamMember.invited_email) == user.email.lower(),
-    )
+    """Match a membership row to this person: by account always, by email only
+    when they actually have one (`_email_key`). A blank address must not widen
+    the predicate."""
+    terms = [TeamMember.user_id == user.id]
+    key = _email_key(user.email)
+    if key is not None:
+        terms.append(func.lower(TeamMember.invited_email) == key)
+    return or_(*terms)
 
 
 def list_pending_invitations(db: Session, user: User) -> list[TeamMember]:
@@ -531,6 +585,17 @@ def revoke_invite_link(
         db.commit()
 
 
+def _invite_is_spent(invite: TeamInvite) -> bool:
+    """Revoked, expired or used up. Shared by `resolve_invite_link` and the
+    re-check `accept_invite_link` runs under the row lock, so the two can never
+    disagree about what "live" means."""
+    return (
+        invite.revoked_at is not None
+        or (invite.expires_at is not None and invite.expires_at <= _utcnow())
+        or (invite.max_uses is not None and invite.uses >= invite.max_uses)
+    )
+
+
 def resolve_invite_link(db: Session, token: str) -> TeamInvite:
     """The live invite behind `token`, or `InviteNotFoundError` — the same
     error whether the token is unknown, revoked, expired or used up."""
@@ -540,12 +605,7 @@ def resolve_invite_link(db: Session, token: str) -> TeamInvite:
         .filter(TeamInvite.token == token)
         .first()
     )
-    if (
-        invite is None
-        or invite.revoked_at is not None
-        or (invite.expires_at is not None and invite.expires_at <= _utcnow())
-        or (invite.max_uses is not None and invite.uses >= invite.max_uses)
-    ):
+    if invite is None or _invite_is_spent(invite):
         raise InviteNotFoundError("Invite not found")
     return invite
 
@@ -554,15 +614,29 @@ def accept_invite_link(db: Session, user: User, token: str) -> TeamMember:
     """Redeem a join link. An already-active member is simply returned; a
     pending or removed row is activated in place."""
     invite = resolve_invite_link(db, token)
+    # Serialize concurrent redemptions of this team's links. Both the
+    # exhaustion check above and the seat count below are read-check-write, so
+    # without this two people clicking a `max_uses=1` link at the same instant
+    # each see room for one more and both get in. The lock is on the *team*,
+    # not the invite row, because `_seat_count` aggregates over `team_members`
+    # — locking only the invite would still let two different links race the
+    # same seat limit.
+    db.query(Team).filter(Team.id == invite.team_id).with_for_update().one()
+    # Re-read under the lock: whoever we queued behind has committed by now.
+    db.refresh(invite)
+    if _invite_is_spent(invite):
+        raise InviteNotFoundError("Invite not found")
+
     team = invite.team
     member = (
         db.query(TeamMember)
-        .filter(
-            TeamMember.team_id == team.id,
-            or_(
-                TeamMember.user_id == user.id,
-                func.lower(TeamMember.invited_email) == user.email.lower(),
-            ),
+        .filter(TeamMember.team_id == team.id, _pending_filter(user))
+        # An account row and an email row can both match; the account row is
+        # the authoritative one, so make the pick deterministic instead of
+        # leaving it to scan order.
+        .order_by(
+            case((TeamMember.user_id == user.id, 0), else_=1),
+            TeamMember.created_at.asc(),
         )
         .first()
     )
@@ -593,7 +667,10 @@ def accept_invite_link(db: Session, user: User, token: str) -> TeamMember:
         member.role = invite.role
     member.status = "active"
     member.joined_at = _utcnow()
-    invite.uses = invite.uses + 1
+    # SQL-side increment. `invite.uses + 1` in Python emits `SET uses = <n>`
+    # from the value we happened to read, which loses a concurrent increment
+    # even when the lock above serialises the decision.
+    invite.uses = TeamInvite.uses + 1
     db.commit()
     db.refresh(member)
     return member
@@ -609,7 +686,7 @@ def accept_invite_link(db: Session, user: User, token: str) -> TeamMember:
 def list_project_grants(
     db: Session, user_id: UUID, project: Project
 ) -> list[ProjectGrant]:
-    access.require(access.project_role(db, user_id, project), "admin")
+    _require_grant_admin(db, user_id, project)
     return (
         db.query(ProjectGrant)
         .filter(ProjectGrant.project_id == project.id)
@@ -636,7 +713,7 @@ def create_project_grant(
     `collab.grant_write` capability meters (D-C) — team principals are already
     covered by their team's seats.
     """
-    access.require(access.project_role(db, granter_user_id, project), "admin")
+    _require_grant_admin(db, granter_user_id, project)
     if project.is_inbox:
         raise GrantError("The Inbox cannot be shared")
     if role not in GRANT_ROLES:
@@ -644,6 +721,11 @@ def create_project_grant(
     scopes = list(scopes) if scopes is not None else list(GRANT_SCOPES)
     if not scopes or any(s not in GRANT_SCOPES for s in scopes):
         raise GrantError("scopes must be a non-empty subset of tasks/sessions")
+    # Normalise before the emptiness check below: `not "   "` is False, so a
+    # whitespace-only address used to pass the guard and then be stored as ''
+    # by `.strip()`, where `attach_pending_grants` would hand it to the next
+    # blank-email signup.
+    invited_email = _email_key(invited_email)
 
     if principal_type == "team":
         if (
@@ -655,9 +737,7 @@ def create_project_grant(
     elif principal_type == "user":
         if principal_id is None and invited_email:
             target = (
-                db.query(User)
-                .filter(func.lower(User.email) == invited_email.strip().lower())
-                .first()
+                db.query(User).filter(func.lower(User.email) == invited_email).first()
             )
             principal_id = target.id if target else None
         if principal_id is None and not invited_email:
@@ -685,7 +765,7 @@ def create_project_grant(
         project_id=project.id,
         principal_type=principal_type,
         principal_id=principal_id,
-        invited_email=invited_email.strip() if invited_email else None,
+        invited_email=invited_email,
         role=role,
         scopes=scopes,
         granted_by_user_id=granter_user_id,
@@ -702,7 +782,7 @@ def create_project_grant(
 def delete_project_grant(
     db: Session, user_id: UUID, project: Project, grant_id: UUID
 ) -> bool:
-    access.require(access.project_role(db, user_id, project), "admin")
+    _require_grant_admin(db, user_id, project)
     grant = (
         db.query(ProjectGrant)
         .filter(ProjectGrant.id == grant_id, ProjectGrant.project_id == project.id)
@@ -719,12 +799,18 @@ def attach_pending_grants(db: Session, user: User) -> int:
     """Turn email-addressed grants into user grants for a freshly created
     account. Called once, from the signup path; the resolver only ever reads
     `principal_id`, so a grant stays inert until this runs."""
+    key = _email_key(user.email)
+    if key is None:
+        # An account with no usable address (Apple relay withheld) can claim
+        # nothing by email — and must not, or it would claim every grant left
+        # blank by some other writer.
+        return 0
     rows = (
         db.query(ProjectGrant)
         .filter(
             ProjectGrant.principal_type == "user",
             ProjectGrant.principal_id.is_(None),
-            func.lower(ProjectGrant.invited_email) == user.email.lower(),
+            func.lower(ProjectGrant.invited_email) == key,
         )
         .all()
     )

@@ -24,6 +24,7 @@ from shared.database import (
     Task,
     TaskLabel,
     Team,
+    TeamInvite,
     TeamMember,
     User,
     UserInstanceAccess,
@@ -327,6 +328,31 @@ class TestCapabilityHook:
     def test_raising_hook_fails_closed(self, test_db, monkeypatch):
         def broken(db, user_id, capability, context):
             raise RuntimeError("billing is down")
+
+        monkeypatch.setattr(hooks, "_capability_hooks", [broken])
+        with pytest.raises(hooks.CapabilityDenied):
+            hooks.check_capability(test_db, uuid4(), "collab.team_seat", {})
+
+    def test_database_error_is_not_a_billing_answer(self, test_db, monkeypatch):
+        """A transient DB error must not become 402. It still denies the action
+        (the request aborts), but as `503 + Retry-After` via main.py's handler
+        — telling a *paying* customer to upgrade because flycast blipped is
+        both wrong and unretryable."""
+        from sqlalchemy.exc import OperationalError
+
+        def flaky(db, user_id, capability, context):
+            raise OperationalError("SELECT 1", {}, Exception("connection lost"))
+
+        monkeypatch.setattr(hooks, "_capability_hooks", [flaky])
+        with pytest.raises(OperationalError):
+            hooks.check_capability(test_db, uuid4(), "collab.team_seat", {})
+
+    def test_other_errors_still_fail_closed_as_denial(self, test_db, monkeypatch):
+        """Narrowing the catch must not reopen the fail-open hole: anything
+        that is not a database error is still a denial, never a free seat."""
+
+        def broken(db, user_id, capability, context):
+            raise ValueError("bad plan data")
 
         monkeypatch.setattr(hooks, "_capability_hooks", [broken])
         with pytest.raises(hooks.CapabilityDenied):
@@ -748,3 +774,396 @@ class TestAccountDeletionSweeps:
         assert (
             test_db.query(TaskLabel).filter(TaskLabel.user_id == other_id).count() == 0
         )
+
+
+# --- Regressions ---------------------------------------------------------------
+#
+# One class per defect found reviewing the access-core PR. Each test fails on
+# the pre-fix code.
+
+
+class TestOwnershipChangingMoveNeedsOwner:
+    """An `editor` grantee must not be able to move a task off the owner's
+    board and onto their own — ownership follows the project, so the task and
+    its whole history would leave the owner's `visible_project_select` for
+    good."""
+
+    def test_editor_cannot_move_task_into_own_inbox(
+        self, test_db, test_user, other, project
+    ):
+        _grant(test_db, project, "user", other.id, "editor")
+        task = task_queries.create_task(
+            test_db, test_user.id, project_id=project.id, title="Mine", sharing=False
+        )
+        with pytest.raises(AccessDenied):
+            task_queries.update_task(
+                test_db, other.id, task.id, {"project_id": None}, sharing=True
+            )
+        test_db.expire_all()
+        assert test_db.get(Task, task.id).user_id == test_user.id
+
+    def test_editor_cannot_move_task_into_own_project(
+        self, test_db, test_user, other, project
+    ):
+        """`editor` on the *destination* is satisfied trivially by any project
+        the grantee owns, so the inbox is not the only route."""
+        _grant(test_db, project, "user", other.id, "editor")
+        mine = task_queries.create_project(test_db, other.id, name="Bob's board")
+        task = task_queries.create_task(
+            test_db, test_user.id, project_id=project.id, title="Mine", sharing=False
+        )
+        with pytest.raises(AccessDenied):
+            task_queries.update_task(
+                test_db, other.id, task.id, {"project_id": mine.id}, sharing=True
+            )
+        test_db.expire_all()
+        assert test_db.get(Task, task.id).project_id == project.id
+
+    def test_owner_can_still_move_their_own_task_to_inbox(
+        self, test_db, test_user, project
+    ):
+        task = task_queries.create_task(
+            test_db, test_user.id, project_id=project.id, title="Mine", sharing=False
+        )
+        moved = task_queries.update_task(
+            test_db, test_user.id, task.id, {"project_id": None}, sharing=True
+        )
+        assert moved is not None
+        assert moved.project_id == get_or_create_inbox(test_db, test_user.id).id
+
+    def test_editor_can_still_move_within_the_owners_projects(
+        self, test_db, test_user, other, project
+    ):
+        """The ownership boundary is the line, not the move itself."""
+        second = task_queries.create_project(test_db, test_user.id, name="Other board")
+        _grant(test_db, project, "user", other.id, "editor")
+        _grant(test_db, second, "user", other.id, "editor")
+        task = task_queries.create_task(
+            test_db, test_user.id, project_id=project.id, title="Mine", sharing=False
+        )
+        moved = task_queries.update_task(
+            test_db, other.id, task.id, {"project_id": second.id}, sharing=True
+        )
+        assert moved is not None
+        assert moved.project_id == second.id
+        assert moved.user_id == test_user.id
+
+
+class TestBlankEmailIsNeverAPrincipal:
+    """`users.email` is uniquely indexed, so at most one account can carry a
+    blank address (prod: exactly one of 19,681). That incidental uniqueness on
+    *another table* is the only thing standing between a blank
+    `invited_email` and one account resolving to another's membership row, so
+    the blank is refused at the writer and at the schema instead."""
+
+    def test_create_team_stores_null_not_blank_for_a_blank_email_owner(self, test_db):
+        owner = _user(test_db, "")
+        team = collab_queries.create_team(test_db, owner, name="Relay")
+        row = (
+            test_db.query(TeamMember)
+            .filter(TeamMember.team_id == team.id, TeamMember.user_id == owner.id)
+            .one()
+        )
+        assert row.invited_email is None
+
+    def test_grant_rejects_a_whitespace_only_email(self, test_db, test_user, project):
+        """`not "   "` is False, so this used to pass the "principal required"
+        guard and then be stored as '' by `.strip()`."""
+        with pytest.raises(GrantError):
+            collab_queries.create_project_grant(
+                test_db,
+                test_user.id,
+                project,
+                principal_type="user",
+                invited_email="   ",
+                role="viewer",
+            )
+
+    def test_blank_email_account_claims_no_pending_grants(
+        self, test_db, test_user, project
+    ):
+        blank = _user(test_db, "")
+        test_db.add(
+            ProjectGrant(
+                project_id=project.id,
+                principal_type="user",
+                principal_id=None,
+                invited_email="someone@example.com",
+                role="viewer",
+                scopes=["tasks"],
+            )
+        )
+        test_db.commit()
+        assert collab_queries.attach_pending_grants(test_db, blank) == 0
+
+    def test_schema_refuses_a_blank_invited_email(self, test_db, test_user, project):
+        from sqlalchemy.exc import IntegrityError
+
+        team = collab_queries.create_team(test_db, test_user, name="Guarded")
+        test_db.add(
+            TeamMember(
+                team_id=team.id,
+                user_id=None,
+                invited_email="  ",
+                role="member",
+                status="invited",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            test_db.commit()
+        test_db.rollback()
+
+    def test_schema_refuses_a_principal_less_grant(self, test_db, project):
+        from sqlalchemy.exc import IntegrityError
+
+        test_db.add(
+            ProjectGrant(
+                project_id=project.id,
+                principal_type="user",
+                principal_id=None,
+                invited_email=None,
+                role="viewer",
+                scopes=["tasks"],
+            )
+        )
+        with pytest.raises(IntegrityError):
+            test_db.commit()
+        test_db.rollback()
+
+
+class TestSurvivingTeamKeepsAnOwner:
+    """`delete_user_account` must not leave a team alive without an active
+    owner: `_payer_id` has nobody to bill and `require_team(minimum="owner")`
+    can never be satisfied, so the team is unadministerable for good."""
+
+    def test_last_owner_leaving_promotes_the_longest_standing_member(
+        self, test_db, test_user
+    ):
+        alice, bob = _user(test_db, "a@example.com"), _user(test_db, "b@example.com")
+        team = _team(test_db, (alice, "owner", "active"), (bob, "member", "active"))
+        team_id = team.id
+        delete_user_account(test_db, alice.id)
+
+        assert test_db.query(Team).filter(Team.id == team_id).count() == 1
+        survivor = test_db.query(TeamMember).filter(TeamMember.team_id == team_id).one()
+        assert survivor.user_id == bob.id
+        assert survivor.role == "owner"
+
+    def test_promotion_prefers_an_admin_over_a_member(self, test_db):
+        alice = _user(test_db, "a@example.com")
+        member = _user(test_db, "m@example.com")
+        admin = _user(test_db, "adm@example.com")
+        team = _team(
+            test_db,
+            (alice, "owner", "active"),
+            (member, "member", "active"),
+            (admin, "admin", "active"),
+        )
+        team_id, admin_id = team.id, admin.id
+        delete_user_account(test_db, alice.id)
+
+        owners = (
+            test_db.query(TeamMember)
+            .filter(TeamMember.team_id == team_id, TeamMember.role == "owner")
+            .all()
+        )
+        assert [o.user_id for o in owners] == [admin_id]
+
+    def test_an_existing_co_owner_is_left_alone(self, test_db):
+        alice, bob = _user(test_db, "a@example.com"), _user(test_db, "b@example.com")
+        carol = _user(test_db, "c@example.com")
+        team = _team(
+            test_db,
+            (alice, "owner", "active"),
+            (bob, "owner", "active"),
+            (carol, "member", "active"),
+        )
+        team_id, bob_id = team.id, bob.id
+        delete_user_account(test_db, alice.id)
+
+        owners = (
+            test_db.query(TeamMember)
+            .filter(TeamMember.team_id == team_id, TeamMember.role == "owner")
+            .all()
+        )
+        assert [o.user_id for o in owners] == [bob_id]
+
+    def test_team_whose_only_other_member_never_accepted_is_deleted(self, test_db):
+        """An `invited` member is not an active one: keeping the team would
+        leave it ownerless. It goes, and the invite with it."""
+        alice, bob = _user(test_db, "a@example.com"), _user(test_db, "b@example.com")
+        team = _team(test_db, (alice, "owner", "active"), (bob, "member", "invited"))
+        team_id = team.id
+        delete_user_account(test_db, alice.id)
+
+        assert test_db.query(Team).filter(Team.id == team_id).count() == 0
+        assert (
+            test_db.query(TeamMember).filter(TeamMember.team_id == team_id).count() == 0
+        )
+
+    def test_a_team_you_were_removed_from_is_not_yours_to_delete(self, test_db):
+        alice, bob = _user(test_db, "a@example.com"), _user(test_db, "b@example.com")
+        team = _team(test_db, (bob, "owner", "removed"), (alice, "member", "removed"))
+        # Nobody active at all, but Alice was removed — the team is not hers.
+        team_id = team.id
+        delete_user_account(test_db, alice.id)
+        assert test_db.query(Team).filter(Team.id == team_id).count() == 1
+
+
+class TestPayerResolution:
+    def test_ownerless_team_raises_instead_of_asserting(self, test_db, test_user):
+        """A bare `assert` here is stripped under `python -O`, which would hand
+        `None` to `check_capability` as the payer id — a silent mis-meter."""
+        team = Team(name="Orphan", slug=f"orphan-{uuid4().hex[:8]}")
+        team.created_by_user_id = None
+        test_db.add(team)
+        test_db.commit()
+        with pytest.raises(collab_queries.TeamStateError):
+            collab_queries._payer_id(test_db, team)
+
+    def test_payer_still_resolves_after_the_owner_deletes_their_account(self, test_db):
+        """The promotion above is what keeps this answerable."""
+        alice, bob = _user(test_db, "a@example.com"), _user(test_db, "b@example.com")
+        team = _team(test_db, (alice, "owner", "active"), (bob, "member", "active"))
+        team_id, bob_id = team.id, bob.id
+        delete_user_account(test_db, alice.id)
+
+        test_db.expire_all()
+        assert collab_queries._payer_id(test_db, test_db.get(Team, team_id)) == bob_id
+
+
+class TestInviteLinkRedemptionIsSerialized:
+    def test_one_use_link_admits_exactly_one_of_two_racing_clients(
+        self, test_db, test_user, monkeypatch
+    ):
+        """Two real sessions, two threads, one `max_uses=1` link.
+
+        `_seat_count` is slowed to widen the read-check-write window: without
+        the row lock both clients read `uses = 0`, both pass, and both join.
+        """
+        import threading
+        import time
+
+        from sqlalchemy.orm import sessionmaker
+
+        team = collab_queries.create_team(test_db, test_user, name="Race")
+        invite = collab_queries.create_invite_link(
+            test_db, test_user.id, team.id, role="member", max_uses=1
+        )
+        token, invite_id = invite.token, invite.id
+        racers = [
+            _user(test_db, "racer-a@example.com").id,
+            _user(test_db, "racer-b@example.com").id,
+        ]
+
+        real_seat_count = collab_queries._seat_count
+
+        def slow_seat_count(db, team_id):
+            time.sleep(0.4)
+            return real_seat_count(db, team_id)
+
+        monkeypatch.setattr(collab_queries, "_seat_count", slow_seat_count)
+
+        Session = sessionmaker(bind=test_db.get_bind())
+        outcomes: list[str] = []
+        guard = threading.Lock()
+
+        def redeem(user_id):
+            session = Session()
+            try:
+                racer = session.get(User, user_id)
+                assert racer is not None
+                collab_queries.accept_invite_link(session, racer, token)
+                result = "joined"
+            except collab_queries.InviteNotFoundError:
+                result = "rejected"
+            finally:
+                session.close()
+            with guard:
+                outcomes.append(result)
+
+        threads = [threading.Thread(target=redeem, args=(u,)) for u in racers]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+
+        assert sorted(outcomes) == ["joined", "rejected"]
+        test_db.expire_all()
+        assert test_db.get(TeamInvite, invite_id).uses == 1
+        assert (
+            test_db.query(TeamMember)
+            .filter(TeamMember.team_id == team.id, TeamMember.status == "active")
+            .count()
+            == 2  # the owner plus exactly one racer
+        )
+
+    def test_uses_increments_per_redemption(self, test_db, test_user):
+        """SQL-side increment: a Python-side `uses + 1` writes back a stale
+        read and silently under-counts."""
+        team = collab_queries.create_team(test_db, test_user, name="Counted")
+        invite = collab_queries.create_invite_link(
+            test_db, test_user.id, team.id, role="member", max_uses=3
+        )
+        invite_id = invite.token, invite.id
+        for email in ("one@example.com", "two@example.com"):
+            collab_queries.accept_invite_link(
+                test_db, _user(test_db, email), invite.token
+            )
+        test_db.expire_all()
+        assert test_db.get(TeamInvite, invite_id[1]).uses == 2
+
+
+class TestGrantAdminIsNotPerScope:
+    """A `tasks`-only admin must not be able to administer grants — otherwise
+    it writes itself a second grant with `scopes=["sessions"]` and reads every
+    session on the board, which is the boundary the two-lens design rests on."""
+
+    def test_scope_limited_admin_cannot_widen_its_own_scope(
+        self, test_db, test_user, other, project
+    ):
+        _grant(test_db, project, "user", other.id, "admin", scopes=["tasks"])
+        with pytest.raises(AccessDenied):
+            collab_queries.create_project_grant(
+                test_db,
+                other.id,
+                project,
+                principal_type="user",
+                principal_id=other.id,
+                role="admin",
+                scopes=["sessions"],
+            )
+
+    def test_scope_limited_admin_cannot_list_or_delete_grants(
+        self, test_db, test_user, other, project
+    ):
+        _grant(test_db, project, "user", other.id, "admin", scopes=["tasks"])
+        with pytest.raises(AccessDenied):
+            collab_queries.list_project_grants(test_db, other.id, project)
+
+    def test_unrestricted_admin_still_manages_grants(
+        self, test_db, test_user, other, project
+    ):
+        _grant(test_db, project, "user", other.id, "admin")
+        third = _user(test_db, "third@example.com")
+        grant = collab_queries.create_project_grant(
+            test_db,
+            other.id,
+            project,
+            principal_type="user",
+            principal_id=third.id,
+            role="viewer",
+        )
+        assert grant.principal_id == third.id
+        assert collab_queries.list_project_grants(test_db, other.id, project)
+
+    def test_owner_is_unaffected(self, test_db, test_user, other, project):
+        grant = collab_queries.create_project_grant(
+            test_db,
+            test_user.id,
+            project,
+            principal_type="user",
+            principal_id=other.id,
+            role="editor",
+        )
+        assert grant.role == "editor"

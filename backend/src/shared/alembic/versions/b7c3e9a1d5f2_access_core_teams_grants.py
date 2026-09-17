@@ -104,6 +104,14 @@ def upgrade() -> None:
             "status IN ('invited','active','removed')",
             name="ck_team_members_status",
         ),
+        # A blank address is not an address. ~710 Apple-relay accounts have
+        # `users.email = ''`, and '' = '' makes every one of them the same
+        # principal when an invite is matched by email, so the empty string
+        # must never reach this column in the first place.
+        sa.CheckConstraint(
+            "invited_email IS NULL OR btrim(invited_email) <> ''",
+            name="ck_team_members_invited_email_not_blank",
+        ),
         sa.ForeignKeyConstraint(["team_id"], ["teams.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
@@ -263,6 +271,23 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "role IN ('viewer','commenter','editor','admin')",
             name="ck_project_grants_role",
+        ),
+        # A grant must name somebody. Both partial unique indexes below are
+        # `WHERE ... IS NOT NULL`, so a row with neither column set is not just
+        # meaningless, it is invisible to them.
+        sa.CheckConstraint(
+            "principal_id IS NOT NULL OR invited_email IS NOT NULL",
+            name="ck_project_grants_has_principal",
+        ),
+        # Only a pending *user* invite is identified by email; a team is always
+        # a resolved id.
+        sa.CheckConstraint(
+            "principal_type <> 'team' OR principal_id IS NOT NULL",
+            name="ck_project_grants_team_has_id",
+        ),
+        sa.CheckConstraint(
+            "invited_email IS NULL OR btrim(invited_email) <> ''",
+            name="ck_project_grants_invited_email_not_blank",
         ),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(

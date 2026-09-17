@@ -685,10 +685,15 @@ class ProjectResponse(BaseModel):
     # (collaboration §4). Owners and team members cover both scopes; a grantee
     # gets what the grant says, so a sessions-only viewer's client can hide the
     # board without a second round trip.
-    role: ProjectRoleLiteral = "owner"
-    scopes: list[GrantScopeLiteral] = Field(
-        default_factory=lambda: ["tasks", "sessions"]
-    )
+    #
+    # Defaulted to the *least* privilege on purpose. These are authorization
+    # facts about the caller, not columns on the row, so `model_validate(project)`
+    # cannot supply them — and a call site that forgets must under-report (the
+    # client hides an affordance the user actually has) rather than claim
+    # `owner` and render buttons that 403. Build these responses with
+    # `api.tasks._project_response`, which always sets both.
+    role: ProjectRoleLiteral = "viewer"
+    scopes: list[GrantScopeLiteral] = Field(default_factory=list)
     # Task-identifier prefix; None until the project's first task allocates one.
     key: str | None = None
     git_remote_url: str | None = None

@@ -122,6 +122,12 @@ class TeamMember(Base):
             "status IN ('invited','active','removed')",
             name="ck_team_members_status",
         ),
+        # '' = '' would make every blank-email account the same principal when
+        # an invite is matched by address — see `collab_queries._email_key`.
+        CheckConstraint(
+            "invited_email IS NULL OR btrim(invited_email) <> ''",
+            name="ck_team_members_invited_email_not_blank",
+        ),
         Index("ix_team_members_team", "team_id"),
         Index(
             "ix_team_members_user",
@@ -247,6 +253,23 @@ class ProjectGrant(Base):
         CheckConstraint(
             "role IN ('viewer','commenter','editor','admin')",
             name="ck_project_grants_role",
+        ),
+        # Invariants that used to live only in `create_project_grant`'s Python
+        # branches. Both partial unique indexes below are `WHERE ... IS NOT
+        # NULL`, so a principal-less row is unique-index-invisible as well as
+        # meaningless; and a blank `invited_email` collides with every
+        # blank-email account (see `collab_queries._email_key`).
+        CheckConstraint(
+            "principal_id IS NOT NULL OR invited_email IS NOT NULL",
+            name="ck_project_grants_has_principal",
+        ),
+        CheckConstraint(
+            "principal_type <> 'team' OR principal_id IS NOT NULL",
+            name="ck_project_grants_team_has_id",
+        ),
+        CheckConstraint(
+            "invited_email IS NULL OR btrim(invited_email) <> ''",
+            name="ck_project_grants_invited_email_not_blank",
         ),
         Index("ix_project_grants_project", "project_id"),
         # Backs "projects shared with me" — the principal side of the lookup.

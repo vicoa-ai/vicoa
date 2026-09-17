@@ -14,6 +14,8 @@ import logging
 from typing import Any, Awaitable, Callable, Protocol
 from uuid import UUID
 
+from sqlalchemy.exc import OperationalError as SAOperationalError
+
 logger = logging.getLogger(__name__)
 
 # --- user creation (welcome email, etc.) --------------------------------------
@@ -108,11 +110,25 @@ def check_capability(
 ) -> None:
     """Raise ``CapabilityDenied`` if any registered hook denies. Empty registry
     ⇒ allow. A hook that *raises* is treated as a denial too — failing open on
-    a billing error would hand out seats for free."""
+    a billing error would hand out seats for free.
+
+    The one exception is a transient database error. Re-raising it still denies
+    the action (the request aborts), but it aborts as ``503 + Retry-After`` via
+    ``backend.main``'s handler instead of telling a *paying* customer to
+    upgrade — a 402 is a statement about their subscription, and a flycast
+    blip is not evidence about their subscription.
+    """
     for fn in _capability_hooks:
         try:
             reason = fn(db, user_id, capability, context)
         except CapabilityDenied:
+            raise
+        except SAOperationalError:
+            logger.warning(
+                "capability hook %r hit a database error for %s; surfacing as 503",
+                getattr(fn, "__name__", fn),
+                capability,
+            )
             raise
         except Exception:
             logger.exception(
