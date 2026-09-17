@@ -43,8 +43,8 @@ export interface WorktreeSubGroupHeaderProps {
       checkout and unmanaged worktrees, which render as a plain header. */
   onRequestDelete?: () => void;
   /** This branch's pull request, when it has one. Recolors the branch icon and
-      adds the hover card; absent (no PR, no `gh`, no GitHub) renders the plain
-      grey branch icon this row has always shown. */
+      makes the whole row open the PR panel on hover; absent (no PR, no `gh`,
+      no GitHub) renders the plain grey branch icon this row has always shown. */
   pr?: PrInfo | null;
 }
 
@@ -54,6 +54,9 @@ export interface WorktreeSubGroupHeaderProps {
  * worktrees) a delete action surfaced two ways from a single definition:
  * right-click and a hover-revealed three-dot menu. Keeping the two menus off
  * one `actions` list is what keeps them from drifting apart.
+ *
+ * When the branch has a pull request, hovering anywhere on the row opens its
+ * panel beside the sidebar.
  */
 export function WorktreeSubGroupHeader({
   label,
@@ -77,75 +80,74 @@ export function WorktreeSubGroupHeader({
   const branchIcon = <BranchIcon className={cn('h-3 w-3 shrink-0', branchIconClassName)} />;
 
   const header = (
-    // `select-none` stops a right-click from starting a text selection on the
-    // label instead of opening the context menu.
-    <div className="group/label flex w-full select-none items-center gap-1 py-0.5 pl-3 pr-2">
-      <button
-        type="button"
-        onClick={onToggleCollapsed}
-        aria-expanded={!collapsed}
-        className="flex min-w-0 flex-1 items-center gap-1 text-left"
-      >
-        <PrHoverCard pr={pr} branch={worktreeBranch ?? label}>
-          {/* A span, not a button: the trigger sits inside the collapse button,
-              and hover cards open on hover anyway. Its panel is portaled out, so
-              its own buttons never nest inside this one. */}
-          <span className="flex shrink-0 items-center">{branchIcon}</span>
-        </PrHoverCard>
-        <span
-          className={cn(
-            'truncate text-[11px] font-light text-muted-foreground/60',
-            missing && 'line-through text-muted-foreground/40',
-          )}
+    // The hover card's panel is portaled out, so its own buttons never nest
+    // inside the collapse button below. `select-none` stops a right-click from
+    // starting a text selection on the label instead of opening the context
+    // menu.
+    <PrHoverCard pr={pr} branch={worktreeBranch ?? label}>
+      <div className="group/label flex w-full select-none items-center gap-1 py-0.5 pl-3 pr-2">
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          aria-expanded={!collapsed}
+          className="flex min-w-0 flex-1 items-center gap-1 text-left"
         >
-          {label}
-        </span>
-        {missing && (
+          {branchIcon}
           <span
-            title="This worktree's folder no longer exists"
-            className="shrink-0 rounded border border-border/60 px-1 text-[9px] leading-4 text-muted-foreground/50"
+            className={cn(
+              'truncate text-[11px] font-light text-muted-foreground/60',
+              missing && 'line-through text-muted-foreground/40',
+            )}
           >
-            deleted
+            {label}
           </span>
-        )}
-        <ChevronRight
-          className={cn(
-            'h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform group-hover/label:text-muted-foreground',
-            !collapsed && 'rotate-90',
-          )}
-        />
-      </button>
-      {actions.length > 0 && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              title="Worktree actions"
-              aria-label="Worktree actions"
-              className="shrink-0 rounded p-0.5 text-muted-foreground/50 opacity-0 transition-opacity hover:text-muted-foreground focus-visible:opacity-100 group-hover/label:opacity-100"
+          {missing && (
+            <span
+              title="This worktree's folder no longer exists"
+              className="shrink-0 rounded border border-border/60 px-1 text-[9px] leading-4 text-muted-foreground/50"
             >
-              <MoreHorizontal className="h-3 w-3" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-32 font-mono text-xs">
-            {actions.map(({ key, icon: Icon, label: actionLabel, onSelect }) => (
-              <DropdownMenuItem key={key} className="text-xs" onSelect={onSelect}>
-                <Icon className="h-3 w-3" />
-                {actionLabel}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
-      {newSessionDirectory && (
-        <NewSessionButton
-          directory={newSessionDirectory}
-          label={label}
-          worktreeBranch={worktreeBranch}
-          onNavigate={onNavigate}
-        />
-      )}
-    </div>
+              deleted
+            </span>
+          )}
+          <ChevronRight
+            className={cn(
+              'h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform group-hover/label:text-muted-foreground',
+              !collapsed && 'rotate-90',
+            )}
+          />
+        </button>
+        {actions.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                title="Worktree actions"
+                aria-label="Worktree actions"
+                className="shrink-0 rounded p-0.5 text-muted-foreground/50 opacity-0 transition-opacity hover:text-muted-foreground focus-visible:opacity-100 group-hover/label:opacity-100"
+              >
+                <MoreHorizontal className="h-3 w-3" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-32 font-mono text-xs">
+              {actions.map(({ key, icon: Icon, label: actionLabel, onSelect }) => (
+                <DropdownMenuItem key={key} className="text-xs" onSelect={onSelect}>
+                  <Icon className="h-3 w-3" />
+                  {actionLabel}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        {newSessionDirectory && (
+          <NewSessionButton
+            directory={newSessionDirectory}
+            label={label}
+            worktreeBranch={worktreeBranch}
+            onNavigate={onNavigate}
+          />
+        )}
+      </div>
+    </PrHoverCard>
   );
 
   if (actions.length === 0) return header;
