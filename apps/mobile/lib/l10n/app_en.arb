@@ -121,6 +121,7 @@
   "agentChatSendFailed": "Couldn't send. Check your connection and try again.",
   "agentChatNotSentTapToRetry": "Not sent. Tap to retry.",
   "agentChatResend": "Resend",
+  "agentChatResendPrompt": "Resend this message?",
   "agentChatSessionReady": "Session ready",
   "agentChatSessionRenamed": "Session renamed successfully",
   "agentChatSessionTitle": "Session",

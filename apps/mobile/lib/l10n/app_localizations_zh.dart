@@ -298,6 +298,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get agentChatResend => '重新发送';
 
   @override
+  String get agentChatResendPrompt => '重新发送这条消息？';
+
+  @override
   String get agentChatSessionReady => '任务已就绪';
 
   @override

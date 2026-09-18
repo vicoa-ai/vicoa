@@ -626,6 +626,12 @@ abstract class AppLocalizations {
   /// **'Resend'**
   String get agentChatResend;
 
+  /// No description provided for @agentChatResendPrompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Resend this message?'**
+  String get agentChatResendPrompt;
+
   /// No description provided for @agentChatSessionReady.
   ///
   /// In en, this message translates to:

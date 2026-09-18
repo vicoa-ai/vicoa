@@ -308,6 +308,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get agentChatResend => 'Resend';
 
   @override
+  String get agentChatResendPrompt => 'Resend this message?';
+
+  @override
   String get agentChatSessionReady => 'Session ready';
 
   @override

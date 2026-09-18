@@ -88,6 +88,7 @@
   "agentChatSendFailed": "发送失败，请检查网络后重试。",
   "agentChatNotSentTapToRetry": "未发送，点按重试。",
   "agentChatResend": "重新发送",
+  "agentChatResendPrompt": "重新发送这条消息？",
   "agentChatSessionReady": "任务已就绪",
   "agentChatSessionRenamed": "任务重命名成功",
   "agentChatSessionTitle": "任务",

@@ -1452,8 +1452,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
               key: ValueKey('send_status_$messageId'),
               status: messageSendStatus,
               sentAt: sentAt(message),
-              onRetry: () => _model.resendMessage(context, messageId),
-              onMore: () => _showUnsentMessageActions(messageId),
+              onTap: () => _showUnsentMessageActions(messageId),
             ),
           Flexible(
             child: LayoutBuilder(
@@ -1985,8 +1984,8 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     );
   }
 
-  /// Long-press on a failed bubble's red mark: resend / edit in input / delete.
-  /// (A plain tap resends directly.)
+  /// Tap on a failed bubble's red mark: "Resend this message?" with resend /
+  /// edit in input / delete. Resend is never a single tap — it can duplicate.
   void _showUnsentMessageActions(String messageId) {
     showUnsentMessageSheet(
       context: context,

@@ -16,21 +16,21 @@ import 'message_queue_status.dart';
 /// - `sending`: nothing until [kSendIndicatorDelay] has passed since
 ///   [sentAt] (wall-clock, so a background/resume can't desync it), then a
 ///   thin grey spinner.
-/// - `failed`: a red circled `!`. Tap → [onRetry]; long-press → [onMore]
-///   (edit / delete).
+/// - `failed`: a red circled `!`. Tap → [onTap], which opens the
+///   "Resend this message?" sheet (resend / edit / delete). Never resends
+///   directly: a resend can duplicate, and a 44px target beside a bubble is
+///   easy to hit while scrolling.
 class SendStatusIndicator extends StatefulWidget {
   const SendStatusIndicator({
     super.key,
     required this.status,
     required this.sentAt,
-    required this.onRetry,
-    required this.onMore,
+    required this.onTap,
   });
 
   final String status;
   final DateTime? sentAt;
-  final VoidCallback onRetry;
-  final VoidCallback onMore;
+  final VoidCallback onTap;
 
   @override
   State<SendStatusIndicator> createState() => _SendStatusIndicatorState();
@@ -92,11 +92,7 @@ class _SendStatusIndicatorState extends State<SendStatusIndicator> {
               borderRadius: BorderRadius.circular(22.0),
               onTap: () {
                 HapticFeedback.lightImpact();
-                widget.onRetry();
-              },
-              onLongPress: () {
-                HapticFeedback.mediumImpact();
-                widget.onMore();
+                widget.onTap();
               },
               // 44px hit target around a 22px glyph.
               child: SizedBox(
@@ -135,7 +131,9 @@ class _SendStatusIndicatorState extends State<SendStatusIndicator> {
   }
 }
 
-/// Long-press menu for a failed bubble: resend, edit in input, delete.
+/// The failed bubble's sheet, iMessage-style: a "Resend this message?" title,
+/// resend as the primary action, then edit in input / delete. Dismissing is
+/// the cancel.
 Future<void> showUnsentMessageSheet({
   required BuildContext context,
   required VoidCallback onResend,
@@ -157,10 +155,25 @@ Future<void> showUnsentMessageSheet({
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(height: 8.0),
+            Padding(
+              padding: const EdgeInsetsDirectional.fromSTEB(20.0, 20.0, 20.0, 8.0),
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(
+                  l10n.agentChatResendPrompt,
+                  style: theme.bodyMedium.override(
+                    font: GoogleFonts.sourceSans3(fontWeight: FontWeight.w600),
+                    fontSize: 19.0,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.0,
+                  ),
+                ),
+              ),
+            ),
             _UnsentAction(
               icon: Icons.refresh_rounded,
               label: l10n.agentChatResend,
+              color: theme.primary,
               onTap: () {
                 Navigator.of(ctx).pop();
                 onResend();
