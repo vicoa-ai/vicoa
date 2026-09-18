@@ -201,6 +201,21 @@ class FFAppState extends ChangeNotifier {
       }
     });
     _safeInit(() {
+      final branchesJson = prefs.getString('ff_cachedCheckoutBranches') ?? '{}';
+      try {
+        final decoded = jsonDecode(branchesJson);
+        if (decoded is Map) {
+          _cachedCheckoutBranches = {
+            for (final e in decoded.entries)
+              if (e.value is String) e.key.toString(): e.value as String,
+          };
+        }
+      } catch (e) {
+        print("Can't decode cached checkout branches. Error: $e.");
+        _cachedCheckoutBranches = {};
+      }
+    });
+    _safeInit(() {
       final timestampStr = prefs.getString('ff_cachedAgentInstancesTimestamp');
       if (timestampStr != null) {
         try {
@@ -706,6 +721,15 @@ class FFAppState extends ChangeNotifier {
     debugLogAppState(this);
   }
 
+  // Current git branch per session checkout ("machineId|cwd" -> branch) so
+  // the home page's cards paint their branch from cache before the RPC lands.
+  Map<String, String> _cachedCheckoutBranches = {};
+  Map<String, String> get cachedCheckoutBranches => _cachedCheckoutBranches;
+  set cachedCheckoutBranches(Map<String, String> value) {
+    _cachedCheckoutBranches = value;
+    prefs.setString('ff_cachedCheckoutBranches', jsonEncode(value));
+  }
+
   // Cached agents
   List<dynamic> _cachedAgents = [];
   List<dynamic> get cachedAgents => _cachedAgents;
@@ -756,6 +780,7 @@ class FFAppState extends ChangeNotifier {
     cachedAgentsTimestamp = null;
     cachedMachines = [];
     cachedMachinesTimestamp = null;
+    cachedCheckoutBranches = {};
     clearLastWebPreviewUrl();
     setLastWebPreviewDesktopMode(false);
 

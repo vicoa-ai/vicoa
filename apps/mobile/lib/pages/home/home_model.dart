@@ -4,6 +4,8 @@ import '/flutter_flow/custom_functions.dart' as functions;
 import '/custom_code/actions/index.dart' as actions;
 import '/auth/supabase_auth/auth_util.dart';
 import 'home_widget.dart' show HomeWidget;
+import 'checkout_branches.dart';
+import 'session_card_text.dart' show sessionWorktreeBranch;
 import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/material.dart';
@@ -63,6 +65,11 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
   int _highestLoadedPage = 1;
   bool _reachedPaginationEnd = false;
   final Set<String> _deletedInstanceIds = {};
+  // Current branch of each main-checkout session's cwd, for the card's second
+  // line (a worktree session already carries its branch). Seeded from the
+  // persisted cache so cards paint on the first frame; refreshed over RPC
+  // whenever the list is (re)loaded.
+  late final CheckoutBranchResolver _checkoutBranches;
 
   @override
   void initState(BuildContext context) {
@@ -70,9 +77,51 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     final prefs = FFAppState().userPreferences;
     selectedGroupBy = prefs.homeFilterGroupBy;
     selectedTab = prefs.homeFilterStatus;
+    _checkoutBranches = CheckoutBranchResolver(
+      call: actions.VicoaWsClient.instance.callRpc,
+      onChanged: () => _notifyUI?.call(),
+      seed: FFAppState().cachedCheckoutBranches,
+      persist: (b) => FFAppState().cachedCheckoutBranches = b,
+    );
     _loadCachedData();
     _startPeriodicRefresh();
     _connectWs();
+  }
+
+  /// Live branch of the checkout [instance] runs in (`''` for a detached
+  /// HEAD), or `null` while unknown / not a repo.
+  String? checkoutBranchFor(Map<String, dynamic> instance) {
+    final machineId = instance['machine_id']?.toString() ?? '';
+    final project = instance['project']?.toString() ?? '';
+    if (machineId.isEmpty || project.isEmpty) return null;
+    return _checkoutBranches.branchFor(machineId, project);
+  }
+
+  /// The distinct checkouts behind the sessions currently on screen. Worktree
+  /// sessions are skipped (their branch is in the payload), as are machines
+  /// the list already reports offline — the relay would just answer
+  /// `no_handler`.
+  List<BranchProbeTarget> _branchProbeTargets() {
+    final seen = <String>{};
+    final targets = <BranchProbeTarget>[];
+    for (final group in getGroupedSessions().values) {
+      for (final s in group) {
+        if (s is! Map<String, dynamic>) continue;
+        if (sessionWorktreeBranch(s) != null) continue;
+        if (s['live_state']?.toString() == actions.kLiveStateMachineOffline) continue;
+        final machineId = s['machine_id']?.toString() ?? '';
+        final project = s['project']?.toString() ?? '';
+        if (machineId.isEmpty || project.isEmpty) continue;
+        if (seen.add(branchCacheKey(machineId, project))) {
+          targets.add((machineId: machineId, path: project));
+        }
+      }
+    }
+    return targets;
+  }
+
+  void _refreshCheckoutBranches({bool onlyUnknown = false}) {
+    unawaited(_checkoutBranches.refresh(_branchProbeTargets(), onlyUnknown: onlyUnknown));
   }
 
   // Set UI notification callback
@@ -225,6 +274,9 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
         FFAppState().cachedAgentInstances = agentInstances;
         FFAppState().cachedAgentInstancesTimestamp = DateTime.now();
         _notifyUI?.call();
+        // Label a checkout we have never seen without re-asking every known
+        // one, so a burst of spawns doesn't fan out.
+        _refreshCheckoutBranches(onlyUnknown: true);
       }
     } else if (eventType == 'instance_updated') {
       if (_deletedInstanceIds.contains(id)) return;
@@ -336,6 +388,7 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
       if (notifyUI && _notifyUI != null) {
         _notifyUI!();
       }
+      _refreshCheckoutBranches();
     } on actions.AuthenticationException catch (e) {
       debugPrint('Authentication error: $e');
       if (showLoading) {
@@ -440,6 +493,8 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
         appState.cachedAgentInstancesTimestamp = DateTime.now();
         _previousSessionCount = agentInstances.length;
         _highestLoadedPage = pageToLoad;
+        // A deeper page can surface a checkout the first page didn't have.
+        _refreshCheckoutBranches(onlyUnknown: true);
       }
 
       if (uniqueNextItems.isEmpty) {
@@ -808,13 +863,17 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     FFAppState().updateUserPreferences((p) => p..homeFilterGroupBy = groupBy);
   }
 
+  // Filter changes can bring sessions on screen whose checkout was never
+  // probed (targets are taken from the visible list only).
   void selectTab(String tab) {
     selectedTab = tab;
     FFAppState().updateUserPreferences((p) => p..homeFilterStatus = tab);
+    _refreshCheckoutBranches(onlyUnknown: true);
   }
 
   void selectAgentType(String agentType) {
     selectedAgentType = agentType;
+    _refreshCheckoutBranches(onlyUnknown: true);
   }
 
   void selectDateRange(String range) {
@@ -822,11 +881,13 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     if (range != 'Custom') {
       customDateRange = null;
     }
+    _refreshCheckoutBranches(onlyUnknown: true);
   }
 
   void selectCustomDateRange(DateTimeRange range) {
     customDateRange = range;
     selectedDateRange = 'Custom';
+    _refreshCheckoutBranches(onlyUnknown: true);
   }
 
   String get selectedDateFilterLabel {

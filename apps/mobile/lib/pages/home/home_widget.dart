@@ -858,6 +858,7 @@ class _HomeWidgetState extends State<HomeWidget>
       instance: instance,
       status: status,
       groupBy: groupBy,
+      checkoutBranch: _model.checkoutBranchFor(instance),
       onAction: _handleSessionAction,
       onRemoveInstance: (id) {
         _model.removeInstance(id);

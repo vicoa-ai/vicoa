@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -10,6 +11,7 @@ import '/flutter_flow/flutter_flow_util.dart';
 import '/l10n/app_localizations.dart';
 import '/index.dart';
 import '/custom_code/actions/index.dart' as actions;
+import 'session_card_text.dart';
 
 class SessionCard extends StatelessWidget {
   const SessionCard({
@@ -17,6 +19,7 @@ class SessionCard extends StatelessWidget {
     required this.instance,
     required this.status,
     this.groupBy = 'Time',
+    this.checkoutBranch,
     required this.onAction,
     required this.onRemoveInstance,
     required this.onReload,
@@ -27,6 +30,9 @@ class SessionCard extends StatelessWidget {
   final Map<String, dynamic> instance;
   final String status;
   final String groupBy;
+  /// Live branch of the checkout this session runs in, when the home model
+  /// has resolved it (see `sessionCardRow2`).
+  final String? checkoutBranch;
   final Future<void> Function(Map<String, dynamic>, String) onAction;
   final void Function(String id) onRemoveInstance;
   final Future<void> Function() onReload;
@@ -110,7 +116,10 @@ class SessionCard extends StatelessWidget {
             padding:
                 const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
             child: SessionCardContent(
-                instance: instance, status: status, groupBy: groupBy),
+                instance: instance,
+                status: status,
+                groupBy: groupBy,
+                checkoutBranch: checkoutBranch),
           ),
         ),
       ),
@@ -124,64 +133,55 @@ class SessionCardContent extends StatelessWidget {
     required this.instance,
     required this.status,
     this.groupBy = 'Time',
+    this.checkoutBranch,
   });
 
   final Map<String, dynamic> instance;
   final String status;
   final String groupBy;
+  final String? checkoutBranch;
 
-  bool get _hasTitle => instance['name']?.toString().isNotEmpty == true;
-
-  String _displayAgentType(String? raw) {
-    if (raw == null) return 'Agent';
-    if (raw.toLowerCase() == 'claude') return 'Claude Code';
-    return raw;
-  }
-
-  String _getLatestMessage() {
-    final msg = instance['latest_message']?.toString().trim() ?? '';
-    return (msg.isNotEmpty &&
-            !msg.contains('API Error') &&
-            !msg.contains('error'))
-        ? msg
-        : '';
-  }
-
-  String _getProjectLabel() {
-    final project = instance['project']?.toString().trim() ?? '';
-    if (project.isEmpty) return '';
-    final clean = project.endsWith('/')
-        ? project.substring(0, project.length - 1)
-        : project;
-    final last = clean.split('/').last;
-    return last.isNotEmpty ? last : '';
-  }
-
-  String _getRow1Text() {
-    if (_hasTitle) return instance['name'] as String;
-    final msg = _getLatestMessage();
-    if (msg.isNotEmpty) return msg;
-    return _displayAgentType(instance['agent_type_name']?.toString());
-  }
-
-  String _getRow2Text() {
-    final agentType =
-        _displayAgentType(instance['agent_type_name']?.toString());
-    if (groupBy == 'Project') {
-      if (_hasTitle) {
-        final msg = _getLatestMessage();
-        return msg.isNotEmpty ? msg : agentType;
-      }
-      return agentType;
+  /// Second line: plain text, or `text  ⎇ branch` for a git session — a gap,
+  /// not a separator glyph, before the icon. One Text.rich so the whole line
+  /// ellipsizes as a unit; the branch is set in the monospace the worktrees
+  /// page uses for branch names.
+  Widget _row2(BuildContext context, ({String text, String? branch}) row,
+      Color color) {
+    final base = FlutterFlowTheme.of(context).bodySmall.override(
+          color: color,
+          fontSize: 14.0,
+        );
+    final branch = row.branch;
+    if (branch == null) {
+      return Text(row.text, style: base, maxLines: 1, overflow: TextOverflow.ellipsis);
     }
-    final label = _getProjectLabel();
-    return label.isNotEmpty ? label : agentType;
+    return Text.rich(
+      TextSpan(
+        style: base,
+        children: [
+          if (row.text.isNotEmpty) TextSpan(text: row.text),
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Padding(
+              padding: EdgeInsets.only(left: row.text.isNotEmpty ? 8.0 : 0.0, right: 4.0),
+              child: FaIcon(FontAwesomeIcons.codeBranch, size: 9.0, color: color),
+            ),
+          ),
+          TextSpan(
+            text: branch,
+            style: GoogleFonts.firaCode(fontSize: 13.0, color: color),
+          ),
+        ],
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final row1Text = _getRow1Text();
-    final row2Text = _getRow2Text();
+    final row1Text = sessionCardRow1(instance);
+    final row2 = sessionCardRow2(instance, groupBy, checkoutBranch: checkoutBranch);
     final agentTypeName = instance['agent_type_name']?.toString();
     final timeRaw = instance['latest_message_at'] ?? instance['started_at'] ?? '';
     final time = functions.formatRelativeTimeShort(
@@ -290,17 +290,7 @@ class SessionCardContent extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Expanded(
-                    child: Text(
-                      row2Text,
-                      style: FlutterFlowTheme.of(context).bodySmall.override(
-                            color: subtitleColor,
-                            fontSize: 14.0,
-                          ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
+                  Expanded(child: _row2(context, row2, subtitleColor)),
                   const SizedBox(width: 8.0),
                   Text(
                     time,

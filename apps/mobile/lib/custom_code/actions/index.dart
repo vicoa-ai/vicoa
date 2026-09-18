@@ -74,7 +74,7 @@ export 'api_get_instance_messages.dart' show apiGetInstanceMessages;
 export 'api_get_instance_by_id.dart' show apiGetInstanceById;
 export 'api_stream_instance_messages.dart' show apiStreamInstanceMessages;
 export 'api_spawn_session_ws.dart' show apiSpawnSession;
-export 'api_resume_session.dart' show apiResumeSession, resumeAgentSlug, resumeAgentSessionHandle, resumeExpandProjectPath, canResumeSession, resumeBlockedReason, liveStateIsReachable, liveStateBlocksSending, liveStateHint, liveStateShortLabel, markResumed, isWithinResumeGrace, kLiveStateLive;
+export 'api_resume_session.dart' show apiResumeSession, resumeAgentSlug, resumeAgentSessionHandle, resumeExpandProjectPath, canResumeSession, resumeBlockedReason, liveStateIsReachable, liveStateBlocksSending, liveStateHint, liveStateShortLabel, markResumed, isWithinResumeGrace, kLiveStateLive, kLiveStateMachineOffline;
 export 'api_get_agent_catalog.dart' show apiGetAgentCatalog;
 export 'api_get_spawn_request_status.dart' show apiGetSpawnRequestStatus;
 export 'coding_minutes_per_year.dart' show codingMinutesPerYear;
