@@ -1,7 +1,7 @@
 'use client';
 
 import type React from 'react';
-import { Archive, Check, CirclePlay, Copy, Mail, MoreHorizontal, Pencil, Pin, PinOff, Share2, Trash2, type LucideIcon } from 'lucide-react';
+import { Archive, Check, CirclePlay, Copy, Mail, MoreHorizontal, Pencil, Pin, PinOff, Share, Trash2, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -99,7 +99,7 @@ export function buildSessionActions({
     });
   }
   if (onShare) {
-    actions.push({ key: 'share', icon: Share2, label: 'Share', onSelect: onShare });
+    actions.push({ key: 'share', icon: Share, label: 'Share', onSelect: onShare });
   }
   if (onRename) {
     actions.push({ key: 'rename', icon: Pencil, label: 'Rename', onSelect: onRename });

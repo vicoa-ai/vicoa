@@ -7,7 +7,7 @@ import { AgentTypeIcon } from '@/components/dashboard/agent-type-icon';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import { agentPrincipal, useAgentProfiles } from '@/lib/use-agent-profiles';
 import { Button } from '@/components/ui/button';
-import { X, ArrowDown, Pin, Loader2, Menu, PanelLeft, Folder, FolderPlus, MessageCircle, FileCode } from 'lucide-react';
+import { X, ArrowDown, Pin, Loader2, Menu, PanelLeft, Folder, FolderPlus, MessageCircle, FileCode, Share } from 'lucide-react';
 import { useDesktopChrome } from '@/components/dashboard/desktop-chrome-context';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { attachSelectionDragFix } from '@/lib/selection-drag-fix';
@@ -2292,6 +2292,19 @@ function AgentInstanceContent() {
           </div>
         </TooltipProvider>
         <div style={NO_DRAG} className="flex items-center gap-0.5">
+          {/* Share sits next to the panel toggle (same visual weight); the
+              ⋯ menu keeps its entry too. Same gate as the menu entry. */}
+          {!isDesktopLocal() && instance.is_owner !== false && (
+            <button
+              type="button"
+              aria-label="Share session"
+              title="Share"
+              onClick={() => setShareOpen(true)}
+              className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded p-0 text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <Share className="h-4 w-4" />
+            </button>
+          )}
           <FilesGitPanelToggle open={panel.open} onToggle={panel.toggleOpen} />
           {/* The files/git panel takes the window's right edge only as the right
               rail; reserve here when it's closed OR maximized into the center

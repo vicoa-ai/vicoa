@@ -32,11 +32,11 @@ function shareTitle(share: PublicShareResponse): string {
 }
 
 function shareDescription(share: PublicShareResponse): string {
-  const by = share.owner.name ? ` by ${share.owner.name}` : '';
+  const by = share.owner?.name ? ` by ${share.owner.name}` : '';
   if (share.kind === 'session') {
     const agent = share.session?.agent_profile?.name ?? share.session?.agent_type_name ?? 'an agent';
     const count = share.session?.message_count ?? 0;
-    return `A ${agent} session${by} — ${count} message${count === 1 ? '' : 's'}. Shared read-only via Vicoa.`;
+    return `A ${agent} session${by} with ${count} message${count === 1 ? '' : 's'}. Shared read-only via Vicoa.`;
   }
   if (share.kind === 'project_board') return `A task board${by}. Shared read-only via Vicoa.`;
   return `Agent sessions${by}. Shared read-only via Vicoa.`;
@@ -59,7 +59,7 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
 export default async function SharePage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const share = await loadShare(token);
-  // A real 404 (see app/s/not-found.tsx): the token space must not be an
+  // A real 404 (see app/share/not-found.tsx): the token space must not be an
   // oracle, so unknown, revoked, expired and wrong-audience all land here.
   if (!share) notFound();
   return <ShareViewer token={token} share={share} />;

@@ -83,6 +83,8 @@ def create_share_link_endpoint(
             audience=request.audience,
             filters=request.filters,
             allow_comments=request.allow_comments,
+            show_owner=request.show_owner,
+            show_branch=request.show_branch,
             expires_in_days=request.expires_in_days,
         )
     except ShareTargetNotFoundError as exc:
@@ -229,7 +231,7 @@ def get_public_session(
     instance = share_queries.covered_instance(db, grant, instance_id)
     if instance is None:
         raise _share_not_found()
-    return share_queries.public_session_summary(db, instance)
+    return share_queries.public_session_summary(db, grant, instance)
 
 
 @public_router.get(

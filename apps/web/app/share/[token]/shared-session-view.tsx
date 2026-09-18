@@ -1,13 +1,18 @@
 'use client';
 
-// One shared session: header (title, agent, status, config line) over the
-// read-only transcript, polled with a watermark (`after=`) so a steady-state
-// poll is a near-empty page. Used directly by a `session` link and by the
-// project-sessions link once a session is picked.
+// One shared session: the main pane — header (title, agent, config line) over
+// the read-only transcript, polled with a watermark (`after=`) so a
+// steady-state poll is a near-empty page. Used by a `session` link and by the
+// project-sessions link for the picked session.
+//
+// No status pill: "Waiting for input" is the owner's to-do, not the viewer's,
+// and it reads as an invitation on a page where nobody can type. The one
+// state a spectator cares about — "is this still moving?" — is a small live
+// dot while the agent is actually working, plus the transcript's own
+// thinking indicator.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, GitBranch, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { GitBranch, Loader2 } from 'lucide-react';
 import { SessionAgentIcon } from '@/components/dashboard/agent-type-icon';
 import { SessionTranscript } from '@/components/dashboard/session-transcript';
 import { AttachmentUrlProvider } from '@/components/chat-attachments';
@@ -20,6 +25,7 @@ import {
   publicAttachmentUrl,
 } from '@/lib/public-share-api';
 import { isClosedByDesign } from '@/lib/session-liveness';
+import { ShareHeader } from './share-shell';
 import { POLL_ACTIVE_MS, POLL_IDLE_MS, useDocumentVisible, useSharePoll } from './use-share-poll';
 
 const PAGE_SIZE = 100;
@@ -38,37 +44,26 @@ export function describeSessionConfig(config: Record<string, unknown> | null): s
   return parts.length ? parts.join(' · ') : null;
 }
 
-function statusLabel(session: PublicSessionSummary): { label: string; tone: string } {
-  if (session.live_state === 'machine_offline') return { label: 'Offline', tone: 'bg-muted text-muted-foreground' };
-  switch (session.status) {
-    case 'STARTING':
-    case 'ACTIVE':
-      return { label: 'Working', tone: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-300' };
-    case 'AWAITING_INPUT':
-      return { label: 'Waiting for input', tone: 'bg-blue-500/15 text-blue-700 dark:text-blue-300' };
-    case 'COMPLETED':
-      return { label: 'Archived', tone: 'bg-muted text-muted-foreground' };
-    case 'FAILED':
-      return { label: 'Failed', tone: 'bg-red-500/15 text-red-700 dark:text-red-300' };
-    case 'KILLED':
-    case 'DISCONNECTED':
-      return { label: 'Stopped', tone: 'bg-muted text-muted-foreground' };
-    default:
-      return { label: 'Idle', tone: 'bg-muted text-muted-foreground' };
-  }
-}
-
 type LoadState = 'loading' | 'ready' | 'gone' | 'error';
+
+/** Whether the agent is working right now — the only status a viewer is shown. */
+export function isSessionLive(session: PublicSessionSummary): boolean {
+  if (session.live_state === 'machine_offline') return false;
+  return session.status === 'ACTIVE' || session.status === 'STARTING';
+}
 
 export function SharedSessionView({
   token,
   initialSession,
-  onBack,
+  openHref,
+  onSessionChange,
 }: {
   token: string;
   initialSession: PublicSessionSummary;
-  /** Present when reached from a project-sessions list. */
-  onBack?: () => void;
+  /** "Open in Vicoa" target for a signed-in viewer who can see this session (the owner). */
+  openHref?: string | null;
+  /** Each polled summary, so the sidebar row can follow the title and live state. */
+  onSessionChange?: (session: PublicSessionSummary) => void;
 }) {
   const instanceId = initialSession.id;
   const [session, setSession] = useState<PublicSessionSummary>(initialSession);
@@ -109,6 +104,7 @@ export function SharedSessionView({
         fetchPublicSession(token, instanceId),
       ]);
       setSession(summary);
+      onSessionChange?.(summary);
       setNotice(null);
       if (page.messages.length === 0) return;
       setMessages((prev) => {
@@ -122,12 +118,12 @@ export function SharedSessionView({
         // Revoked / expired mid-view (a live share is a window, §10.3).
         setState('gone');
       } else if (err instanceof ShareRateLimitedError) {
-        setNotice(`Updates paused — too many requests. Retrying in ${err.retryAfterSeconds}s.`);
+        setNotice(`Updates paused: too many requests. Retrying in ${err.retryAfterSeconds}s.`);
       } else {
-        setNotice('Updates paused — connection problem. Retrying…');
+        setNotice('Updates paused: connection problem. Retrying…');
       }
     }
-  }, [state, messages, token, instanceId]);
+  }, [state, messages, token, instanceId, onSessionChange]);
 
   const active = !isClosedByDesign(session.status);
   useSharePoll(tick, {
@@ -155,45 +151,46 @@ export function SharedSessionView({
 
   const resolveAttachment = useCallback((id: string) => publicAttachmentUrl(token, id), [token]);
   const configLine = useMemo(() => describeSessionConfig(session.session_config), [session.session_config]);
-  const status = statusLabel(session);
+  const live = isSessionLive(session);
   const title = session.name || 'Untitled session';
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-2">
-        {onBack && (
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onBack} aria-label="Back to sessions">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        )}
-        <SessionAgentIcon agentTypeName={session.agent_type_name} status={session.status} size={18} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="truncate text-sm font-medium">{title}</h2>
-            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${status.tone}`}>
-              {status.label}
+      <ShareHeader openHref={openHref}>
+        <div className="flex min-w-0 items-center gap-2">
+          <SessionAgentIcon agentTypeName={session.agent_type_name} status={session.status} size={16} />
+          <h1 className="min-w-0 truncate font-mono text-sm font-normal" title={title}>
+            {title}
+          </h1>
+          {live && (
+            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground" title="The agent is working">
+              <span className="relative flex size-2">
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-60" />
+                <span className="relative inline-flex size-2 rounded-full bg-success" />
+              </span>
+              Live
             </span>
-          </div>
-          <div className="flex items-center gap-1.5 truncate text-[11px] text-muted-foreground">
-            <span>{session.agent_profile?.name ?? session.agent_type_name}</span>
-            {configLine && (
-              <>
-                <span>·</span>
-                <span className="truncate">{configLine}</span>
-              </>
-            )}
-            {session.worktree_name && (
-              <>
-                <span>·</span>
-                <span className="inline-flex items-center gap-1">
-                  <GitBranch className="h-3 w-3" />
-                  {session.worktree_name}
-                </span>
-              </>
-            )}
-          </div>
+          )}
         </div>
-      </div>
+        <div className="flex min-w-0 items-center gap-1.5 truncate text-[11px] text-muted-foreground">
+          <span>{session.agent_profile?.name ?? session.agent_type_name}</span>
+          {configLine && (
+            <>
+              <span>·</span>
+              <span className="truncate">{configLine}</span>
+            </>
+          )}
+          {session.worktree_name && (
+            <>
+              <span>·</span>
+              <span className="inline-flex items-center gap-1">
+                <GitBranch className="h-3 w-3" />
+                {session.worktree_name}
+              </span>
+            </>
+          )}
+        </div>
+      </ShareHeader>
 
       {notice && (
         <div className="shrink-0 border-b border-amber-500/30 bg-amber-500/10 px-4 py-1 text-center text-[11px] text-amber-700 dark:text-amber-300">

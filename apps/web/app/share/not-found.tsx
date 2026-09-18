@@ -1,6 +1,6 @@
 'use client';
 
-// The one honest failure page for `/s/<token>` (collaboration §10.5): unknown,
+// The one honest failure page for `/share/<token>` (collaboration §10.5): unknown,
 // revoked, expired and audience-restricted links all look the same to the
 // visitor, by design — a page that distinguished them would be an oracle. The
 // one useful hint is that signing in might help, so an anonymous visitor gets a
@@ -32,7 +32,8 @@ export default function ShareNotFound() {
 
   return (
     <div className="flex h-dvh flex-col items-center justify-center gap-4 px-6 text-center">
-      <Image src="/images/vicoa-logo-text.webp" alt="Vicoa" width={0} height={0} sizes="100vw" className="h-8 w-auto" priority />
+      {/* The login page's mark, at its size. */}
+      <Image src="/images/vicoa-light.webp" alt="Vicoa" width={0} height={0} sizes="100vw" className="h-12 w-auto opacity-90" priority />
       <div className="space-y-1">
         <h1 className="text-lg font-medium">This link isn&apos;t available</h1>
         <p className="max-w-md text-sm text-muted-foreground">

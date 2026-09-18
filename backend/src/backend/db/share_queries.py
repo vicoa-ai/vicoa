@@ -168,6 +168,8 @@ def _link_response(link: ShareLink) -> ShareLinkResponse:
         audience=link.audience,  # type: ignore[arg-type]
         filters=link.filters,
         allow_comments=link.allow_comments,
+        show_owner=link.show_owner,
+        show_branch=link.show_branch,
         expires_at=link.expires_at,
         revoked_at=link.revoked_at,
         last_accessed_at=link.last_accessed_at,
@@ -187,6 +189,8 @@ def create_share_link(
     audience: str,
     filters: dict | None,
     allow_comments: bool,
+    show_owner: bool = False,
+    show_branch: bool = False,
     expires_in_days: int | None,
 ) -> ShareLinkResponse:
     """Mint a link. The request model has already validated shape/filters;
@@ -207,6 +211,8 @@ def create_share_link(
         audience=audience,
         filters=filters or None,
         allow_comments=allow_comments,
+        show_owner=show_owner,
+        show_branch=show_branch,
         expires_at=(
             _utcnow() + timedelta(days=expires_in_days)
             if expires_in_days is not None
@@ -394,6 +400,8 @@ def _public_session(
     instance: AgentInstance,
     stats: dict,
     profiles: dict[UUID, AgentProfile],
+    *,
+    show_branch: bool = False,
 ) -> PublicSessionSummary:
     meta = (
         instance.instance_metadata
@@ -417,7 +425,9 @@ def _public_session(
         ended_at=instance.ended_at,
         updated_at=instance.updated_at,
         worktree_name=(
-            str(meta["worktree_name"]) if meta.get("worktree_name") else None
+            str(meta["worktree_name"])
+            if show_branch and meta.get("worktree_name")
+            else None
         ),
         session_config=_public_session_config(instance),
         message_count=int(s.get("message_count", 0) or 0),
@@ -436,10 +446,15 @@ def _profiles_for(
 
 
 def public_session_summary(
-    db: Session, instance: AgentInstance
+    db: Session, grant: access.ShareGrant, instance: AgentInstance
 ) -> PublicSessionSummary:
     stats = _get_instance_message_stats(db, [instance.id])
-    return _public_session(instance, stats, _profiles_for(db, [instance]))
+    return _public_session(
+        instance,
+        stats,
+        _profiles_for(db, [instance]),
+        show_branch=grant.link.show_branch,
+    )
 
 
 def _public_project(project: Project) -> PublicProjectSummary:
@@ -480,7 +495,7 @@ def public_share(
         instance = covered_instance(db, grant, grant.instance_id)  # type: ignore[arg-type]
         if instance is None:
             raise ShareTargetNotFoundError("Share not found")
-        session = public_session_summary(db, instance)
+        session = public_session_summary(db, grant, instance)
     else:
         row = db.get(Project, grant.project_id)
         if row is None:
@@ -495,8 +510,9 @@ def public_share(
         filters=grant.filters or None,
         created_at=link.created_at,
         expires_at=link.expires_at,
-        owner=_user_principal(owner),
+        owner=_user_principal(owner) if link.show_owner else None,
         viewer=_user_principal(viewer) if viewer is not None else None,
+        viewer_is_owner=viewer is not None and viewer.id == link.created_by_user_id,
         session=session,
         project=project,
     )
@@ -520,7 +536,10 @@ def public_sessions(
     stats = _get_instance_message_stats(db, [r.id for r in rows])
     profiles = _profiles_for(db, rows)
     return PublicSessionsPage(
-        items=[_public_session(r, stats, profiles) for r in rows],
+        items=[
+            _public_session(r, stats, profiles, show_branch=grant.link.show_branch)
+            for r in rows
+        ],
         total=total,
         limit=limit,
         offset=offset,

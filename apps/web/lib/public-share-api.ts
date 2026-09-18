@@ -65,7 +65,7 @@ export function shareUrl(token: string): string {
     : typeof window !== 'undefined'
       ? window.location.origin
       : (process.env.NEXT_PUBLIC_VICOA_WEB_URL ?? 'https://vicoa.ai');
-  return `${origin.replace(/\/$/, '')}/s/${token}`;
+  return `${origin.replace(/\/$/, '')}/share/${token}`;
 }
 
 /** The share-scoped attachment URL — no cookie proxy; the token authorizes it. */

@@ -777,12 +777,16 @@ export interface CreateShareLinkRequest {
   filters?: ShareBoardFilters | ShareSessionsFilters | null;
   /** The one write a link can carry; needs `audience: 'authenticated'` and a board. */
   allow_comments?: boolean;
+  /** Show the owner's name/avatar on the page. Off by default. */
+  show_owner?: boolean;
+  /** Show worktree/branch names on the page. Off by default. */
+  show_branch?: boolean;
   expires_in_days?: number | null;
 }
 
 export interface ShareLinkResponse {
   id: string;
-  /** The capability itself — the URL is `/s/<token>`. */
+  /** The capability itself — the URL is `/share/<token>`. */
   token: string;
   kind: ShareKind;
   agent_instance_id: string | null;
@@ -790,6 +794,8 @@ export interface ShareLinkResponse {
   audience: ShareAudience;
   filters: ShareBoardFilters | ShareSessionsFilters | null;
   allow_comments: boolean;
+  show_owner: boolean;
+  show_branch: boolean;
   expires_at: string | null;
   revoked_at: string | null;
   last_accessed_at: string | null;
@@ -846,8 +852,11 @@ export interface PublicShareResponse {
   filters: ShareBoardFilters | ShareSessionsFilters | null;
   created_at: string;
   expires_at: string | null;
-  owner: PrincipalResponse;
+  /** Only when the link opted in (`show_owner`). */
+  owner: PrincipalResponse | null;
   viewer: PrincipalResponse | null;
+  /** The signed-in visitor created this link — the page may deep-link into their dashboard. */
+  viewer_is_owner: boolean;
   session: PublicSessionSummary | null;
   project: PublicProjectSummary | null;
 }

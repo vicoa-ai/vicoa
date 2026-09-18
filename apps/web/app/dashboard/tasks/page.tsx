@@ -13,7 +13,7 @@ import {
   List,
   ListTodo,
   Plus,
-  Share2,
+  Share,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -794,7 +794,7 @@ function TasksPageInner() {
               })
             }
           >
-            <Share2 className="size-3.5" />
+            <Share className="size-3.5" />
             <span className="hidden md:inline">Share</span>
           </Button>
         )}

@@ -1221,6 +1221,9 @@ class CreateShareLinkRequest(BaseModel):
     # The one write a link can carry; the model, the DB and the resolver all
     # require `audience='authenticated'` for it.
     allow_comments: bool = False
+    # What the viewer page may show; both default off (see the ORM model).
+    show_owner: bool = False
+    show_branch: bool = False
     expires_in_days: int | None = Field(default=None, ge=1, le=365)
 
     @model_validator(mode="after")
@@ -1259,6 +1262,8 @@ class ShareLinkResponse(BaseModel):
     audience: ShareAudienceLiteral
     filters: dict | None = None
     allow_comments: bool
+    show_owner: bool
+    show_branch: bool
     expires_at: datetime | None = None
     revoked_at: datetime | None = None
     last_accessed_at: datetime | None = None
@@ -1338,8 +1343,13 @@ class PublicShareResponse(BaseModel):
     filters: dict | None = None
     created_at: datetime
     expires_at: datetime | None = None
-    owner: PrincipalResponse
+    # Only when the link opted in (`show_owner`); otherwise the page says
+    # "shared via Vicoa" and nothing about who.
+    owner: PrincipalResponse | None = None
     viewer: PrincipalResponse | None = None
+    # The signed-in visitor is the link's creator — drives "Open in Vicoa"
+    # deep-linking on the page without exposing the owner to anyone else.
+    viewer_is_owner: bool = False
     session: PublicSessionSummary | None = None
     project: PublicProjectSummary | None = None
 

@@ -46,6 +46,7 @@ import {
   postPublicComment,
 } from '@/lib/public-share-api';
 import { cn } from '@/lib/utils';
+import { ShareHeader } from './share-shell';
 import { POLL_IDLE_MS, useSharePoll } from './use-share-poll';
 
 const COLUMN_WIDTH = 280;
@@ -206,7 +207,7 @@ function TaskSheet({
                 <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-xs">
                   <span className="text-muted-foreground">Sign in to Vicoa to join the discussion.</span>
                   <Button asChild size="sm" variant="outline" className="h-7 gap-1.5 text-xs">
-                    <a href={`/sign-in?redirect=${encodeURIComponent(typeof window !== 'undefined' ? window.location.pathname + window.location.search : `/s/${token}`)}`}>
+                    <a href={`/sign-in?redirect=${encodeURIComponent(typeof window !== 'undefined' ? window.location.pathname + window.location.search : `/share/${token}`)}`}>
                       <LogIn className="h-3 w-3" />
                       Sign in
                     </a>
@@ -221,7 +222,16 @@ function TaskSheet({
   );
 }
 
-export function SharedBoardView({ token, share }: { token: string; share: PublicShareResponse }) {
+export function SharedBoardView({
+  token,
+  share,
+  openHref,
+}: {
+  token: string;
+  share: PublicShareResponse;
+  /** "Open in Vicoa" target for a signed-in viewer who owns the project. */
+  openHref?: string | null;
+}) {
   const [board, setBoard] = useState<PublicBoardResponse | null>(null);
   const [error, setError] = useState<'gone' | 'error' | null>(null);
   const [openTask, setOpenTask] = useState<TaskResponse | null>(null);
@@ -260,17 +270,19 @@ export function SharedBoardView({ token, share }: { token: string; share: Public
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-2">
-        {project && (
-          <>
-            <ProjectIcon project={{ id: project.id, name: project.name, icon: project.icon }} className="size-4" />
-            <h2 className="truncate text-sm font-medium">{project.name}</h2>
-          </>
-        )}
-        <span className="text-[11px] text-muted-foreground">
-          {board ? `${board.tasks.length} task${board.tasks.length === 1 ? '' : 's'}` : ''}
-        </span>
-      </div>
+      <ShareHeader openHref={openHref}>
+        <div className="flex min-w-0 items-center gap-2">
+          {project && (
+            <>
+              <ProjectIcon project={{ id: project.id, name: project.name, icon: project.icon }} className="size-4" />
+              <h1 className="min-w-0 truncate font-mono text-sm font-normal">{project.name}</h1>
+            </>
+          )}
+          <span className="shrink-0 text-[11px] text-muted-foreground">
+            {board ? `${board.tasks.length} task${board.tasks.length === 1 ? '' : 's'}` : ''}
+          </span>
+        </div>
+      </ShareHeader>
 
       {error === 'gone' ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-1 px-6 text-center text-sm text-muted-foreground">
@@ -302,7 +314,7 @@ export function SharedBoardView({ token, share }: { token: string; share: Public
             ))}
           </div>
           {error === 'error' && (
-            <p className="py-2 text-center text-xs text-muted-foreground">Updates paused — connection problem.</p>
+            <p className="py-2 text-center text-xs text-muted-foreground">Updates paused: connection problem.</p>
           )}
         </div>
       )}

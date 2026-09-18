@@ -11,7 +11,7 @@ import {
   Kanban,
   MoreHorizontal,
   Settings,
-  Share2,
+  Share,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -1301,7 +1301,7 @@ export function SidebarSessions({
                                 setShareTarget({ kind: 'project', projectId: dbProject.id, name: dbProject.name })
                               }
                             >
-                              <Share2 className="h-3.5 w-3.5" />
+                              <Share className="h-3.5 w-3.5" />
                               Share project…
                             </DropdownMenuItem>
                           )}

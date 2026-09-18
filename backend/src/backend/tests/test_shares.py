@@ -228,6 +228,9 @@ class TestOwnerApi:
         assert len(link["token"]) == 43
         assert link["audience"] == "public"
         assert link["allow_comments"] is False
+        # Both display flags are opt-in.
+        assert link["show_owner"] is False
+        assert link["show_branch"] is False
         assert link["created_by"]["name"] == "Test User"
         assert "email" not in link["created_by"]
 
@@ -482,18 +485,13 @@ class TestPublicSession:
     def test_meta_strips_what_a_viewer_must_not_see(self, client, world, token):
         body = client.get(f"/api/v1/public/shares/{token}").json()
         assert body["kind"] == "session"
-        assert body["owner"] == {
-            "type": "user",
-            "id": str(world.owner.id),
-            "name": "Test User",
-            "avatar_image_uri": None,
-            "emoji": None,
-            "updated_at": body["owner"]["updated_at"],
-        }
+        # A default link says nothing about who shared it, nor the branch.
+        assert body["owner"] is None
+        assert body["viewer_is_owner"] is False
         session = body["session"]
         assert session["name"] == "Fix the build"
         assert session["agent_type_name"] == "claude code"
-        assert session["worktree_name"] == "wt-1"
+        assert session["worktree_name"] is None
         assert session["message_count"] == 3
         # The display subset only — never the raw config or metadata.
         assert session["session_config"] == {
@@ -504,6 +502,47 @@ class TestPublicSession:
         for key in ("home_dir", "machine_id", "instance_metadata", "project"):
             assert key not in session
         assert body["viewer"] is None
+
+    def test_display_flags_opt_in_owner_and_branch(self, client, world):
+        _as(client, world.owner)
+        link = _mint(
+            client,
+            {
+                "kind": "session",
+                "agent_instance_id": str(world.instance.id),
+                "show_owner": True,
+                "show_branch": True,
+            },
+        )
+        assert link["show_owner"] is True and link["show_branch"] is True
+        # The owner looking at their own link: the page may deep-link back.
+        mine = client.get(f"/api/v1/public/shares/{link['token']}").json()
+        assert mine["viewer_is_owner"] is True
+        _as(client, None)
+        body = client.get(f"/api/v1/public/shares/{link['token']}").json()
+        assert body["owner"] == {
+            "type": "user",
+            "id": str(world.owner.id),
+            "name": "Test User",
+            "avatar_image_uri": None,
+            "emoji": None,
+            "updated_at": body["owner"]["updated_at"],
+        }
+        assert "email" not in body["owner"]
+        assert body["viewer_is_owner"] is False
+        assert body["session"]["worktree_name"] == "wt-1"
+        # The per-session poll and the project list honour the same flag.
+        polled = client.get(
+            f"/api/v1/public/shares/{link['token']}/sessions/{world.instance.id}"
+        ).json()
+        assert polled["worktree_name"] == "wt-1"
+        _as(client, world.owner)
+        plain = _mint(
+            client, {"kind": "project_sessions", "project_id": str(world.project.id)}
+        )
+        _as(client, None)
+        rows = client.get(f"/api/v1/public/shares/{plain['token']}/sessions").json()
+        assert all(row["worktree_name"] is None for row in rows["items"])
 
     def test_messages_first_page_then_poll_watermark(self, client, world, token):
         base = f"/api/v1/public/shares/{token}/sessions/{world.instance.id}/messages"

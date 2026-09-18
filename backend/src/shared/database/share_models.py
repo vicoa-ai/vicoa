@@ -119,6 +119,16 @@ class ShareLink(Base):
     allow_comments: Mapped[bool] = mapped_column(
         default=False, server_default=text("false")
     )
+    # What the viewer page may show about the owner and the work, both off by
+    # default: a share is the transcript, not the person behind it (the
+    # ChatGPT "share your name" default), and a branch name is repo-internal
+    # metadata like the path, which a public page never carries.
+    show_owner: Mapped[bool] = mapped_column(
+        default=False, server_default=text("false")
+    )
+    show_branch: Mapped[bool] = mapped_column(
+        default=False, server_default=text("false")
+    )
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
