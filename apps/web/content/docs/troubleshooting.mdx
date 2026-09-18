@@ -498,6 +498,20 @@ After upgrading, restart Vicoa:
 vicoa
 ```
 
+## Share Link Issues
+
+### A share link says "This link isn't available"
+
+Every dead link shows the same page, on purpose: the page never says *which* of these it is.
+
+- **Revoked or expired.** Ask the person who shared it for a new link; they can create one from the same Share dialog.
+- **Limited to Vicoa users.** A link made for *Vicoa users only* shows this page to anyone who is signed out. Press **Sign in** on that page; it returns you to the link.
+- **Copied incompletely.** The token after `/share/` is 43 characters. A link that was trimmed by a chat app or an email client stops working.
+
+### A shared page stopped updating
+
+The page polls for new messages every few seconds while it is visible and slows down in a background tab. A yellow *Updates paused* bar means the page could not reach Vicoa (a connection problem, or too many requests from one network); it retries on its own, and switching back to the tab refreshes immediately.
+
 ## Mobile App Issues
 
 ### Agent Sessions Not Syncing

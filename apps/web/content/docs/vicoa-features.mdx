@@ -262,6 +262,7 @@ Share a session's transcript, a project's sessions, or a project's task board
 with anyone — no Vicoa account needed to read it.
 
 **Where to find it:**
+- The **Share** button in a session's header, next to the files panel toggle
 - A session's **⋯** menu (session header, sidebar or Kanban card) → **Share**
 - A project's **⋯** menu in the sidebar → **Share project…**
 - The Tasks page, with a project selected → **Share**
@@ -277,10 +278,26 @@ after that the existing link is right there with a **Copy link** button; use
   task. The one opt-in is *Allow comments* on a board link, which lets
   signed-in Vicoa users comment on tasks under their own name.
 - **Audience:** *Anyone with the link* (no account) or *Vicoa users only*.
+  Someone who opens a *Vicoa users only* link while signed out sees "This
+  link isn't available" with a sign-in button; the link works once they sign
+  in.
 - **Expiry:** never, or 1 / 7 / 30 / 90 days. Revoke a link at any time from
-  the same dialog — it stops working immediately.
+  the same dialog — it stops working immediately, for everyone.
 - **Filters:** narrow a board link to certain statuses or labels, or a sessions
   link to a date range. Filters apply live, so new matches appear too.
+
+**What the page says about you.** By default a shared page shows the work
+and nothing about who shared it: no name, no avatar, no branch names. Two
+switches under *Viewers can see* turn those on per link — **My name** puts
+your name and avatar on the page, **Branch names** shows each session's
+worktree branch.
+
+**What viewers see.** The page looks like Vicoa: for a project link, the
+shared sessions sit in the sidebar and open on the right; for a board link,
+the board itself. A session shows a **Live** dot while its agent is working,
+and every viewer sees new messages within seconds. Viewers who are signed in
+to Vicoa get an **Open in Vicoa** button; everyone else gets **Log in** and
+**Sign up for free**.
 
 **It is a live view.** A link shared during a session keeps showing whatever
 happens next until you revoke it.

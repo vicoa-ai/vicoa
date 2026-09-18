@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Navigation,
   Share2,
+  Link2,
   Globe,
 } from 'lucide-react';
 import { pageMetadata } from '@/lib/seo';
@@ -270,6 +271,16 @@ const cardFeatures: CardFeature[] = [
       'Long-press a message to select it',
       'Select and copy multiple messages',
       'Export a conversation to share'
+    ]
+  },
+  {
+    icon: <Link2 className="h-8 w-8" />,
+    title: 'Share with a Link',
+    description: 'A live, read-only link to a session or a task board. No account needed to read it.',
+    details: [
+      'Anyone with the link, or Vicoa users only',
+      'Expiry and one-click revoke',
+      'Your name and branches shown only if you choose'
     ]
   },
   {
