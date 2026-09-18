@@ -49,3 +49,43 @@ bool isControlOrArtifactMessage(dynamic message) {
   if (content.trim() == _waitingForInputPlaceholder) return true;
   return _controlCommandJsonRegex.hasMatch(content);
 }
+
+// ---------------------------------------------------------------------------
+// Local send state on an optimistic USER message.
+//
+// Never comes from the server: `_addOptimisticMessage` stamps it,
+// `_promoteOptimistic` strips it on success, and a server copy replacing the
+// entry (WS echo or REST merge) drops it implicitly. Shape:
+//
+//   _send_status: 'sending' | 'failed'
+//   _sent_at:     ISO-8601, when this attempt started
+//
+// The default is success: a `sending` bubble shows nothing for the first
+// [kSendIndicatorDelay], so a normal 200–800ms round trip never flashes an
+// indicator. `failed` is event-driven (the POST actually errored or hit its
+// deadline), not a second timer.
+
+const String kSendStatusKey = '_send_status';
+const String kSentAtKey = '_sent_at';
+const String kSendStatusSending = 'sending';
+const String kSendStatusFailed = 'failed';
+
+/// How long a `sending` bubble stays indicator-free before the spinner appears.
+const Duration kSendIndicatorDelay = Duration(seconds: 2);
+
+/// Reads `message['_send_status']`; null for anything that isn't an
+/// in-flight or failed local send.
+String? sendStatus(dynamic message) {
+  if (message is! Map) return null;
+  final status = message[kSendStatusKey];
+  if (status is! String || status.isEmpty) return null;
+  return status;
+}
+
+/// When the current send attempt started, or null if unknown.
+DateTime? sentAt(dynamic message) {
+  if (message is! Map) return null;
+  final raw = message[kSentAtKey];
+  if (raw is! String) return null;
+  return DateTime.tryParse(raw);
+}

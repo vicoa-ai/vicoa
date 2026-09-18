@@ -15,6 +15,7 @@ import '/pages/agent_chat/components/voice_dictation_bar.dart';
 import '/pages/agent_chat/voice_transcription_provider.dart';
 import 'agent_chat_widget.dart' show AgentChatWidget;
 import 'components/pending_attachment.dart';
+import 'components/message_queue_status.dart';
 import '/flutter_flow/custom_functions.dart' as functions;
 import '/actions/actions.dart' as local_actions;
 import '/profile/no_credit_sheet/no_credit_sheet_widget.dart';
@@ -66,6 +67,10 @@ class AgentChatModel extends FlutterFlowModel<AgentChatWidget>
   List<dynamic> messages = [];
   bool isLoadingMessages = false;
   bool isSendingMessage = false;
+  /// Serialises the network half of sends per session: two messages typed
+  /// 300ms apart must reach the server in that order, and with the composer
+  /// no longer blocking on the POST nothing else enforces it.
+  Future<void> _sendChain = Future.value();
   // True from successful send until the WebSocket confirms the agent is active.
   // Drives the vibing indicator independently of the send-button spinner.
   bool isWaitingForAgentResponse = false;
@@ -891,6 +896,7 @@ String? latestWebPreviewUrl;
       final cachedMessages = FFAppState().getCachedMessages(instanceId!);
       if (cachedMessages.isNotEmpty) {
         messages = cachedMessages;
+        _settleStaleSends();
         _refreshLatestWebPreviewUrl();
         isLoadingMessages = false;
         onStateChanged?.call();
@@ -1146,6 +1152,8 @@ String? latestWebPreviewUrl;
       'sender_type': 'user',
       'created_at': DateTime.now().toIso8601String(),
       '_optimistic': true,
+      kSendStatusKey: kSendStatusSending,
+      kSentAtKey: DateTime.now().toIso8601String(),
       if (attachments.isNotEmpty) ...{
         // Mirror the server's message_metadata.attachments shape so the
         // bubble renders identically before and after the round-trip.
@@ -1184,6 +1192,8 @@ String? latestWebPreviewUrl;
       final promoted = Map<String, dynamic>.from(messages[optimisticIndex] as Map);
       promoted['id'] = realId;
       promoted.remove('_optimistic');
+      promoted.remove(kSendStatusKey);
+      promoted.remove(kSentAtKey);
       messages[optimisticIndex] = promoted;
     }
 
@@ -1333,39 +1343,10 @@ String? latestWebPreviewUrl;
 
     // Check credits/subscription before showing the message — avoids a flash
     // if the user hits the paywall and the send is aborted.
-    final hasActiveSubscription = await actions.hasActiveSubscription();
-
-    if (!hasActiveSubscription) {
-      const creditsNeeded = 1;
-      final currentCredits = FFAppState().credit.balance;
-
-      if (currentCredits < creditsNeeded) {
-        FocusManager.instance.primaryFocus?.unfocus();
-
-        if (context.mounted) {
-          await showModalBottomSheet(
-            context: context,
-            backgroundColor: Colors.transparent,
-            enableDrag: false,
-            builder: (context) {
-              return NoCreditSheetWidget(
-                paywall: 'agent_chat',
-                creditsNeeded: creditsNeeded,
-              );
-            },
-          );
-        }
-        isSendingMessage = false;
-        return;
-      }
-
-      if (context.mounted) {
-        await local_actions.useCredit(
-          context,
-          usedCredit: creditsNeeded,
-          name: 'Agent Chat Message',
-        );
-      }
+    final gate = await _chargeCreditForSend(context);
+    if (!gate.ok) {
+      isSendingMessage = false;
+      return;
     }
 
     isSendingMessage = true;
@@ -1403,42 +1384,118 @@ String? latestWebPreviewUrl;
       filterSlashCommands('');
       filterFileMentions('');
     }
+    // The composer is free from here. The POST runs in the background and
+    // the bubble's own `_send_status` carries its state (spinner after 2s,
+    // red ! on failure) — see message_queue_status.dart.
+    isSendingMessage = false;
     onStateChanged?.call();
     scrollToBottom();
 
-    // The shared repair for both failure paths: drop the optimistic bubble,
-    // return the uploads to the strip, refund the credit, and hand the user
-    // back their text with a visible error rather than dropping it silently.
-    Future<void> handleSendFailure() async {
-      _removeOptimistic(optimisticId);
-      // The uploads already succeeded server-side — put them back in the
-      // strip so a retry doesn't force a re-pick.
-      pendingAttachments.addAll(sendAttachments);
-      pendingAttachmentsRevision++;
-      // An option/permission click never occupied the composer, so putting its
-      // text there would be inserting something the user never typed.
-      if (!isOptionClick) {
-        restoreUnsentMessage(content);
-      }
-      if (!hasActiveSubscription && context.mounted) {
-        await local_actions.grantCredit(
-          context,
-          creditGranted: 1,
-          name: 'Refund: Failed Agent Chat Message',
+    final delivered = await _deliver(
+      optimisticId: optimisticId,
+      content: content,
+      attachmentIds: attachmentIds,
+      isOptionClick: isOptionClick,
+    );
+    // Same rule as before: the refund/snack only happen while the screen is
+    // still there (grantCredit takes a context by signature).
+    if (!delivered && context.mounted) {
+      await _afterFailedSend(context, isOptionClick: isOptionClick, refund: gate.charged);
+    }
+  }
+
+  /// The UI side of a failed send, kept out of the background POST so it can
+  /// check the screen is still there. A plain message's failure is shown on
+  /// its bubble; an option/permission answer has no bubble to carry it (and
+  /// re-tapping the option is the natural retry), so it gets a snack instead.
+  Future<void> _afterFailedSend(
+    BuildContext context, {
+    required bool isOptionClick,
+    required bool refund,
+  }) async {
+    if (isOptionClick && context.mounted) {
+      unawaited(SessionActions.showSnack(
+        context,
+        AppLocalizations.of(context).agentChatSendFailed,
+        waitTime: 3000,
+      ));
+    }
+    if (refund && context.mounted) {
+      await local_actions.grantCredit(
+        context,
+        creditGranted: 1,
+        name: 'Refund: Failed Agent Chat Message',
+      );
+    }
+  }
+
+  /// The credit/paywall gate every send passes: subscribers are free, others
+  /// pay one credit or see the paywall. `ok` is false when the send must not
+  /// proceed; `charged` says whether a failure should refund. Shared by
+  /// [sendMessage] and [resendMessage] so a retry is charged exactly like a
+  /// fresh send (the failed attempt was refunded).
+  Future<({bool ok, bool charged})> _chargeCreditForSend(
+      BuildContext context) async {
+    final hasActiveSubscription = await actions.hasActiveSubscription();
+    if (hasActiveSubscription) return (ok: true, charged: false);
+
+    const creditsNeeded = 1;
+    if (FFAppState().credit.balance < creditsNeeded) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      if (context.mounted) {
+        await showModalBottomSheet(
+          context: context,
+          backgroundColor: Colors.transparent,
+          enableDrag: false,
+          builder: (context) {
+            return NoCreditSheetWidget(
+              paywall: 'agent_chat',
+              creditsNeeded: creditsNeeded,
+            );
+          },
         );
       }
-      if (context.mounted) {
-        // The app's own snack (a modal route, so it clears bottom sheets).
-        // Not awaited: it resolves on dismiss, and the finally below must
-        // release the send button now, not after the toast.
-        unawaited(SessionActions.showSnack(
-          context,
-          AppLocalizations.of(context).agentChatSendFailed,
-          waitTime: 3000,
-        ));
-      }
+      return (ok: false, charged: false);
     }
 
+    if (context.mounted) {
+      await local_actions.useCredit(
+        context,
+        usedCredit: creditsNeeded,
+        name: 'Agent Chat Message',
+      );
+    }
+    return (ok: true, charged: true);
+  }
+
+  /// Queues the network half of a send behind any still in flight (see
+  /// [_sendChain]); resolves to whether the server accepted it.
+  Future<bool> _deliver({
+    required String optimisticId,
+    required String content,
+    required List<String> attachmentIds,
+    required bool isOptionClick,
+  }) {
+    final run = _sendChain.then((_) => _postUserMessage(
+          optimisticId: optimisticId,
+          content: content,
+          attachmentIds: attachmentIds,
+          isOptionClick: isOptionClick,
+        ));
+    // A failure is handled inside; never let it poison the chain.
+    _sendChain = run.then((_) {}, onError: (_) {});
+    return run;
+  }
+
+  /// The POST and its outcome, model-only: runs after the bubble is on screen
+  /// and the composer is released, possibly after the user has left the
+  /// screen, so it touches neither the input nor a BuildContext.
+  Future<bool> _postUserMessage({
+    required String optimisticId,
+    required String content,
+    required List<String> attachmentIds,
+    required bool isOptionClick,
+  }) async {
     bool sentOk = false;
     try {
       final result = await actions.apiChatWithAgent(
@@ -1477,15 +1534,13 @@ String? latestWebPreviewUrl;
           FFAppState().updateAnalyticsFlags((f) => f.hasSentFirstMobileMessage = true);
         }
       } else {
-        debugPrint('Failed to send message. Please try again.');
-        await handleSendFailure();
+        debugPrint('Failed to send message.');
+        _markSendFailed(optimisticId, isOptionClick: isOptionClick);
       }
     } catch (e) {
       debugPrint('Error sending message: $e');
-      await handleSendFailure();
+      _markSendFailed(optimisticId, isOptionClick: isOptionClick);
     } finally {
-      // Send button always returns to normal as soon as the POST completes.
-      isSendingMessage = false;
       if (!sentOk) {
         // POST failed — vibing has nothing to wait for.
         isWaitingForAgentResponse = false;
@@ -1503,8 +1558,128 @@ String? latestWebPreviewUrl;
           }
         });
       }
+      onStateChanged?.call();
+    }
+    return sentOk;
+  }
+
+  void _markSendFailed(String optimisticId, {required bool isOptionClick}) {
+    if (isOptionClick) {
+      // No bubble carries an option answer's state; drop the optimistic entry
+      // (the caller shows a snack).
+      _removeOptimistic(optimisticId);
+      return;
+    }
+    // The bubble stays, flagged red; the user retries from it. Its
+    // attachments stay too — the uploads succeeded server-side and the retry
+    // reuses their ids.
+    _setSendStatus(optimisticId, kSendStatusFailed);
+  }
+
+  void _setSendStatus(String optimisticId, String status) {
+    final index = messages.indexWhere((msg) => msg['id'] == optimisticId);
+    if (index == -1) return;
+    final updated = Map<String, dynamic>.from(messages[index] as Map);
+    updated[kSendStatusKey] = status;
+    if (status == kSendStatusSending) {
+      // Restamp so the indicator's quiet window restarts on a retry.
+      updated[kSentAtKey] = DateTime.now().toIso8601String();
+    }
+    messages[index] = updated;
+    if (instanceId != null) {
+      FFAppState().setCachedMessages(instanceId!, messages);
+    }
+    onStateChanged?.call();
+  }
+
+  /// Nothing is in flight after a cold start, so a cached `sending` entry is
+  /// a ghost whose spinner would never resolve. Downgrade it to `failed`; if
+  /// the original request did land, the WS catch-up or the REST merge still
+  /// heals it into the real message (both match optimistic entries by
+  /// content).
+  void _settleStaleSends() {
+    var changed = false;
+    for (var i = 0; i < messages.length; i++) {
+      if (sendStatus(messages[i]) != kSendStatusSending) continue;
+      final updated = Map<String, dynamic>.from(messages[i] as Map);
+      updated[kSendStatusKey] = kSendStatusFailed;
+      messages[i] = updated;
+      changed = true;
+    }
+    if (changed && instanceId != null) {
+      FFAppState().setCachedMessages(instanceId!, messages);
     }
   }
+
+  /// Retries a failed send from its bubble: same content, same (already
+  /// uploaded) attachment ids, same credit gate as a fresh send.
+  ///
+  /// This is a plain second POST. If the first one reached the server and
+  /// only the response was lost, the WS echo / REST merge normally heals the
+  /// bubble before anyone taps; a tap that beats them produces a duplicate.
+  /// Accepted — see plans/todos/mobile-send-resilience.md.
+  Future<void> resendMessage(BuildContext context, String optimisticId) async {
+    if (instanceId == null) return;
+    final index = messages.indexWhere((msg) => msg['id'] == optimisticId);
+    if (index == -1) return;
+    final entry = messages[index];
+    if (entry is! Map || sendStatus(entry) != kSendStatusFailed) return;
+
+    final content = entry['content']?.toString() ?? '';
+    final attachmentIds = [
+      for (final a in _messageAttachments(entry))
+        if (a is Map && a['id'] != null) a['id'].toString(),
+    ];
+
+    final gate = await _chargeCreditForSend(context);
+    if (!gate.ok) return;
+
+    _setSendStatus(optimisticId, kSendStatusSending);
+    isWaitingForAgentResponse = true;
+    onStateChanged?.call();
+
+    final delivered = await _deliver(
+      optimisticId: optimisticId,
+      content: content,
+      attachmentIds: attachmentIds,
+      isOptionClick: false,
+    );
+    if (!delivered && context.mounted) {
+      await _afterFailedSend(context, isOptionClick: false, refund: gate.charged);
+    }
+  }
+
+  /// "Edit in input" for a failed bubble: its text goes back to the composer
+  /// and its uploads back to the strip (ids intact, so no re-upload), then
+  /// the bubble goes away.
+  void editUnsentMessage(String optimisticId) {
+    final index = messages.indexWhere((msg) => msg['id'] == optimisticId);
+    if (index == -1) return;
+    final entry = messages[index];
+    if (entry is! Map || sendStatus(entry) != kSendStatusFailed) return;
+
+    final localPaths = entry['_local_paths'];
+    for (final a in _messageAttachments(entry)) {
+      if (a is! Map || a['id'] == null) continue;
+      final id = a['id'].toString();
+      final path = localPaths is Map ? localPaths[id]?.toString() : null;
+      if (path == null) continue;
+      final filename = a['filename']?.toString();
+      pendingAttachments.add(PendingAttachment(
+        localPath: path,
+        filename: filename,
+        isImage: isImageFilename(filename ?? path),
+      )
+        ..id = id
+        ..meta = Map<String, dynamic>.from(a));
+    }
+    pendingAttachmentsRevision++;
+    _removeOptimistic(optimisticId);
+    restoreUnsentMessage(entry['content']?.toString() ?? '');
+    messageFocusNode.requestFocus();
+  }
+
+  void deleteUnsentMessage(String optimisticId) => _removeOptimistic(optimisticId);
 
   Future<void> requestPermissionModeChange(AgentPermissionMode newMode) async {
     if (instanceId == null) return;

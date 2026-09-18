@@ -299,7 +299,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get agentChatSendFailed =>
-      'Couldn\'t send your message. It\'s back in the box — check your connection and try again.';
+      'Couldn\'t send. Check your connection and try again.';
+
+  @override
+  String get agentChatNotSentTapToRetry => 'Not sent. Tap to retry.';
+
+  @override
+  String get agentChatResend => 'Resend';
 
   @override
   String get agentChatSessionReady => 'Session ready';

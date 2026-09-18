@@ -16,6 +16,7 @@ import '/pages/agent_chat/components/chat_input_area.dart';
 import '/pages/agent_chat/components/ask_user_question_panel.dart';
 import '/pages/agent_chat/components/message_attachments.dart';
 import '/pages/agent_chat/components/message_queue_status.dart';
+import '/pages/agent_chat/components/send_status_indicator.dart';
 import '/pages/agent_chat/components/queued_messages_bar.dart';
 import '/pages/agent_chat/components/session_loading_indicator.dart';
 import '/pages/agent_chat/components/chat_block_spacing.dart';
@@ -1072,6 +1073,9 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     final messageQueueStatus = isUser ? queueStatus(message) : null;
     final isQueuedMessage = messageQueueStatus == kQueueStatusQueued;
     final isCancelledMessage = messageQueueStatus == kQueueStatusCancelled;
+    // Local send state (sending / failed) of an optimistic user message —
+    // rendered as a mark beside the bubble, never inside it.
+    final messageSendStatus = isUser ? sendStatus(message) : null;
 
     // Queued (and cancelled-before-consumed) user messages never enter the
     // transcript — they're staged in the queue bar above the input until the
@@ -1439,8 +1443,18 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       ),
       child: Row(
         mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: messageSendStatus != null
+            ? CrossAxisAlignment.center
+            : CrossAxisAlignment.start,
         children: [
+          if (messageSendStatus != null)
+            SendStatusIndicator(
+              key: ValueKey('send_status_$messageId'),
+              status: messageSendStatus,
+              sentAt: sentAt(message),
+              onRetry: () => _model.resendMessage(context, messageId),
+              onMore: () => _showUnsentMessageActions(messageId),
+            ),
           Flexible(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -1968,6 +1982,20 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       isCancelling: (id) => _cancellingMessageIds.contains(id),
       onCancel: _cancelQueuedMessage,
       onRevert: _revertQueuedMessage,
+    );
+  }
+
+  /// Long-press on a failed bubble's red mark: resend / edit in input / delete.
+  /// (A plain tap resends directly.)
+  void _showUnsentMessageActions(String messageId) {
+    showUnsentMessageSheet(
+      context: context,
+      onResend: () => _model.resendMessage(context, messageId),
+      onEdit: () {
+        _model.editUnsentMessage(messageId);
+        safeSetState(() {});
+      },
+      onDelete: () => _model.deleteUnsentMessage(messageId),
     );
   }
 
