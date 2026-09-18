@@ -305,10 +305,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get agentChatNotSentTapToRetry => 'Not sent. Tap to retry.';
 
   @override
-  String get agentChatResend => 'Resend';
+  String get agentChatResendPrompt => 'Resend this message?';
 
   @override
-  String get agentChatResendPrompt => 'Resend this message?';
+  String get agentChatResendContent => 'This message didn\'t reach the server.';
 
   @override
   String get agentChatSessionReady => 'Session ready';

@@ -620,17 +620,17 @@ abstract class AppLocalizations {
   /// **'Not sent. Tap to retry.'**
   String get agentChatNotSentTapToRetry;
 
-  /// No description provided for @agentChatResend.
-  ///
-  /// In en, this message translates to:
-  /// **'Resend'**
-  String get agentChatResend;
-
   /// No description provided for @agentChatResendPrompt.
   ///
   /// In en, this message translates to:
   /// **'Resend this message?'**
   String get agentChatResendPrompt;
+
+  /// No description provided for @agentChatResendContent.
+  ///
+  /// In en, this message translates to:
+  /// **'This message didn\'t reach the server.'**
+  String get agentChatResendContent;
 
   /// No description provided for @agentChatSessionReady.
   ///

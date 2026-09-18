@@ -3,8 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'package:google_fonts/google_fonts.dart';
-
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/l10n/app_localizations.dart';
 import 'message_queue_status.dart';
@@ -16,10 +14,10 @@ import 'message_queue_status.dart';
 /// - `sending`: nothing until [kSendIndicatorDelay] has passed since
 ///   [sentAt] (wall-clock, so a background/resume can't desync it), then a
 ///   thin grey spinner.
-/// - `failed`: a red circled `!`. Tap → [onTap], which opens the
-///   "Resend this message?" sheet (resend / edit / delete). Never resends
-///   directly: a resend can duplicate, and a 44px target beside a bubble is
-///   easy to hit while scrolling.
+/// - `failed`: a red circled `!`. Tap → [onTap], which asks "Resend this
+///   message?" before anything happens. Never resends directly: a resend can
+///   duplicate, and a 44px target beside a bubble is easy to hit while
+///   scrolling.
 class SendStatusIndicator extends StatefulWidget {
   const SendStatusIndicator({
     super.key,
@@ -125,122 +123,6 @@ class _SendStatusIndicatorState extends State<SendStatusIndicator> {
             strokeWidth: 1.5,
             color: theme.secondaryText.withValues(alpha: 0.6),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The failed bubble's sheet, iMessage-style: a "Resend this message?" title,
-/// resend as the primary action, then edit in input / delete. Dismissing is
-/// the cancel.
-Future<void> showUnsentMessageSheet({
-  required BuildContext context,
-  required VoidCallback onResend,
-  required VoidCallback onEdit,
-  required VoidCallback onDelete,
-}) {
-  final theme = FlutterFlowTheme.of(context);
-  final l10n = AppLocalizations.of(context);
-  return showModalBottomSheet<void>(
-    context: context,
-    backgroundColor: Colors.transparent,
-    builder: (ctx) => Container(
-      decoration: BoxDecoration(
-        color: theme.secondaryBackground,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24.0)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsetsDirectional.fromSTEB(20.0, 20.0, 20.0, 8.0),
-              child: Align(
-                alignment: AlignmentDirectional.centerStart,
-                child: Text(
-                  l10n.agentChatResendPrompt,
-                  style: theme.bodyMedium.override(
-                    font: GoogleFonts.sourceSans3(fontWeight: FontWeight.w600),
-                    fontSize: 19.0,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.0,
-                  ),
-                ),
-              ),
-            ),
-            _UnsentAction(
-              icon: Icons.refresh_rounded,
-              label: l10n.agentChatResend,
-              color: theme.primary,
-              onTap: () {
-                Navigator.of(ctx).pop();
-                onResend();
-              },
-            ),
-            _UnsentAction(
-              icon: Icons.edit_rounded,
-              label: l10n.agentChatRevertQueuedMessageTooltip,
-              onTap: () {
-                Navigator.of(ctx).pop();
-                onEdit();
-              },
-            ),
-            _UnsentAction(
-              icon: Icons.delete_outline_rounded,
-              label: l10n.commonDelete,
-              color: theme.error,
-              onTap: () {
-                Navigator.of(ctx).pop();
-                onDelete();
-              },
-            ),
-            const SizedBox(height: 8.0),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-class _UnsentAction extends StatelessWidget {
-  const _UnsentAction({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.color,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = FlutterFlowTheme.of(context);
-    final tint = color ?? theme.primaryText;
-    return InkWell(
-      onTap: () {
-        HapticFeedback.lightImpact();
-        onTap();
-      },
-      child: Padding(
-        padding: const EdgeInsetsDirectional.fromSTEB(20.0, 14.0, 20.0, 14.0),
-        child: Row(
-          children: [
-            Icon(icon, size: 22.0, color: tint),
-            const SizedBox(width: 14.0),
-            Text(
-              label,
-              style: theme.bodyLarge.override(
-                font: GoogleFonts.sourceSans3(),
-                color: tint,
-                letterSpacing: 0.0,
-              ),
-            ),
-          ],
         ),
       ),
     );

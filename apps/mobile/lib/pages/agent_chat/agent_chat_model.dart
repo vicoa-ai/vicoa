@@ -232,26 +232,6 @@ String? latestWebPreviewUrl;
     }
   }
 
-  /// Puts an un-sent message's text back in the composer after a failed send.
-  ///
-  /// Mirrors the queued-message revert in AgentChatWidget: append rather than
-  /// replace (so anything typed while the POST was in flight survives), cursor
-  /// to the end, re-run the overlay filters, and persist it as the draft so the
-  /// text also survives the app being killed.
-  void restoreUnsentMessage(String text) {
-    if (text.isEmpty) return;
-    final current = messageController.text;
-    final separator = current.isEmpty ? '' : '\n';
-    messageController.text = '$current$separator$text';
-    messageController.selection = TextSelection.fromPosition(
-      TextPosition(offset: messageController.text.length),
-    );
-    filterSlashCommands(messageController.text);
-    filterFileMentions(messageController.text);
-    saveDraftMessage();
-    onStateChanged?.call();
-  }
-
   // Save the last seen message info
   void saveLastSeenMessage() {
     if (instanceId != null && messages.isNotEmpty) {
@@ -1648,38 +1628,6 @@ String? latestWebPreviewUrl;
       await _afterFailedSend(context, isOptionClick: false, refund: gate.charged);
     }
   }
-
-  /// "Edit in input" for a failed bubble: its text goes back to the composer
-  /// and its uploads back to the strip (ids intact, so no re-upload), then
-  /// the bubble goes away.
-  void editUnsentMessage(String optimisticId) {
-    final index = messages.indexWhere((msg) => msg['id'] == optimisticId);
-    if (index == -1) return;
-    final entry = messages[index];
-    if (entry is! Map || sendStatus(entry) != kSendStatusFailed) return;
-
-    final localPaths = entry['_local_paths'];
-    for (final a in _messageAttachments(entry)) {
-      if (a is! Map || a['id'] == null) continue;
-      final id = a['id'].toString();
-      final path = localPaths is Map ? localPaths[id]?.toString() : null;
-      if (path == null) continue;
-      final filename = a['filename']?.toString();
-      pendingAttachments.add(PendingAttachment(
-        localPath: path,
-        filename: filename,
-        isImage: isImageFilename(filename ?? path),
-      )
-        ..id = id
-        ..meta = Map<String, dynamic>.from(a));
-    }
-    pendingAttachmentsRevision++;
-    _removeOptimistic(optimisticId);
-    restoreUnsentMessage(entry['content']?.toString() ?? '');
-    messageFocusNode.requestFocus();
-  }
-
-  void deleteUnsentMessage(String optimisticId) => _removeOptimistic(optimisticId);
 
   Future<void> requestPermissionModeChange(AgentPermissionMode newMode) async {
     if (instanceId == null) return;

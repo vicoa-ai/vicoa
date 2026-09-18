@@ -17,6 +17,7 @@ import '/pages/agent_chat/components/ask_user_question_panel.dart';
 import '/pages/agent_chat/components/message_attachments.dart';
 import '/pages/agent_chat/components/message_queue_status.dart';
 import '/pages/agent_chat/components/send_status_indicator.dart';
+import '/pages/confirm_dialog/confirm_dialog_widget.dart';
 import '/pages/agent_chat/components/queued_messages_bar.dart';
 import '/pages/agent_chat/components/session_loading_indicator.dart';
 import '/pages/agent_chat/components/chat_block_spacing.dart';
@@ -1452,7 +1453,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
               key: ValueKey('send_status_$messageId'),
               status: messageSendStatus,
               sentAt: sentAt(message),
-              onTap: () => _showUnsentMessageActions(messageId),
+              onTap: () => _confirmResend(messageId),
             ),
           Flexible(
             child: LayoutBuilder(
@@ -1984,18 +1985,23 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     );
   }
 
-  /// Tap on a failed bubble's red mark: "Resend this message?" with resend /
-  /// edit in input / delete. Resend is never a single tap — it can duplicate.
-  void _showUnsentMessageActions(String messageId) {
-    showUnsentMessageSheet(
-      context: context,
-      onResend: () => _model.resendMessage(context, messageId),
-      onEdit: () {
-        _model.editUnsentMessage(messageId);
-        safeSetState(() {});
-      },
-      onDelete: () => _model.deleteUnsentMessage(messageId),
-    );
+  /// Tap on a failed bubble's red mark: the app's confirm dialog asks
+  /// "Resend this message?" and only Confirm resends. Never a single tap —
+  /// a resend can duplicate. Tapping outside is a cancel.
+  Future<void> _confirmResend(String messageId) async {
+    final shouldResend = await showDialog<bool>(
+          context: context,
+          builder: (_) => Dialog(
+            backgroundColor: Colors.transparent,
+            child: ConfirmDialogWidget(
+              title: AppLocalizations.of(context).agentChatResendPrompt,
+              content: AppLocalizations.of(context).agentChatResendContent,
+            ),
+          ),
+        ) ??
+        false;
+    if (!shouldResend || !mounted) return;
+    await _model.resendMessage(context, messageId);
   }
 
   /// Pulls a still-queued message back into the composer for editing: appends

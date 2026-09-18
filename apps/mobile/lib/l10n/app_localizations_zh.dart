@@ -295,10 +295,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get agentChatNotSentTapToRetry => '未发送，点按重试。';
 
   @override
-  String get agentChatResend => '重新发送';
+  String get agentChatResendPrompt => '重新发送这条消息？';
 
   @override
-  String get agentChatResendPrompt => '重新发送这条消息？';
+  String get agentChatResendContent => '这条消息没有送达服务器。';
 
   @override
   String get agentChatSessionReady => '任务已就绪';
