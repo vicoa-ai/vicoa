@@ -118,6 +118,7 @@
   "agentChatQueuedLabel": "Queued",
   "agentChatQueuedSheetTitle": "Queued messages",
   "agentChatRenameFailed": "Failed to rename session. Please try again.",
+  "agentChatSendFailed": "Couldn't send your message. It's back in the box — check your connection and try again.",
   "agentChatSessionReady": "Session ready",
   "agentChatSessionRenamed": "Session renamed successfully",
   "agentChatSessionTitle": "Session",

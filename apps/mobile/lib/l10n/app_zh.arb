@@ -85,6 +85,7 @@
   "agentChatQueuedLabel": "排队中",
   "agentChatQueuedSheetTitle": "排队消息",
   "agentChatRenameFailed": "重命名任务失败，请重试。",
+  "agentChatSendFailed": "消息发送失败，内容已保留在输入框，请检查网络后重试。",
   "agentChatSessionReady": "任务已就绪",
   "agentChatSessionRenamed": "任务重命名成功",
   "agentChatSessionTitle": "任务",

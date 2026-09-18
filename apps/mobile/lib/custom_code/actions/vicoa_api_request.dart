@@ -61,6 +61,17 @@ bool _isPublicEndpoint(String endpoint) {
       .any((publicEndpoint) => endpoint.startsWith(publicEndpoint));
 }
 
+/// How long any single Vicoa API call may take before we abandon it.
+///
+/// Without a deadline `http.*` simply waits on the socket: a half-open
+/// connection (Wi-Fi <-> cellular handoff, captive portal, a dropped NAT
+/// entry) leaves the future pending for minutes with no error at all, so any
+/// caller that gates UI on the response - the chat send button - spins forever
+/// with nothing to catch. Timing out doesn't tear the socket down, it just
+/// stops the caller waiting on it. 45s is well clear of a slow-but-working
+/// request on a bad mobile link.
+const _requestTimeout = Duration(seconds: 45);
+
 Future<bool> _hasInternetReachability() async {
   try {
     final result = await InternetAddress.lookup('google.com').timeout(
@@ -107,32 +118,31 @@ Future<http.Response> _vicoaSendRequest(
     headers['Authorization'] = 'Bearer $userToken';
   }
 
-  http.Response response;
-
   try {
+    final Future<http.Response> pending;
     switch (method.toLowerCase()) {
       case 'get':
-        response = await http.get(uri, headers: headers);
+        pending = http.get(uri, headers: headers);
         break;
       case 'post':
-        response = await http.post(
+        pending = http.post(
           uri,
           headers: headers,
           body: json.encode(body, toEncodable: _encodeFallback),
         );
         break;
       case 'put':
-        response = await http.put(
+        pending = http.put(
           uri,
           headers: headers,
           body: json.encode(body, toEncodable: _encodeFallback),
         );
         break;
       case 'delete':
-        response = await http.delete(uri, headers: headers);
+        pending = http.delete(uri, headers: headers);
         break;
       case 'patch':
-        response = await http.patch(
+        pending = http.patch(
           uri,
           headers: headers,
           body: json.encode(body, toEncodable: _encodeFallback),
@@ -141,6 +151,11 @@ Future<http.Response> _vicoaSendRequest(
       default:
         throw ApiException('Unsupported HTTP method: $method', 400);
     }
+
+    // One deadline for the whole exchange (connect + send + receive), so a
+    // stalled request becomes a TimeoutException the handlers below can
+    // categorize instead of a future that never completes.
+    final response = await pending.timeout(_requestTimeout);
 
     if (response.statusCode == 401) {
       debugPrint('Received 401 Unauthorized for $endpoint: ${response.body}');

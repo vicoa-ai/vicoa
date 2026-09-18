@@ -1,4 +1,5 @@
 import '/flutter_flow/app_locale.dart';
+import '/l10n/app_localizations.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/actions/ws_protocol.dart' as ws_protocol;
@@ -223,6 +224,26 @@ String? latestWebPreviewUrl;
     if (instanceId != null) {
       FFAppState().clearChatDraft(instanceId!);
     }
+  }
+
+  /// Puts an un-sent message's text back in the composer after a failed send.
+  ///
+  /// Mirrors the queued-message revert in AgentChatWidget: append rather than
+  /// replace (so anything typed while the POST was in flight survives), cursor
+  /// to the end, re-run the overlay filters, and persist it as the draft so the
+  /// text also survives the app being killed.
+  void restoreUnsentMessage(String text) {
+    if (text.isEmpty) return;
+    final current = messageController.text;
+    final separator = current.isEmpty ? '' : '\n';
+    messageController.text = '$current$separator$text';
+    messageController.selection = TextSelection.fromPosition(
+      TextPosition(offset: messageController.text.length),
+    );
+    filterSlashCommands(messageController.text);
+    filterFileMentions(messageController.text);
+    saveDraftMessage();
+    onStateChanged?.call();
   }
 
   // Save the last seen message info
@@ -1384,6 +1405,35 @@ String? latestWebPreviewUrl;
     onStateChanged?.call();
     scrollToBottom();
 
+    // The shared repair for both failure paths: drop the optimistic bubble,
+    // return the uploads to the strip, refund the credit, and hand the user
+    // back their text with a visible error rather than dropping it silently.
+    Future<void> handleSendFailure() async {
+      _removeOptimistic(optimisticId);
+      // The uploads already succeeded server-side — put them back in the
+      // strip so a retry doesn't force a re-pick.
+      pendingAttachments.addAll(sendAttachments);
+      pendingAttachmentsRevision++;
+      // An option/permission click never occupied the composer, so putting its
+      // text there would be inserting something the user never typed.
+      if (!isOptionClick) {
+        restoreUnsentMessage(content);
+      }
+      if (!hasActiveSubscription && context.mounted) {
+        await local_actions.grantCredit(
+          context,
+          creditGranted: 1,
+          name: 'Refund: Failed Agent Chat Message',
+        );
+      }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(AppLocalizations.of(context).agentChatSendFailed),
+          backgroundColor: Colors.red,
+        ));
+      }
+    }
+
     bool sentOk = false;
     try {
       final result = await actions.apiChatWithAgent(
@@ -1423,31 +1473,11 @@ String? latestWebPreviewUrl;
         }
       } else {
         debugPrint('Failed to send message. Please try again.');
-        _removeOptimistic(optimisticId);
-        // The uploads already succeeded server-side — put them back in the
-        // strip so a retry doesn't force a re-pick.
-        pendingAttachments.addAll(sendAttachments);
-        pendingAttachmentsRevision++;
-        if (!hasActiveSubscription && context.mounted) {
-          await local_actions.grantCredit(
-            context,
-            creditGranted: 1,
-            name: 'Refund: Failed Agent Chat Message',
-          );
-        }
+        await handleSendFailure();
       }
     } catch (e) {
       debugPrint('Error sending message: $e');
-      _removeOptimistic(optimisticId);
-      pendingAttachments.addAll(sendAttachments);
-      pendingAttachmentsRevision++;
-      if (!hasActiveSubscription && context.mounted) {
-        await local_actions.grantCredit(
-          context,
-          creditGranted: 1,
-          name: 'Refund: Failed Agent Chat Message',
-        );
-      }
+      await handleSendFailure();
     } finally {
       // Send button always returns to normal as soon as the POST completes.
       isSendingMessage = false;

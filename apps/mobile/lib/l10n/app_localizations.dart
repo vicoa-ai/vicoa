@@ -608,6 +608,12 @@ abstract class AppLocalizations {
   /// **'Failed to rename session. Please try again.'**
   String get agentChatRenameFailed;
 
+  /// No description provided for @agentChatSendFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t send your message. It\'s back in the box — check your connection and try again.'**
+  String get agentChatSendFailed;
+
   /// No description provided for @agentChatSessionReady.
   ///
   /// In en, this message translates to:

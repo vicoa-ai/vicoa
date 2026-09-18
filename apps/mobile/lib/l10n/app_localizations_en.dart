@@ -298,6 +298,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Failed to rename session. Please try again.';
 
   @override
+  String get agentChatSendFailed =>
+      'Couldn\'t send your message. It\'s back in the box — check your connection and try again.';
+
+  @override
   String get agentChatSessionReady => 'Session ready';
 
   @override
