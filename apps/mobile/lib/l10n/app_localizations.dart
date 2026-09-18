@@ -1430,6 +1430,18 @@ abstract class AppLocalizations {
   /// **'Yesterday'**
   String get dateYesterday;
 
+  /// No description provided for @directoryPickerProjects.
+  ///
+  /// In en, this message translates to:
+  /// **'Projects'**
+  String get directoryPickerProjects;
+
+  /// No description provided for @directoryPickerFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Folder'**
+  String get directoryPickerFolder;
+
   /// No description provided for @directoryPickerRecent.
   ///
   /// In en, this message translates to:

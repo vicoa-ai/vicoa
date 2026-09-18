@@ -299,6 +299,8 @@
   "dateRangeXWeekdayWed": "Wed",
   "dateToday": "Today",
   "dateYesterday": "Yesterday",
+  "directoryPickerProjects": "Projects",
+  "directoryPickerFolder": "Folder",
   "directoryPickerRecent": "Recent",
   "directoryPickerWorkingDirectory": "Working Directory",
   "errorStateDisplaySignInAgain": "Sign In Again",

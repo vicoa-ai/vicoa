@@ -143,6 +143,31 @@ describe('resolveWorktreeSpawn', () => {
     });
   });
 
+  it('existing carries the subfolder into the worktree', () => {
+    // A monorepo session picked at `repo/apps/web` on a worktree starts at
+    // `<worktree>/apps/web`, not at the worktree root.
+    expect(
+      resolveWorktreeSpawn({
+        mode: 'existing',
+        baseDirectory: '~/app/apps/web',
+        subpath: 'apps/web',
+        selectedWorktreePath: '/u/vicoa/workspaces/app-1a2b/brave-river',
+      }),
+    ).toEqual({
+      directory: '/u/vicoa/workspaces/app-1a2b/brave-river/apps/web',
+      worktree: undefined,
+    });
+  });
+
+  it('new sends the subfolder itself — the daemon forks the whole repo', () => {
+    expect(
+      resolveWorktreeSpawn({ mode: 'new', baseDirectory: '~/app/apps/web', subpath: 'apps/web' }),
+    ).toEqual({
+      directory: '~/app/apps/web',
+      worktree: { new: true },
+    });
+  });
+
   it('existing with no path falls back to the base directory', () => {
     expect(resolveWorktreeSpawn({ mode: 'existing', baseDirectory: '~/app' })).toEqual({
       directory: '~/app',

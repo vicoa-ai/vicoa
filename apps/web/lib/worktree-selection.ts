@@ -7,6 +7,8 @@
  * `plans/todos/vicoa-app-worktree.md`.
  */
 
+import { joinSubpath } from '@/lib/project-paths';
+
 /** How a new session relates to a git worktree. */
 export type WorktreeMode = 'none' | 'new' | 'existing';
 
@@ -80,20 +82,27 @@ export interface WorktreeSpawn {
 }
 
 /**
- * Map a worktree selection onto spawn-session args. `new` keeps the base
- * directory (the daemon forks off its HEAD, on `newWorktreeName` when the user
- * picked one, else a random slug); `existing` spawns directly in the selected
- * worktree path; `none` is a plain spawn. A stale `existing` selection with no
- * path falls back to the base directory.
+ * Map a worktree selection onto spawn-session args. `baseDirectory` is the
+ * folder the user picked — the repo root or a subfolder of it (a monorepo
+ * session at `repo/apps/web`); `subpath` is that folder's part below the
+ * root (`''` at the root). `new` sends the folder as-is (the daemon forks the
+ * whole repo off its HEAD, on `newWorktreeName` when the user picked one, else
+ * a random slug, and starts the agent at the same subfolder inside the new
+ * checkout); `existing` starts at the selected worktree — at the same
+ * subfolder inside it, so the checkout and the folder stay orthogonal;
+ * `none` is a plain spawn. A stale `existing` selection with no path falls
+ * back to the base directory.
  */
 export function resolveWorktreeSpawn({
   mode,
   baseDirectory,
+  subpath = '',
   selectedWorktreePath,
   newWorktreeName,
 }: {
   mode: WorktreeMode;
   baseDirectory: string;
+  subpath?: string;
   selectedWorktreePath?: string | null;
   newWorktreeName?: string | null;
 }): WorktreeSpawn {
@@ -106,7 +115,12 @@ export function resolveWorktreeSpawn({
       };
     }
     case 'existing':
-      return { directory: selectedWorktreePath || baseDirectory, worktree: undefined };
+      return {
+        directory: selectedWorktreePath
+          ? joinSubpath(selectedWorktreePath, subpath)
+          : baseDirectory,
+        worktree: undefined,
+      };
     case 'none':
     default:
       return { directory: baseDirectory, worktree: undefined };

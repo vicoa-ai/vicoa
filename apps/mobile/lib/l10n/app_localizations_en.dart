@@ -732,6 +732,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get dateYesterday => 'Yesterday';
 
   @override
+  String get directoryPickerProjects => 'Projects';
+
+  @override
+  String get directoryPickerFolder => 'Folder';
+
+  @override
   String get directoryPickerRecent => 'Recent';
 
   @override

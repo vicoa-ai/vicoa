@@ -2,35 +2,51 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '/custom_code/utils/project_paths.dart';
 import '/flutter_flow/flutter_flow_icon_button.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/l10n/app_localizations.dart';
+import '/pages/tasks/task_glyphs.dart' show TaskProjectIcon;
 
 /// Bottom-sheet for picking the working directory. Styled to match the
 /// message_selection_sheet pattern: full-bleed container (90% screen height)
 /// with a handle bar, Close / Title / Done header, and a scrollable body.
 ///
-/// The sheet owns the text input + the recent-directories list; the new-session
-/// screen renders only a click-target container that opens this sheet.
+/// Two callers, two lists. The new-session screen passes [projects] — the
+/// projects linked to a folder on the selected machine, newest activity first
+/// — and the sheet shows them on top, the path input beneath for any other
+/// folder (a project's subfolder, or a brand-new one the backend mints a
+/// project for on the first spawn). The automation editor passes plain
+/// [recentDirectories] instead. The screen renders only a click-target
+/// container that opens this sheet.
 ///
 /// Returns the chosen directory (or `null` on cancel).
 Future<String?> showDirectoryPickerSheet({
   required BuildContext context,
   required String initial,
-  required List<String> recentDirectories,
+  List<ProjectPickerEntry> projects = const [],
+  String? selectedProjectId,
+  List<String> recentDirectories = const [],
 }) async {
   return showModalBottomSheet<String>(
     context: context,
     isScrollControlled: true,
     useSafeArea: false,
     backgroundColor: Colors.transparent,
-    builder: (ctx) => _DirectoryPickerSheet(initial: initial, recent: recentDirectories),
+    builder: (ctx) => _DirectoryPickerSheet(
+      initial: initial,
+      projects: projects,
+      selectedProjectId: selectedProjectId,
+      recent: recentDirectories,
+    ),
   );
 }
 
 class _DirectoryPickerSheet extends StatefulWidget {
-  const _DirectoryPickerSheet({required this.initial, required this.recent});
+  const _DirectoryPickerSheet({required this.initial, required this.projects, required this.selectedProjectId, required this.recent});
   final String initial;
+  final List<ProjectPickerEntry> projects;
+  final String? selectedProjectId;
   final List<String> recent;
 
   @override
@@ -97,8 +113,27 @@ class _DirectoryPickerSheetState extends State<_DirectoryPickerSheet> {
           onClose: () { HapticFeedback.lightImpact(); Navigator.pop(context); },
           onConfirm: _confirm,
         ),
+        // Projects first (the common case is picking one), the path input
+        // for everything else beneath. When the caller passes plain recent
+        // folders instead (the automation editor), those take the list slot.
+        if (widget.projects.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsetsDirectional.fromSTEB(16.0, 16.0, 16.0, 8.0),
+            child: Align(alignment: AlignmentDirectional.centerStart, child: _sectionLabel(context, AppLocalizations.of(context).directoryPickerProjects)),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsetsDirectional.fromSTEB(16.0, 0.0, 16.0, 0.0),
+              child: _ProjectList(projects: widget.projects, selectedProjectId: widget.selectedProjectId, onTap: _pickRecent),
+            ),
+          ),
+        ],
         Padding(
-          padding: const EdgeInsetsDirectional.fromSTEB(16.0, 16.0, 16.0, 0.0),
+          padding: const EdgeInsetsDirectional.fromSTEB(16.0, 16.0, 16.0, 8.0),
+          child: Align(alignment: AlignmentDirectional.centerStart, child: _sectionLabel(context, AppLocalizations.of(context).directoryPickerFolder)),
+        ),
+        Padding(
+          padding: const EdgeInsetsDirectional.fromSTEB(16.0, 0.0, 16.0, 0.0),
           child: _DirectoryTextField(controller: _controller, focusNode: _focusNode, onSubmit: (_) => _confirm()),
         ),
         if (widget.recent.isNotEmpty) ...[
@@ -112,8 +147,10 @@ class _DirectoryPickerSheetState extends State<_DirectoryPickerSheet> {
               child: _RecentDirectoryList(directories: widget.recent, onTap: _pickRecent),
             ),
           ),
-        ] else
-          const Expanded(child: SizedBox.shrink()),
+        ] else if (widget.projects.isEmpty)
+          const Expanded(child: SizedBox.shrink())
+        else
+          const SizedBox(height: 16.0),
         // Push content above the keyboard when it's open.
         SizedBox(height: MediaQuery.of(context).viewInsets.bottom),
       ]),
@@ -228,6 +265,65 @@ class _DirectoryTextField extends StatelessWidget {
           style: theme.bodyMedium.override(font: GoogleFonts.firaCode(), fontSize: 15.0),
         ),
       ),
+    );
+  }
+}
+
+/// The projects linked to a folder on the selected machine: icon + name, the
+/// folder in muted mono beneath, a check on the one the current folder falls
+/// under. Tapping picks the project's folder.
+class _ProjectList extends StatelessWidget {
+  const _ProjectList({required this.projects, required this.selectedProjectId, required this.onTap});
+  final List<ProjectPickerEntry> projects;
+  final String? selectedProjectId;
+  final ValueChanged<String> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = FlutterFlowTheme.of(context);
+    return ListView.separated(
+      padding: EdgeInsets.zero,
+      itemCount: projects.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8.0),
+      itemBuilder: (context, index) {
+        final entry = projects[index];
+        final selected = entry.id == selectedProjectId;
+        return InkWell(
+          onTap: () => onTap(entry.path),
+          borderRadius: BorderRadius.circular(12.0),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 10.0),
+            decoration: BoxDecoration(
+              color: theme.primaryBackground,
+              borderRadius: BorderRadius.circular(12.0),
+              border: selected ? Border.all(color: theme.primary, width: 1.0) : null,
+            ),
+            child: Row(children: [
+              TaskProjectIcon(project: entry.project, size: 18.0),
+              const SizedBox(width: 10.0),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                  Text(
+                    entry.name,
+                    style: theme.bodyMedium.override(font: GoogleFonts.sourceSans3(fontWeight: FontWeight.w500), fontSize: 15.0, fontWeight: FontWeight.w500, color: theme.primaryText),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    entry.path,
+                    style: theme.bodySmall.override(font: GoogleFonts.firaCode(), fontSize: 12.0, color: theme.secondaryText),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ]),
+              ),
+              if (selected) ...[
+                const SizedBox(width: 8.0),
+                Icon(Icons.check_rounded, color: theme.primary, size: 18.0),
+              ],
+            ]),
+          ),
+        );
+      },
     );
   }
 }

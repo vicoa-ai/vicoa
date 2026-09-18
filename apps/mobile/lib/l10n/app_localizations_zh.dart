@@ -711,6 +711,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get dateYesterday => '昨天';
 
   @override
+  String get directoryPickerProjects => '项目';
+
+  @override
+  String get directoryPickerFolder => '文件夹';
+
+  @override
   String get directoryPickerRecent => '最近';
 
   @override

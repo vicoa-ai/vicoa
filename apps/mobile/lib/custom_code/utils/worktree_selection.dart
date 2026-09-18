@@ -1,6 +1,8 @@
 // New-session worktree selection state + the spawn-arg decision logic.
 // See `plans/todos/vicoa-app-worktree.md` §5.3.
 
+import 'project_paths.dart';
+
 /// How the new session relates to a git worktree:
 ///   - [none]        spawn in the chosen directory (today's behavior)
 ///   - [newWorktree] daemon forks a fresh branch+checkout off HEAD
@@ -13,14 +15,19 @@ typedef WorktreeSpawn = ({String directory, Map<String, dynamic>? worktree});
 
 /// Map a [WorktreeMode] selection onto spawn-session args.
 ///
-/// `newWorktree` keeps [baseDirectory] (the daemon forks off its HEAD) and asks
-/// for creation; `existing` spawns directly in the selected worktree path with
-/// no `worktree` param; `none` is today's plain spawn. An `existing` selection
-/// with no path falls back to the base directory so a stale selection can never
-/// produce an empty directory.
+/// [baseDirectory] is the folder the user picked — the repo root or a
+/// subfolder of it (a monorepo session at `repo/apps/web`); [subpath] is that
+/// folder's part below the root (`''` at the root). `newWorktree` sends the
+/// folder as-is (the daemon forks the whole repo off its HEAD and starts the
+/// agent at the same subfolder inside the new checkout); `existing` starts at
+/// the selected worktree — at the same subfolder inside it, so the checkout
+/// and the folder stay orthogonal; `none` is today's plain spawn. An
+/// `existing` selection with no path falls back to the base directory so a
+/// stale selection can never produce an empty directory.
 WorktreeSpawn resolveWorktreeSpawn({
   required WorktreeMode mode,
   required String baseDirectory,
+  String subpath = '',
   String? selectedWorktreePath,
 }) {
   switch (mode) {
@@ -30,7 +37,9 @@ WorktreeSpawn resolveWorktreeSpawn({
       return (directory: baseDirectory, worktree: {'new': true});
     case WorktreeMode.existing:
       return (
-        directory: selectedWorktreePath ?? baseDirectory,
+        directory: selectedWorktreePath == null
+            ? baseDirectory
+            : joinSubpath(selectedWorktreePath, subpath),
         worktree: null,
       );
   }

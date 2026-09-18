@@ -29,9 +29,11 @@ export interface WorktreeSubGroupHeaderProps {
   label: string;
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  /** Target of this group's "+", or null to hide it. */
+  /** Target of this group's "+" — the PROJECT's folder (the repo's main
+      checkout), never the worktree — or null to hide it. */
   newSessionDirectory: string | null;
   /** Preselect this worktree on the new-session page; absent for main. */
+  worktreePath?: string;
   worktreeBranch?: string;
   /** Git no longer has a checkout at this folder: the row reads as deleted.
       Its actions are unchanged — "Delete" still archives the sessions that
@@ -63,6 +65,7 @@ export function WorktreeSubGroupHeader({
   collapsed,
   onToggleCollapsed,
   newSessionDirectory,
+  worktreePath,
   worktreeBranch,
   missing = false,
   onNavigate,
@@ -142,6 +145,7 @@ export function WorktreeSubGroupHeader({
           <NewSessionButton
             directory={newSessionDirectory}
             label={label}
+            worktreePath={worktreePath}
             worktreeBranch={worktreeBranch}
             onNavigate={onNavigate}
           />

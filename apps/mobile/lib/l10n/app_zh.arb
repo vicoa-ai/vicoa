@@ -222,6 +222,8 @@
   "dateRangeXWeekdayWed": "三",
   "dateToday": "今天",
   "dateYesterday": "昨天",
+  "directoryPickerProjects": "项目",
+  "directoryPickerFolder": "文件夹",
   "directoryPickerRecent": "最近",
   "directoryPickerWorkingDirectory": "工作目录",
   "errorStateDisplaySignInAgain": "重新登录",

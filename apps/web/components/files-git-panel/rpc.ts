@@ -437,11 +437,33 @@ export async function rpcGitWorktreeList(
   machineId: string,
   cwd: string,
 ): Promise<WorktreeInfo[]> {
+  return (await rpcGitWorktreeListWithMain(machineId, cwd)).worktrees;
+}
+
+/** A repo's linked worktrees plus where its main checkout is. `cwd` may be
+ * any folder of the repo — a subfolder or a linked worktree — which is what
+ * makes `mainPath` useful: it resolves whatever path the caller holds to the
+ * repo root. `mainPath` is null on a daemon that predates the field. */
+export interface WorktreeListing {
+  mainPath: string | null;
+  mainDisplayPath: string | null;
+  worktrees: WorktreeInfo[];
+}
+
+export async function rpcGitWorktreeListWithMain(
+  machineId: string,
+  cwd: string,
+): Promise<WorktreeListing> {
   const result = await getRpcClient(machineId).callRpc(machineId, 'git-worktree-list', { cwd });
   if (typeof result.error === 'string') {
     throw new RpcError(result.error);
   }
-  return (result.worktrees as WorktreeInfo[]) ?? [];
+  return {
+    mainPath: typeof result.main_path === 'string' ? result.main_path : null,
+    mainDisplayPath:
+      typeof result.main_display_path === 'string' ? result.main_display_path : null,
+    worktrees: (result.worktrees as WorktreeInfo[]) ?? [],
+  };
 }
 
 /** The daemon's verdict on a user-typed name for a new worktree

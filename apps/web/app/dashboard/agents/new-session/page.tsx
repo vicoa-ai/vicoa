@@ -28,7 +28,7 @@ import { AgentTypeIcon, getAgentLogoSrc } from '@/components/dashboard/agent-typ
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import { agentPrincipal, agentProfileBlockedReason } from '@/lib/use-agent-profiles';
 import { ChipDropdown, ModeIcon, PERMISSION_LIST_WIDTH_CLASS, TickItem, modelListWidthClass, modelSublabel } from '@/components/dashboard/session-config-dropdown';
-import { rpcGitStatus } from '@/components/files-git-panel/rpc';
+import { rpcGitStatus, rpcGitWorktreeListWithMain, type WorktreeListing } from '@/components/files-git-panel/rpc';
 import { FilesGitPanel, FilesGitPanelToggle, usePanelState } from '@/components/files-git-panel';
 import {
   DropdownMenu,
@@ -89,6 +89,15 @@ import {
   resolveWorktreeSpawn,
   type WorktreeMode,
 } from '@/lib/worktree-selection';
+import {
+  canonicalPath,
+  directoryChipLabel,
+  joinSubpath,
+  projectsOnMachine,
+  relativeSubpath,
+  resolveProjectForDirectory,
+} from '@/lib/project-paths';
+import { ProjectIcon } from '@/components/dashboard/task-ui';
 import { loadPromptDraft, savePromptDraft, clearPromptDraft } from '@/lib/new-session-draft';
 import { clearForkContext, loadForkContext, type ForkContext } from '@/lib/fork-session';
 import { currentPathname, openCreatedSession } from '@/lib/new-session-navigation';
@@ -286,6 +295,27 @@ function mergeMachineUpdate(list: MachineSummary[], body: MachineBody): MachineS
   return sortMachinesOnlineFirstShared(next);
 }
 
+/** A worktree to preselect once `directory` lands on the project's folder
+ * — from the sidebar's per-worktree "+" or from normalising a typed worktree
+ * path back to its repo. */
+interface PendingWorktreePreselect {
+  /** The `directory` value the preselect belongs to (the project's folder). */
+  directory: string;
+  path: string;
+  branch: string;
+}
+
+function readWorktreePreselect(params: URLSearchParams): PendingWorktreePreselect | null {
+  const directory = params.get('directory');
+  const branch = params.get('worktreeBranch');
+  if (!directory || !branch) return null;
+  // Older links carried the worktree itself as `directory`; keep them working
+  // — the normalisation effect moves the chip onto the project once the daemon
+  // reports the repo's main path.
+  const path = params.get('worktreePath') ?? directory;
+  return { directory, path, branch };
+}
+
 function NewSessionContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -294,16 +324,16 @@ function NewSessionContent() {
   // that machine's own default instead of snapping back to the link's folder.
   const directoryParam = searchParams.get('directory');
   const pendingDirectoryRef = useRef<string | null>(directoryParam);
-  // The sidebar's per-worktree "+" links here with `?directory=<worktree path>
-  // &worktreeBranch=<branch>`; we preselect that worktree instead of starting
-  // on "current branch". Consumed once (see the clear effect below), so a later
-  // directory change falls back to the normal "none" default.
-  const pendingWorktreeRef = useRef<{ path: string; branch: string } | null>(
-    (() => {
-      const dir = searchParams.get('directory');
-      const branch = searchParams.get('worktreeBranch');
-      return dir && branch ? { path: dir, branch } : null;
-    })(),
+  // The sidebar's per-worktree "+" links here with `?directory=<project root>
+  // &worktreePath=<worktree>&worktreeBranch=<branch>`; we land on the project's
+  // folder with that worktree preselected instead of "current branch". The
+  // folder chip is the project, never the worktree (`directory` is normalised
+  // that way below too). Consumed once (see the clear effect below), so a later
+  // directory change falls back to the normal "none" default. An older link
+  // that put the worktree itself in `directory` (no `worktreePath`) is handled
+  // by the normalisation effect once the daemon reports the repo's main path.
+  const pendingWorktreeRef = useRef<PendingWorktreePreselect | null>(
+    readWorktreePreselect(searchParams),
   );
   // `?machineId=` / `?agent=` come from a fork (the chat page's per-message
   // fork button): a forked session must land on the SAME machine and agent as
@@ -365,6 +395,10 @@ function NewSessionContent() {
   const [machines, setMachines] = useState<MachineSummary[]>([]);
   const [isLoadingMachines, setIsLoadingMachines] = useState(false);
   const [selectedMachineId, setSelectedMachineId] = useState<string>('');
+  // The folder to work in: a project's root or a subfolder of it — never a
+  // worktree path (a typed/linked worktree is normalised back to its repo with
+  // the worktree selected below). Persisted; the spawn cwd is derived from
+  // this + the checkout at submit and never stored.
   const [directory, setDirectory] = useState('');
   // Worktree selection (only when the machine advertises worktree support).
   // `none` keeps today's spawn-in-directory behavior.
@@ -388,8 +422,17 @@ function NewSessionContent() {
   // Sub-tasks chosen in the Start-session dialog: seeded into the prompt and
   // advanced to in_progress with the parent when the session starts.
   const [subtasks, setSubtasks] = useState<TaskResponse[]>([]);
-  // Projects, only for resolving the selected task's linked folder below.
+  // The user's projects (all machines): the picker lists the ones linked to a
+  // folder on the selected machine, the folder chip names the one `directory`
+  // falls under, and a selected task resolves to its linked folder below.
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
+  // The selected folder's repo as the daemon sees it: its main checkout and
+  // linked worktrees. Drives the worktree-path normalisation (a typed or
+  // linked worktree path becomes root + "existing" selection), the restore
+  // check (a remembered worktree that no longer exists is dropped), and the
+  // subfolder carried into a worktree at spawn. Null until fetched, and for a
+  // plain folder.
+  const [repoListing, setRepoListing] = useState<WorktreeListing | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -566,22 +609,21 @@ function NewSessionContent() {
     return machine.display_name || machine.hostname || `Machine ${machine.machine_id.slice(0, 6)}`;
   }, []);
 
-  const getRecentDirectories = useCallback((machine: MachineSummary): string[] => {
-    if (Array.isArray(machine.recent_directories)) return machine.recent_directories;
-    const meta = machine.metadata as Record<string, unknown> | null | undefined;
-    if (meta && Array.isArray(meta.recent_directories)) {
-      return (meta.recent_directories as unknown[]).map(String);
-    }
-    return [];
-  }, []);
-
+  // Where a machine starts when nothing is remembered for it: its most recently
+  // used project's folder (the backend files the repo root here, never a
+  // worktree or subfolder), else its home. Only the *default* reads this —
+  // the picker lists projects, not this list.
   const initialDirectoryForMachine = useCallback((machine: MachineSummary) => {
-    const recent = getRecentDirectories(machine);
-    if (recent.length > 0) return recent[0];
     const meta = machine.metadata as Record<string, unknown> | null | undefined;
+    const recent = Array.isArray(machine.recent_directories)
+      ? machine.recent_directories
+      : meta && Array.isArray(meta.recent_directories)
+        ? (meta.recent_directories as unknown[]).map(String)
+        : [];
+    if (recent.length > 0) return recent[0];
     if (meta && typeof meta.home_dir === 'string' && meta.home_dir.length > 0) return meta.home_dir;
     return '~/';
-  }, [getRecentDirectories]);
+  }, []);
 
   // Hydrate persisted per-agent configs once on mount.
   useEffect(() => {
@@ -1013,8 +1055,9 @@ function NewSessionContent() {
       return;
     }
     let cancelled = false;
+    // An unfiled parent's children are unfiled too: list everything and filter.
     api
-      .listTasks({ projectId: selectedTask.project_id })
+      .listTasks({ projectId: selectedTask.project_id ?? undefined })
       .then((all) => {
         if (cancelled) return;
         const children = all
@@ -1160,7 +1203,7 @@ function NewSessionContent() {
     // below starts it over.
     setNewWorktreeName('');
     const preselect = pendingWorktreeRef.current;
-    if (preselect && preselect.path === directory) {
+    if (preselect && preselect.directory === directory) {
       pendingWorktreeRef.current = null;
       setWorktreeMode('existing');
       setSelectedWorktreePath(preselect.path);
@@ -1201,20 +1244,19 @@ function NewSessionContent() {
   // "+". Deliberately does NOT strip the param (a refresh should re-preselect,
   // matching cold-nav) or touch the machine (the "+" carries no machine, same
   // as the cold-nav path).
+  const worktreePathParam = searchParams.get('worktreePath');
   const worktreeBranchParam = searchParams.get('worktreeBranch');
   const appliedDirectoryLinkRef = useRef<string | null>(
-    directoryParam ? `${directoryParam}|${worktreeBranchParam ?? ''}` : null,
+    directoryParam ? `${directoryParam}|${worktreePathParam ?? ''}|${worktreeBranchParam ?? ''}` : null,
   );
   useEffect(() => {
     if (!directoryParam) return;
-    const key = `${directoryParam}|${worktreeBranchParam ?? ''}`;
+    const key = `${directoryParam}|${worktreePathParam ?? ''}|${worktreeBranchParam ?? ''}`;
     if (appliedDirectoryLinkRef.current === key) return;
     appliedDirectoryLinkRef.current = key;
-    pendingWorktreeRef.current = worktreeBranchParam
-      ? { path: directoryParam, branch: worktreeBranchParam }
-      : null;
+    pendingWorktreeRef.current = readWorktreePreselect(searchParams);
     setDirectory(directoryParam);
-  }, [directoryParam, worktreeBranchParam]);
+  }, [directoryParam, worktreePathParam, worktreeBranchParam, searchParams]);
 
   // Persist the machine/directory/worktree setup whenever it changes, so it is
   // restored on the next visit (agent + per-agent config persist separately via
@@ -1508,9 +1550,21 @@ function NewSessionContent() {
       );
 
       // Map the worktree selection onto the spawn directory + optional param.
+      // The folder's part below the repo root (a monorepo session at
+      // `repo/apps/web`) carries into the worktree, so the checkout and the
+      // folder stay orthogonal; the daemon's main path is the authority on
+      // where the root is, a linked project folder the fallback.
+      const subpath =
+        (repoListing?.mainPath
+          ? relativeSubpath(directory.trim(), repoListing.mainPath, machine?.home_dir)
+          : null) ??
+        resolveProjectForDirectory(directory.trim(), selectedMachineId, projects, machine?.home_dir)
+          ?.subpath ??
+        '';
       const spawn = resolveWorktreeSpawn({
         mode: worktreeMode,
         baseDirectory: directory.trim(),
+        subpath,
         selectedWorktreePath,
         newWorktreeName,
       });
@@ -1668,7 +1722,7 @@ function NewSessionContent() {
       setErrorMessage(message);
       setIsSubmitting(false);
     }
-  }, [api, selectedMachineId, directory, sessionConfig, prompt, selectedTask, subtasks, pendingImages, pendingFolderRefs, forkContext, machines, isSubmitting, worktreeMode, selectedWorktreePath, selectedProfile, selectedProfileId, persistSelection, refreshData, router]);
+  }, [api, selectedMachineId, directory, sessionConfig, prompt, selectedTask, subtasks, pendingImages, pendingFolderRefs, forkContext, machines, isSubmitting, worktreeMode, selectedWorktreePath, newWorktreeName, repoListing, projects, selectedProfile, selectedProfileId, persistSelection, refreshData, router]);
 
   // Insert the highlighted command into the prompt (vs. the chat input, which
   // sends immediately — starting a session is heavier, so we let the user
@@ -1715,8 +1769,28 @@ function NewSessionContent() {
     }
   };
 
-  const recentDirectories = currentMachine ? getRecentDirectories(currentMachine) : [];
   const isOnline = currentMachine ? isMachineOnline(currentMachine) : false;
+  const machineHomeDir = (() => {
+    if (!currentMachine) return undefined;
+    if (typeof currentMachine.home_dir === 'string' && currentMachine.home_dir) {
+      return currentMachine.home_dir;
+    }
+    const meta = currentMachine.metadata as Record<string, unknown> | null | undefined;
+    return meta && typeof meta.home_dir === 'string' ? meta.home_dir : undefined;
+  })();
+  // The picker's list: projects linked to a folder on this machine, newest
+  // activity first. The chip resolves `directory` to the project it falls
+  // under (longest linked folder) and names it — `vicoa · apps/web` for a
+  // subfolder, the folder's own name when no project claims it yet.
+  const pickerProjects = useMemo(
+    () => (selectedMachineId ? projectsOnMachine(projects, selectedMachineId) : []),
+    [projects, selectedMachineId],
+  );
+  const directoryProject = useMemo(
+    () => resolveProjectForDirectory(directory, selectedMachineId, projects, machineHomeDir),
+    [directory, selectedMachineId, projects, machineHomeDir],
+  );
+  const directoryLabel = directoryChipLabel(directory, directoryProject);
   /**
    * The one reason the composer can't submit, in precedence order — recomputed
    * every render (incl. the liveness tick), so it clears the instant a daemon
@@ -1790,6 +1864,74 @@ function NewSessionContent() {
       cancelled = true;
     };
   }, [selectedMachineId, directory, isOnline]);
+
+  // The repo behind `directory`, as the daemon sees it: main checkout + linked
+  // worktrees. Fetched alongside git-status whenever the folder changes (the
+  // worktree popover refetches on open for its own list). Only meaningful on
+  // a daemon with worktree support; a plain folder or an old daemon leaves it
+  // null and every consumer below degrades to today's behaviour.
+  const worktreesSupported = !!currentMachine && machineSupportsWorktree(currentMachine);
+  useEffect(() => {
+    setRepoListing(null);
+    const cwd = directory.trim();
+    if (!selectedMachineId || !cwd || !isOnline || !worktreesSupported || isGitRepo === false) {
+      return;
+    }
+    let cancelled = false;
+    rpcGitWorktreeListWithMain(selectedMachineId, cwd)
+      .then((listing) => {
+        if (!cancelled) setRepoListing(listing);
+      })
+      .catch(() => {
+        if (!cancelled) setRepoListing(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMachineId, directory, isOnline, worktreesSupported, isGitRepo]);
+
+  // Normalise a worktree path back to its project: when the folder the user
+  // typed, dropped, or arrived with (an older sidebar link) is itself one of
+  // the repo's linked worktrees, move the chip onto the repo's main checkout —
+  // at the same subfolder — with that worktree selected. The folder chip is
+  // the project; the checkout is the worktree chip's job. Arms the same
+  // preselect the sidebar link uses, so the clear/restore effect applies the
+  // worktree once the new directory lands instead of resetting it.
+  useEffect(() => {
+    if (!repoListing?.mainPath) return;
+    const cwd = directory.trim();
+    if (!cwd) return;
+    const main = repoListing.mainPath;
+    if (relativeSubpath(cwd, main, machineHomeDir) !== null) return; // inside the repo: fine
+    const worktree = repoListing.worktrees.find(
+      (w) => relativeSubpath(cwd, w.path, machineHomeDir) !== null,
+    );
+    if (!worktree) return;
+    const subpath = relativeSubpath(cwd, worktree.path, machineHomeDir) ?? '';
+    const root = repoListing.mainDisplayPath ?? main;
+    const target = joinSubpath(root, subpath);
+    pendingWorktreeRef.current = {
+      directory: target,
+      path: worktree.path,
+      branch: worktree.branch,
+    };
+    setDirectory(target);
+  }, [repoListing, directory, machineHomeDir]);
+
+  // A remembered or linked worktree that git no longer lists (removed since
+  // the last visit) is dropped silently rather than left as a dangling chip.
+  useEffect(() => {
+    if (!repoListing || worktreeMode !== 'existing' || !selectedWorktreePath) return;
+    const stillThere = repoListing.worktrees.some(
+      (w) =>
+        !w.prunable &&
+        canonicalPath(w.path, machineHomeDir) === canonicalPath(selectedWorktreePath, machineHomeDir),
+    );
+    if (stillThere) return;
+    setWorktreeMode('none');
+    setSelectedWorktreePath(null);
+    setSelectedWorktreeBranch(null);
+  }, [repoListing, worktreeMode, selectedWorktreePath, machineHomeDir]);
 
   const modelEntries = activeAgentDef?.models ?? null;
   // Catalog agents (static + the machine's cached extras synthesized into
@@ -1998,20 +2140,23 @@ function NewSessionContent() {
             <DirectoryPickerPopover
               value={directory}
               onChange={setDirectory}
-              recentDirectories={recentDirectories}
+              projects={pickerProjects}
+              selectedProjectId={directoryProject?.project.id ?? null}
               disabled={!api || machines.length === 0 || !isOnline}
             >
               <button
                 type="button"
-                title={directory.trim() || 'Working directory'}
+                title={directory.trim() || 'Project folder'}
                 className={SETUP_CHIP_CLASS}
                 disabled={!api || machines.length === 0 || !isOnline}
               >
-                <Folder className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+                {directoryProject ? (
+                  <ProjectIcon project={directoryProject.project} className="size-3.5" />
+                ) : (
+                  <Folder className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+                )}
                 <span className={`max-w-44 truncate ${directory.trim() ? '' : 'text-muted-foreground/60'}`}>
-                  {directory.trim()
-                    ? (directory.replace(/\/+$/, '').split('/').pop() || directory)
-                    : 'Choose folder'}
+                  {directoryLabel || 'Choose folder'}
                 </span>
               </button>
             </DirectoryPickerPopover>

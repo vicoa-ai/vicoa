@@ -64,6 +64,38 @@ void main() {
     });
   });
 
+  group('rpcGitWorktreeListing', () {
+    test('reports the repo main checkout and flags a prunable worktree', () async {
+      // `main_path` is what lets the picker resolve whatever folder it holds
+      // — a subfolder, a linked worktree — back to the project's folder.
+      Future<Map<String, dynamic>> fakeCall(String _, String __, Map<String, dynamic> ___) async => {
+            'main_path': '/Users/u/src/app',
+            'main_display_path': '~/src/app',
+            'worktrees': [
+              {'path': '/Users/u/vicoa/workspaces/app-1a2b/gone', 'branch': 'gone', 'head': 'a', 'managed': true, 'prunable': true},
+            ],
+          };
+
+      final listing = await rpcGitWorktreeListing(call: fakeCall, machineId: 'm', cwd: '/Users/u/src/app/apps/web');
+      expect(listing.mainPath, '/Users/u/src/app');
+      expect(listing.mainDisplayPath, '~/src/app');
+      expect(listing.worktrees.single.prunable, isTrue);
+    });
+
+    test('an old daemon without main_path reads as null, list still parses', () async {
+      Future<Map<String, dynamic>> fakeCall(String _, String __, Map<String, dynamic> ___) async => {
+            'worktrees': [
+              {'path': '/w', 'branch': 'b', 'head': 'h', 'managed': true},
+            ],
+          };
+
+      final listing = await rpcGitWorktreeListing(call: fakeCall, machineId: 'm', cwd: '/p');
+      expect(listing.mainPath, isNull);
+      expect(listing.worktrees.single.path, '/w');
+      expect(listing.worktrees.single.prunable, isFalse);
+    });
+  });
+
   group('rpcGitWorktreeRemove', () {
     test('sends cwd/worktree_path/force and completes on ok', () async {
       var called = false;

@@ -128,9 +128,11 @@ interface RenderedSubGroup {
   key: string;
   label: string;
   instances: AgentInstanceResponse[];
-  /** Target of this group's "+", or null to hide it. */
+  /** Target of this group's "+" — the project's folder (the repo's main
+      checkout, never the worktree) — or null to hide it. */
   directory: string | null;
   /** Preselect this worktree on the new-session page; absent for main. */
+  worktreePath?: string;
   worktreeBranch?: string;
   /** Git no longer has a checkout at this folder (see WorktreeSessionGroup). */
   missing: boolean;
@@ -783,8 +785,12 @@ export function SidebarSessions({
             key: `${key}::wt::${w.path}`,
             label: w.branch || '(detached)',
             instances: w.instances,
-            // No "+" on a folder that is gone — there is nowhere to start in.
-            directory: w.missing ? null : w.path,
+            // The "+" starts at the PROJECT's folder with this worktree
+            // preselected; the new-session page derives the cwd. No "+" on a
+            // folder that is gone — there is nowhere to start in — and none
+            // without a known main checkout to anchor the project chip on.
+            directory: w.missing ? null : repoDirectory,
+            worktreePath: w.missing ? undefined : w.path,
             worktreeBranch: w.branch || undefined,
             missing: w.missing,
             // Any real linked worktree is removable (the daemon confines
@@ -1383,6 +1389,7 @@ export function SidebarSessions({
                                     collapsed={isSubCollapsed}
                                     onToggleCollapsed={() => toggleGroupCollapsed(rsub.key)}
                                     newSessionDirectory={rsub.directory}
+                                    worktreePath={rsub.worktreePath}
                                     worktreeBranch={rsub.worktreeBranch}
                                     missing={rsub.missing}
                                     pr={rsub.pr}

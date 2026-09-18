@@ -197,21 +197,45 @@ class WorktreeInfo {
     required this.branch,
     required this.head,
     required this.managed,
+    this.prunable = false,
   });
   final String path;
   final String branch;
   final String head;
   final bool managed;
+  /// Git's own verdict that the checkout directory is gone while the
+  /// registration lingers — such a worktree can't be started in.
+  final bool prunable;
 
   static WorktreeInfo fromJson(Map<String, dynamic> json) => WorktreeInfo(
         path: json['path'] as String,
         branch: json['branch'] as String? ?? '',
         head: json['head'] as String? ?? '',
         managed: json['managed'] as bool? ?? false,
+        prunable: json['prunable'] as bool? ?? false,
       );
 }
 
+/// A repo's linked worktrees plus where its main checkout is. The listing's
+/// `cwd` may be any folder of the repo — a subfolder or a linked worktree —
+/// which is what makes [mainPath] useful: it resolves whatever path the
+/// caller holds to the repo root. [mainPath] is null on a daemon that
+/// predates the field.
+class WorktreeListing {
+  const WorktreeListing({required this.mainPath, required this.mainDisplayPath, required this.worktrees});
+  final String? mainPath;
+  final String? mainDisplayPath;
+  final List<WorktreeInfo> worktrees;
+}
+
 Future<List<WorktreeInfo>> rpcGitWorktreeList({
+  required RpcCaller call,
+  required String machineId,
+  required String cwd,
+}) async =>
+    (await rpcGitWorktreeListing(call: call, machineId: machineId, cwd: cwd)).worktrees;
+
+Future<WorktreeListing> rpcGitWorktreeListing({
   required RpcCaller call,
   required String machineId,
   required String cwd,
@@ -220,9 +244,11 @@ Future<List<WorktreeInfo>> rpcGitWorktreeList({
   final err = result['error'];
   if (err is String) throw GitOpsException(err);
   final raw = result['worktrees'] as List<dynamic>? ?? const [];
-  return raw
-      .map((e) => WorktreeInfo.fromJson(e as Map<String, dynamic>))
-      .toList();
+  return WorktreeListing(
+    mainPath: result['main_path'] as String?,
+    mainDisplayPath: result['main_display_path'] as String?,
+    worktrees: raw.map((e) => WorktreeInfo.fromJson(e as Map<String, dynamic>)).toList(),
+  );
 }
 
 Future<void> rpcGitWorktreeRemove({

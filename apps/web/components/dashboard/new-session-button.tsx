@@ -3,25 +3,31 @@
 import { Plus } from 'lucide-react';
 
 /** Hover-revealed "+" on a project or worktree header: starts a session in that
-    group's directory. On a worktree header, `worktreeBranch` rides along so the
-    new-session page opens with that worktree preselected rather than the repo.
+    group's project folder. On a worktree header, `worktreePath` + `worktreeBranch`
+    ride along so the new-session page opens on the project's root with that
+    worktree preselected — the folder chip is always the project, never the
+    worktree, so a removed worktree can't leave a dangling "project" behind.
 
     Reveal is driven by the parent header's `group/label` hover, so it must be
     rendered inside such a group. */
 export function NewSessionButton({
   directory,
   label,
+  worktreePath,
   worktreeBranch,
   onNavigate,
 }: {
+  /** The project's folder (the repo's main checkout), never a worktree. */
   directory: string;
   label: string;
+  worktreePath?: string;
   worktreeBranch?: string;
   onNavigate: (href: string) => void;
 }) {
-  const href = worktreeBranch
-    ? `/dashboard/agents/new-session?directory=${encodeURIComponent(directory)}&worktreeBranch=${encodeURIComponent(worktreeBranch)}`
-    : `/dashboard/agents/new-session?directory=${encodeURIComponent(directory)}`;
+  const params = new URLSearchParams({ directory });
+  if (worktreePath) params.set('worktreePath', worktreePath);
+  if (worktreeBranch) params.set('worktreeBranch', worktreeBranch);
+  const href = `/dashboard/agents/new-session?${params.toString()}`;
   return (
     <button
       type="button"

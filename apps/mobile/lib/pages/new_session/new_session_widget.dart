@@ -16,6 +16,7 @@ import '/backend/agent_catalog.dart';
 import '/pages/new_session/components/agent_config_sheet.dart';
 import '/pages/new_session/components/directory_picker_sheet.dart';
 import '/pages/new_session/components/worktree_picker_sheet.dart';
+import '/pages/tasks/task_glyphs.dart' show TaskProjectIcon;
 import '/custom_code/utils/worktree_selection.dart';
 import '/pages/snack_bar/snack_bar_widget.dart';
 import '/pages/info_dialog/info_dialog_widget.dart';
@@ -343,12 +344,17 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
     );
   }
 
-  /// Click-target card mirroring the Machine card style. Tapping opens the
-  /// directory picker bottom sheet, which owns the input + recent list.
+  /// Click-target card mirroring the Machine card style: the project the
+  /// folder falls under (`vicoa · apps/web` for a subfolder), with its icon,
+  /// and the full path beneath; the folder's own name when no project claims
+  /// it yet. Tapping opens the picker sheet, which owns the projects list +
+  /// path input.
   Widget _buildDirectoryCard() {
     final theme = FlutterFlowTheme.of(context);
     final value = _model.directoryController.text.trim();
     final hasValue = value.isNotEmpty;
+    final match = _model.directoryProject;
+    final label = _model.directoryLabel;
     return Container(
       decoration: BoxDecoration(color: theme.primaryBackground, borderRadius: BorderRadius.circular(16.0)),
       child: Material(
@@ -357,18 +363,34 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
           borderRadius: BorderRadius.circular(16.0),
           onTap: _openDirectoryPicker,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
             child: Row(children: [
+              if (match != null) ...[
+                TaskProjectIcon(project: match.project, size: 18.0),
+                const SizedBox(width: 10.0),
+              ] else if (hasValue) ...[
+                Icon(Icons.folder_outlined, color: theme.secondaryText, size: 18.0),
+                const SizedBox(width: 10.0),
+              ],
               Expanded(
-                child: Text(
-                  hasValue ? value : '~/projects/my-app',
-                  style: theme.bodyMedium.override(
-                    font: GoogleFonts.firaCode(),
-                    fontSize: 15.0,
-                    color: hasValue ? theme.primaryText : theme.secondaryText.withValues(alpha: 0.5),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                  Text(
+                    hasValue ? label : '~/projects/my-app',
+                    style: theme.bodyMedium.override(
+                      font: GoogleFonts.sourceSans3(fontWeight: FontWeight.w500),
+                      fontSize: 15.0,
+                      fontWeight: FontWeight.w500,
+                      color: hasValue ? theme.primaryText : theme.secondaryText.withValues(alpha: 0.5),
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  overflow: TextOverflow.ellipsis,
-                ),
+                  if (hasValue)
+                    Text(
+                      value,
+                      style: theme.bodySmall.override(font: GoogleFonts.firaCode(), fontSize: 12.0, color: theme.secondaryText),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                ]),
               ),
               const SizedBox(width: 8.0),
               Icon(Icons.unfold_more_rounded, color: theme.secondaryText, size: 20.0),
@@ -385,7 +407,8 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
     final picked = await showDirectoryPickerSheet(
       context: context,
       initial: _model.directoryController.text,
-      recentDirectories: _model.getRecentDirectories(),
+      projects: _model.pickerProjects,
+      selectedProjectId: _model.directoryProject?.projectId,
     );
     if (!mounted || picked == null) return;
     _model.directoryController.value = TextEditingValue(

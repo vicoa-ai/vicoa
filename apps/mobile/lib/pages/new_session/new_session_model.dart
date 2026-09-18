@@ -5,6 +5,7 @@ import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/actions/rpc_git.dart';
 import '/custom_code/utils/file_mention_utils.dart';
 import '/custom_code/utils/machine_utils.dart';
+import '/custom_code/utils/project_paths.dart';
 import '/custom_code/utils/slash_command_utils.dart';
 import '/custom_code/utils/worktree_selection.dart';
 import '/pages/agent_chat/components/pending_attachment.dart';
@@ -44,8 +45,16 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
       FFAppState().updateUserPreferences((p) => p..newSessionAgentType = value);
     }
   }
+  // The folder to work in: a project's root or a subfolder of it — never a
+  // worktree path (a typed worktree path is normalised back to its repo with
+  // the worktree selected, see [_probeDirectoryIsGitRepo]). Persisted; the
+  // spawn cwd is derived from this + the checkout at submit and never stored.
   TextEditingController directoryController = TextEditingController();
   FocusNode directoryFocusNode = FocusNode();
+  // The user's projects (all machines), from GET /api/v1/projects: the picker
+  // sheet lists the ones linked to a folder on the selected machine and the
+  // folder card names the one the directory falls under.
+  List<dynamic> projects = const [];
   // Worktree selection (only meaningful when the selected machine advertises
   // worktree support and the directory is a git repo). `none` keeps today's
   // spawn-in-directory behavior.
@@ -58,6 +67,12 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
   // is held while a probe is in flight so the card doesn't blink when moving
   // between two non-repo folders.
   bool? directoryIsGitRepo;
+  // The repo behind the directory as the daemon sees it (main checkout +
+  // linked worktrees), from the same probe. Null until probed and for a plain
+  // folder / old daemon. Drives the worktree-path normalisation, the restore
+  // check (a remembered worktree git no longer lists is dropped) and the
+  // subfolder carried into a worktree at spawn.
+  WorktreeListing? repoListing;
   int _gitRepoProbeToken = 0;
   TextEditingController promptController = TextEditingController();
   FocusNode promptFocusNode = FocusNode();
@@ -214,7 +229,32 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
 
     _restorePersistedSelection().then((_) => loadAgentCatalog());
     unawaited(loadSlashCommands());
+    unawaited(loadProjects());
   }
+
+  /// Fetch the user's projects for the folder picker + folder card. Best
+  /// effort: on failure the card falls back to the folder's own name and the
+  /// picker to the typed path.
+  Future<void> loadProjects() async {
+    final list = await actions.apiGetProjects();
+    projects = list;
+    onStateChanged?.call();
+  }
+
+  String? get _selectedMachineHomeDir => getMachineHomeDir(getSelectedMachine());
+
+  /// The picker sheet's list: projects linked to a folder on the selected
+  /// machine, newest activity first.
+  List<ProjectPickerEntry> get pickerProjects => projectsOnMachine(projects, selectedMachineId);
+
+  /// The project the current folder falls under on the selected machine, or
+  /// null for a folder no project claims yet.
+  ProjectDirectoryMatch? get directoryProject => resolveProjectForDirectory(
+      directoryController.text, selectedMachineId, projects, _selectedMachineHomeDir);
+
+  /// What the folder card shows: the project's name (`vicoa · apps/web` for a
+  /// subfolder), or the folder's own name when no project claims it.
+  String get directoryLabel => directoryChipLabel(directoryController.text, directoryProject);
 
   void _hydratePerAgentDefaults() {
     final catalog = agentCatalog;
@@ -614,18 +654,26 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
   /// same call the picker sheet makes when it opens. Only a definitive
   /// `not_a_repo` sets false; a transport failure resets to unknown so the card
   /// fails open rather than staying hidden on a real repo.
+  ///
+  /// The listing itself is kept ([repoListing]) and drives two corrections:
+  /// a folder that is one of the repo's linked worktrees is normalised back
+  /// to the repo's main checkout (at the same subfolder) with that worktree
+  /// selected — the folder card is the project, the worktree card the
+  /// checkout — and a remembered worktree git no longer lists is dropped.
   Future<void> _probeDirectoryIsGitRepo() async {
     final machineId = selectedMachineId;
     final cwd = directoryController.text.trim();
     final token = ++_gitRepoProbeToken;
     if (machineId == null || cwd.isEmpty || !isMachineOnline(getSelectedMachine())) {
       directoryIsGitRepo = null;
+      repoListing = null;
       onStateChanged?.call();
       return;
     }
     bool? isRepo;
+    WorktreeListing? listing;
     try {
-      await rpcGitWorktreeList(call: actions.VicoaWsClient.instance.callRpc, machineId: machineId, cwd: cwd);
+      listing = await rpcGitWorktreeListing(call: actions.VicoaWsClient.instance.callRpc, machineId: machineId, cwd: cwd);
       isRepo = true;
     } on GitOpsException catch (e) {
       if (e.code == 'not_a_repo') isRepo = false;
@@ -635,7 +683,48 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
     // Drop a stale response if the directory/machine changed mid-flight.
     if (token != _gitRepoProbeToken) return;
     directoryIsGitRepo = isRepo;
+    repoListing = listing;
+    if (listing != null && _normaliseWorktreeDirectory(cwd, listing)) return;
+    _dropVanishedWorktreeSelection(listing);
     onStateChanged?.call();
+  }
+
+  /// When [cwd] sits inside one of the repo's linked worktrees, move the
+  /// folder onto the repo's main checkout (same subfolder) and select that
+  /// worktree. Returns true when it did — the directory change re-runs the
+  /// probe against the main checkout.
+  bool _normaliseWorktreeDirectory(String cwd, WorktreeListing listing) {
+    final main = listing.mainPath;
+    if (main == null) return false;
+    final homeDir = _selectedMachineHomeDir;
+    if (relativeSubpath(cwd, main, homeDir) != null) return false; // inside the repo: fine
+    for (final wt in listing.worktrees) {
+      final subpath = relativeSubpath(cwd, wt.path, homeDir);
+      if (subpath == null) continue;
+      directoryController.text = joinSubpath(listing.mainDisplayPath ?? main, subpath);
+      worktreeMode = WorktreeMode.existing;
+      selectedWorktreePath = wt.path;
+      selectedWorktreeBranch = wt.branch;
+      _persistDirectory();
+      persistWorktreeSelection();
+      _reloadDirectoryDerivedState();
+      onStateChanged?.call();
+      return true;
+    }
+    return false;
+  }
+
+  /// A remembered worktree that git no longer lists (removed since the last
+  /// visit) is dropped silently rather than left as a dangling selection.
+  void _dropVanishedWorktreeSelection(WorktreeListing? listing) {
+    if (listing == null || worktreeMode != WorktreeMode.existing) return;
+    final selected = selectedWorktreePath;
+    if (selected == null) return;
+    final homeDir = _selectedMachineHomeDir;
+    final stillThere = listing.worktrees.any((w) => !w.prunable && canonicalPath(w.path, homeDir) == canonicalPath(selected, homeDir));
+    if (stillThere) return;
+    resetWorktreeSelection();
+    persistWorktreeSelection();
   }
 
   void onDirectoryChanged() {
@@ -647,6 +736,10 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
     _reloadDirectoryDerivedState();
   }
 
+  /// Where a machine starts when nothing is remembered for it: its most
+  /// recently used project's folder (the backend files the repo root here,
+  /// never a worktree or subfolder), else its home. Only the *default* reads
+  /// this — the picker sheet lists projects, not this list.
   void _updateDirectoryForMachine(dynamic machine) {
     final recentDirs = _getRecentDirectories(machine);
     if (recentDirs.isNotEmpty) {
@@ -667,21 +760,6 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
       }
     }
     return [];
-  }
-
-  List<String> getRecentDirectories() {
-    final appState = FFAppState();
-    if (selectedMachineId == null) return appState.cachedDirectories;
-    final machine = machines.firstWhere(
-      (m) => (m['machine_id'] ?? m['id']) == selectedMachineId,
-      orElse: () => null,
-    );
-    if (machine != null) {
-      final machineRecent = _getRecentDirectories(machine);
-      final combined = <String>{...machineRecent, ...appState.cachedDirectories}.toList();
-      return combined.take(20).toList();
-    }
-    return appState.cachedDirectories;
   }
 
   // Delegate to the shared machine_utils helpers so this screen and the
@@ -932,14 +1010,22 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
       final prompt =
           includePromptInSpawn ? promptController.text.trim() : '';
 
+      // Still fed for the automation editor's folder list; the new-session
+      // picker itself lists projects now.
       FFAppState().addToCachedDirectories(directory);
 
       final cfg = sessionConfig;
       final extraMetadata = cfg?.toSpawnMetadata();
       // Map the worktree selection onto the spawn directory + optional param.
+      // The folder's part below the repo root carries into the worktree; the
+      // daemon's main path is the authority on where the root is, a linked
+      // project folder the fallback.
+      final mainPath = repoListing?.mainPath;
+      final subpath = (mainPath == null ? null : relativeSubpath(directory, mainPath, _selectedMachineHomeDir)) ?? directoryProject?.subpath ?? '';
       final spawn = resolveWorktreeSpawn(
         mode: worktreeMode,
         baseDirectory: directory,
+        subpath: subpath,
         selectedWorktreePath: selectedWorktreePath,
       );
       final result = await actions.apiSpawnSession(
