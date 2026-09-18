@@ -148,6 +148,26 @@ local-first with background sync.
   certs or service-account JSON in the tree.
 - **Ask via the question tool** if your agent harness has one, rather than
   asking in prose.
+- **Mind the blast radius** — see the next section before killing processes
+  or touching services, ports, or files you did not create.
+
+## Shared machine: blast radius
+
+This machine also runs other agent sessions, the Vicoa desktop app (daemon +
+a renderer titled `next-server (v15.x)`, same as any `next dev`), a shared dev
+backend and DB, and other sessions' dev servers. Only touch what you created:
+
+- Kill by PID, only processes you started. Never `pkill -f`, `killall`,
+  `pgrep … | xargs kill`, `lsof -ti :<range> | xargs kill`, `vicoa stop …`.
+  (macOS `pkill`: options after the pattern become extra patterns —
+  `pkill -f X -u nick` also kills everything matching `nick`.)
+- Pick your own port (`PORT=3003`) and verify it with `lsof`; don't
+  `pnpm build` beside a running `pnpm dev`; don't restart the shared backend
+  (`dev-stop.sh`, `docker compose down -v`) or downgrade the shared DB.
+- No `git reset --hard` / `clean -fdx` / `push --force` / worktree removal,
+  and no `rm -rf`, outside your own branch and paths.
+
+If you can't list a command's targets by hand, print them first and ask.
 
 ## Extension points (why some code looks indirect)
 
