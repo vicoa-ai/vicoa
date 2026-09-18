@@ -49,7 +49,6 @@ from shared.database import (
     TeamMember,
     User,
     UserInstanceAccess,
-    get_or_create_inbox,
 )
 from shared.database.enums import AgentStatus, InstanceAccessLevel
 
@@ -187,7 +186,6 @@ def world(test_db, test_user, request) -> World:
     subject_kind: str = request.param
     db = test_db
     owner = test_user
-    get_or_create_inbox(db, owner.id)
 
     project = Project(
         user_id=owner.id,
@@ -423,15 +421,25 @@ ENDPOINTS: list[Endpoint] = [
         ),
     ),
     Endpoint(
+        "GET /projects/{id}/summary",
+        "project",
+        "viewer",
+        lambda c, w: c.get(f"/api/v1/projects/{w.project.id}/summary"),
+    ),
+    Endpoint(
         "DELETE /projects/{id}",
         "project",
         "owner",
         lambda c, w: c.delete(f"/api/v1/projects/{w.project.id}"),
     ),
+    # Directories are "where MY copy of this project lives": a project-settings
+    # write (any grant scope), but one any contributor may make for their own
+    # machine, so the floor is editor. Unlinking someone else's row takes
+    # admin (test_tasks.py).
     Endpoint(
         "PUT /projects/{id}/directories",
         "project",
-        "admin",
+        "editor",
         lambda c, w: c.put(
             f"/api/v1/projects/{w.project.id}/directories",
             json={"machine_id": str(w.subject_machine.id), "local_path": "/src"},
@@ -440,7 +448,7 @@ ENDPOINTS: list[Endpoint] = [
     Endpoint(
         "DELETE /projects/{id}/directories/{machine}",
         "project",
-        "admin",
+        "editor",
         lambda c, w: c.delete(
             f"/api/v1/projects/{w.project.id}/directories/{w.subject_machine.id}"
         ),
@@ -589,6 +597,16 @@ ENDPOINTS: list[Endpoint] = [
         "admin",
         lambda c, w: c.patch(
             f"/api/v1/agent-instances/{w.instance.id}", json={"pinned": True}
+        ),
+    ),
+    # Unfiling needs manage rights on the session alone; filing ONTO a
+    # project additionally needs editor there (test_tasks.py covers that leg).
+    Endpoint(
+        "PATCH /agent-instances/{id} project_id",
+        "sessions",
+        "admin",
+        lambda c, w: c.patch(
+            f"/api/v1/agent-instances/{w.instance.id}", json={"project_id": None}
         ),
     ),
     Endpoint(
@@ -757,6 +775,7 @@ def test_every_dashboard_route_is_in_the_matrix_or_owner_only():
         "/projects/{project_id}/directories": "/projects/{id}/directories",
         "/projects/{project_id}/directories/{machine_id}": "/projects/{id}/directories/{machine}",
         "/projects/{project_id}/icon": "/projects/{id}/icon",
+        "/projects/{project_id}/summary": "/projects/{id}/summary",
         "/tasks/{task_id}": "/tasks/{id}",
         "/tasks/{task_id}/sessions": "/tasks/{id}/sessions",
         "/tasks/{task_id}/timeline": "/tasks/{id}/timeline",

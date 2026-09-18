@@ -368,13 +368,15 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
         # Mirror the legacy HTTP spawn-session side effect: when the web/CLI
         # spawns a session through the daemon, push the directory onto the
         # machine's recent_directories so the new-session picker shows it
-        # next time.
+        # next time. The *project's* folder, not the spawn cwd: a worktree
+        # spawn's cwd is the worktree (outside the repo) and a monorepo spawn's
+        # is a subfolder — the daemon reports the repo root for both.
         if (
             method == "spawn-session"
             and isinstance(result, dict)
             and not result.get("error")
         ):
-            directory = params.get("directory")
+            directory = result.get("repo_root") or params.get("directory")
             if isinstance(directory, str) and directory.strip():
                 try:
                     await asyncio.to_thread(

@@ -460,10 +460,18 @@ export interface ProjectResponse {
   icon_image_uri: string | null;
   /** Who set the image: 'user' (upload, wins) | 'git' (seeded) | null. */
   icon_source: string | null;
-  /** The per-user "No project" bucket; not archivable or deletable. */
+  /**
+   * DEPRECATED, always false. "No project" is a null `project_id` on the task
+   * or session, not a project row. Kept one release for old clients.
+   */
   is_inbox: boolean;
   is_archived: boolean;
   archived_at: string | null;
+  /**
+   * Newest session start in this project, for recency ordering. Only the list
+   * endpoint knows it; single-project responses leave it null.
+   */
+  last_activity_at?: string | null;
   directories: ProjectDirectory[];
   created_at: string;
   updated_at: string;
@@ -476,6 +484,13 @@ export interface ProjectResponse {
    */
   role?: ProjectRole;
   scopes?: GrantScope[];
+}
+
+/** What deleting the project would file under No project — for the confirm dialog. */
+export interface ProjectSummaryResponse {
+  task_count: number;
+  session_count: number;
+  active_session_count: number;
 }
 
 export type ProjectRole = 'viewer' | 'commenter' | 'editor' | 'admin' | 'owner';
@@ -513,10 +528,11 @@ export interface PrincipalResponse {
 
 export interface TaskResponse {
   id: string;
-  project_id: string;
-  /** Per-project sequential number; null for a task that predates the backfill. */
+  /** null = "No project" (unfiled) — the same convention as a session's `project_id`. */
+  project_id: string | null;
+  /** Per-project sequential number; null for an unfiled task or one that predates the backfill. */
   number: number | null;
-  /** "VIC-42" — null when the project has no key or the task has no number. */
+  /** "VIC-42" — null for an unfiled task, or when the project has no key / the task no number. */
   identifier: string | null;
   title: string;
   description: string | null;
@@ -1593,11 +1609,25 @@ class BackendAPI {
   }
 
   // Projects & Tasks (human task tracker)
-  async listProjects(includeArchived = false): Promise<ProjectResponse[]> {
+  /**
+   * The caller's projects, most recent activity first. `machineId` narrows to
+   * projects linked to a folder on that machine — what the new-session picker
+   * lists.
+   */
+  async listProjects(
+    includeArchived = false,
+    options: { machineId?: string } = {},
+  ): Promise<ProjectResponse[]> {
     const params = new URLSearchParams();
     if (includeArchived) params.append('include_archived', 'true');
+    if (options.machineId) params.append('machine_id', options.machineId);
     const endpoint = `/api/v1/projects${params.toString() ? `?${params.toString()}` : ''}`;
     return this.request<ProjectResponse[]>(endpoint);
+  }
+
+  /** What deleting the project would file under No project — for the confirm dialog. */
+  async getProjectSummary(projectId: string): Promise<ProjectSummaryResponse> {
+    return this.request<ProjectSummaryResponse>(`/api/v1/projects/${projectId}/summary`);
   }
 
   async createProject(data: CreateProjectRequest): Promise<ProjectResponse> {

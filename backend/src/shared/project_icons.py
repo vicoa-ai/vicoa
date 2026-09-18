@@ -95,7 +95,7 @@ def seed_project_icon(project_id: UUID) -> None:
     """
     with SessionLocal() as db:
         project = db.get(Project, project_id)
-        if project is None or project.is_inbox:
+        if project is None:
             return
         # Only NULL icon_source is eligible: 'git' = already attempted, 'user' =
         # uploaded / explicitly reset (must win). icon_image_uri set = already

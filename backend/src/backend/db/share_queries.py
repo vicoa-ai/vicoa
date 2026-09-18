@@ -228,7 +228,7 @@ def _require_target_admin(
         return
 
     project = db.get(Project, project_id) if project_id is not None else None
-    if project is None or project.is_inbox:
+    if project is None:
         raise ShareTargetNotFoundError("Project not found")
     for scope in scopes:
         role = access.project_role(
@@ -339,7 +339,7 @@ def list_share_links(
         # Listing needs standing on the project, not on a particular scope, so
         # a sessions-only admin still sees that tasks links exist.
         project = db.get(Project, project_id)
-        if project is None or project.is_inbox:
+        if project is None:
             raise ShareTargetNotFoundError("Project not found")
         role = access.project_role(db, user_id, project)
         if role is None:

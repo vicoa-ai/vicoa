@@ -35,6 +35,14 @@ Match order (identity strength, high → low):
      linked main checkout, but its repo root does. Works for non-git folders
      too (repo_root simply absent), so a remote is never required.
 
+Within each tier the user's **own** projects win, then projects **shared with
+them** at ``editor`` or above for sessions (team-owned boards they are a member
+of, grants): a member who clones the team's repo on their own laptop lands on
+the shared project instead of minting a private twin, and their sessions show
+up on the board. A viewer's session never attaches to someone else's project —
+attaching is contributing. Auto-create, when nothing matches, always mints a
+*personal* project.
+
 Both the register hooks (servers routers) and the link-a-folder backfill
 (backend task_queries) call this one helper so the rule can never drift.
 """
@@ -87,23 +95,35 @@ def _match_project(
     Deliberately does not exclude ``is_archived`` rows: activity in an archived
     project must re-match it so the caller can un-archive rather than duplicate.
     """
+    # Own personal projects, then the shared ones this user may contribute to.
+    # Lazy import: `shared.access` imports this package's models.
+    from shared.access import visible_project_select
+
+    own = visible_project_select(user_id, scope="me")
+    shared = visible_project_select(
+        user_id, scope="shared", grant_scope="sessions", min_role="editor"
+    )
+
     # Tier 1 — canonical git remote (dormant until the daemon reports a remote).
     if git_remote_url:
-        matched = (
-            db.query(Project)
-            .filter(
-                Project.user_id == user_id,
-                Project.git_remote_url == git_remote_url,
-                Project.is_inbox.is_(False),
+        for scope in (own, shared):
+            matched = (
+                db.query(Project)
+                .filter(
+                    Project.id.in_(scope),
+                    Project.git_remote_url == git_remote_url,
+                )
+                .order_by(Project.created_at.asc())
+                .limit(1)
+                .first()
             )
-            .order_by(Project.created_at.asc())
-            .limit(1)
-            .first()
-        )
-        if matched is not None:
-            return matched
+            if matched is not None:
+                return matched
 
     # Tier 2 — cwd OR source repo root under a linked directory on this machine.
+    # The rows are the user's own (a member links their own machine), but the
+    # project behind one may be shared — and a since-revoked grant must not
+    # keep attaching sessions to it, hence the access filter on the project.
     candidates = [p for p in (project_path, repo_root) if p]
     if candidates and machine_id is not None:
         rows = (
@@ -111,6 +131,10 @@ def _match_project(
             .filter(
                 ProjectDirectory.user_id == user_id,
                 ProjectDirectory.machine_id == machine_id,
+                or_(
+                    ProjectDirectory.project_id.in_(own),
+                    ProjectDirectory.project_id.in_(shared),
+                ),
             )
             .all()
         )
@@ -147,7 +171,7 @@ def resolve_project_id_for_session(
 
 
 def _should_skip_autocreate(name_source: str | None, home_dir: str | None) -> bool:
-    """True when a session should NOT mint a project (routes to Inbox/NULL).
+    """True when a session should NOT mint a project (stays at NULL = No project).
 
     Auto-create names a project after ``repo_root or cwd``; some paths are not
     worth a project of their own: a session whose cwd is the home directory (no

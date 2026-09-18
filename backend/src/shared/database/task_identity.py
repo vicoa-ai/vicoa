@@ -11,9 +11,9 @@ choices that the first draft of the plan conflated:
   already unambiguous.
 
 **Keys are allocated lazily, on a project's first task**, not when the project
-is created. Projects are created from three places — the Inbox helper, the
-explicit REST create, and the session-registration auto-match, which runs on the
-daemon's hot path in the `servers` process — and only the last of those would
+is created. Projects are created from two places — the explicit REST create
+and the session-registration auto-match, which runs on the daemon's hot path in
+the `servers` process — and only the last of those would
 have had to grow a uniqueness query and a race it cannot retry out of. Deferring
 to `create_task` puts the allocation somewhere that *can* retry, keeps the
 registration path untouched, and means a project that never holds a task never

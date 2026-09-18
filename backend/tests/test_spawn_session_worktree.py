@@ -321,3 +321,58 @@ def test_spawn_with_blank_or_non_string_name_falls_back_to_random(
         )
         assert "agent_instance_id" in result, (name, result)
         assert result["branch"].strip(), name
+
+
+def test_spawn_new_worktree_from_a_subfolder_starts_at_the_same_subfolder(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    """`directory` may be a subfolder of the repo: the worktree forks the
+    whole repo and the agent starts at that subfolder inside the new checkout.
+    `repo_root` in the result names the checkout the worktree was forked
+    from, so the server files the project's folder — not the worktree — as
+    the recent directory."""
+    subdir = committed_repo / "apps" / "web"
+    subdir.mkdir(parents=True)
+    (subdir / "index.txt").write_text("x\n")
+    subprocess.run(["git", "-C", str(committed_repo), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(committed_repo), "commit", "-q", "-m", "subdir"], check=True
+    )
+    daemon = _prep_daemon(monkeypatch)
+    calls: dict = {}
+    _patch_popen(monkeypatch, calls)
+
+    result = daemon.spawn_session_rpc(
+        {
+            "params": {
+                "directory": str(subdir),
+                "agent": "claude",
+                "worktree": {"new": True},
+            }
+        }
+    )
+
+    assert "error" not in result, result
+    worktree = Path(result["worktree_path"])
+    assert worktree.name == committed_repo.name
+    assert Path(calls["cwd"]).resolve() == (worktree / "apps" / "web").resolve()
+    assert (worktree / "apps" / "web" / "index.txt").is_file()
+    assert Path(result["repo_root"]).expanduser().resolve() == committed_repo.resolve()
+
+
+def test_spawn_without_worktree_reports_the_repo_root(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    subdir = committed_repo / "apps"
+    subdir.mkdir()
+    daemon = _prep_daemon(monkeypatch)
+    calls: dict = {}
+    _patch_popen(monkeypatch, calls)
+
+    result = daemon.spawn_session_rpc(
+        {"params": {"directory": str(subdir), "agent": "claude"}}
+    )
+
+    assert "error" not in result, result
+    assert Path(calls["cwd"]).resolve() == subdir.resolve()
+    assert Path(result["repo_root"]).expanduser().resolve() == committed_repo.resolve()

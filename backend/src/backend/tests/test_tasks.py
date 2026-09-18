@@ -1,24 +1,22 @@
 """Tests for projects & tasks (plans/todos/tasks-and-projects-feature.md).
 
-Covers the Inbox helper, the projects/tasks REST API (user scoping, Inbox
-default, status/priority validation), and the instance-status → task-status
-linkage.
+Covers the projects/tasks REST API (user scoping, the No-project default,
+status/priority validation), project deletion filing work under No project,
+and the instance-status → task-status linkage.
 """
 
 from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
 
 from shared.database import (
     Machine,
     Project,
     ProjectDirectory,
+    ProjectGrant,
     Task,
     User,
-    get_or_create_inbox,
 )
 from shared.database.enums import AgentStatus
 
@@ -45,71 +43,14 @@ def other_user(test_db):
     return user
 
 
-class TestInboxHelper:
-    def test_creates_inbox_once(self, test_db, test_user):
-        inbox = get_or_create_inbox(test_db, test_user.id)
-        assert inbox.name == "Inbox"
-        assert inbox.is_inbox is True
-        assert inbox.user_id == test_user.id
-
-        again = get_or_create_inbox(test_db, test_user.id)
-        assert again.id == inbox.id
-
-    def test_losing_the_create_race_reuses_the_winner(
-        self, test_db, test_user, postgres_container
-    ):
-        """A concurrent insert wins uq_projects_user_inbox; we reuse its row.
-
-        Regression: rolling back the SAVEPOINT already expunges the pending
-        Project, so the follow-up expunge raised InvalidRequestError and turned
-        a handled race into a 500 on GET /api/v1/projects.
-        """
-        other_engine = create_engine(postgres_container.get_connection_url())
-        OtherSession = sessionmaker(bind=other_engine)
-        raced = []
-
-        def insert_winner(session, flush_context, instances):
-            """Commit the rival Inbox from another connection mid-flush."""
-            if raced or not any(
-                isinstance(obj, Project) and obj.is_inbox for obj in session.new
-            ):
-                return
-            raced.append(True)
-            other = OtherSession()
-            try:
-                other.add(Project(user_id=test_user.id, name="Inbox", is_inbox=True))
-                other.commit()
-            finally:
-                other.close()
-
-        event.listen(test_db, "before_flush", insert_winner)
-        try:
-            inbox = get_or_create_inbox(test_db, test_user.id)
-        finally:
-            event.remove(test_db, "before_flush", insert_winner)
-            other_engine.dispose()
-
-        assert raced, "the rival insert never fired"
-        assert inbox.is_inbox is True
-        assert inbox.user_id == test_user.id
-        assert (
-            test_db.query(Project)
-            .filter(Project.user_id == test_user.id, Project.is_inbox.is_(True))
-            .count()
-            == 1
-        )
-
-
 class TestProjectsAPI:
-    def test_list_projects_lazily_includes_inbox(self, authenticated_client):
+    def test_list_projects_starts_empty(self, authenticated_client):
+        """No hidden Inbox row: a fresh user has no projects at all."""
         resp = authenticated_client.get("/api/v1/projects")
         assert resp.status_code == 200
-        data = resp.json()
-        assert len(data) == 1
-        assert data[0]["is_inbox"] is True
-        assert data[0]["name"] == "Inbox"
+        assert resp.json() == []
 
-    def test_create_project_and_list_orders_inbox_first(self, authenticated_client):
+    def test_create_project_and_list(self, authenticated_client):
         resp = authenticated_client.post(
             "/api/v1/projects", json={"name": "Alpha", "color": "#ff0000"}
         )
@@ -118,9 +59,10 @@ class TestProjectsAPI:
         assert created["name"] == "Alpha"
         assert created["color"] == "#ff0000"
         assert created["is_inbox"] is False
+        assert created["last_activity_at"] is None
 
         listed = authenticated_client.get("/api/v1/projects").json()
-        assert [p["name"] for p in listed] == ["Inbox", "Alpha"]
+        assert [p["name"] for p in listed] == ["Alpha"]
 
     def test_update_and_archive_project(self, authenticated_client):
         project = authenticated_client.post(
@@ -149,18 +91,6 @@ class TestProjectsAPI:
             ).json()
         ]
         assert "Beta" in with_archived
-
-    def test_inbox_cannot_be_archived_or_deleted(self, authenticated_client):
-        inbox = authenticated_client.get("/api/v1/projects").json()[0]
-        assert inbox["is_inbox"] is True
-
-        resp = authenticated_client.patch(
-            f"/api/v1/projects/{inbox['id']}", json={"is_archived": True}
-        )
-        assert resp.status_code == 400
-
-        resp = authenticated_client.delete(f"/api/v1/projects/{inbox['id']}")
-        assert resp.status_code == 400
 
     def test_projects_are_user_scoped(self, authenticated_client, test_db, other_user):
         foreign = Project(user_id=other_user.id, name="Theirs")
@@ -241,17 +171,6 @@ class TestProjectDirectoriesAPI:
             "/desktop/alpha",
         }
 
-    def test_inbox_cannot_be_linked(self, authenticated_client, test_db, test_user):
-        machine = _make_machine(test_db, test_user.id)
-        inbox = authenticated_client.get("/api/v1/projects").json()[0]
-        assert inbox["is_inbox"] is True
-
-        resp = authenticated_client.put(
-            f"/api/v1/projects/{inbox['id']}/directories",
-            json={"machine_id": str(machine.id), "local_path": "/home/nick"},
-        )
-        assert resp.status_code == 400
-
     def test_foreign_machine_and_project_rejected(
         self, authenticated_client, test_db, test_user, other_user
     ):
@@ -276,6 +195,73 @@ class TestProjectDirectoriesAPI:
         )
         assert resp.status_code == 404
 
+    def test_member_links_own_machine_owner_unlinks_it(
+        self, authenticated_client, test_db, test_user, other_user
+    ):
+        """An editor grantee links THEIR machine to the shared project (that
+        is how a team shares one project across laptops); a viewer may not;
+        the owner can unlink the member's row, the member cannot unlink the
+        owner's."""
+        from backend.db import task_queries
+        from shared.access import AccessDenied
+
+        project = authenticated_client.post(
+            "/api/v1/projects", json={"name": "Alpha"}
+        ).json()
+        owner_machine = _make_machine(test_db, test_user.id, "Owner box")
+        authenticated_client.put(
+            f"/api/v1/projects/{project['id']}/directories",
+            json={"machine_id": str(owner_machine.id), "local_path": "/owner/alpha"},
+        )
+        member_machine = _make_machine(test_db, other_user.id, "Member box")
+        grant = ProjectGrant(
+            project_id=project["id"],
+            principal_type="user",
+            principal_id=other_user.id,
+            role="viewer",
+            scopes=["tasks", "sessions"],
+        )
+        test_db.add(grant)
+        test_db.commit()
+
+        with pytest.raises(AccessDenied):
+            task_queries.set_project_directory(
+                test_db,
+                other_user.id,
+                project["id"],
+                member_machine.id,
+                "/member/alpha",
+                sharing=True,
+            )
+        grant.role = "editor"
+        test_db.commit()
+        linked = task_queries.set_project_directory(
+            test_db,
+            other_user.id,
+            project["id"],
+            member_machine.id,
+            "/member/alpha",
+            sharing=True,
+        )
+        assert linked is not None
+        rows = {d.machine_id: d for d in linked.directories}
+        assert rows[member_machine.id].user_id == other_user.id
+        assert rows[owner_machine.id].user_id == test_user.id
+
+        # The member may not unlink the owner's machine...
+        with pytest.raises(AccessDenied):
+            task_queries.delete_project_directory(
+                test_db, other_user.id, project["id"], owner_machine.id, sharing=True
+            )
+        # ...but the owner may unlink the member's.
+        resp = authenticated_client.delete(
+            f"/api/v1/projects/{project['id']}/directories/{member_machine.id}"
+        )
+        assert resp.status_code == 200
+        assert [d["machine_id"] for d in resp.json()["directories"]] == [
+            str(owner_machine.id)
+        ]
+
     def test_deleting_project_removes_its_directories(
         self, authenticated_client, test_db, test_user
     ):
@@ -299,19 +285,94 @@ class TestProjectDirectoriesAPI:
         )
         assert remaining == 0
 
+    def test_deleting_project_files_tasks_and_sessions_under_no_project(
+        self, authenticated_client, test_db, test_user, test_agent_instance
+    ):
+        """Nothing cascades: tasks lose their identifier and go unfiled, the
+        session stays and goes unfiled, comments/activity follow the task."""
+        project = authenticated_client.post(
+            "/api/v1/projects", json={"name": "Alpha"}
+        ).json()
+        task = authenticated_client.post(
+            "/api/v1/tasks", json={"title": "keep me", "project_id": project["id"]}
+        ).json()
+        assert task["identifier"] is not None
+        authenticated_client.post(
+            f"/api/v1/tasks/{task['id']}/comments", json={"body": "a note"}
+        )
+        test_agent_instance.project_id = project["id"]
+        test_db.commit()
+
+        summary = authenticated_client.get(
+            f"/api/v1/projects/{project['id']}/summary"
+        ).json()
+        assert summary == {
+            "task_count": 1,
+            "session_count": 1,
+            "active_session_count": 1,
+        }
+
+        assert (
+            authenticated_client.delete(f"/api/v1/projects/{project['id']}").status_code
+            == 204
+        )
+        test_db.expire_all()
+
+        after = authenticated_client.get(f"/api/v1/tasks/{task['id']}").json()
+        assert after["project_id"] is None
+        assert after["number"] is None
+        assert after["identifier"] is None
+        assert after["title"] == "keep me"
+        timeline = authenticated_client.get(
+            f"/api/v1/tasks/{task['id']}/timeline"
+        ).json()
+        assert [c["body"] for c in timeline["comments"]] == ["a note"]
+        row = test_db.get(Task, task["id"])
+        assert row is not None and row.user_id == test_user.id
+
+        instance = test_db.get(type(test_agent_instance), test_agent_instance.id)
+        assert instance is not None and instance.project_id is None
+        assert (
+            authenticated_client.get(
+                f"/api/v1/projects/{project['id']}/summary"
+            ).status_code
+            == 404
+        )
+
+    def test_deleting_archived_project_is_allowed(self, authenticated_client):
+        project = authenticated_client.post(
+            "/api/v1/projects", json={"name": "Alpha"}
+        ).json()
+        authenticated_client.patch(
+            f"/api/v1/projects/{project['id']}", json={"is_archived": True}
+        )
+        assert (
+            authenticated_client.delete(f"/api/v1/projects/{project['id']}").status_code
+            == 204
+        )
+        assert (
+            authenticated_client.get("/api/v1/projects?include_archived=true").json()
+            == []
+        )
+
 
 class TestTasksAPI:
-    def test_create_task_defaults_to_inbox(self, authenticated_client):
+    def test_create_task_defaults_to_no_project(self, authenticated_client):
+        """Without a project the task is unfiled: NULL project, no identifier,
+        and no project row gets minted behind the scenes."""
         resp = authenticated_client.post("/api/v1/tasks", json={"title": "Fix the bug"})
         assert resp.status_code == 201
         task = resp.json()
         assert task["title"] == "Fix the bug"
         assert task["status"] == "backlog"
         assert task["priority"] == "none"
+        assert task["project_id"] is None
+        assert task["number"] is None
+        assert task["identifier"] is None
 
-        inbox = authenticated_client.get("/api/v1/projects").json()[0]
-        assert inbox["is_inbox"] is True
-        assert task["project_id"] == inbox["id"]
+        assert authenticated_client.get("/api/v1/projects").json() == []
+        listed = authenticated_client.get("/api/v1/tasks").json()
+        assert [t["title"] for t in listed] == ["Fix the bug"]
 
     def test_create_task_rejects_unknown_status_and_priority(
         self, authenticated_client
@@ -342,14 +403,14 @@ class TestTasksAPI:
         make("second", 2.0)
         make("first", 1.0)
         make("done-task", 0.5, status="done")
-        authenticated_client.post("/api/v1/tasks", json={"title": "inbox-task"})
+        authenticated_client.post("/api/v1/tasks", json={"title": "unfiled-task"})
 
         all_tasks = authenticated_client.get("/api/v1/tasks").json()
         assert {t["title"] for t in all_tasks} == {
             "second",
             "first",
             "done-task",
-            "inbox-task",
+            "unfiled-task",
         }
 
         in_project = authenticated_client.get(
@@ -419,10 +480,7 @@ class TestTasksAPI:
         assert resp.status_code == 200
         assert resp.json()["id"] == task["id"]
 
-        foreign_inbox = get_or_create_inbox(test_db, other_user.id)
-        foreign_task = Task(
-            user_id=other_user.id, project_id=foreign_inbox.id, title="theirs"
-        )
+        foreign_task = Task(user_id=other_user.id, project_id=None, title="theirs")
         test_db.add(foreign_task)
         test_db.commit()
         assert (
@@ -437,10 +495,7 @@ class TestTasksAPI:
         assert authenticated_client.get("/api/v1/tasks").json() == []
 
     def test_tasks_are_user_scoped(self, authenticated_client, test_db, other_user):
-        foreign_project = get_or_create_inbox(test_db, other_user.id)
-        foreign_task = Task(
-            user_id=other_user.id, project_id=foreign_project.id, title="theirs"
-        )
+        foreign_task = Task(user_id=other_user.id, project_id=None, title="theirs")
         test_db.add(foreign_task)
         test_db.commit()
 
@@ -568,8 +623,7 @@ class TestSubtasks:
         assert resp.status_code == 400
 
     def test_parent_must_be_own_task(self, authenticated_client, test_db, other_user):
-        foreign_inbox = get_or_create_inbox(test_db, other_user.id)
-        foreign = Task(user_id=other_user.id, project_id=foreign_inbox.id, title="x")
+        foreign = Task(user_id=other_user.id, project_id=None, title="x")
         test_db.add(foreign)
         test_db.commit()
 
@@ -601,10 +655,7 @@ class TestInstanceTaskLink:
     def test_patch_instance_rejects_foreign_task(
         self, authenticated_client, test_db, test_agent_instance, other_user
     ):
-        foreign_inbox = get_or_create_inbox(test_db, other_user.id)
-        foreign_task = Task(
-            user_id=other_user.id, project_id=foreign_inbox.id, title="theirs"
-        )
+        foreign_task = Task(user_id=other_user.id, project_id=None, title="theirs")
         test_db.add(foreign_task)
         test_db.commit()
 
@@ -615,6 +666,45 @@ class TestInstanceTaskLink:
         assert resp.status_code == 404
         test_db.refresh(test_agent_instance)
         assert test_agent_instance.task_id is None
+
+    def test_patch_instance_project_id_files_and_unfiles(
+        self, authenticated_client, test_db, test_agent_instance, other_user
+    ):
+        """`project_id` on the session PATCH: file onto an own project (which
+        also un-archives it), refuse a foreign one, and `null` unfiles."""
+        project = authenticated_client.post(
+            "/api/v1/projects", json={"name": "Alpha"}
+        ).json()
+        authenticated_client.patch(
+            f"/api/v1/projects/{project['id']}", json={"is_archived": True}
+        )
+
+        resp = authenticated_client.patch(
+            f"/api/v1/agent-instances/{test_agent_instance.id}",
+            json={"project_id": project["id"]},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["project_id"] == project["id"]
+        test_db.expire_all()
+        assert test_db.get(Project, project["id"]).is_archived is False
+
+        foreign = Project(user_id=other_user.id, name="Theirs")
+        test_db.add(foreign)
+        test_db.commit()
+        resp = authenticated_client.patch(
+            f"/api/v1/agent-instances/{test_agent_instance.id}",
+            json={"project_id": str(foreign.id)},
+        )
+        assert resp.status_code == 404
+        test_db.refresh(test_agent_instance)
+        assert str(test_agent_instance.project_id) == project["id"]
+
+        resp = authenticated_client.patch(
+            f"/api/v1/agent-instances/{test_agent_instance.id}",
+            json={"project_id": None},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["project_id"] is None
 
 
 class TestTaskSessions:
@@ -644,10 +734,7 @@ class TestTaskSessions:
         assert resp.status_code == 404
 
     def test_foreign_task_is_404(self, authenticated_client, test_db, other_user):
-        foreign_inbox = get_or_create_inbox(test_db, other_user.id)
-        foreign_task = Task(
-            user_id=other_user.id, project_id=foreign_inbox.id, title="theirs"
-        )
+        foreign_task = Task(user_id=other_user.id, project_id=None, title="theirs")
         test_db.add(foreign_task)
         test_db.commit()
 
@@ -660,8 +747,7 @@ class TestStatusLinkage:
 
     @pytest.fixture
     def linked_task(self, test_db, test_user, test_agent_instance):
-        inbox = get_or_create_inbox(test_db, test_user.id)
-        task = Task(user_id=test_user.id, project_id=inbox.id, title="linked")
+        task = Task(user_id=test_user.id, project_id=None, title="linked")
         test_db.add(task)
         test_db.flush()
         test_agent_instance.task_id = task.id
@@ -707,8 +793,7 @@ class TestStatusLinkage:
         instance already went ACTIVE — linking must still sync the task."""
         from shared.database import AgentInstance
 
-        inbox = get_or_create_inbox(test_db, test_user.id)
-        task = Task(user_id=test_user.id, project_id=inbox.id, title="late-link")
+        task = Task(user_id=test_user.id, project_id=None, title="late-link")
         instance = AgentInstance(
             id=uuid4(),
             agent_type_id=test_agent_type.id,
@@ -725,10 +810,7 @@ class TestStatusLinkage:
         assert task.status == "in_progress"
 
     def test_no_sync_across_users(self, test_db, test_agent_instance, other_user):
-        foreign_inbox = get_or_create_inbox(test_db, other_user.id)
-        foreign_task = Task(
-            user_id=other_user.id, project_id=foreign_inbox.id, title="theirs"
-        )
+        foreign_task = Task(user_id=other_user.id, project_id=None, title="theirs")
         test_db.add(foreign_task)
         test_db.flush()
 
@@ -984,11 +1066,7 @@ class TestProjectAutoCreate:
     """Match-or-create + self-heal (resolve_or_create_project_id_for_session)."""
 
     def _count(self, db, user_id):
-        return (
-            db.query(Project)
-            .filter(Project.user_id == user_id, Project.is_inbox.is_(False))
-            .count()
-        )
+        return db.query(Project).filter(Project.user_id == user_id).count()
 
     def test_new_git_repo_creates_project_and_directory(self, test_db, test_user):
         from shared.database.project_matching import (
@@ -1010,7 +1088,7 @@ class TestProjectAutoCreate:
         project = test_db.get(Project, pid)
         assert project.name == "alpha"  # repo basename
         assert project.git_remote_url == "git@github.com:vicoa-ai/alpha.git"
-        assert not project.is_inbox and not project.is_archived
+        assert not project.is_archived
         dirs = (
             test_db.query(ProjectDirectory)
             .filter(ProjectDirectory.project_id == pid)
@@ -1177,3 +1255,115 @@ class TestProjectAutoCreate:
         )
         assert len(dirs) == 1
         assert dirs[0].local_path == "/home/nick/alpha"  # not narrowed
+
+
+class TestSharedProjectMatching:
+    """A member's session lands on the project shared with them, not on a
+    private twin — and never on one they may only view."""
+
+    REMOTE = "git@github.com:vicoa-ai/alpha.git"
+
+    def _shared_project(self, db, owner_id, member_id, role):
+        project = Project(user_id=owner_id, name="alpha", git_remote_url=self.REMOTE)
+        db.add(project)
+        db.flush()
+        db.add(
+            ProjectGrant(
+                project_id=project.id,
+                principal_type="user",
+                principal_id=member_id,
+                role=role,
+                scopes=["tasks", "sessions"],
+            )
+        )
+        db.commit()
+        return project
+
+    def _register(self, db, user_id, machine_id, path="/home/bob/alpha"):
+        from shared.database.project_matching import (
+            resolve_or_create_project_id_for_session,
+        )
+
+        pid = resolve_or_create_project_id_for_session(
+            db,
+            user_id,
+            machine_id,
+            path,
+            git_remote_url=self.REMOTE,
+            repo_root=path,
+            home_dir="/home/bob",
+        )
+        db.commit()
+        return pid
+
+    def test_editor_clone_on_own_machine_joins_the_shared_project(
+        self, test_db, test_user, other_user
+    ):
+        shared = self._shared_project(test_db, test_user.id, other_user.id, "editor")
+        machine = _make_machine(test_db, other_user.id, "bob-laptop")
+
+        pid = self._register(test_db, other_user.id, machine.id)
+
+        assert pid == shared.id
+        # No private twin, and the member's machine is now linked (their row).
+        assert (
+            test_db.query(Project).filter(Project.user_id == other_user.id).count() == 0
+        )
+        row = (
+            test_db.query(ProjectDirectory)
+            .filter(
+                ProjectDirectory.project_id == shared.id,
+                ProjectDirectory.machine_id == machine.id,
+            )
+            .one()
+        )
+        assert row.user_id == other_user.id
+        assert row.local_path == "/home/bob/alpha"
+
+        # Second session: the path tier now hits the member's own row.
+        again = self._register(test_db, other_user.id, machine.id, "/home/bob/alpha/x")
+        assert again == shared.id
+
+    def test_own_project_beats_a_shared_one_with_the_same_remote(
+        self, test_db, test_user, other_user
+    ):
+        shared = self._shared_project(test_db, test_user.id, other_user.id, "editor")
+        mine = Project(user_id=other_user.id, name="alpha", git_remote_url=self.REMOTE)
+        test_db.add(mine)
+        test_db.commit()
+        machine = _make_machine(test_db, other_user.id, "bob-laptop")
+
+        assert self._register(test_db, other_user.id, machine.id) == mine.id
+        assert shared.id != mine.id
+
+    def test_viewer_gets_a_private_project_not_the_shared_one(
+        self, test_db, test_user, other_user
+    ):
+        shared = self._shared_project(test_db, test_user.id, other_user.id, "viewer")
+        machine = _make_machine(test_db, other_user.id, "bob-laptop")
+
+        pid = self._register(test_db, other_user.id, machine.id)
+
+        assert pid is not None and pid != shared.id
+        assert test_db.get(Project, pid).user_id == other_user.id
+
+    def test_revoked_grant_stops_the_path_tier_from_attaching(
+        self, test_db, test_user, other_user
+    ):
+        shared = self._shared_project(test_db, test_user.id, other_user.id, "editor")
+        machine = _make_machine(test_db, other_user.id, "bob-laptop")
+        assert self._register(test_db, other_user.id, machine.id) == shared.id
+
+        test_db.query(ProjectGrant).filter(
+            ProjectGrant.project_id == shared.id
+        ).delete()
+        test_db.commit()
+
+        from shared.database.project_matching import resolve_project_id_for_session
+
+        assert (
+            resolve_project_id_for_session(
+                test_db, other_user.id, machine.id, "/home/bob/alpha/sub"
+            )
+            is None
+        )

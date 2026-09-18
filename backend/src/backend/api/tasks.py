@@ -14,6 +14,7 @@ owner-only lens by design.
 """
 
 import logging
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import (
@@ -41,7 +42,6 @@ from ..db.queries import list_task_instances
 from ..db.task_serializers import serialize_task, serialize_tasks
 from ..db.task_queries import (
     AssigneeNotFoundError,
-    InboxImmutableError,
     LabelNotFoundError,
     ProjectKeyTakenError,
     MachineNotFoundError,
@@ -59,6 +59,7 @@ from ..models import (
     CreateTaskLabelRequest,
     CreateTaskRequest,
     ProjectResponse,
+    ProjectSummaryResponse,
     SetProjectDirectoryRequest,
     TaskLabelResponse,
     TaskPriorityLiteral,
@@ -84,12 +85,16 @@ _INLINE_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 def list_projects_endpoint(
     background_tasks: BackgroundTasks,
     include_archived: bool = False,
+    machine_id: UUID | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[ProjectResponse]:
-    projects = task_queries.list_projects(
-        db, current_user.id, include_archived, sharing=True
+    """The caller's projects, most recent activity first. `machine_id` narrows
+    to projects linked to a folder on that machine (the new-session picker)."""
+    rows = task_queries.list_projects(
+        db, current_user.id, include_archived, sharing=True, machine_id=machine_id
     )
+    projects = [project for project, _ in rows]
     accesses = access.project_accesses(db, current_user.id, projects)
     # Lazy, best-effort default-icon seed (§4e): first fetch of a git-backed
     # project with no icon set kicks off a background owner-avatar seed. The
@@ -97,8 +102,7 @@ def list_projects_endpoint(
     # owner's own fetch seeds — a grantee's view never mutates the project.
     for project in projects:
         if (
-            not project.is_inbox
-            and project.user_id == current_user.id
+            project.user_id == current_user.id
             and project.git_remote_url
             and project.icon_source is None
             and not project.icon_image_uri
@@ -106,23 +110,31 @@ def list_projects_endpoint(
             and not project.icon
         ):
             background_tasks.add_task(project_icons.seed_project_icon, project.id)
-    return [_project_response(p, accesses.get(p.id)) for p in projects]
+    return [
+        _project_response(p, accesses.get(p.id), last_activity_at=last_at)
+        for p, last_at in rows
+    ]
 
 
 def _project_response(
-    project: Project, project_access: access.ProjectAccess | None
+    project: Project,
+    project_access: access.ProjectAccess | None,
+    *,
+    last_activity_at: datetime | None = None,
 ) -> ProjectResponse:
     """Serialize with the caller's standing on the project.
 
     Every project response goes through here. `role` / `scopes` describe the
     caller, not the row, so they have to be resolved per request — the model
     defaults them to the least privilege precisely so that forgetting is a
-    hidden button rather than a phantom one.
+    hidden button rather than a phantom one. `last_activity_at` is only known
+    to the list query; single-project responses leave it unset.
     """
     response = ProjectResponse.model_validate(project)
     if project_access is not None:
         response.role = project_access.role
         response.scopes = list(project_access.scopes)  # type: ignore[assignment]
+    response.last_activity_at = last_activity_at
     return response
 
 
@@ -170,10 +182,6 @@ def update_project_endpoint(
         project = task_queries.update_project(
             db, current_user.id, project_id, fields, sharing=True
         )
-    except InboxImmutableError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
     except ProjectKeyTakenError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
@@ -185,20 +193,37 @@ def update_project_endpoint(
     return _project_response_for(db, current_user.id, project)
 
 
+@router.get("/projects/{project_id}/summary", response_model=ProjectSummaryResponse)
+def get_project_summary_endpoint(
+    project_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProjectSummaryResponse:
+    """What a delete would file under No project — for the confirm dialog."""
+    summary = task_queries.project_summary(
+        db, current_user.id, project_id, sharing=True
+    )
+    if summary is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+    task_count, session_count, active_session_count = summary
+    return ProjectSummaryResponse(
+        task_count=task_count,
+        session_count=session_count,
+        active_session_count=active_session_count,
+    )
+
+
 @router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project_endpoint(
     project_id: UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
-    try:
-        deleted = task_queries.delete_project(
-            db, current_user.id, project_id, sharing=True
-        )
-    except InboxImmutableError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
+    """Delete the project. Its tasks and sessions are filed under No project
+    (tasks lose their identifier); nothing of the user's work is destroyed."""
+    deleted = task_queries.delete_project(db, current_user.id, project_id, sharing=True)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
@@ -222,10 +247,6 @@ def set_project_directory_endpoint(
             local_path=request.local_path.strip(),
             sharing=True,
         )
-    except InboxImmutableError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
     except MachineNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)

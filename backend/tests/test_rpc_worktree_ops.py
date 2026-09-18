@@ -531,3 +531,39 @@ def test_remove_worktree_dirty_needs_force(home: Path, committed_repo: Path):
     forced = remove_worktree(str(committed_repo), created["path"], force=True)
     assert forced == {"ok": True}
     assert not path.exists()
+
+
+def test_list_worktrees_reports_the_main_checkout_from_any_path(
+    home: Path, committed_repo: Path
+):
+    """`main_path` is the repo root whether asked from the checkout, a
+    subfolder of it, or a linked worktree — what lets a client resolve the
+    path it holds to the project's folder."""
+    from vicoa.rpc.worktree_ops import create_worktree, list_worktrees
+
+    (committed_repo / "apps" / "web").mkdir(parents=True)
+    created = create_worktree(str(committed_repo))
+    main = str(committed_repo.resolve())
+
+    for cwd in (committed_repo, committed_repo / "apps" / "web", created["path"]):
+        result = list_worktrees(str(cwd))
+        assert "error" not in result, (cwd, result)
+        assert str(Path(result["main_path"]).resolve()) == main
+        assert result["main_display_path"]
+
+
+def test_create_worktree_from_a_subfolder_forks_the_whole_repo(
+    home: Path, committed_repo: Path
+):
+    """A monorepo session at `repo/apps/web` must fork `repo`, not treat the
+    subfolder as the project: the checkout leaf and the managed root are keyed
+    on the repo, and `repo_root` says which."""
+    from vicoa.rpc.worktree_ops import create_worktree
+
+    (committed_repo / "apps" / "web").mkdir(parents=True)
+    created = create_worktree(str(committed_repo / "apps" / "web"), name="feat/x")
+
+    assert "error" not in created, created
+    assert Path(created["repo_root"]).resolve() == committed_repo.resolve()
+    assert Path(created["path"]).name == committed_repo.name
+    assert (Path(created["path"]) / "seed.txt").is_file()

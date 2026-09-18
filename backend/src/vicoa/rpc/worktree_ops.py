@@ -98,19 +98,37 @@ def check_worktree_name(cwd: str, name: str) -> dict[str, Any]:
     return {"available": True}
 
 
+def _toplevel(abs_dir: Path) -> Path | None:
+    """The working tree's top-level directory for any path inside it (a
+    subdirectory of a checkout resolves to the checkout), or None outside git."""
+    proc = subprocess.run(
+        ["git", "-C", str(abs_dir), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    raw = proc.stdout.decode("utf-8", errors="replace").strip()
+    return Path(raw).resolve() if raw else None
+
+
 def create_worktree(repo_dir: str, name: str | None = None) -> dict[str, Any]:
     """Fork a fresh branch + checkout off `repo_dir`'s current HEAD.
 
-    Returns `{"path", "branch"}` on success or `{"error"}` if the directory is
-    not a git repo or `git worktree add` fails (e.g. unborn HEAD). The branch
-    name equals the worktree name. Without `name` the daemon generates a
-    unique random slug; with one, the user's choice is used verbatim and a
-    collision is an error (`name_taken`) rather than a silent `-2` — they
-    asked for THAT name. An invalid ref is `invalid_name`.
+    `repo_dir` may be any directory inside the checkout — a monorepo session
+    started at `repo/apps/web` forks the whole repo, not the subfolder — so the
+    worktree is keyed on the top-level and `repo_root` in the result says
+    which. Returns `{"path", "branch", "repo_root"}` on success or `{"error"}`
+    if the directory is not a git repo or `git worktree add` fails (e.g.
+    unborn HEAD). The branch name equals the worktree name. Without `name` the
+    daemon generates a unique random slug; with one, the user's choice is used
+    verbatim and a collision is an error (`name_taken`) rather than a silent
+    `-2` — they asked for THAT name. An invalid ref is `invalid_name`.
     """
-    abs_repo = Path(os.path.expanduser(repo_dir)).resolve()
-    if not _is_git_repo(abs_repo):
+    abs_dir = Path(os.path.expanduser(repo_dir)).resolve()
+    if not _is_git_repo(abs_dir):
         return {"error": "not_a_repo"}
+    abs_repo = _toplevel(abs_dir) or abs_dir
 
     parent = worktrees_parent_dir(abs_repo)
     parent.mkdir(parents=True, exist_ok=True)
@@ -119,7 +137,7 @@ def create_worktree(repo_dir: str, name: str | None = None) -> dict[str, Any]:
     # basename so the session's `project` displays as the project name. The
     # collision check is on the middle dir under `parent`.
     if name is not None and name.strip():
-        verdict = check_worktree_name(repo_dir, name)
+        verdict = check_worktree_name(str(abs_repo), name)
         if not verdict.get("available"):
             return {"error": str(verdict.get("reason") or "invalid_name")}
         name = name.strip()
@@ -143,7 +161,7 @@ def create_worktree(repo_dir: str, name: str | None = None) -> dict[str, Any]:
             or "worktree_add_failed"
         }
 
-    return {"path": str(path), "branch": name}
+    return {"path": str(path), "branch": name, "repo_root": str(abs_repo)}
 
 
 def _prune_empty_dirs(start: Path) -> None:
@@ -205,12 +223,17 @@ def _parse_worktree_porcelain(blob: bytes) -> list[dict[str, Any]]:
 
 
 def list_worktrees(cwd: str) -> dict[str, Any]:
-    """List a repo's worktrees, excluding the main one.
+    """List a repo's linked worktrees, plus where its main checkout is.
 
-    Returns `{"worktrees": [{path, display_path, branch, head, managed,
-    prunable}]}` or `{"error": "not_a_repo"}`. `managed` marks worktrees the
-    daemon created (under `~/vicoa/workspaces/`) — only those are removable by
-    the app; the user's own hand-made worktrees are flagged unmanaged.
+    Returns `{"main_path", "main_display_path", "worktrees": [{path,
+    display_path, branch, head, managed, prunable}]}` or `{"error":
+    "not_a_repo"}`. `cwd` may be any directory of the repo — a subfolder or a
+    linked worktree — which is what makes `main_path` useful: it lets a client
+    resolve whatever path it holds to the repo's root (the project's folder)
+    and tell "this cwd *is* a worktree" from "this cwd is the checkout".
+    `managed` marks worktrees the daemon created (under `~/vicoa/workspaces/`)
+    — only those are removable by the app; the user's own hand-made worktrees
+    are flagged unmanaged.
 
     `display_path` is the home-collapsed form (`~/…`) produced by the same
     helper a session's `project` is registered with, so the app can match a
@@ -231,7 +254,11 @@ def list_worktrees(cwd: str) -> dict[str, Any]:
         return {"error": "not_a_repo"}
 
     records = _parse_worktree_porcelain(proc.stdout)
-    # The first record is always the main worktree — drop it.
+    if not records:
+        return {"error": "not_a_repo"}
+    # The first record is always the main worktree: reported on its own, not
+    # in the list (it is never removable and never a "worktree" to the app).
+    main_path = records[0]["path"]
     linked = records[1:]
 
     worktrees = [
@@ -245,7 +272,11 @@ def list_worktrees(cwd: str) -> dict[str, Any]:
         }
         for rec in linked
     ]
-    return {"worktrees": worktrees}
+    return {
+        "main_path": main_path,
+        "main_display_path": get_project_path(main_path),
+        "worktrees": worktrees,
+    }
 
 
 def remove_worktree(

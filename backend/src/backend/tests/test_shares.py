@@ -42,7 +42,6 @@ from shared.database import (
     Task,
     TaskLabel,
     User,
-    get_or_create_inbox,
 )
 from shared.database.enums import AgentStatus
 
@@ -84,7 +83,6 @@ class World:
     def __init__(self, db, owner: User) -> None:
         self.db = db
         self.owner = owner
-        get_or_create_inbox(db, owner.id)
         self.project = Project(
             user_id=owner.id, name="Shared Board", key="SHB", task_counter=3
         )
@@ -289,20 +287,8 @@ class TestOwnerApi:
         for body in bad:
             assert client.post("/api/v1/shares", json=body).status_code == 422, body
 
-    def test_inbox_and_deleted_session_are_not_shareable(self, client, world):
+    def test_deleted_session_is_not_shareable(self, client, world):
         _as(client, world.owner)
-        inbox = get_or_create_inbox(world.db, world.owner.id)
-        assert (
-            client.post(
-                "/api/v1/shares",
-                json={
-                    "kind": "project",
-                    "scopes": ["tasks"],
-                    "project_id": str(inbox.id),
-                },
-            ).status_code
-            == 404
-        )
         assert (
             client.post(
                 "/api/v1/shares",

@@ -15,13 +15,17 @@ Safe by default: a call site that forgets the flag gets the narrower lens.
 Under the sharing lens a visible-but-insufficient role raises `AccessDenied`
 (→ 403); an invisible resource is still `None` (→ 404), never 403.
 
-The Inbox project is the per-user "No project" bucket: lazily created, never
-archivable, deletable or grantable.
+"No project" is `tasks.project_id IS NULL` — the same convention as
+`agent_instances.project_id`. There is no hidden Inbox row. An unfiled task is
+visible to its owner alone under either lens, has no `KEY-n` identifier
+(identifiers are project-scoped), and gets one when moved into a project.
 
 Ownership invariant: `tasks.user_id` is always the owning project's `user_id`
 — the project owner, not whoever created the task — so the owner-only lens
 (CLI, automations) keeps seeing every task on its own boards, and a task that
-moves project moves owner with it. Who actually did what is `task_activity`'s
+moves project moves owner with it. An unfiled task is owned by whoever filed
+it there (its creator, the caller who moved it out, or the owner of the project
+that was deleted from under it). Who actually did what is `task_activity`'s
 job, not this column's.
 """
 
@@ -45,9 +49,9 @@ from shared.database import (
     TaskActivity,
     TaskComment,
     TaskLabel,
-    get_or_create_inbox,
 )
 from shared.database.agent_profile_models import AgentProfile
+from shared.database.enums import AgentStatus
 from shared.database.project_matching import backfill_project_id_for_directory
 from shared.database.task_identity import (
     allocate_task_number,
@@ -64,10 +68,6 @@ STALE_PROJECT_DAYS = 30
 # Tasks in these terminal states don't count as "open work" keeping a project
 # alive for auto-archive purposes.
 _CLOSED_TASK_STATUSES = ("done", "cancelled")
-
-
-class InboxImmutableError(Exception):
-    """Raised when a request tries to archive or delete the Inbox project."""
 
 
 class MachineNotFoundError(Exception):
@@ -168,7 +168,7 @@ def _latest_activity_subquery(db: Session, user_id: UUID):
 def autoarchive_stale_projects(
     db: Session, user_id: UUID, days: int = STALE_PROJECT_DAYS
 ) -> int:
-    """Archive non-Inbox projects idle for ``days`` with no open tasks (§4b).
+    """Archive projects idle for ``days`` with no open tasks (§4b).
 
     The counterweight to auto-create: touching a repo mints a project, so
     long-untouched ones fall out of the way on their own. Conservative —
@@ -180,10 +180,13 @@ def autoarchive_stale_projects(
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
     latest = _latest_activity_subquery(db, user_id)
+    # `IS NOT NULL` is load-bearing: one NULL inside a `NOT IN (...)` subquery
+    # makes the whole predicate unknown, and nothing would ever archive.
     open_task_projects = (
         select(Task.project_id)
         .where(
             Task.user_id == user_id,
+            Task.project_id.isnot(None),
             Task.status.notin_(_CLOSED_TASK_STATUSES),
         )
         .distinct()
@@ -193,7 +196,6 @@ def autoarchive_stale_projects(
         .outerjoin(latest, latest.c.pid == Project.id)
         .filter(
             _owner_only_project_filter(user_id),
-            Project.is_inbox.is_(False),
             Project.is_archived.is_(False),
             Project.created_at < cutoff,
             or_(latest.c.last_at.is_(None), latest.c.last_at < cutoff),
@@ -218,33 +220,44 @@ def list_projects(
     include_archived: bool = False,
     *,
     sharing: bool = False,
-) -> list[Project]:
-    """The projects the caller can see: Inbox first, then most-recent activity,
-    then name. Under the sharing lens that includes team-owned projects the
-    caller is an active member of and projects granted to them or their teams.
+    machine_id: UUID | None = None,
+) -> list[tuple[Project, datetime | None]]:
+    """The projects the caller can see, each paired with its newest session
+    start (``None`` when no session ever ran there): most-recent activity
+    first, then name. Under the sharing lens that includes team-owned projects
+    the caller is an active member of and projects granted to them or their
+    teams. With ``machine_id``, only projects linked to a folder on that machine
+    — what the new-session picker lists.
 
-    Lazily creates the Inbox so clients always have the "No project" bucket to
-    group by, and opportunistically auto-archives stale projects (on every fetch,
-    including the sidebar's include_archived read) so the counterweight to
-    auto-create needs no scheduler.
+    Opportunistically auto-archives stale projects (on every fetch, including
+    the sidebar's include_archived read) so the counterweight to auto-create
+    needs no scheduler.
     """
-    get_or_create_inbox(db, user_id)
-    db.commit()
     autoarchive_stale_projects(db, user_id)
 
     latest = _latest_activity_subquery(db, user_id)
-    query = db.query(Project).outerjoin(latest, latest.c.pid == Project.id)
+    query = db.query(Project, latest.c.last_at).outerjoin(
+        latest, latest.c.pid == Project.id
+    )
     if sharing:
         query = query.filter(Project.id.in_(access.visible_project_select(user_id)))
     else:
         query = query.filter(_owner_only_project_filter(user_id))
     if not include_archived:
         query = query.filter(Project.is_archived.is_(False))
-    return query.order_by(
-        Project.is_inbox.desc(),
+    if machine_id is not None:
+        query = query.filter(
+            Project.id.in_(
+                select(ProjectDirectory.project_id).where(
+                    ProjectDirectory.machine_id == machine_id
+                )
+            )
+        )
+    rows = query.order_by(
         latest.c.last_at.desc().nullslast(),
         Project.name.asc(),
     ).all()
+    return [(project, last_at) for project, last_at in rows]
 
 
 def create_project(
@@ -274,14 +287,23 @@ def get_accessible_project(
     *,
     sharing: bool = False,
     minimum: str = "viewer",
+    grant_scope: access.GrantScope | None = None,
 ) -> Project | None:
     """The single project-access predicate (plan §9 constraint 3).
 
     Every project-scoped read that isn't already a list — icon serving/upload,
     settings — routes through here. None when invisible; `AccessDenied` when
-    visible but below `minimum`.
+    visible but below `minimum`. `grant_scope` narrows a grant to the area
+    being touched ('sessions' for filing a session onto the project).
     """
-    return _get_project(db, user_id, project_id, sharing=sharing, minimum=minimum)
+    return _get_project(
+        db,
+        user_id,
+        project_id,
+        sharing=sharing,
+        grant_scope=grant_scope,
+        minimum=minimum,
+    )
 
 
 def set_project_icon(
@@ -336,8 +358,6 @@ def update_project(
     project = _get_project(db, user_id, project_id, sharing=sharing, minimum="admin")
     if project is None:
         return None
-    if project.is_inbox and fields.get("is_archived"):
-        raise InboxImmutableError("The Inbox project cannot be archived")
 
     if "is_archived" in fields:
         archived = bool(fields.pop("is_archived"))
@@ -358,17 +378,58 @@ def update_project(
     return project
 
 
+def project_summary(
+    db: Session, user_id: UUID, project_id: UUID, *, sharing: bool = False
+) -> tuple[int, int, int] | None:
+    """``(task_count, session_count, active_session_count)`` — what a delete
+    would file under No project, for the confirm dialog. None when invisible."""
+    project = _get_project(db, user_id, project_id, sharing=sharing)
+    if project is None:
+        return None
+    task_count = (
+        db.query(func.count(Task.id)).filter(Task.project_id == project.id).scalar()
+        or 0
+    )
+    sessions = db.query(func.count(AgentInstance.id)).filter(
+        AgentInstance.project_id == project.id,
+        AgentInstance.status != AgentStatus.DELETED,
+    )
+    session_count = sessions.scalar() or 0
+    active_count = (
+        sessions.filter(AgentInstance.status == AgentStatus.ACTIVE).scalar() or 0
+    )
+    return task_count, session_count, active_count
+
+
 def delete_project(
     db: Session, user_id: UUID, project_id: UUID, *, sharing: bool = False
 ) -> bool:
-    """Delete a project; its tasks go with it (FK CASCADE). Owner only — an
-    admin grantee runs the project, the owner is the one who can end it.
-    False = not found."""
+    """Delete a project. Nothing of the user's work cascades: its tasks (with
+    their comments and activity) and its sessions are filed under **No
+    project** — tasks lose their ``KEY-n`` (the number is project-scoped) and
+    become the project owner's; sessions keep their owner. Directories, grants
+    and share links do go with the row. Owner only — an admin grantee runs the
+    project, the owner is the one who can end it. Allowed on an archived
+    project. False = not found."""
     project = _get_project(db, user_id, project_id, sharing=sharing, minimum="owner")
     if project is None:
         return False
-    if project.is_inbox:
-        raise InboxImmutableError("The Inbox project cannot be deleted")
+    # Explicit rather than leaning on the FK's SET NULL: the number must be
+    # cleared with the project (a stale number would collide the next time the
+    # task is filed), and the child rows' denormalized project_id follows the
+    # task exactly as it does on a move.
+    task_ids = select(Task.id).where(Task.project_id == project.id)
+    for model in (TaskComment, TaskActivity):
+        db.query(model).filter(model.task_id.in_(task_ids)).update(
+            {"project_id": None}, synchronize_session=False
+        )
+    db.query(Task).filter(Task.project_id == project.id).update(
+        {"project_id": None, "number": None, "user_id": project.user_id},
+        synchronize_session=False,
+    )
+    db.query(AgentInstance).filter(AgentInstance.project_id == project.id).update(
+        {"project_id": None}, synchronize_session=False
+    )
     db.delete(project)
     db.commit()
     return True
@@ -390,16 +451,17 @@ def set_project_directory(
 
     Upsert on (project_id, machine_id) — the table allows one row per pair, so
     re-linking a machine overwrites its path instead of adding a second row.
-    Admin+ on the project; the machine must be the caller's own (machines are
-    never shared). Returns the refreshed project, or None when invisible.
+    The machine must be the caller's own (machines are never shared), so this
+    is always "where *my* copy of this project lives": any member who may
+    contribute (``editor`` on the project — a project-settings write, so any
+    grant scope counts) can link their own machine — that is how a shared repo
+    gets one project across the team's laptops. Re-linking the same path is
+    also the way to re-run the adoption backfill below. Returns the refreshed
+    project, or None when invisible.
     """
-    project = _get_project(db, user_id, project_id, sharing=sharing, minimum="admin")
+    project = _get_project(db, user_id, project_id, sharing=sharing, minimum="editor")
     if project is None:
         return None
-    # Inbox is the "No project" bucket for unfiled tasks; a directory there
-    # would silently attach itself to every task the user never filed.
-    if project.is_inbox:
-        raise InboxImmutableError("The Inbox project cannot be linked to a directory")
 
     machine = (
         db.query(Machine)
@@ -450,8 +512,9 @@ def delete_project_directory(
     *,
     sharing: bool = False,
 ) -> Project | None:
-    """Unlink a machine from a project. Admin+. None when invisible."""
-    project = _get_project(db, user_id, project_id, sharing=sharing, minimum="admin")
+    """Unlink a machine from a project. A member may unlink their own machine
+    (``editor``); someone else's row takes ``admin``. None when invisible."""
+    project = _get_project(db, user_id, project_id, sharing=sharing, minimum="editor")
     if project is None:
         return None
     row = (
@@ -463,6 +526,11 @@ def delete_project_directory(
         .first()
     )
     if row is not None:
+        if row.user_id != user_id:
+            access.require(
+                _role_for(db, user_id, project, sharing=sharing),
+                "admin",
+            )
         db.delete(row)
         db.commit()
         db.refresh(project)
@@ -583,13 +651,13 @@ def _resolve_labels(
     user_id: UUID,
     label_ids: list[UUID],
     *,
-    project: Project,
+    project: Project | None,
     sharing: bool,
 ) -> list[TaskLabel]:
     if not label_ids:
         return []
     usable = _visible_label_filter(user_id, sharing=sharing)
-    if sharing:
+    if sharing and project is not None:
         usable = or_(usable, _project_vocabulary_filter(project))
     labels = db.query(TaskLabel).filter(TaskLabel.id.in_(label_ids), usable).all()
     if len(labels) != len(set(label_ids)):
@@ -600,7 +668,7 @@ def _resolve_labels(
 def _validate_assignee(
     db: Session,
     user_id: UUID,
-    project: Project,
+    project: Project | None,
     assignee_type: str | None,
     assignee_id: UUID | None,
     *,
@@ -611,21 +679,24 @@ def _validate_assignee(
     A user assignee is the caller, or (sharing lens) anyone who can see the
     board — owner, team member or grantee. An agent assignee is one of the
     caller's own profiles, or (sharing lens) one belonging to the project's
-    owner or owning team.
+    owner or owning team. An unfiled task (``project`` None) has no board for
+    anyone else to stand on: the caller and the caller's own profiles only.
     """
     if assignee_type is None or assignee_id is None:
         return
     if assignee_type == "user":
         if assignee_id == user_id:
             return
-        if sharing and (
-            access.project_role(db, assignee_id, project, grant_scope="tasks")
+        if (
+            sharing
+            and project is not None
+            and access.project_role(db, assignee_id, project, grant_scope="tasks")
             is not None
         ):
             return
         raise AssigneeNotFoundError("Assignee not found")
     owners = [AgentProfile.user_id == user_id]
-    if sharing:
+    if sharing and project is not None:
         if project.team_id is not None:
             owners.append(AgentProfile.team_id == project.team_id)
         else:
@@ -672,8 +743,12 @@ def _validate_parent(
 def _visible_task_filter(user_id: UUID, *, sharing: bool):
     if not sharing:
         return Task.user_id == user_id
-    return Task.project_id.in_(
-        access.visible_project_select(user_id, grant_scope="tasks")
+    # An unfiled task has no project to be shared through: its owner alone.
+    return or_(
+        Task.project_id.in_(
+            access.visible_project_select(user_id, grant_scope="tasks")
+        ),
+        and_(Task.project_id.is_(None), Task.user_id == user_id),
     )
 
 
@@ -719,11 +794,11 @@ def create_task(
     *,
     sharing: bool = False,
 ) -> Task:
-    """Create a task; without an explicit project it lands in the caller's
-    Inbox. Creating on someone else's project needs `editor`."""
-    if project_id is None:
-        project = get_or_create_inbox(db, user_id)
-    else:
+    """Create a task; without an explicit project it is unfiled (No project,
+    owned by the caller, no identifier). Creating on someone else's project
+    needs `editor`."""
+    project: Project | None = None
+    if project_id is not None:
         project = _get_project(
             db,
             user_id,
@@ -749,13 +824,17 @@ def create_task(
     # Identity (§3.5). The key is allocated lazily, on the project's first task,
     # in its own savepoint; the number comes from UPDATE ... RETURNING on the
     # counter, whose row lock serializes concurrent inserts into this project.
-    ensure_project_key_committed(db, project)
-    number = allocate_task_number(db, project)
+    # An unfiled task has neither — identifiers are project-scoped.
+    number: int | None = None
+    if project is not None:
+        ensure_project_key_committed(db, project)
+        number = allocate_task_number(db, project)
 
     task = Task(
-        # The project owner owns the task (module docstring), whoever created it.
-        user_id=project.user_id,
-        project_id=project.id,
+        # The project owner owns the task (module docstring), whoever created
+        # it; an unfiled task is the caller's.
+        user_id=project.user_id if project is not None else user_id,
+        project_id=project.id if project is not None else None,
         number=number,
         title=title,
         description=description,
@@ -833,16 +912,23 @@ def resolve_task(
     )
 
 
+def _task_role(
+    db: Session, user_id: UUID, task: Task, project: Project | None, *, sharing: bool
+) -> Role | None:
+    """The caller's role on the task: its project's role, or — for an unfiled
+    task, which only its owner can see — ``owner``."""
+    if project is None:
+        return "owner" if task.user_id == user_id else None
+    return _role_for(db, user_id, project, sharing=sharing, grant_scope="tasks")
+
+
 def _require_task_editor(
     db: Session, user_id: UUID, task: Task, *, sharing: bool
-) -> Project:
-    """The task's project, after asserting the caller may change the task."""
-    project = db.get(Project, task.project_id)
-    assert project is not None  # FK; the task was just loaded through it
-    access.require(
-        _role_for(db, user_id, project, sharing=sharing, grant_scope="tasks"),
-        "editor",
-    )
+) -> Project | None:
+    """The task's project (None when unfiled), after asserting the caller may
+    change the task."""
+    project = db.get(Project, task.project_id) if task.project_id else None
+    access.require(_task_role(db, user_id, task, project, sharing=sharing), "editor")
     return project
 
 
@@ -863,9 +949,8 @@ def update_task(
 
     if "project_id" in fields:
         project_id = fields.pop("project_id")
-        if project_id is None:
-            target = get_or_create_inbox(db, user_id)
-        else:
+        target: Project | None = None
+        if project_id is not None:
             target = _get_project(
                 db,
                 user_id,
@@ -876,41 +961,47 @@ def update_task(
             )
             if target is None:
                 raise ProjectNotFoundError("Project not found")
-        if target.user_id != task.user_id:
+        # Unfiled = the caller's own; ownership follows the project otherwise.
+        new_owner = target.user_id if target is not None else user_id
+        if new_owner != task.user_id:
             # The move crosses an ownership boundary, and ownership follows the
             # project (below), so this hands the task to somebody else.
             #
             # `editor` is not enough. An editor grantee is trusted to
             # reorganise tasks *within* the boards they were given — but
-            # `project_id: null` resolves to *their own* Inbox, and any project
-            # they own satisfies an `editor` floor trivially, so an editor
-            # could otherwise pull someone else's task (plus its comments and
-            # activity) onto a board the original owner cannot see. The owner's
-            # `visible_project_select` would no longer match it and the task
-            # would be gone for good.
+            # `project_id: null` makes the task *their own* unfiled task, and
+            # any project they own satisfies an `editor` floor trivially, so an
+            # editor could otherwise pull someone else's task (plus its
+            # comments and activity) onto a board the original owner cannot
+            # see. The owner's `visible_project_select` would no longer match
+            # it and the task would be gone for good.
             access.require(
-                _role_for(db, user_id, project, sharing=sharing, grant_scope="tasks"),
-                "owner",
+                _task_role(db, user_id, task, project, sharing=sharing), "owner"
             )
-        if target.id != task.project_id:
+        target_id = target.id if target is not None else None
+        if target_id != task.project_id:
             # Moving a task reassigns BOTH halves of its identifier — GitHub does
             # the same on issue transfer, and D-B accepts the cost: "VIC-42"
             # written in an old comment goes stale. The number it vacates is
-            # never reused; counters only ever climb.
+            # never reused; counters only ever climb. Moving OUT to No project
+            # drops the identifier altogether (there is no project to scope it).
             #
             # The child rows carry a denormalized project_id (so the project
             # access predicate needs no join), so they have to move too — a
             # comment left pointing at the old project would be readable
             # through a grant on a project it no longer belongs to.
-            ensure_project_key_committed(db, target)
+            if target is not None:
+                ensure_project_key_committed(db, target)
             for model in (TaskComment, TaskActivity):
                 db.query(model).filter(model.task_id == task.id).update(
-                    {"project_id": target.id}, synchronize_session=False
+                    {"project_id": target_id}, synchronize_session=False
                 )
-            task.project_id = target.id
+            task.project_id = target_id
             # Ownership follows the project (module docstring).
-            task.user_id = target.user_id
-            task.number = allocate_task_number(db, target)
+            task.user_id = new_owner
+            task.number = (
+                allocate_task_number(db, target) if target is not None else None
+            )
             project = target
 
     if "parent_task_id" in fields:

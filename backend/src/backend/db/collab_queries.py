@@ -714,8 +714,6 @@ def create_project_grant(
     covered by their team's seats.
     """
     _require_grant_admin(db, granter_user_id, project)
-    if project.is_inbox:
-        raise GrantError("The Inbox cannot be shared")
     if role not in GRANT_ROLES:
         raise GrantError("Unknown role")
     scopes = list(scopes) if scopes is not None else list(GRANT_SCOPES)

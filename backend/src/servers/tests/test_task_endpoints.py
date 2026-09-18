@@ -2,7 +2,7 @@
 
 The human-facing equivalent is covered in backend/tests/test_tasks.py; this
 suite proves the same CRUD works under the agent RS256-JWT auth used by the
-CLI, including user scoping and the Inbox default.
+CLI, including user scoping and the No-project default.
 """
 
 from uuid import uuid4
@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from shared.database.models import User
+from shared.database.task_models import Project
 from shared.database.session import get_db
 from servers.api.auth import get_current_user_id
 from servers.api.tasks import task_router
@@ -47,14 +48,14 @@ def client(test_db, test_user):
 
 
 class TestTaskCrud:
-    def test_create_defaults_to_inbox(self, client):
+    def test_create_defaults_to_no_project(self, client):
         resp = client.post("/api/v1/tasks", json={"title": "Write the CLI"})
         assert resp.status_code == 201, resp.text
         task = resp.json()
         assert task["title"] == "Write the CLI"
         assert task["status"] == "backlog"
         assert task["priority"] == "none"
-        assert task["project_id"] is not None  # landed in the auto-created Inbox
+        assert task["project_id"] is None  # unfiled: no hidden Inbox row
 
     def test_create_with_fields(self, client):
         resp = client.post(
@@ -164,9 +165,15 @@ class TestIdentifierRefs:
     """
 
     @pytest.fixture
-    def keyed(self, client):
-        """A task whose project got a key allocated on its first task."""
-        return client.post("/api/v1/tasks", json={"title": "Ship it"}).json()
+    def keyed(self, client, test_db, test_user):
+        """A task whose project got a key allocated on its first task. An
+        unfiled task has no identifier, so this one is filed in a project."""
+        project = Project(user_id=test_user.id, name="Vicoa")
+        test_db.add(project)
+        test_db.commit()
+        return client.post(
+            "/api/v1/tasks", json={"title": "Ship it", "project_id": str(project.id)}
+        ).json()
 
     def test_get_by_identifier(self, client, keyed):
         assert keyed["identifier"]

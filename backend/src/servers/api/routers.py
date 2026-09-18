@@ -870,13 +870,14 @@ async def machine_rpc_endpoint(
         }.get(exc.code, status.HTTP_502_BAD_GATEWAY)
         raise HTTPException(status_code=http_status, detail=exc.code) from exc
     # Mirror the WS handler's post-spawn side effect so REST clients see the
-    # same recent_directories update.
+    # same recent_directories update (the repo root when the daemon reports
+    # one — never a worktree or subfolder; see the WS handler).
     if (
         request.method == "spawn-session"
         and isinstance(result, dict)
         and not result.get("error")
     ):
-        directory = request.params.get("directory")
+        directory = result.get("repo_root") or request.params.get("directory")
         if isinstance(directory, str) and directory.strip():
             try:
                 push_recent_directory_after_spawn(

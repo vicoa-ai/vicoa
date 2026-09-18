@@ -425,12 +425,12 @@ vicoa task update 5f2c9d1e-...-full-uuid --priority urgent --title "New title"
 vicoa task delete 5f2c9d1e-...-full-uuid -y
 ```
 
-`create` defaults to `status=backlog`, `priority=none`, and files into your **Inbox** unless you pass `--project <PROJECT_ID>`.
+`create` defaults to `status=backlog`, `priority=none`, and is filed under **No project** unless you pass `--project <PROJECT_ID>`.
 
 | Flag (create / update) | Meaning |
 |---|---|
 | `--description <text>` | Longer body |
-| `--project <PROJECT_ID>` | Project to file under (defaults to Inbox) |
+| `--project <PROJECT_ID>` | Project to file under (defaults to No project) |
 | `--status <status>` | Task status (enum above) |
 | `--priority <priority>` | Task priority (enum above) |
 | `--parent <TASK_UUID>` | Make it a subtask of another task |

@@ -39,7 +39,7 @@ from protocol.agent_catalog import (
 from integrations.headless.generic_acp import effective_acp_agents
 from integrations.headless.pi_family.spec import PI_FAMILY_AGENTS
 from integrations.headless.antigravity import spec as antigravity_spec
-from vicoa.utils import derive_ws_url, get_project_path
+from vicoa.utils import derive_ws_url, get_git_identity, get_project_path
 from vicoa.machine_identity import (
     IdentityAction,
     api_key_fingerprint,
@@ -2486,7 +2486,10 @@ class MachineDaemon:
             # there instead. The target path is daemon-computed (never
             # app-supplied); an optional `name` is the user's pick for the
             # branch, else a random slug. A creation failure short-circuits
-            # before any launch side effects.
+            # before any launch side effects. `directory` may be a subfolder
+            # of the repo (a monorepo session at `repo/apps/web`): the
+            # worktree forks the whole repo and the agent starts at the same
+            # relative subfolder inside it.
             worktree_param = params.get("worktree")
             if isinstance(worktree_param, dict) and worktree_param.get("new") is True:
                 from vicoa.rpc.worktree_ops import create_worktree
@@ -2499,7 +2502,13 @@ class MachineDaemon:
                 if "error" in created:
                     return {"error": f"Failed to create worktree: {created['error']}"}
                 worktree_info = created
-                expanded_directory = created["path"]
+                requested_dir = os.path.realpath(os.path.expanduser(directory.strip()))
+                subdir = os.path.relpath(requested_dir, created["repo_root"])
+                expanded_directory = (
+                    os.path.join(created["path"], subdir)
+                    if subdir and subdir != "." and not subdir.startswith("..")
+                    else created["path"]
+                )
             else:
                 expanded_directory = os.path.expanduser(directory.strip())
             os.makedirs(expanded_directory, exist_ok=True)
@@ -2556,10 +2565,10 @@ class MachineDaemon:
                 if not isinstance(stderr_log, int):
                     stderr_log.close()
         except (ValueError, RuntimeError) as exc:
-            self._rollback_worktree(params.get("directory"), worktree_info)
+            self._rollback_worktree(worktree_info)
             return {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001 - any spawn failure -> rpc result
-            self._rollback_worktree(params.get("directory"), worktree_info)
+            self._rollback_worktree(worktree_info)
             return {"error": f"Failed to launch headless session: {exc}"}
 
         # Monitor with request_id="" — there is no spawn-request row, so the
@@ -2582,11 +2591,23 @@ class MachineDaemon:
         # "started"); the RPC path never got it.
         failure = self._wait_for_registration(session_id, process)
         if failure is not None:
-            self._rollback_worktree(params.get("directory"), worktree_info)
+            self._rollback_worktree(worktree_info)
             print(f"[daemon] RPC spawn-session {normalized_agent} failed: {failure}")
             return {"error": failure}
         print(f"[daemon] RPC spawn-session launched {normalized_agent}: {session_id}")
         result: dict[str, Any] = {"agent_instance_id": session_id}
+        # The repo's main checkout for whatever the agent's cwd is — a
+        # subfolder, a linked worktree — so the server files the *project's*
+        # folder (not the worktree, not the subfolder) as the recent directory.
+        # Best-effort and absent for a plain folder; the wrapper reports the
+        # same thing at registration.
+        repo_root = (
+            get_project_path(str(worktree_info["repo_root"]))
+            if worktree_info is not None
+            else get_git_identity(expanded_directory)[0]
+        )
+        if repo_root:
+            result["repo_root"] = repo_root
         if worktree_info is not None:
             # Returned only for immediate display; the agent self-registers with
             # project=worktree path, which stays the source of truth.
@@ -2603,7 +2624,7 @@ class MachineDaemon:
                 )
                 from vicoa.rpc.worktree_trust import is_repo_trusted
 
-                source_repo = str(params.get("directory") or "")
+                source_repo = str(worktree_info["repo_root"])
                 setup_commands = read_committed_config_commands(source_repo, "setup")
                 if setup_commands:
                     result["setup_commands"] = setup_commands
@@ -2702,19 +2723,19 @@ class MachineDaemon:
         except Exception as exc:  # noqa: BLE001 - teardown is best-effort
             print(f"[daemon] worktree teardown failed: {exc}")
 
-    def _rollback_worktree(
-        self, repo_dir: Any, worktree_info: dict[str, Any] | None
-    ) -> None:
+    def _rollback_worktree(self, worktree_info: dict[str, Any] | None) -> None:
         """Remove a worktree created for a spawn that then failed to launch.
 
         Best-effort: a rollback failure must not mask the original spawn error.
         """
-        if not worktree_info or not isinstance(repo_dir, str):
+        if not worktree_info:
             return
         try:
             from vicoa.rpc.worktree_ops import remove_worktree
 
-            remove_worktree(repo_dir, worktree_info["path"], force=True)
+            remove_worktree(
+                str(worktree_info["repo_root"]), worktree_info["path"], force=True
+            )
         except Exception as exc:  # noqa: BLE001 - rollback is best-effort
             print(f"[daemon] worktree rollback failed: {exc}")
 

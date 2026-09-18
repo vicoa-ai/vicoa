@@ -87,7 +87,10 @@ class Project(Base):
         Index("ix_projects_user", "user_id"),
         # Soft auto-match on remote URL (not unique — forks/local-only break that).
         Index("ix_projects_user_remote", "user_id", "git_remote_url"),
-        # One Inbox per user, enforced in the DB so lazy auto-create is race-safe.
+        # DEPRECATED: the per-user Inbox row is gone ("No project" is NULL —
+        # see the tasks_no_project migration). The column and this index stay
+        # one release so clients that still read `is_inbox` see `false`; both
+        # are dropped in a follow-up migration.
         Index(
             "uq_projects_user_inbox",
             "user_id",
@@ -164,7 +167,9 @@ class Project(Base):
     # is not an option; a counter row + row lock is). Never decremented — a
     # deleted or moved-away task does not free its number.
     task_counter: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    # The per-user "No project" bucket; non-archivable, non-deletable.
+    # DEPRECATED, always False: "No project" is `tasks.project_id IS NULL` /
+    # `agent_instances.project_id IS NULL`, not a hidden project row. Kept one
+    # release for old clients; dropped in a follow-up migration.
     is_inbox: Mapped[bool] = mapped_column(default=False)
     is_archived: Mapped[bool] = mapped_column(default=False)
     archived_at: Mapped[datetime | None] = mapped_column(
@@ -344,16 +349,22 @@ class Task(Base):
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), type_=PostgresUUID(as_uuid=True)
     )
-    # NOT NULL — a task without an explicit project lands in the user's Inbox.
-    project_id: Mapped[UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"),
+    # NULL = "No project" — the same convention as agent_instances.project_id.
+    # SET NULL so a raw project delete files its tasks rather than losing them;
+    # `delete_project` does the same explicitly (and clears `number`) so the
+    # move is one code path whether it runs through the ORM or the FK.
+    project_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"),
         type_=PostgresUUID(as_uuid=True),
+        nullable=True,
+        default=None,
     )
 
     # Per-project sequential number; rendered as `{project.key}-{number}`.
-    # Allocated from projects.task_counter in the insert transaction. Nullable
-    # so the column can land ahead of its backfill and so a task can exist
-    # transiently without one.
+    # Allocated from projects.task_counter in the insert transaction. NULL for
+    # a task with no project (an identifier is project-scoped, so an unfiled
+    # task has none until it is moved into a project), for rows that predate
+    # the backfill, and transiently while one is being allocated.
     number: Mapped[int | None] = mapped_column(Integer, default=None)
 
     title: Mapped[str] = mapped_column(String(255))
@@ -441,9 +452,13 @@ class TaskComment(Base):
     task_id: Mapped[UUID] = mapped_column(
         ForeignKey("tasks.id", ondelete="CASCADE"), type_=PostgresUUID(as_uuid=True)
     )
-    project_id: Mapped[UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"),
+    # Denormalized from the task (so the project access predicate needs no
+    # join); NULL when the task has no project. Follows the task on a move.
+    project_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"),
         type_=PostgresUUID(as_uuid=True),
+        nullable=True,
+        default=None,
     )
     # The root this comment answers, or NULL when it *is* a root. Always points
     # at a root (see the class docstring), so `parent_comment_id IS NULL` is the
@@ -542,9 +557,13 @@ class TaskActivity(Base):
     task_id: Mapped[UUID] = mapped_column(
         ForeignKey("tasks.id", ondelete="CASCADE"), type_=PostgresUUID(as_uuid=True)
     )
-    project_id: Mapped[UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"),
+    # Denormalized from the task (so the project access predicate needs no
+    # join); NULL when the task has no project. Follows the task on a move.
+    project_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"),
         type_=PostgresUUID(as_uuid=True),
+        nullable=True,
+        default=None,
     )
     # NULL when no actor could be resolved — a background sweep with no request
     # context. Renders as an unattributed line rather than being dropped.

@@ -16,7 +16,6 @@ from shared.database import (
     TaskActivity,
     TaskComment,
     User,
-    get_or_create_inbox,
 )
 from shared.database.actor import Actor, set_session_actor
 from shared.database.enums import AgentStatus
@@ -135,11 +134,11 @@ class TestNumberAllocation:
         )
         assert second.number == 2
 
-    def test_inbox_tasks_get_numbers_too(self, test_db, test_user):
+    def test_unfiled_task_has_no_identifier(self, test_db, test_user):
+        """No project, no key to scope a number under."""
         task = task_queries.create_task(test_db, test_user.id, "unfiled")
-        inbox = get_or_create_inbox(test_db, test_user.id)
-        assert task.number == 1
-        assert inbox.key == "INB"
+        assert task.project_id is None
+        assert task.number is None
 
     def test_rejected_create_does_not_burn_a_number(self, test_db, test_user):
         """Validation runs before allocation, so a 404 leaves no gap."""

@@ -222,13 +222,9 @@ def visible_project_select(
     ]
     if grant_scope is not None:
         grant_filters.append(ProjectGrant.scopes.contains([grant_scope]))
-    # A grant on a project I own is meaningless; and the Inbox is never
-    # grantable — it is the per-user "No project" bucket, not a board.
-    granted = (
-        select(ProjectGrant.project_id)
-        .join(Project, Project.id == ProjectGrant.project_id)
-        .where(*grant_filters, Project.is_inbox.is_(False))
-    )
+    # A grant on a project I own is meaningless (it is unioned with `own`
+    # anyway); nothing else to exclude.
+    granted = select(ProjectGrant.project_id).where(*grant_filters)
     if scope == "shared":
         shared = union(team_owned, granted).subquery()
         return select(shared.c.id).where(shared.c.id.not_in(own))
@@ -273,9 +269,7 @@ def project_accesses(
             if trole is not None:
                 out[project.id] = ProjectAccess(TEAM_ROLE_TO_PROJECT_ROLE[trole])
                 continue
-        # The Inbox is never reachable by anyone but its owner.
-        if not project.is_inbox:
-            unresolved.append(project)
+        unresolved.append(project)
     if not unresolved:
         return out
 
@@ -336,12 +330,15 @@ def project_role(
 
 
 def task_role(db: Session, user_id: UUID, task: Task | UUID) -> Role | None:
-    """Delegates to the task's project with the 'tasks' scope."""
+    """Delegates to the task's project with the 'tasks' scope. An unfiled task
+    (no project) has no board to be shared through: its owner alone, as owner."""
     if not isinstance(task, Task):
         row = db.get(Task, task)
         if row is None:
             return None
         task = row
+    if task.project_id is None:
+        return "owner" if task.user_id == user_id else None
     return project_role(db, user_id, task.project_id, grant_scope="tasks")
 
 

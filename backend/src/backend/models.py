@@ -703,9 +703,16 @@ class ProjectResponse(BaseModel):
     # the fallback chain icon_image_uri → emoji icon/color → generated default.
     icon_image_uri: str | None = None
     icon_source: str | None = None
-    is_inbox: bool
+    # DEPRECATED, always False. "No project" is a NULL project_id on the task
+    # or session, not a project row; the field is kept one release for clients
+    # that still read it.
+    is_inbox: bool = False
     is_archived: bool
     archived_at: datetime | None = None
+    # Newest session start in this project (recency ordering for the sidebar
+    # and the new-session picker). Only the list endpoint knows it; single
+    # project responses leave it None.
+    last_activity_at: datetime | None = None
     # Inlined rather than a separate endpoint: the lists are tiny and both the
     # Tasks page and the new-session directory resolver need them alongside the
     # project itself.
@@ -714,6 +721,14 @@ class ProjectResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ProjectSummaryResponse(BaseModel):
+    """What deleting the project would file under No project."""
+
+    task_count: int
+    session_count: int
+    active_session_count: int
 
 
 class SetProjectDirectoryRequest(BaseModel):
@@ -770,11 +785,12 @@ class PrincipalResponse(BaseModel):
 
 class TaskResponse(BaseModel):
     id: UUID
-    project_id: UUID
+    # None = "No project" (unfiled). Same convention as a session's project_id.
+    project_id: UUID | None = None
     # Per-project sequential number and the rendered "VIC-42". Both are None for
-    # a task whose project has no key yet (or that predates the backfill), and
-    # clients must render such a task without an identifier rather than
-    # inventing one.
+    # an unfiled task (identifiers are project-scoped), for a task whose project
+    # has no key yet (or that predates the backfill); clients must render such a
+    # task without an identifier rather than inventing one.
     number: int | None = None
     identifier: str | None = None
     title: str
@@ -816,7 +832,7 @@ class TaskAssigneeFields(BaseModel):
 class CreateTaskRequest(TaskAssigneeFields):
     title: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
-    # Omitted → the user's Inbox ("No project" bucket).
+    # Omitted → No project (unfiled: owned by the caller, no identifier).
     project_id: UUID | None = None
     status: TaskStatusLiteral = "backlog"
     priority: TaskPriorityLiteral = "none"

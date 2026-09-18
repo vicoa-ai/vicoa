@@ -1,24 +1,20 @@
 """Task-tracker DB helpers shared by both server processes.
 
-Holds the Inbox auto-create helper and the instance-status → task-status
-linkage (tasks-and-projects plan §4).
+Holds the instance-status → task-status linkage (tasks-and-projects plan §4).
+"No project" is simply ``tasks.project_id IS NULL`` — there is no Inbox row.
 """
 
 import logging
-from uuid import UUID
 
 from sqlalchemy import event
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, attributes
 
 from .actor import Actor, register_activity_override
 from .enums import AgentStatus
 from .models import AgentInstance
-from .task_models import Project, Task
+from .task_models import Task
 
 logger = logging.getLogger(__name__)
-
-INBOX_PROJECT_NAME = "Inbox"
 
 # Literal mapping chosen by Nick (plan §4). Because vicoa's lifecycle runs
 # ACTIVE → COMPLETED → REVIEWED, a review after completion moves the task
@@ -28,47 +24,6 @@ AGENT_TO_TASK_STATUS: dict[AgentStatus, str] = {
     AgentStatus.COMPLETED: "done",
     AgentStatus.REVIEWED: "in_review",
 }
-
-
-def get_or_create_inbox(db: Session, user_id: UUID) -> Project:
-    """Return the user's Inbox project, lazily creating it on first use.
-
-    The Inbox is the "No project" bucket that keeps tasks.project_id NOT NULL.
-    Idempotent and race-safe: the partial unique index uq_projects_user_inbox
-    allows one is_inbox row per user, and losing a concurrent insert falls
-    back to re-reading the winner.
-    """
-
-    def _existing() -> Project | None:
-        return (
-            db.query(Project)
-            .filter(Project.user_id == user_id, Project.is_inbox.is_(True))
-            .first()
-        )
-
-    inbox = _existing()
-    if inbox is not None:
-        return inbox
-
-    inbox = Project(user_id=user_id, name=INBOX_PROJECT_NAME, is_inbox=True)
-    nested = db.begin_nested()
-    try:
-        db.add(inbox)
-        db.flush()
-        nested.commit()
-    except IntegrityError:
-        # Rolling back the SAVEPOINT already restores the session snapshot,
-        # which expunges anything added inside it — so guard the expunge or it
-        # raises InvalidRequestError and masks the race we are handling.
-        nested.rollback()
-        if inbox in db:
-            db.expunge(inbox)
-        winner = _existing()
-        if winner is None:  # pragma: no cover - only under pathological races
-            raise
-        logger.info("inbox create raced for user %s; reusing existing", user_id)
-        return winner
-    return inbox
 
 
 def _sync_task_status_before_flush(session: Session, flush_context, instances) -> None:

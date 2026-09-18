@@ -36,6 +36,7 @@ from ..db import (
     update_agent_instance_name,
     update_agent_instance_pinned,
     link_instance_to_task,
+    move_instance_to_project,
     get_messages_after_id,
     get_latest_message_id,
     get_instance_messages,
@@ -756,7 +757,7 @@ def delete_agent_instance_endpoint(
     return {"message": "Agent instance deleted successfully"}
 
 
-ALLOWED_INSTANCE_PATCH_FIELDS = {"name", "pinned", "task_id"}
+ALLOWED_INSTANCE_PATCH_FIELDS = {"name", "pinned", "task_id", "project_id"}
 
 
 @router.patch("/agent-instances/{instance_id}", response_model=AgentInstanceResponse)
@@ -766,10 +767,12 @@ def update_agent_instance_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Update an agent instance. Supports `name`, `pinned` and `task_id`.
+    """Update an agent instance. Supports `name`, `pinned`, `task_id` and
+    `project_id` (re-file the session; `null` = No project).
 
     Owner or project admin — including `pinned`, which is a property of the
-    session, not of whoever is looking at it.
+    session, not of whoever is looking at it. Filing onto a project needs
+    `editor` on the destination as well.
     """
     unknown = set(update_data.keys()) - ALLOWED_INSTANCE_PATCH_FIELDS
     if unknown:
@@ -791,6 +794,19 @@ def update_agent_instance_endpoint(
         if not result:
             raise HTTPException(
                 status_code=404, detail="Agent instance or task not found"
+            )
+    if "project_id" in update_data:
+        raw_project_id = update_data["project_id"]
+        try:
+            project_id = (
+                UUID(str(raw_project_id)) if raw_project_id is not None else None
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid project_id") from exc
+        result = move_instance_to_project(db, instance_id, current_user.id, project_id)
+        if not result:
+            raise HTTPException(
+                status_code=404, detail="Agent instance or project not found"
             )
     if "name" in update_data:
         result = update_agent_instance_name(

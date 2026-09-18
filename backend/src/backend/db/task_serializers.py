@@ -22,13 +22,17 @@ def serialize_tasks(db: Session, tasks: list[Task]) -> list[TaskResponse]:
     if not tasks:
         return []
 
-    project_ids = {t.project_id for t in tasks}
-    keys: dict[UUID, str | None] = {
-        row[0]: row[1]
-        for row in db.query(Project.id, Project.key)
-        .filter(Project.id.in_(project_ids))
-        .all()
-    }
+    project_ids = {t.project_id for t in tasks if t.project_id is not None}
+    keys: dict[UUID, str | None] = (
+        {
+            row[0]: row[1]
+            for row in db.query(Project.id, Project.key)
+            .filter(Project.id.in_(project_ids))
+            .all()
+        }
+        if project_ids
+        else {}
+    )
 
     parent_ids = {t.parent_task_id for t in tasks if t.parent_task_id is not None}
     parent_titles: dict[UUID, str] = {
@@ -50,8 +54,11 @@ def serialize_tasks(db: Session, tasks: list[Task]) -> list[TaskResponse]:
     out: list[TaskResponse] = []
     for task in tasks:
         response = TaskResponse.model_validate(task)
-        response.identifier = format_task_identifier(
-            keys.get(task.project_id), task.number
+        # An unfiled task has no key to scope a number under: no identifier.
+        response.identifier = (
+            format_task_identifier(keys.get(task.project_id), task.number)
+            if task.project_id is not None
+            else None
         )
         if task.parent_task_id is not None:
             response.parent_title = parent_titles.get(task.parent_task_id)

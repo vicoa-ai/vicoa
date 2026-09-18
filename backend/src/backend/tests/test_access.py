@@ -28,7 +28,6 @@ from shared.database import (
     TeamMember,
     User,
     UserInstanceAccess,
-    get_or_create_inbox,
 )
 from shared.database.enums import AgentStatus, InstanceAccessLevel
 
@@ -120,11 +119,15 @@ class TestProjectRole:
         assert access.project_role(test_db, other.id, project) is None
         assert access.project_role(test_db, other.id, uuid4()) is None
 
-    def test_inbox_is_never_grantable(self, test_db, test_user, other):
-        inbox = get_or_create_inbox(test_db, test_user.id)
-        _grant(test_db, inbox, "user", other.id, "admin")
-        assert access.project_role(test_db, other.id, inbox) is None
-        assert inbox.id not in access.visible_project_ids(test_db, other.id)
+    def test_unfiled_task_is_owner_only(self, test_db, test_user, other):
+        """A task with no project has no board to be shared through: its owner
+        is `owner` on it, everyone else sees nothing."""
+        task = task_queries.create_task(test_db, test_user.id, "loose note")
+        assert task.project_id is None
+        assert access.task_role(test_db, test_user.id, task) == "owner"
+        assert access.task_role(test_db, other.id, task) is None
+        assert task_queries.get_task(test_db, other.id, task.id, sharing=True) is None
+        assert task_queries.get_task(test_db, test_user.id, task.id, sharing=True)
 
     def test_direct_grant_and_scopes(self, test_db, other, project):
         _grant(test_db, project, "user", other.id, "editor", scopes=["sessions"])
@@ -412,16 +415,6 @@ class TestProjectGrants:
         )
 
     def test_validation(self, test_db, test_user, other, project):
-        inbox = get_or_create_inbox(test_db, test_user.id)
-        with pytest.raises(GrantError):
-            collab_queries.create_project_grant(
-                test_db,
-                test_user.id,
-                inbox,
-                principal_type="user",
-                principal_id=other.id,
-                role="viewer",
-            )
         with pytest.raises(GrantError):
             collab_queries.create_project_grant(
                 test_db,
@@ -640,7 +633,7 @@ class TestLabelsAndTasksUnderTheLens:
             is None
         )
         assert project.id not in {
-            p.id for p in task_queries.list_projects(test_db, other.id)
+            p.id for p, _ in task_queries.list_projects(test_db, other.id)
         }
 
     def test_identifier_prefers_own_project(self, test_db, test_user, other):
@@ -788,9 +781,11 @@ class TestOwnershipChangingMoveNeedsOwner:
     its whole history would leave the owner's `visible_project_select` for
     good."""
 
-    def test_editor_cannot_move_task_into_own_inbox(
+    def test_editor_cannot_unfile_someone_elses_task(
         self, test_db, test_user, other, project
     ):
+        """`project_id: null` would make the task the editor's own unfiled
+        task — an ownership change, so `owner` on the source is required."""
         _grant(test_db, project, "user", other.id, "editor")
         task = task_queries.create_task(
             test_db, test_user.id, project_id=project.id, title="Mine", sharing=False
@@ -806,7 +801,7 @@ class TestOwnershipChangingMoveNeedsOwner:
         self, test_db, test_user, other, project
     ):
         """`editor` on the *destination* is satisfied trivially by any project
-        the grantee owns, so the inbox is not the only route."""
+        the grantee owns, so unfiling is not the only route."""
         _grant(test_db, project, "user", other.id, "editor")
         mine = task_queries.create_project(test_db, other.id, name="Bob's board")
         task = task_queries.create_task(
@@ -819,17 +814,23 @@ class TestOwnershipChangingMoveNeedsOwner:
         test_db.expire_all()
         assert test_db.get(Task, task.id).project_id == project.id
 
-    def test_owner_can_still_move_their_own_task_to_inbox(
-        self, test_db, test_user, project
-    ):
+    def test_owner_can_still_unfile_their_own_task(self, test_db, test_user, project):
         task = task_queries.create_task(
             test_db, test_user.id, project_id=project.id, title="Mine", sharing=False
         )
+        assert task.number is not None
         moved = task_queries.update_task(
             test_db, test_user.id, task.id, {"project_id": None}, sharing=True
         )
         assert moved is not None
-        assert moved.project_id == get_or_create_inbox(test_db, test_user.id).id
+        assert moved.project_id is None
+        assert moved.number is None
+        assert moved.user_id == test_user.id
+        # And back: filing it again allocates a fresh number.
+        refiled = task_queries.update_task(
+            test_db, test_user.id, task.id, {"project_id": project.id}, sharing=True
+        )
+        assert refiled is not None and refiled.number == 2
 
     def test_editor_can_still_move_within_the_owners_projects(
         self, test_db, test_user, other, project

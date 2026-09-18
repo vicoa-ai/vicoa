@@ -220,3 +220,45 @@ async def test_stamp_task_is_held_until_it_finishes(
     assert ws_handler._stamp_tasks, "stamp task was left unreferenced"
     for task in list(ws_handler._stamp_tasks):
         task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_spawn_files_the_repo_root_as_the_recent_directory(
+    test_db, bound_session, monkeypatch, user
+):
+    """A worktree spawn's cwd is the worktree (outside the repo) and a
+    monorepo spawn's is a subfolder; the picker must remember the project's
+    folder, which the daemon reports as `repo_root`. Without it, the cwd
+    itself is the best available."""
+    from shared.database.models import Machine
+
+    machine = Machine(user_id=user.id, display_name="Laptop", hostname="h")
+    test_db.add(machine)
+    test_db.commit()
+    conn = _connection(user.id)
+
+    async def spawn(result: dict, directory: str) -> None:
+        async def fake_call(user_id, machine_id, method, call_params):
+            return result
+
+        monkeypatch.setattr(ws_handler.rpc_router, "call", fake_call)
+        await ws_handler.handle_rpc_call(
+            conn,
+            {
+                "request_id": "r1",
+                "machine_id": str(machine.id),
+                "method": "spawn-session",
+                "params": {"agent": "claude", "directory": directory},
+            },
+        )
+
+    await spawn(
+        {"agent_instance_id": str(uuid4()), "repo_root": "~/src/app"},
+        "~/vicoa/workspaces/app-worktrees/feat/app",
+    )
+    await spawn({"agent_instance_id": str(uuid4())}, "~/scratch")
+
+    test_db.expire_all()
+    row = test_db.get(Machine, machine.id)
+    assert row is not None
+    assert row.machine_metadata["recent_directories"] == ["~/scratch", "~/src/app"]

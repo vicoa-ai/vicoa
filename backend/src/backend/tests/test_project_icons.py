@@ -342,7 +342,9 @@ class TestAutoArchiveAndOrdering:
             )
         test_db.commit()
 
-        names = [p["name"] for p in authenticated_client.get("/api/v1/projects").json()]
-        # Inbox first, then most-recent activity.
-        assert names[0] == "Inbox"
+        listed = authenticated_client.get("/api/v1/projects").json()
+        names = [p["name"] for p in listed]
+        # Most-recent activity first; the timestamp rides along for clients.
         assert names.index("Recent") < names.index("Old")
+        by_name = {p["name"]: p for p in listed}
+        assert by_name["Recent"]["last_activity_at"] is not None

@@ -1833,7 +1833,7 @@ Examples:
     task_create.add_argument(
         "--project",
         metavar="PROJECT_ID",
-        help="Project id to file under (omit to use your Inbox)",
+        help="Project id to file under (omit for No project)",
     )
     task_create.add_argument(
         "--status", choices=TASK_STATUSES, help="Initial status (default: backlog)"

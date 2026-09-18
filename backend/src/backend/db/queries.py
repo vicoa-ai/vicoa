@@ -1285,6 +1285,49 @@ def link_instance_to_task(
     return format_agent_instance(instance, message_stats)
 
 
+def move_instance_to_project(
+    db: Session, instance_id: UUID, user_id: UUID, project_id: UUID | None
+) -> AgentInstanceResponse | None:
+    """Re-file a session under another project, or under No project (``None``).
+
+    The explicit counterpart of the register-time auto-match: how a session
+    that landed unfiled (its project was deleted, it ran in a folder that was
+    linked later, …) gets adopted, one at a time. Manage rights on the session
+    (owner or project admin) and ``editor`` on the destination's sessions
+    scope — filing a session onto a board is contributing to it, the same
+    floor as linking one's machine to the project. ``None`` clears the link.
+    Returns None when the session or the target is invisible.
+    """
+    from .task_queries import get_accessible_project
+
+    instance = _get_managed_instance(db, instance_id, user_id, load_agent_type=True)
+    if instance is None:
+        return None
+    if project_id is not None:
+        target = get_accessible_project(
+            db,
+            user_id,
+            project_id,
+            sharing=True,
+            minimum="editor",
+            grant_scope="sessions",
+        )
+        if target is None:
+            return None
+        # Filing a session is live work on that project: an archived match is
+        # no longer stale (the same self-heal rule the register path applies).
+        if target.is_archived:
+            target.is_archived = False
+            target.archived_at = None
+
+    instance.project_id = project_id
+    db.commit()
+    db.refresh(instance)
+
+    message_stats = _get_instance_message_stats(db, [instance.id])
+    return format_agent_instance(instance, message_stats)
+
+
 def list_task_instances(
     db: Session, user_id: UUID, task_id: UUID
 ) -> list[AgentInstanceResponse]:
