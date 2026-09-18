@@ -298,9 +298,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get agentChatResendPrompt => '重新发送这条消息？';
 
   @override
-  String get agentChatResendContent => '这条消息没有送达服务器。';
-
-  @override
   String get agentChatSessionReady => '任务已就绪';
 
   @override

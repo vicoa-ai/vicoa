@@ -1995,7 +1995,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
             backgroundColor: Colors.transparent,
             child: ConfirmDialogWidget(
               title: AppLocalizations.of(context).agentChatResendPrompt,
-              content: AppLocalizations.of(context).agentChatResendContent,
+              content: null,
             ),
           ),
         ) ??

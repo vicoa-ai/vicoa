@@ -308,9 +308,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get agentChatResendPrompt => 'Resend this message?';
 
   @override
-  String get agentChatResendContent => 'This message didn\'t reach the server.';
-
-  @override
   String get agentChatSessionReady => 'Session ready';
 
   @override

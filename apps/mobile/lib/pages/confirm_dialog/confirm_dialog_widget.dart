@@ -19,6 +19,8 @@ class ConfirmDialogWidget extends StatefulWidget {
   });
 
   final String? title;
+  // Null or empty → title-only dialog (the body block is skipped entirely,
+  // not rendered blank).
   final String? content;
 
   @override
@@ -151,6 +153,7 @@ class _ConfirmDialogWidgetState extends State<ConfirmDialogWidget>
                   ),
                 ),
               ),
+              if (widget.content?.isNotEmpty ?? false)
               Align(
                 alignment: AlignmentDirectional(0.0, 0.0),
                 child: Padding(
