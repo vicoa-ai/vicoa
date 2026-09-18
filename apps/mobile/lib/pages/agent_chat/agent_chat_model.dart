@@ -1,5 +1,6 @@
 import '/flutter_flow/app_locale.dart';
 import '/l10n/app_localizations.dart';
+import '/pages/common/session_actions.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/actions/ws_protocol.dart' as ws_protocol;
@@ -1427,9 +1428,13 @@ String? latestWebPreviewUrl;
         );
       }
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(AppLocalizations.of(context).agentChatSendFailed),
-          backgroundColor: Colors.red,
+        // The app's own snack (a modal route, so it clears bottom sheets).
+        // Not awaited: it resolves on dismiss, and the finally below must
+        // release the send button now, not after the toast.
+        unawaited(SessionActions.showSnack(
+          context,
+          AppLocalizations.of(context).agentChatSendFailed,
+          waitTime: 3000,
         ));
       }
     }
