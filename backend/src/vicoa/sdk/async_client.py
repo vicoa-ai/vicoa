@@ -12,7 +12,7 @@ import certifi
 from aiohttp import ClientTimeout
 
 from vicoa.constants import DEFAULT_API_URL
-from vicoa.machine_state import read_machine_id
+from vicoa.machine_state import read_machine_id, wait_for_machine_id
 from vicoa.utils import get_git_identity, get_worktree_name
 
 from .exceptions import AuthenticationError, TimeoutError, APIError
@@ -457,7 +457,14 @@ class AsyncVicoaClient:
         # the link null rather than receiving an empty id. Scoped to this
         # client's base_url so a session against a custom backend links to that
         # backend's daemon registration, not the prod one.
+        # A daemon the CLI just autostarted may still be registering: wait for
+        # it (bounded, off the loop) rather than register the first session on
+        # a machine unlinked — that session's project match depends on it.
         resolved_machine_id = machine_id or read_machine_id(self.base_url)
+        if not resolved_machine_id:
+            resolved_machine_id = await asyncio.to_thread(
+                wait_for_machine_id, self.base_url
+            )
         if resolved_machine_id:
             payload["machine_id"] = resolved_machine_id
         # Only include session_config when the caller provided it. Omitting

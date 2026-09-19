@@ -49,6 +49,7 @@ def test_omits_machine_id_when_unregistered(monkeypatch) -> None:
     """No daemon state (standalone wrapper) → the key is omitted, so the server
     leaves the session's machine link null rather than receiving an empty id."""
     monkeypatch.setattr("vicoa.sdk.client.read_machine_id", lambda *_: None)
+    monkeypatch.setattr("vicoa.sdk.client.wait_for_machine_id", lambda *_a, **_k: None)
     client = _client()
     captured: dict = {}
     _capture_payload(client, captured)
@@ -90,6 +91,9 @@ async def test_async_sends_machine_id_from_daemon_state(monkeypatch) -> None:
 
 async def test_async_omits_machine_id_when_unregistered(monkeypatch) -> None:
     monkeypatch.setattr("vicoa.sdk.async_client.read_machine_id", lambda *_: None)
+    monkeypatch.setattr(
+        "vicoa.sdk.async_client.wait_for_machine_id", lambda *_a, **_k: None
+    )
     client = _async_client()
     captured: dict = {}
     _capture_async_payload(client, captured)
@@ -97,3 +101,50 @@ async def test_async_omits_machine_id_when_unregistered(monkeypatch) -> None:
     await client.register_agent_instance(agent_type="claude")
 
     assert "machine_id" not in captured["json"]
+
+
+# --- first-run race: an autostarted daemon still registering ---
+
+
+def test_waits_for_pending_daemon_registration(monkeypatch) -> None:
+    """No machine_id yet but a daemon is mid-registration → the SDK waits for
+    it (bounded) and stamps the id it delivers, instead of registering the
+    machine's first session unlinked."""
+    monkeypatch.setattr("vicoa.sdk.client.read_machine_id", lambda *_: None)
+    monkeypatch.setattr(
+        "vicoa.sdk.client.wait_for_machine_id", lambda *_a, **_k: "mac-after-wait"
+    )
+    client = _client()
+    captured: dict = {}
+    _capture_payload(client, captured)
+
+    client.register_agent_instance(agent_type="claude")
+
+    assert captured["json"]["machine_id"] == "mac-after-wait"
+
+
+def test_no_daemon_at_all_still_omits_machine_id(monkeypatch) -> None:
+    monkeypatch.setattr("vicoa.sdk.client.read_machine_id", lambda *_: None)
+    monkeypatch.setattr("vicoa.sdk.client.wait_for_machine_id", lambda *_a, **_k: None)
+    client = _client()
+    captured: dict = {}
+    _capture_payload(client, captured)
+
+    client.register_agent_instance(agent_type="claude")
+
+    assert "machine_id" not in captured["json"]
+
+
+async def test_async_waits_for_pending_daemon_registration(monkeypatch) -> None:
+    monkeypatch.setattr("vicoa.sdk.async_client.read_machine_id", lambda *_: None)
+    monkeypatch.setattr(
+        "vicoa.sdk.async_client.wait_for_machine_id",
+        lambda *_a, **_k: "mac-async-wait",
+    )
+    client = _async_client()
+    captured: dict = {}
+    _capture_async_payload(client, captured)
+
+    await client.register_agent_instance(agent_type="claude")
+
+    assert captured["json"]["machine_id"] == "mac-async-wait"

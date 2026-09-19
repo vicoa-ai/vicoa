@@ -282,7 +282,7 @@ def test_update_machine_recent_directories_uses_launch_directory(monkeypatch, tm
     # State-file lookup is exercised by tests in test_machine_state.py.
     # Here we just stub the resolved machine_id so this test focuses on the
     # cli function's call shape into VicoaClient.
-    monkeypatch.setattr(cli, "read_machine_id", lambda _base_url: "machine-123")
+    monkeypatch.setattr(cli, "wait_for_machine_id", lambda _base_url: "machine-123")
     monkeypatch.setattr(cli, "get_current_version", lambda: "1.2.3")
     monkeypatch.setattr("vicoa.sdk.client.VicoaClient", FakeClient)
 
@@ -312,7 +312,7 @@ def test_update_machine_recent_directories_skips_without_machine_id(monkeypatch)
             nonlocal called
             called = True
 
-    monkeypatch.setattr(cli, "read_machine_id", lambda _base_url: None)
+    monkeypatch.setattr(cli, "wait_for_machine_id", lambda _base_url: None)
     monkeypatch.setattr("vicoa.sdk.client.VicoaClient", FakeClient)
 
     args = Namespace(

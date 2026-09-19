@@ -29,7 +29,7 @@ from .machine_daemon import (
     run_daemon,
     stop_background_daemon,
 )
-from .machine_state import read_machine_id
+from .machine_state import wait_for_machine_id
 from . import credentials_state
 from .constants import DEFAULT_API_URL, DEFAULT_AUTH_URL
 from .file_sync import sync_project_files
@@ -1076,9 +1076,12 @@ def update_machine_recent_directories(args, api_key: str) -> None:
     display_directory = get_project_path(launch_directory)
 
     try:
-        machine_id = read_machine_id(base_url)
+        # Runs on a background thread, so it can afford to wait out a daemon
+        # the CLI just autostarted (first run on this machine); once the
+        # daemon has registered, this is a plain state-file read.
+        machine_id = wait_for_machine_id(base_url)
         if machine_id is None:
-            # No daemon has registered for this base_url yet — nothing to link.
+            # No daemon has registered for this base_url — nothing to link.
             return
 
         from vicoa.sdk.client import VicoaClient
@@ -1177,8 +1180,10 @@ def run_agent_default(args, unknown_args):
         sys.exit(0)
 
     api_key = ensure_api_key(args)
-    update_machine_recent_directories_async(args, api_key)
+    # Daemon first: on a machine's first run the recent-directory sync below
+    # needs the machine_id the daemon is about to register.
     maybe_start_machine_daemon(args, api_key)
+    update_machine_recent_directories_async(args, api_key)
 
     # Sync slash commands to backend
     base_url = getattr(args, "base_url", DEFAULT_API_URL)

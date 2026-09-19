@@ -14,6 +14,8 @@ auto-migrated to ``daemons[<default-url>]`` the first time they're read.
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -176,3 +178,71 @@ def read_machine_id(
     entry = read_daemon_entry(base_url, state_path)
     machine_id = entry.get(_MACHINE_ID_KEY)
     return machine_id if isinstance(machine_id, str) and machine_id else None
+
+
+def _pid_alive(pid: int) -> bool:
+    """Cheap liveness probe for the wait below.
+
+    POSIX ``kill(pid, 0)``; on Windows the only portable check is ``tasklist``
+    (100 ms+ per call), which is too slow to sit inside a 100 ms poll loop, so
+    the pid is trusted there — the wait is bounded either way.
+    """
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def daemon_registration_pending(
+    base_url: str | None = None, state_path: Path = STATE_PATH
+) -> bool:
+    """True while a daemon for ``base_url`` has started but not yet registered.
+
+    ``ensure_background_daemon_running`` stamps ``daemon_pid`` the instant it
+    spawns the daemon; ``machine_id`` lands only after the daemon's
+    ``/machines/register`` round-trip. The window between the two is what a
+    wrapper started by ``vicoa <agent>`` on a machine's very first run sees.
+    """
+    entry = read_daemon_entry(base_url, state_path)
+    if entry.get(_MACHINE_ID_KEY):
+        return False
+    pid = entry.get(_PID_KEY)
+    return isinstance(pid, int) and _pid_alive(pid)
+
+
+def wait_for_machine_id(
+    base_url: str | None = None,
+    *,
+    timeout: float = 3.0,
+    interval: float = 0.1,
+    state_path: Path = STATE_PATH,
+) -> str | None:
+    """Return ``machine_id`` for ``base_url``, waiting briefly if a daemon is
+    mid-registration; ``None`` otherwise.
+
+    Only waits when :func:`daemon_registration_pending` — no daemon, or one
+    that already registered, returns at once. Bounded by ``timeout`` so a
+    daemon that fails to register (dead credential, no network) costs one wait
+    and the session proceeds unlinked, as it would have anyway. ``vicoa
+    <agent>`` autostarts the daemon without waiting for it, and the wrapper
+    registers its session ~0.5 s later — about when the daemon's registration
+    lands — so without this the first session on a fresh machine had even odds
+    of registering machine-less.
+    """
+    machine_id = read_machine_id(base_url, state_path)
+    if machine_id or not daemon_registration_pending(base_url, state_path):
+        return machine_id
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(interval)
+        machine_id = read_machine_id(base_url, state_path)
+        if machine_id:
+            return machine_id
+    return None

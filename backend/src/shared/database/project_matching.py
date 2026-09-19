@@ -11,9 +11,11 @@ points share one matcher:
     real ``projects`` row (orca-style), rather than leaving the sidebar to
     derive a phantom basename-only group forever (project-identity-unification
     plan §4a). It also **self-heals**: activity in an archived project
-    un-archives it (running an agent there contradicts "no active work"), and it
+    un-archives it (running an agent there contradicts "no active work"), it
     ensures a ``project_directories`` row for this machine so subsequent
-    path-tier matches hit.
+    path-tier matches hit, and it stamps the git remote onto a project that was
+    linked by folder alone so later sessions (other machines, worktrees) can
+    match it by identity.
 
 The matcher intentionally does **not** filter out archived projects: a session
 in a repo the user archived must re-match (and un-archive) that project, never
@@ -35,6 +37,18 @@ Match order (identity strength, high → low):
      linked main checkout, but its repo root does. Works for non-git folders
      too (repo_root simply absent), so a remote is never required.
 
+     Paths are compared in a canonical form (``~`` expanded with the session's
+     ``home_dir``, ``\\`` folded to ``/``, no trailing slash) because the two
+     sides come from different writers: wrappers report ``~``-collapsed paths,
+     but a wrapper whose HOME differs from the daemon's (e2e, containers)
+     reports absolute ones, and Windows wrappers report backslashes.
+
+     A session that registers **without a machine** (no daemon on that box yet,
+     an older client, a container) can't be matched per-machine, so its path
+     is matched against the user's directory rows on *any* machine — the same
+     ``~``-relative checkout on two boxes is the same project far more often
+     than not. Longest path wins, ties go to the oldest project.
+
 Within each tier the user's **own** projects win, then projects **shared with
 them** at ``editor`` or above for sessions (team-owned boards they are a member
 of, grants): a member who clones the team's repo on their own laptop lands on
@@ -42,6 +56,11 @@ the shared project instead of minting a private twin, and their sessions show
 up on the board. A viewer's session never attaches to someone else's project —
 attaching is contributing. Auto-create, when nothing matches, always mints a
 *personal* project.
+
+Auto-create is skipped for a machine-less session with no remote: such a
+project could never get a directory row, so nothing would ever match it again
+and the next machine-less session in the same folder would mint another. It
+stays unfiled ("No project") instead.
 
 Both the register hooks (servers routers) and the link-a-folder backfill
 (backend task_queries) call this one helper so the rule can never drift.
@@ -51,6 +70,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import or_, text
@@ -61,25 +82,47 @@ from .task_models import Project, ProjectDirectory
 
 logger = logging.getLogger(__name__)
 
+# ``C:`` / ``D:`` — a bare Windows drive after the trailing slash is stripped.
+_DRIVE_ROOT = re.compile(r"^[A-Za-z]:$")
+
+
+def _normalize_path(path: str, home_dir: str | None) -> str:
+    """Canonical form of a path for *comparison* (never for storage).
+
+    Folds ``\\`` to ``/`` (Windows wrappers report backslashes), expands a
+    leading ``~`` with ``home_dir`` when the caller knows it, and strips the
+    trailing slash. Storage keeps whatever the wrapper reported so the UI keeps
+    showing ``~/…``.
+    """
+    p = path.replace("\\", "/")
+    if home_dir and (p == "~" or p.startswith("~/")):
+        p = home_dir.replace("\\", "/").rstrip("/") + p[1:]
+    return p.rstrip("/")
+
 
 def _basename(path: str) -> str:
     """Last path segment (the project's default display name)."""
-    parts = path.rstrip("/").split("/")
+    parts = _normalize_path(path, None).split("/")
     return parts[-1] if parts else path
 
 
 def _path_at_or_under(session_path: str, local_path: str) -> bool:
     """True when ``session_path`` is ``local_path`` itself or a child of it.
 
-    Compared on a path boundary (``/a/b`` must not match ``/a/bc``) and tolerant
-    of a trailing slash on either side.
+    Both sides are expected in canonical form (see :func:`_normalize_path`);
+    compared on a path boundary (``/a/b`` must not match ``/a/bc``).
     """
     base = local_path.rstrip("/")
-    return (
-        session_path == base
-        or session_path == base + "/"
-        or session_path.startswith(base + "/")
-    )
+    session = session_path.rstrip("/")
+    return session == base or session.startswith(base + "/")
+
+
+@dataclass(frozen=True)
+class _Match:
+    project: Project
+    # The tier-2 row that matched (None for a tier-1 remote match). Lets the
+    # caller tell "linked by folder" from "matched by identity".
+    directory: ProjectDirectory | None
 
 
 def _match_project(
@@ -89,7 +132,8 @@ def _match_project(
     project_path: str | None,
     git_remote_url: str | None,
     repo_root: str | None,
-) -> Project | None:
+    home_dir: str | None = None,
+) -> _Match | None:
     """The shared matcher — returns the matched project (archived or not), or None.
 
     Deliberately does not exclude ``is_archived`` rows: activity in an archived
@@ -118,35 +162,49 @@ def _match_project(
                 .first()
             )
             if matched is not None:
-                return matched
+                return _Match(matched, None)
 
-    # Tier 2 — cwd OR source repo root under a linked directory on this machine.
-    # The rows are the user's own (a member links their own machine), but the
-    # project behind one may be shared — and a since-revoked grant must not
-    # keep attaching sessions to it, hence the access filter on the project.
-    candidates = [p for p in (project_path, repo_root) if p]
-    if candidates and machine_id is not None:
-        rows = (
-            db.query(ProjectDirectory)
-            .filter(
-                ProjectDirectory.user_id == user_id,
-                ProjectDirectory.machine_id == machine_id,
-                or_(
-                    ProjectDirectory.project_id.in_(own),
-                    ProjectDirectory.project_id.in_(shared),
-                ),
-            )
-            .all()
-        )
-        best: ProjectDirectory | None = None
-        for row in rows:
-            if any(_path_at_or_under(c, row.local_path) for c in candidates):
-                if best is None or len(row.local_path) > len(best.local_path):
-                    best = row
-        if best is not None:
-            return db.get(Project, best.project_id)
-
-    return None
+    # Tier 2 — cwd OR source repo root under a linked directory. On this
+    # machine when the session has one; on any of the user's machines when it
+    # doesn't (see the module docstring). The rows are the user's own (a member
+    # links their own machine), but the project behind one may be shared — and
+    # a since-revoked grant must not keep attaching sessions to it, hence the
+    # access filter on the project.
+    candidates = [_normalize_path(p, home_dir) for p in (project_path, repo_root) if p]
+    if not candidates:
+        return None
+    query = db.query(ProjectDirectory).filter(
+        ProjectDirectory.user_id == user_id,
+        or_(
+            ProjectDirectory.project_id.in_(own),
+            ProjectDirectory.project_id.in_(shared),
+        ),
+    )
+    if machine_id is not None:
+        query = query.filter(ProjectDirectory.machine_id == machine_id)
+    best: list[ProjectDirectory] = []
+    best_len = -1
+    for row in query.all():
+        local = _normalize_path(row.local_path, home_dir)
+        if not any(_path_at_or_under(c, local) for c in candidates):
+            continue
+        if len(local) > best_len:
+            best, best_len = [row], len(local)
+        elif len(local) == best_len:
+            best.append(row)
+    if not best:
+        return None
+    # Same-length matches can only tie across machines (the machine-less
+    # lookup): the oldest project wins, deterministically.
+    by_project = {row.project_id: row for row in best}
+    project = (
+        db.query(Project)
+        .filter(Project.id.in_(list(by_project)))
+        .order_by(Project.created_at.asc(), Project.id.asc())
+        .first()
+    )
+    assert project is not None  # every row's project exists (FK)
+    return _Match(project, by_project[project.id])
 
 
 def resolve_project_id_for_session(
@@ -156,6 +214,7 @@ def resolve_project_id_for_session(
     project_path: str | None,
     git_remote_url: str | None = None,
     repo_root: str | None = None,
+    home_dir: str | None = None,
 ) -> UUID | None:
     """Best-effort project for a session; ``None`` when nothing is set up for it.
 
@@ -164,10 +223,10 @@ def resolve_project_id_for_session(
     *main* checkout, even for a linked worktree) — reported by the wrapper so a
     worktree can be attributed to the same project as its main checkout.
     """
-    project = _match_project(
-        db, user_id, machine_id, project_path, git_remote_url, repo_root
+    match = _match_project(
+        db, user_id, machine_id, project_path, git_remote_url, repo_root, home_dir
     )
-    return project.id if project is not None else None
+    return match.project.id if match is not None else None
 
 
 def _should_skip_autocreate(name_source: str | None, home_dir: str | None) -> bool:
@@ -175,15 +234,16 @@ def _should_skip_autocreate(name_source: str | None, home_dir: str | None) -> bo
 
     Auto-create names a project after ``repo_root or cwd``; some paths are not
     worth a project of their own: a session whose cwd is the home directory (no
-    repo), the filesystem root, or anything with an empty basename. A real repo
-    always has a ``repo_root``, so a git session is never skipped.
+    repo) — reported as ``~`` by wrappers, or absolute — the filesystem root, a
+    bare Windows drive, or anything with an empty basename. A real repo always
+    has a ``repo_root``, so a git session is never skipped.
     """
     if not name_source:
         return True
-    base = name_source.rstrip("/")
-    if base in ("", "/"):
+    base = _normalize_path(name_source, home_dir)
+    if base in ("", "~") or _DRIVE_ROOT.match(base):
         return True
-    if home_dir and base == home_dir.rstrip("/"):
+    if home_dir and base == _normalize_path(home_dir, None):
         return True
     return not _basename(base)
 
@@ -224,6 +284,47 @@ def _ensure_directory_row(
     db.flush()
 
 
+def _backfill_remote(
+    match: _Match,
+    *,
+    user_id: UUID,
+    git_remote_url: str | None,
+    repo_root: str | None,
+    home_dir: str | None,
+) -> None:
+    """Stamp the session's remote onto a project that was linked by folder only.
+
+    A project the user created by hand (or that predates remote reporting) has
+    ``git_remote_url`` NULL, so it can only ever be found by path on this one
+    machine; a session elsewhere — another box, a worktree registered without a
+    machine — misses it and mints a twin with the remote. Once the linked folder
+    is known to *be* the repo (the session's ``repo_root`` is the linked path,
+    not a parent of it), the remote is that project's identity: record it so
+    tier 1 finds the project from then on. Own projects only — a member's
+    clone never rewrites the team project's identity.
+    """
+    project, directory = match.project, match.directory
+    if (
+        directory is None
+        or not git_remote_url
+        or project.git_remote_url is not None
+        or project.user_id != user_id
+        or not repo_root
+    ):
+        return
+    if _normalize_path(directory.local_path, home_dir) != _normalize_path(
+        repo_root, home_dir
+    ):
+        return
+    project.git_remote_url = git_remote_url
+    logger.info(
+        "stamped remote %s on folder-linked project %s (%s)",
+        git_remote_url,
+        project.id,
+        project.name,
+    )
+
+
 def _advisory_lock(db: Session, user_id: UUID, key_source: str) -> None:
     """Serialize concurrent auto-creates for the same (user, repo) checkout.
 
@@ -255,25 +356,35 @@ def resolve_or_create_project_id_for_session(
     Unlike :func:`resolve_project_id_for_session`, this materializes a real
     project the first time a session runs in an unseen dir/repo, self-heals an
     archived match back to active, and ensures a directory row for this machine.
-    Returns ``None`` only when the path isn't worth a project (see
-    :func:`_should_skip_autocreate`) — the session then falls back to NULL.
+    Returns ``None`` when the path isn't worth a project (see
+    :func:`_should_skip_autocreate`) or when the session has neither a machine
+    nor a remote (a project minted then would be unreachable — see the module
+    docstring) — the session then falls back to NULL.
 
     Does not commit — the register handler owns the surrounding transaction.
     """
     name_source = repo_root or project_path
-    project = _match_project(
-        db, user_id, machine_id, project_path, git_remote_url, repo_root
+    match = _match_project(
+        db, user_id, machine_id, project_path, git_remote_url, repo_root, home_dir
     )
-    if project is None:
+    if match is None:
         if _should_skip_autocreate(name_source, home_dir):
+            return None
+        if machine_id is None and not git_remote_url:
+            logger.info(
+                "not auto-creating a project for machine-less session in %s "
+                "(user %s): no remote to match it by later",
+                name_source,
+                user_id,
+            )
             return None
         # Re-check under the lock: a concurrent register may have created it
         # while we waited (the lock is held until this request commits).
         _advisory_lock(db, user_id, git_remote_url or name_source or "")
-        project = _match_project(
-            db, user_id, machine_id, project_path, git_remote_url, repo_root
+        match = _match_project(
+            db, user_id, machine_id, project_path, git_remote_url, repo_root, home_dir
         )
-        if project is None:
+        if match is None:
             assert name_source is not None  # guarded by _should_skip_autocreate
             project = Project(
                 user_id=user_id,
@@ -288,12 +399,21 @@ def resolve_or_create_project_id_for_session(
                 project.name,
                 user_id,
             )
+            match = _Match(project, None)
 
+    project = match.project
     # Self-heal: a session is live work — an archived match is no longer stale.
     if project.is_archived:
         project.is_archived = False
         project.archived_at = None
 
+    _backfill_remote(
+        match,
+        user_id=user_id,
+        git_remote_url=git_remote_url,
+        repo_root=repo_root,
+        home_dir=home_dir,
+    )
     _ensure_directory_row(
         db,
         user_id=user_id,
