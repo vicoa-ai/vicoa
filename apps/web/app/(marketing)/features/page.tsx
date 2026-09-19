@@ -20,18 +20,18 @@ import { pageMetadata } from '@/lib/seo';
 export const metadata: Metadata = pageMetadata('/features', {
   title: 'Features | Vicoa: Run A Team of Coding Agents',
   description:
-    'Run Claude Code, Codex, and OpenCode in parallel — each on its own git worktree — and steer them from any device. Explore Vicoa features: parallel agents, the desktop app, Tasks, Automations, file mentions, slash commands, voice dictation, and cross-device workflows.',
+    'Run Claude Code, Codex, and OpenCode in parallel, each on its own git worktree, and steer them from any device. Explore Vicoa features: parallel agents, the desktop app, Tasks, Automations, file mentions, slash commands, voice dictation, and cross-device workflows.',
   openGraph: {
     title: 'Features | Vicoa: Run A Team of Coding Agents',
     description:
-      'Run Claude Code, Codex, and OpenCode in parallel — each on its own git worktree — and steer them from any device. Parallel agents, the desktop app, Tasks, Automations, and more.',
+      'Run Claude Code, Codex, and OpenCode in parallel, each on its own git worktree, and steer them from any device. Parallel agents, the desktop app, Tasks, Automations, and more.',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Features | Vicoa: Run A Team of Coding Agents',
     description:
-      'Run Claude Code, Codex, and OpenCode in parallel — each on its own git worktree — and steer them from any device. Parallel agents, the desktop app, Tasks, Automations, and more.',
+      'Run Claude Code, Codex, and OpenCode in parallel, each on its own git worktree, and steer them from any device. Parallel agents, the desktop app, Tasks, Automations, and more.',
   },
 });
 
@@ -53,11 +53,11 @@ interface CardFeature {
 const features: Feature[] = [
   {
     title: 'Run a Team of Coding Agents in Parallel',
-    description: 'Run Claude Code, Codex, and OpenCode side by side — each on its own git worktree — and watch every agent on one board.',
+    description: 'Run Claude Code, Codex, and OpenCode side by side, each on its own git worktree, and watch every agent on one board.',
     details: [
       'Start several agents at once, each in its own git worktree so they never step on each other',
       'See every agent’s live status on a single board instead of juggling terminal tabs',
-      'Set up and run the fleet from the desktop app — install, sign in, agents auto-detected'
+      'Set up and run the fleet from the desktop app: install, sign in, agents auto-detected'
     ],
     imageUrl: '/images/updates/mac-desktop-app-1.png',
     imageAlt: 'The Vicoa desktop app running coding agent sessions in parallel on macOS'
@@ -75,11 +75,11 @@ const features: Feature[] = [
   },
   {
     title: 'Every Coding Agent, One Workspace',
-    description: 'Claude Code, Codex, OpenCode, and more — plus 300+ models from 60+ providers via OpenRouter.',
+    description: 'Claude Code, Codex, OpenCode, and more, plus 300+ models from 60+ providers via OpenRouter.',
     details: [
       'Run Claude Code, Codex, OpenCode, Pi, and Oh My Pi natively, plus Gemini, Cursor, Copilot, Kimi, and Hermes via ACP',
       'Use 300+ models from 60+ providers through OpenRouter, and bring your own key',
-      'Everything runs on your real machine and codebase — no lock-in, no usage markup'
+      'Everything runs on your real machine and codebase: no lock-in, no usage markup'
     ],
     imageUrl: '/images/updates/opencode-support-1.png',
     imageAlt: 'Vicoa running OpenCode alongside Claude Code and Codex'
@@ -122,7 +122,7 @@ const features: Feature[] = [
     details: [
       'Open your localhost in the Vicoa app while an agent codes',
       'Preview in both phone and desktop viewports',
-      'See changes land in real time without leaving your chair — or your couch'
+      'See changes land in real time without leaving your chair, or your couch'
     ],
     imageUrl: '/images/updates/live-preview-1.png',
     imageAlt: 'Vicoa Live Preview showing a local website in phone and desktop viewports'
@@ -132,7 +132,7 @@ const features: Feature[] = [
     description: 'See what every agent changed in Git diff format, then step through commit history.',
     details: [
       'Browse the Files and Changes panels with inline, per-file git diffs',
-      'Step through commit history — commit graph, file list, and diffs — in the desktop app',
+      'Step through commit history (commit graph, file list, and diffs) in the desktop app',
       'Review changes on mobile or web, then redirect without a separate editor'
     ],
     imageUrl: '/images/features/FileChanges.webp',
@@ -276,7 +276,7 @@ const cardFeatures: CardFeature[] = [
   {
     icon: <Link2 className="h-8 w-8" />,
     title: 'Share with a Link',
-    description: 'A live, read-only link to a session or a task board. No account needed to read it.',
+    description: 'A live link to a session, or to a project’s tasks and sessions. Anyone can follow along, no account needed.',
     details: [
       'Anyone with the link, or Vicoa users only',
       'Expiry and one-click revoke',
