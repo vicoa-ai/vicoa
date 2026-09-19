@@ -2261,6 +2261,7 @@ function NewSessionContent() {
                     <ForkContextChip
                       title={forkContext.sourceTitle}
                       messageCount={forkContext.messageCount}
+                      omittedCount={forkContext.omittedCount}
                       onRemove={removeForkContext}
                     />
                   )}

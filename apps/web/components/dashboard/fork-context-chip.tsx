@@ -11,17 +11,26 @@ import { Split, X } from 'lucide-react';
 export function ForkContextChip({
   title,
   messageCount,
+  omittedCount = 0,
   onRemove,
 }: {
   title: string;
   messageCount: number;
+  /** Earlier messages the history block had to drop to fit its budget. */
+  omittedCount?: number;
   onRemove: () => void;
 }) {
+  const tooltip = [
+    `Chat history from ${title || 'an earlier session'}`,
+    omittedCount > 0 ? `${omittedCount} earlier message${omittedCount === 1 ? '' : 's'} omitted` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
   return (
     <div className="relative">
       <span
         className="flex h-14 w-40 items-center gap-2 rounded-lg border border-border bg-muted-foreground/5 px-3"
-        title={`Chat history from ${title || 'an earlier session'}`}
+        title={tooltip}
       >
         <Split className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
         <span className="flex min-w-0 flex-col text-left">

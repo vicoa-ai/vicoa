@@ -175,6 +175,8 @@ export interface TranscriptRowProps {
   onAskUserQuestionSubmit?: (payload: AskUserQuestionSubmitPayload) => void;
   onAskUserQuestionCancel?: (messageId: string) => void;
   onFork?: (message: MessageResponse) => void;
+  /** Message whose fork is loading the full history — its button spins. */
+  forkingMessageId?: string | null;
   /** Turn-end copy text by message id (see `computeTranscriptTurns`). */
   turnCopyText?: ReadonlyMap<string, string>;
 }
@@ -194,6 +196,7 @@ export function TranscriptRow({
   onAskUserQuestionSubmit,
   onAskUserQuestionCancel,
   onFork,
+  forkingMessageId = null,
   turnCopyText,
 }: TranscriptRowProps) {
   const agentType = resolveAgentType(agentTypeName || undefined);
@@ -269,6 +272,7 @@ export function TranscriptRow({
         onAskUserQuestionSubmit={onAskUserQuestionSubmit}
         onAskUserQuestionCancel={onAskUserQuestionCancel}
         onFork={onFork}
+        forkBusy={forkingMessageId === item.message.id}
         turnCopyText={turnCopyText?.get(item.message.id)}
         agentTypeName={agentTypeName ?? undefined}
         projectPath={projectPath}

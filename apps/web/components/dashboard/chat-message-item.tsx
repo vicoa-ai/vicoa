@@ -69,7 +69,7 @@ export function resolveAgentType(agentTypeName?: string): UiAgentType {
   return 'claude';
 }
 
-export const MessageItem = memo(function MessageItem({ message, onOptionClick, onAskUserQuestionSubmit, onAskUserQuestionCancel, onFork, turnCopyText, agentTypeName, projectPath, compact = false }: {
+export const MessageItem = memo(function MessageItem({ message, onOptionClick, onAskUserQuestionSubmit, onAskUserQuestionCancel, onFork, forkBusy = false, turnCopyText, agentTypeName, projectPath, compact = false }: {
   message: MessageResponse;
   onOptionClick?: (option: string) => void;
   onAskUserQuestionSubmit?: (payload: AskUserQuestionSubmitPayload) => void;
@@ -77,6 +77,8 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
   // Start a new session seeded with the transcript up to this agent message.
   // Absent on user rows and on sub-agent children (they aren't fork points).
   onFork?: (message: MessageResponse) => void;
+  // True while a fork from this message is loading the session's full history.
+  forkBusy?: boolean;
   // Set only on the message that ENDS an agent turn, to the whole turn's prose
   // (see lib/agent-turns.ts). Its presence is what gives an agent message a
   // hover footer at all — mid-turn messages get none, so a run of agent
@@ -249,6 +251,7 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
               timestamp={message.created_at}
               text={turnCopyText ?? userVisibleContent}
               onFork={!isUser && onFork ? () => onFork(message) : undefined}
+              forkBusy={forkBusy}
               align={isUser ? 'right' : 'left'}
             />
           )}

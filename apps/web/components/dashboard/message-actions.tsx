@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Check, Copy, Split } from 'lucide-react';
+import { Check, Copy, Loader2, Split } from 'lucide-react';
 import { formatDateGroup, parseUTCTimestamp } from '@/lib/message-grouping';
 
 /**
@@ -36,6 +36,7 @@ export const MessageActions = memo(function MessageActions({
   timestamp,
   text,
   onFork,
+  forkBusy = false,
   align,
 }: {
   timestamp: string;
@@ -46,6 +47,8 @@ export const MessageActions = memo(function MessageActions({
   text: string;
   /** Omitted for user messages: a fork always resumes from an agent turn. */
   onFork?: () => void;
+  /** The fork is loading the full history: spinner in place of the icon. */
+  forkBusy?: boolean;
   align: 'left' | 'right';
 }) {
   const [copied, setCopied] = useState(false);
@@ -84,11 +87,13 @@ export const MessageActions = memo(function MessageActions({
     <button
       type="button"
       onClick={onFork}
-      title="Fork into a new session from here"
-      aria-label="Fork into a new session from here"
-      className={ACTION_BUTTON_CLASS}
+      disabled={forkBusy}
+      title={forkBusy ? 'Loading the full history…' : 'Fork into a new session from here'}
+      aria-label={forkBusy ? 'Loading the full history' : 'Fork into a new session from here'}
+      aria-busy={forkBusy}
+      className={`${ACTION_BUTTON_CLASS} disabled:cursor-default`}
     >
-      <Split className="h-3.5 w-3.5" />
+      {forkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Split className="h-3.5 w-3.5" />}
     </button>
   ) : null;
 
@@ -100,9 +105,11 @@ export const MessageActions = memo(function MessageActions({
 
   return (
     <div
-      className={`-mt-1 flex items-center gap-0.5 select-none pointer-events-none opacity-0 transition-opacity duration-150 group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 ${
-        align === 'right' ? 'justify-end pr-3' : 'justify-start pl-3'
-      }`}
+      className={`-mt-1 flex items-center gap-0.5 select-none transition-opacity duration-150 group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 ${
+        // Stays visible while the fork loads, so the spinner survives the
+        // pointer leaving the row.
+        forkBusy ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
+      } ${align === 'right' ? 'justify-end pr-3' : 'justify-start pl-3'}`}
     >
       {/* Mirrored around the bubble's edge: the icons sit outermost either way,
           so a user row reads "time, copy" and an agent row "copy, fork, time". */}

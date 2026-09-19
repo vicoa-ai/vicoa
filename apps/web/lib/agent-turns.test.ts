@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { computeTurnEnds, type TurnMessageEntry } from './agent-turns';
+import { computeTurnEnds, groupTurns, type TurnMessageEntry } from './agent-turns';
 
 const user = (id: string, text = 'ask'): TurnMessageEntry => ({ id, kind: 'user', text });
 const agent = (id: string, text: string): TurnMessageEntry => ({ id, kind: 'agent', text });
@@ -44,5 +44,24 @@ describe('computeTurnEnds', () => {
 
   test('no agent messages means no footers', () => {
     expect(computeTurnEnds([user('u1'), user('u2')]).size).toBe(0);
+  });
+});
+
+describe('groupTurns', () => {
+  test('each user entry opens a turn holding everything agent-side until the next', () => {
+    const turns = groupTurns([user('u1'), agent('a1', 'one'), other('t1'), user('u2'), user('u3'), agent('a2', 'two')]);
+    expect(turns.map((t) => [t.user?.id ?? null, t.entries.map((e) => e.id)])).toEqual([
+      ['u1', ['a1', 't1']],
+      ['u2', []],
+      ['u3', ['a2']],
+    ]);
+  });
+
+  test('a leading agent run gets a turn with no user', () => {
+    const turns = groupTurns([agent('a1', 'hi'), user('u1'), agent('a2', 'two')]);
+    expect(turns.map((t) => [t.user?.id ?? null, t.entries.map((e) => e.id)])).toEqual([
+      [null, ['a1']],
+      ['u1', ['a2']],
+    ]);
   });
 });

@@ -33,11 +33,13 @@ import {
   buildTranscriptItems,
   computeTranscriptTurns,
   hasTranscriptMessages,
+  orderTranscriptMessages,
   TranscriptRow,
   type TranscriptItem,
 } from '@/components/dashboard/session-transcript';
 import { getChatItemSearchText } from '@/lib/chat-search';
 import { buildForkTranscript, saveForkContext } from '@/lib/fork-session';
+import { loadFullHistory } from '@/lib/fork-history';
 import { FilesGitPanel, FilesGitPanelToggle, OpenInSubMenu, usePanelState, type PanelPendingAction } from '@/components/files-git-panel';
 import { ChatInput, PermissionModeValue, OpencodeAgentModeValue, type ChatUploadedAttachment, type ChatInputHandle } from '@/components/chat-input';
 import { collectComposerDrop } from '@/lib/chat-drop';
@@ -317,6 +319,13 @@ function AgentInstanceContent() {
   const [isNearBottom, setIsNearBottom] = useState(true);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const isLoadingOlderRef = useRef(false);
+  // The scroll-triggered page load in flight, if any. A fork waits for it
+  // before walking the history itself: two loaders racing on the same cursor
+  // would hand the store a fully-duplicate page, which it reads as "no older
+  // history" and would stop the walk short.
+  const olderLoadRef = useRef<Promise<void> | null>(null);
+  // Message whose footer fork button is busy loading the full history.
+  const [forkingMessageId, setForkingMessageId] = useState<string | null>(null);
   // Virtuoso renders incrementally and measures item heights as it goes — for a
   // long history this produces a visible "scroll down in segments" artifact on
   // first paint. Hide the list under a background overlay until either Virtuoso
@@ -762,22 +771,27 @@ function AgentInstanceContent() {
 
     isLoadingOlderRef.current = true;
     setIsLoadingOlder(true);
-    try {
-      const detail = await getInstanceDetail(instanceId, {
-        messageLimit: OLDER_MESSAGE_PAGE_SIZE,
-        beforeMessageId: oldest.id,
-      });
+    const load = (async () => {
+      try {
+        const detail = await getInstanceDetail(instanceId, {
+          messageLimit: OLDER_MESSAGE_PAGE_SIZE,
+          beforeMessageId: oldest.id,
+        });
 
-      const older: MessageResponse[] = detail.messages ?? [];
-      // The store dedupes by id; a fully-duplicate page clears hasOlder even
-      // when the size heuristic (full page ⇒ assume more remain) says otherwise.
-      store.prependOlder(instanceId, older, older.length >= OLDER_MESSAGE_PAGE_SIZE);
-    } catch (err) {
-      console.error('Failed to load older messages:', err);
-    } finally {
-      isLoadingOlderRef.current = false;
-      setIsLoadingOlder(false);
-    }
+        const older: MessageResponse[] = detail.messages ?? [];
+        // The store dedupes by id; a fully-duplicate page clears hasOlder even
+        // when the size heuristic (full page ⇒ assume more remain) says otherwise.
+        store.prependOlder(instanceId, older, older.length >= OLDER_MESSAGE_PAGE_SIZE);
+      } catch (err) {
+        console.error('Failed to load older messages:', err);
+      } finally {
+        isLoadingOlderRef.current = false;
+        setIsLoadingOlder(false);
+        olderLoadRef.current = null;
+      }
+    })();
+    olderLoadRef.current = load;
+    await load;
   }, [instanceId]);
 
   const postMessageToInstance = useCallback(async (messageContent: string, attachmentIds: string[] = []) => {
@@ -1312,12 +1326,46 @@ function AgentInstanceContent() {
   // Fork: open the new-session page carrying the transcript up to this agent
   // message as a chat-history attachment, on the same machine/folder/agent so
   // the new run picks up where the old one left off (see lib/fork-session.ts).
+  // The store holds only the pages the user scrolled into, so the whole
+  // history is pulled in first (lib/fork-history.ts); a failed page aborts the
+  // fork rather than silently starting it from the tail.
   const handleForkMessage = useCallback(
-    (message: MessageResponse) => {
+    async (message: MessageResponse) => {
       const detail = instance;
-      if (!detail) return;
-      const { text, messageCount } = buildForkTranscript({
-        messages: orderedVisibleMessages,
+      if (!detail || forkingMessageId) return;
+      setForkingMessageId(message.id);
+      try {
+        if (olderLoadRef.current) await olderLoadRef.current;
+        isLoadingOlderRef.current = true;
+        setIsLoadingOlder(true);
+        try {
+          await loadFullHistory({
+            instanceId,
+            store: getMessageStore(),
+            fetchOlder: async (beforeMessageId, limit) => {
+              const page = await getInstanceDetail(instanceId, { messageLimit: limit, beforeMessageId });
+              return page.messages ?? [];
+            },
+          });
+        } catch (err) {
+          console.error('Failed to load the full history for the fork:', err);
+          alert("Couldn't load the full history, so the fork was not started. Please try again.");
+          return;
+        } finally {
+          isLoadingOlderRef.current = false;
+          setIsLoadingOlder(false);
+        }
+      } finally {
+        setForkingMessageId(null);
+      }
+      if (currentInstanceIdRef.current !== instanceId) return;
+
+      // Read the store directly rather than the memoised transcript: this
+      // closure predates the pages just loaded, and the shared ordering is
+      // what the transcript itself renders from.
+      const messages = orderTranscriptMessages(getMessageStore().getSnapshot(instanceId)?.messages ?? []);
+      const { text, messageCount, omittedCount } = buildForkTranscript({
+        messages,
         boundaryMessageId: message.id,
         agentType: resolveAgentType(detail.agent_type_name || undefined),
         sourceTitle: detail.name,
@@ -1326,6 +1374,7 @@ function AgentInstanceContent() {
       saveForkContext({
         text,
         messageCount,
+        omittedCount,
         sourceInstanceId: instanceId,
         sourceTitle: detail.name || 'Untitled session',
       });
@@ -1342,7 +1391,7 @@ function AgentInstanceContent() {
       if (forkAgent) query.set('agent', forkAgent);
       router.push(`/dashboard/agents/new-session?${query.toString()}`);
     },
-    [instance, instanceId, orderedVisibleMessages, router],
+    [forkingMessageId, instance, instanceId, router],
   );
 
   // Focus mode: the files/git panel covers the transcript as a full-width layer
@@ -2452,6 +2501,7 @@ function AgentInstanceContent() {
                 onAskUserQuestionSubmit={handleAskUserQuestionSubmit}
                 onAskUserQuestionCancel={handleAskUserQuestionCancel}
                 onFork={handleForkMessage}
+                forkingMessageId={forkingMessageId}
                 turnCopyText={turnCopyText}
               />
             )}
