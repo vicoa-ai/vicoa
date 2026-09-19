@@ -1658,6 +1658,276 @@ class TestProjectRemoteBackfill:
         assert team_project.git_remote_url is None
 
 
+class TestProjectLinkAdoption:
+    """Linking a directory adopts the unfiled sessions that already ran there.
+
+    Prod had 2,283 sessions (10 users) sitting at ``project_id IS NULL`` next
+    to a same-named project: 2,280 predated the project (auto-create linked
+    the folder but never ran the backfill), the rest had registered with no
+    machine (the backfill was machine-scoped). The sidebar renders those as a
+    basename twin of the real project. Both a manual "save directory" and the
+    matcher's own link now run one backfill that also takes machine-less rows
+    and compares paths canonically.
+    """
+
+    def _instance(
+        self,
+        db,
+        user_id,
+        agent_type_id,
+        machine_id,
+        project,
+        *,
+        home_dir="/home/nick",
+        project_id=None,
+        metadata=None,
+    ):
+        from shared.database import AgentInstance
+
+        inst = AgentInstance(
+            id=uuid4(),
+            agent_type_id=agent_type_id,
+            user_id=user_id,
+            status=AgentStatus.COMPLETED,
+            machine_id=machine_id,
+            project=project,
+            home_dir=home_dir,
+            project_id=project_id,
+            instance_metadata=metadata or {},
+        )
+        db.add(inst)
+        db.commit()
+        return inst
+
+    def test_backfill_adopts_machineless_sessions_under_the_path(
+        self, test_db, test_user, test_agent_type
+    ):
+        from shared.database.project_matching import backfill_project_id_for_directory
+
+        machine = _make_machine(test_db, test_user.id)
+        other_machine = _make_machine(test_db, test_user.id, display_name="Server")
+        project = Project(user_id=test_user.id, name="alpha")
+        test_db.add(project)
+        test_db.flush()
+
+        on_machine = self._instance(
+            test_db, test_user.id, test_agent_type.id, machine.id, "~/alpha"
+        )
+        no_machine = self._instance(
+            test_db, test_user.id, test_agent_type.id, None, "~/alpha/sub"
+        )
+        no_machine_worktree = self._instance(
+            test_db,
+            test_user.id,
+            test_agent_type.id,
+            None,
+            "~/vicoa/workspaces/alpha-worktrees/feat/alpha",
+            metadata={"repo_root": "~/alpha"},
+        )
+        other_box = self._instance(
+            test_db, test_user.id, test_agent_type.id, other_machine.id, "~/alpha"
+        )
+        no_machine_elsewhere = self._instance(
+            test_db, test_user.id, test_agent_type.id, None, "~/alphabet"
+        )
+
+        stamped = backfill_project_id_for_directory(
+            test_db,
+            user_id=test_user.id,
+            project_id=project.id,
+            machine_id=machine.id,
+            local_path="~/alpha",
+        )
+        test_db.commit()
+        assert stamped == 3
+        for inst in (
+            on_machine,
+            no_machine,
+            no_machine_worktree,
+            other_box,
+            no_machine_elsewhere,
+        ):
+            test_db.refresh(inst)
+        assert on_machine.project_id == project.id
+        assert no_machine.project_id == project.id
+        assert no_machine_worktree.project_id == project.id  # by repo_root
+        # Another machine's session is that machine's link to make, not this one's.
+        assert other_box.project_id is None
+        # Path boundary: ``~/alphabet`` is not under ``~/alpha``.
+        assert no_machine_elsewhere.project_id is None
+
+    def test_backfill_compares_paths_canonically(
+        self, test_db, test_user, test_agent_type
+    ):
+        """``~`` on one side and the session's absolute home on the other match."""
+        from shared.database.project_matching import backfill_project_id_for_directory
+
+        machine = _make_machine(test_db, test_user.id)
+        project = Project(user_id=test_user.id, name="alpha")
+        test_db.add(project)
+        test_db.flush()
+
+        absolute = self._instance(
+            test_db, test_user.id, test_agent_type.id, None, "/home/nick/alpha"
+        )
+        tilde = self._instance(
+            test_db, test_user.id, test_agent_type.id, machine.id, "~/alpha/"
+        )
+        # Same absolute path but a different HOME: the ``~`` link does not
+        # expand to it, so it is a different checkout (the e2e-with-temp-HOME
+        # case). Stays unfiled, exactly as the live matcher would leave it.
+        foreign_home = self._instance(
+            test_db,
+            test_user.id,
+            test_agent_type.id,
+            None,
+            "/home/nick/alpha",
+            home_dir="/tmp/e2e-home",
+        )
+
+        stamped = backfill_project_id_for_directory(
+            test_db,
+            user_id=test_user.id,
+            project_id=project.id,
+            machine_id=machine.id,
+            local_path="~/alpha",
+        )
+        test_db.commit()
+        assert stamped == 2
+        for inst in (absolute, tilde, foreign_home):
+            test_db.refresh(inst)
+        assert absolute.project_id == project.id
+        assert tilde.project_id == project.id
+        assert foreign_home.project_id is None
+
+    def test_backfill_never_steals(self, test_db, test_user, test_agent_type):
+        from shared.database.project_matching import backfill_project_id_for_directory
+
+        machine = _make_machine(test_db, test_user.id)
+        project = Project(user_id=test_user.id, name="alpha")
+        other = Project(user_id=test_user.id, name="other")
+        test_db.add_all([project, other])
+        test_db.flush()
+        taken = self._instance(
+            test_db,
+            test_user.id,
+            test_agent_type.id,
+            None,
+            "~/alpha",
+            project_id=other.id,
+        )
+        assert (
+            backfill_project_id_for_directory(
+                test_db,
+                user_id=test_user.id,
+                project_id=project.id,
+                machine_id=machine.id,
+                local_path="~/alpha",
+            )
+            == 0
+        )
+        test_db.commit()
+        test_db.refresh(taken)
+        assert taken.project_id == other.id
+
+    def test_autocreate_adopts_sessions_that_predate_the_project(
+        self, test_db, test_user, test_agent_type
+    ):
+        """The habit_rewards shape: sessions ran in the folder, then the first
+        registration after the matcher shipped minted the project — the old
+        sessions must land in it, not in a basename twin."""
+        from shared.database.project_matching import (
+            resolve_or_create_project_id_for_session,
+        )
+
+        machine = _make_machine(test_db, test_user.id)
+        legacy = self._instance(
+            test_db, test_user.id, test_agent_type.id, machine.id, "~/habit_rewards"
+        )
+        # The opencode_workspace shape: registered with no daemon on the box,
+        # left unfiled by the machine-less rule, then a daemon showed up.
+        machineless = self._instance(
+            test_db, test_user.id, test_agent_type.id, None, "~/habit_rewards/lib"
+        )
+        unrelated = self._instance(
+            test_db, test_user.id, test_agent_type.id, machine.id, "~/other"
+        )
+
+        pid = resolve_or_create_project_id_for_session(
+            test_db,
+            test_user.id,
+            machine.id,
+            "~/habit_rewards",
+            git_remote_url="git@github.com:x/habit_rewards.git",
+            repo_root="~/habit_rewards",
+            home_dir="/home/nick",
+        )
+        test_db.commit()
+        assert pid is not None
+        for inst in (legacy, machineless, unrelated):
+            test_db.refresh(inst)
+        assert legacy.project_id == pid
+        assert machineless.project_id == pid
+        assert unrelated.project_id is None
+
+    def test_remote_match_on_new_machine_adopts_that_machines_sessions(
+        self, test_db, test_user, test_agent_type
+    ):
+        """Tier-1 match creates the first link on a second box: the sessions
+        that ran there before are adopted, the first box's are untouched."""
+        from shared.database.project_matching import (
+            resolve_or_create_project_id_for_session,
+        )
+
+        laptop = _make_machine(test_db, test_user.id)
+        server = _make_machine(test_db, test_user.id, display_name="Server")
+        project = Project(
+            user_id=test_user.id,
+            name="alpha",
+            git_remote_url="git@github.com:x/alpha.git",
+        )
+        test_db.add(project)
+        test_db.flush()
+        test_db.add(
+            ProjectDirectory(
+                user_id=test_user.id,
+                project_id=project.id,
+                machine_id=laptop.id,
+                local_path="~/alpha",
+            )
+        )
+        test_db.commit()
+        on_server = self._instance(
+            test_db, test_user.id, test_agent_type.id, server.id, "~/srv/alpha"
+        )
+        on_laptop_unfiled = self._instance(
+            test_db, test_user.id, test_agent_type.id, laptop.id, "~/alpha"
+        )
+
+        pid = resolve_or_create_project_id_for_session(
+            test_db,
+            test_user.id,
+            server.id,
+            "~/srv/alpha",
+            git_remote_url="git@github.com:x/alpha.git",
+            repo_root="~/srv/alpha",
+            home_dir="/home/nick",
+        )
+        test_db.commit()
+        assert pid == project.id
+        test_db.refresh(on_server)
+        test_db.refresh(on_laptop_unfiled)
+        assert on_server.project_id == project.id
+        # The laptop link already existed, so this call did not touch its rows.
+        assert on_laptop_unfiled.project_id is None
+        assert (
+            test_db.query(ProjectDirectory)
+            .filter(ProjectDirectory.project_id == project.id)
+            .count()
+            == 2
+        )
+
+
 class TestSharedProjectMatching:
     """A member's session lands on the project shared with them, not on a
     private twin — and never on one they may only view."""

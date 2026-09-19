@@ -13,9 +13,11 @@ points share one matcher:
     plan §4a). It also **self-heals**: activity in an archived project
     un-archives it (running an agent there contradicts "no active work"), it
     ensures a ``project_directories`` row for this machine so subsequent
-    path-tier matches hit, and it stamps the git remote onto a project that was
-    linked by folder alone so later sessions (other machines, worktrees) can
-    match it by identity.
+    path-tier matches hit (and, like a manual "save directory", adopts the
+    unfiled sessions that already ran under that path — see
+    ``backfill_project_id_for_directory``), and it stamps the git remote onto
+    a project that was linked by folder alone so later sessions (other
+    machines, worktrees) can match it by identity.
 
 The matcher intentionally does **not** filter out archived projects: a session
 in a repo the user archived must re-match (and un-archive) that project, never
@@ -255,14 +257,15 @@ def _ensure_directory_row(
     project_id: UUID,
     machine_id: UUID | None,
     local_path: str | None,
-) -> None:
+) -> ProjectDirectory | None:
     """Insert a ``project_directories`` row for this machine if absent.
 
     Insert-only: never overwrites an existing (project, machine) link, so a
     session in ``/repo/subdir`` can't narrow a link the user made to ``/repo``.
+    Returns the row when this call created it, else ``None``.
     """
     if machine_id is None or not local_path:
-        return
+        return None
     exists = (
         db.query(ProjectDirectory.id)
         .filter(
@@ -272,16 +275,16 @@ def _ensure_directory_row(
         .first()
     )
     if exists is not None:
-        return
-    db.add(
-        ProjectDirectory(
-            user_id=user_id,
-            project_id=project_id,
-            machine_id=machine_id,
-            local_path=local_path.rstrip("/") or local_path,
-        )
+        return None
+    row = ProjectDirectory(
+        user_id=user_id,
+        project_id=project_id,
+        machine_id=machine_id,
+        local_path=local_path.rstrip("/") or local_path,
     )
+    db.add(row)
     db.flush()
+    return row
 
 
 def _backfill_remote(
@@ -414,13 +417,26 @@ def resolve_or_create_project_id_for_session(
         repo_root=repo_root,
         home_dir=home_dir,
     )
-    _ensure_directory_row(
+    linked = _ensure_directory_row(
         db,
         user_id=user_id,
         project_id=project.id,
         machine_id=machine_id,
         local_path=name_source,
     )
+    if linked is not None:
+        # A new link is a link — sessions that already ran under this path
+        # (before the project existed, or without a machine) must group the
+        # same way they would after a manual "save directory", or the sidebar
+        # shows a basename twin of the project next to it forever.
+        assert machine_id is not None  # _ensure_directory_row needs one
+        backfill_project_id_for_directory(
+            db,
+            user_id=user_id,
+            project_id=project.id,
+            machine_id=machine_id,
+            local_path=linked.local_path,
+        )
     return project.id
 
 
@@ -432,34 +448,56 @@ def backfill_project_id_for_directory(
     machine_id: UUID,
     local_path: str,
 ) -> int:
-    """Stamp ``project_id`` on this machine's unlinked sessions under ``local_path``.
+    """Stamp ``project_id`` on unlinked sessions under ``local_path``.
 
-    Called when a project directory is (re)linked so sessions that ran there
-    *before* the link get attached too (link-after-run must still group). Matches
-    either the session's cwd (``project``) OR its reported source repo root
+    Called when a project directory is linked — by the user (save directory) or
+    by the matcher (auto-create, first session of a remote-matched project on a
+    new machine) — so sessions that ran there *before* the link get attached too
+    (link-after-run must still group). Matches either the session's cwd
+    (``project``) OR its reported source repo root
     (``instance_metadata->>'repo_root'``), so a linked worktree — whose cwd sits
-    outside the repo — is picked up by its repo root. Only touches rows with
-    ``project_id IS NULL`` — never steals a session already matched to another
-    project. Returns the number of rows updated.
+    outside the repo — is picked up by its repo root.
+
+    Adopts sessions on **this machine** and sessions with **no machine** (they
+    registered before a daemon existed on their box; the matcher likewise
+    resolves them by path against any machine's links — see the module
+    docstring). Paths are compared canonically (``~`` expanded with the
+    session's own ``home_dir``, see :func:`_normalize_path`) so a wrapper that
+    reported an absolute path still matches a ``~``-relative link.
+
+    Only touches rows with ``project_id IS NULL`` — never steals a session
+    already matched to another project. Returns the number of rows updated.
     """
-    base = local_path.rstrip("/")
     repo_root_col = AgentInstance.instance_metadata["repo_root"].astext
+    # Narrow projection: a user's unfiled history can run to thousands of rows
+    # and ``git_diff`` is unbounded — never hydrate whole instances here.
     rows = (
-        db.query(AgentInstance)
+        db.query(
+            AgentInstance.id,
+            AgentInstance.project,
+            AgentInstance.home_dir,
+            repo_root_col,
+        )
         .filter(
             AgentInstance.user_id == user_id,
-            AgentInstance.machine_id == machine_id,
             AgentInstance.project_id.is_(None),
             or_(
-                AgentInstance.project == base,
-                AgentInstance.project == base + "/",
-                AgentInstance.project.startswith(base + "/", autoescape=True),
-                repo_root_col == base,
-                repo_root_col.startswith(base + "/", autoescape=True),
+                AgentInstance.machine_id == machine_id,
+                AgentInstance.machine_id.is_(None),
             ),
+            or_(AgentInstance.project.isnot(None), repo_root_col.isnot(None)),
         )
         .all()
     )
-    for inst in rows:
-        inst.project_id = project_id
-    return len(rows)
+    adopt: list[UUID] = []
+    for instance_id, cwd, home_dir, repo_root in rows:
+        local = _normalize_path(local_path, home_dir)
+        candidates = [_normalize_path(p, home_dir) for p in (cwd, repo_root) if p]
+        if any(_path_at_or_under(c, local) for c in candidates):
+            adopt.append(instance_id)
+    if not adopt:
+        return 0
+    db.query(AgentInstance).filter(AgentInstance.id.in_(adopt)).update(
+        {AgentInstance.project_id: project_id}, synchronize_session="fetch"
+    )
+    return len(adopt)
