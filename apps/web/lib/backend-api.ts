@@ -747,10 +747,12 @@ export interface WorkspaceSearchResponse {
 
 // --- Share links (collaboration §3.4, P4) -----------------------------------
 
-export type ShareKind = 'session' | 'project_sessions' | 'project_board';
+export type ShareKind = 'session' | 'project';
+/** Which halves of a project a link carries — the words a grant already uses. */
+export type ShareScope = 'tasks' | 'sessions';
 export type ShareAudience = 'public' | 'authenticated';
 
-/** `filters` for a `project_board` link. Every list is optional and ANDed. */
+/** The `tasks` half of a project link's filters. Every list is optional and ANDed. */
 export interface ShareBoardFilters {
   label_ids?: string[];
   statuses?: TaskStatus[];
@@ -758,8 +760,8 @@ export interface ShareBoardFilters {
 }
 
 /**
- * `filters` for a `project_sessions` link. `statuses`, when given, replaces the
- * default (everything but archived); DELETED is never visible.
+ * The `sessions` half. `statuses`, when given, replaces the default
+ * (everything but archived); DELETED is never visible.
  */
 export interface ShareSessionsFilters {
   date_from?: string;
@@ -769,13 +771,21 @@ export interface ShareSessionsFilters {
   statuses?: (keyof AgentStatus)[];
 }
 
+/** A project link's filters, one entry per scope it carries. */
+export interface ShareProjectFilters {
+  sessions?: ShareSessionsFilters;
+  tasks?: ShareBoardFilters;
+}
+
 export interface CreateShareLinkRequest {
   kind: ShareKind;
   agent_instance_id?: string;
   project_id?: string;
+  /** A project link carries at least one; a session link carries none. */
+  scopes?: ShareScope[];
   audience?: ShareAudience;
-  filters?: ShareBoardFilters | ShareSessionsFilters | null;
-  /** The one write a link can carry; needs `audience: 'authenticated'` and a board. */
+  filters?: ShareProjectFilters | null;
+  /** The one write a link can carry; needs a link that carries `tasks`. */
   allow_comments?: boolean;
   /** Show the owner's name/avatar on the page. Off by default. */
   show_owner?: boolean;
@@ -791,8 +801,9 @@ export interface ShareLinkResponse {
   kind: ShareKind;
   agent_instance_id: string | null;
   project_id: string | null;
+  scopes: ShareScope[];
   audience: ShareAudience;
-  filters: ShareBoardFilters | ShareSessionsFilters | null;
+  filters: ShareProjectFilters | null;
   allow_comments: boolean;
   show_owner: boolean;
   show_branch: boolean;
@@ -844,12 +855,14 @@ export interface PublicProjectSummary {
 export interface PublicShareResponse {
   id: string;
   kind: ShareKind;
+  /** What this link carries; empty for a session link. The viewer draws its sidebar from it. */
+  scopes: ShareScope[];
   audience: ShareAudience;
   /** Whether THIS visitor may comment (link allows it and they are signed in). */
   allow_comments: boolean;
   /** The link allows comments at all — the sign-in prompt for an anonymous visitor. */
   comments_available: boolean;
-  filters: ShareBoardFilters | ShareSessionsFilters | null;
+  filters: ShareProjectFilters | null;
   created_at: string;
   expires_at: string | null;
   /** Only when the link opted in (`show_owner`). */

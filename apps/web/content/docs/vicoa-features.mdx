@@ -160,7 +160,7 @@ Filter your sessions by:
 
 ## Start Agents from Anywhere
 
-Launch Claude Code, Codex, or OpenCode sessions directly from your mobile or web interface—no need to wait until you're back at your desktop.
+Launch Claude Code, Codex, or OpenCode sessions directly from your mobile or web interface. No need to wait until you're back at your desktop.
 
 ### How It Works
 
@@ -256,10 +256,10 @@ Find the right session quickly with advanced filtering:
 - Filter by status (active, completed, interrupted)
 - Filter by date range
 
-## Share Sessions and Boards with a Link
+## Share Sessions and Projects with a Link
 
-Share a session's transcript, a project's sessions, or a project's task board
-with anyone — no Vicoa account needed to read it.
+Share a session's transcript, or a whole project (its tasks, its sessions,
+or both) with anyone. No Vicoa account needed to read it.
 
 **Where to find it:**
 - The **Share** button in a session's header, next to the files panel toggle
@@ -267,34 +267,42 @@ with anyone — no Vicoa account needed to read it.
 - A project's **⋯** menu in the sidebar → **Share project…**
 - The Tasks page, with a project selected → **Share**
 
-The dialog opens on the link itself: the first time, pick who can open it and
-when it expires and press **Create link** — it is copied for you. Every time
-after that the existing link is right there with a **Copy link** button; use
-**New link** for one with different settings. Links look like
-`vicoa.ai/share/…`.
+A project is one link with a content selection: **What this link shares** has
+a switch for **Tasks** and one for **Sessions**, and where you opened the
+dialog only decides which one starts on. The dialog opens on the link itself:
+the first time, pick what it carries, who can open it and when it expires,
+then press **Create link**; it is copied for you. Every time after that the
+existing link is right there with a **Copy link** button; use **New link**
+for one with different settings. Links look like `vicoa.ai/share/…`.
 
 **What a link can do:**
-- **Read-only, always.** A link never lets anyone prompt a session or edit a
-  task. The one opt-in is *Allow comments* on a board link, which lets
-  signed-in Vicoa users comment on tasks under their own name.
+- **Follow along live.** Viewers see the transcript as it grows, or the board
+  as tasks move. They watch; they don't prompt the session or edit tasks. The
+  one opt-in is *Allow comments* on a link that carries tasks, which lets
+  signed-in Vicoa users comment on tasks under their own name, whoever the
+  link is for; a visitor who is not signed in is asked to sign in first.
 - **Audience:** *Anyone with the link* (no account) or *Vicoa users only*.
   Someone who opens a *Vicoa users only* link while signed out sees "This
   link isn't available" with a sign-in button; the link works once they sign
   in.
 - **Expiry:** never, or 1 / 7 / 30 / 90 days. Revoke a link at any time from
-  the same dialog — it stops working immediately, for everyone.
-- **Filters:** narrow a board link to certain statuses or labels, or a sessions
-  link to a date range. Filters apply live, so new matches appear too.
+  the same dialog; it stops working immediately, for everyone.
+- **Filters:** each half narrows on its own: *Filter tasks* by status or
+  label, *Filter sessions* by date range. Filters apply live, so new matches
+  appear too.
 
 **What the page says about you.** By default a shared page shows the work
 and nothing about who shared it: no name, no avatar, no branch names. Two
-switches under *Viewers can see* turn those on per link — **My name** puts
-your name and avatar on the page, **Branch names** shows each session's
-worktree branch.
+switches under *Viewers can see* turn those on per link: **My name and
+avatar** puts them on the page, **Branch names** shows each session's
+worktree branch. With the first one off, the page calls you "Owner" wherever
+you appear (as a task's assignee, in its activity, on your comments), with
+a plain placeholder for the avatar.
 
-**What viewers see.** The page looks like Vicoa: for a project link, the
-shared sessions sit in the sidebar and open on the right; for a board link,
-the board itself. A session shows a **Live** dot while its agent is working,
+**What viewers see.** The page looks like Vicoa: a project link's tasks are
+the sidebar's **Tasks** row, its sessions are the list underneath, and
+picking either opens it on the right. A session shows a **Live** dot while
+its agent is working,
 and every viewer sees new messages within seconds. Viewers who are signed in
 to Vicoa get an **Open in Vicoa** button; everyone else gets **Log in** and
 **Sign up for free**.
@@ -304,7 +312,7 @@ happens next until you revoke it.
 
 <Callout type="warn">
 Anyone with this link can read the full transcript, including any file
-contents or credentials the agent printed. Vicoa does not redact transcripts —
+contents or credentials the agent printed. Vicoa does not redact transcripts, so
 check what the agent saw before sharing.
 </Callout>
 

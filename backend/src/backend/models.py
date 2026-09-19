@@ -1167,7 +1167,10 @@ class WorkspaceSearchResponse(BaseModel):
 # Share links (collaboration §3.4, P4)
 # ============================================================================
 
-ShareKindLiteral = Literal["session", "project_sessions", "project_board"]
+ShareKindLiteral = Literal["session", "project"]
+# What a project link carries. The same two words a project *grant* uses
+# (`GrantScopeLiteral`), because they name the same halves of a project.
+ShareScopeLiteral = Literal["tasks", "sessions"]
 ShareAudienceLiteral = Literal["public", "authenticated"]
 
 
@@ -1182,8 +1185,8 @@ def _z(dt: datetime | None) -> str | None:
 
 
 class ShareBoardFilters(BaseModel):
-    """`filters` for kind='project_board'. Every list is optional and ANDed;
-    an empty/missing list means "no narrowing on that axis"."""
+    """The `tasks` half of a project link's filters. Every list is optional and
+    ANDed; an empty/missing list means "no narrowing on that axis"."""
 
     label_ids: list[UUID] | None = None
     statuses: list[TaskStatusLiteral] | None = None
@@ -1193,8 +1196,8 @@ class ShareBoardFilters(BaseModel):
 
 
 class ShareSessionsFilters(BaseModel):
-    """`filters` for kind='project_sessions'. `statuses`, when given, replaces
-    the default (everything but archived); DELETED is never visible."""
+    """The `sessions` half of a project link's filters. `statuses`, when given,
+    replaces the default (everything but archived); DELETED is never visible."""
 
     date_from: datetime | None = None
     date_to: datetime | None = None
@@ -1212,14 +1215,32 @@ class ShareSessionsFilters(BaseModel):
         return v
 
 
+class ShareProjectFilters(BaseModel):
+    """A project link's filters, one entry per scope it carries.
+
+    Keyed by scope rather than flat, because one link can carry both halves of
+    a project and "statuses" means different things to each of them.
+    """
+
+    sessions: ShareSessionsFilters | None = None
+    tasks: ShareBoardFilters | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class CreateShareLinkRequest(BaseModel):
     kind: ShareKindLiteral
     agent_instance_id: UUID | None = None
     project_id: UUID | None = None
+    # What a project link carries; at least one, in any combination. A session
+    # link carries none (the session is the whole subject).
+    scopes: list[ShareScopeLiteral] = Field(default_factory=list)
     audience: ShareAudienceLiteral = "public"
     filters: dict | None = None
-    # The one write a link can carry; the model, the DB and the resolver all
-    # require `audience='authenticated'` for it.
+    # The one write a link can carry. Independent of `audience`: a public
+    # board can take comments too — the resolver grants them to a signed-in
+    # visitor only, so an anonymous reader of a public link is asked to sign
+    # in first, and a comment is always attributed to a real account.
     allow_comments: bool = False
     # What the viewer page may show; both default off (see the ORM model).
     show_owner: bool = False
@@ -1233,23 +1254,29 @@ class CreateShareLinkRequest(BaseModel):
                 raise ValueError("kind='session' takes agent_instance_id only")
             if self.filters:
                 raise ValueError("a session link has no filters")
+            if self.scopes:
+                raise ValueError("a session link has no scopes")
         else:
             if self.project_id is None or self.agent_instance_id is not None:
-                raise ValueError(f"kind='{self.kind}' takes project_id only")
+                raise ValueError("kind='project' takes project_id only")
+            # De-duplicate but keep the caller's order out of the stored value:
+            # scopes are a set, and a stable order makes rows comparable.
+            self.scopes = [s for s in ("tasks", "sessions") if s in self.scopes]  # type: ignore[misc]
+            if not self.scopes:
+                raise ValueError("a project link must carry at least one scope")
             if self.filters is not None:
-                # Validate against the kind's schema; store the normalised form.
-                schema = (
-                    ShareBoardFilters
-                    if self.kind == "project_board"
-                    else ShareSessionsFilters
-                )
-                self.filters = schema.model_validate(self.filters).model_dump(
-                    mode="json", exclude_none=True
-                )
-        if self.allow_comments and self.audience != "authenticated":
-            raise ValueError("allow_comments requires audience='authenticated'")
-        if self.allow_comments and self.kind != "project_board":
-            raise ValueError("Comments are only possible on a board link")
+                # Validate against the per-scope schema; store the normalised
+                # form, and drop the half of it the link does not carry.
+                parsed = ShareProjectFilters.model_validate(self.filters)
+                self.filters = {
+                    scope: getattr(parsed, scope).model_dump(
+                        mode="json", exclude_none=True
+                    )
+                    for scope in self.scopes
+                    if getattr(parsed, scope) is not None
+                } or None
+        if self.allow_comments and "tasks" not in self.scopes:
+            raise ValueError("Comments need a link that carries tasks")
         return self
 
 
@@ -1259,6 +1286,7 @@ class ShareLinkResponse(BaseModel):
     kind: ShareKindLiteral
     agent_instance_id: UUID | None = None
     project_id: UUID | None = None
+    scopes: list[ShareScopeLiteral] = Field(default_factory=list)
     audience: ShareAudienceLiteral
     filters: dict | None = None
     allow_comments: bool
@@ -1334,6 +1362,9 @@ class PublicShareResponse(BaseModel):
 
     id: UUID
     kind: ShareKindLiteral
+    # Which halves of the project this link carries; empty for a session link.
+    # The viewer page draws its sidebar from this.
+    scopes: list[ShareScopeLiteral] = Field(default_factory=list)
     audience: ShareAudienceLiteral
     # Whether THIS visitor may comment: the link allows it and they are
     # signed in. Anonymous visitors of a comments-enabled link get False

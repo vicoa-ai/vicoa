@@ -33,7 +33,6 @@ import { principalFromResponse } from '@/lib/principals';
 import type {
   PublicBoardResponse,
   PublicShareResponse,
-  ShareBoardFilters,
   TaskResponse,
   TaskStatus,
   TaskTimelineResponse,
@@ -257,7 +256,7 @@ export function SharedBoardView({
   }, [board, openTask]);
 
   const columns = useMemo(() => {
-    const filters = (share.filters ?? null) as ShareBoardFilters | null;
+    const filters = share.filters?.tasks ?? null;
     const statuses: TaskStatus[] = filters?.statuses?.length
       ? STATUS_ORDER.filter((s) => filters.statuses?.includes(s))
       : STATUS_ORDER;
@@ -267,6 +266,21 @@ export function SharedBoardView({
   }, [board, share.filters]);
 
   const project = board?.project ?? share.project;
+
+  // What the link narrowed the board to, in words: "In progress, Done · bug".
+  const filterNote = useMemo(() => {
+    const filters = share.filters?.tasks ?? null;
+    const parts: string[] = [];
+    if (filters?.statuses?.length) {
+      parts.push(STATUS_ORDER.filter((s) => filters.statuses?.includes(s)).map((s) => STATUS_CONFIG[s].label).join(', '));
+    }
+    if (filters?.label_ids?.length) {
+      const byId = new Map((board?.labels ?? []).map((l) => [l.id, l.name]));
+      const names = filters.label_ids.map((id) => byId.get(id)).filter((n): n is string => !!n);
+      parts.push(names.length ? names.join(', ') : `${filters.label_ids.length} label${filters.label_ids.length === 1 ? '' : 's'}`);
+    }
+    return parts.join(' · ');
+  }, [share.filters, board]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -278,8 +292,9 @@ export function SharedBoardView({
               <h1 className="min-w-0 truncate font-mono text-sm font-normal">{project.name}</h1>
             </>
           )}
-          <span className="shrink-0 text-[11px] text-muted-foreground">
+          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
             {board ? `${board.tasks.length} task${board.tasks.length === 1 ? '' : 's'}` : ''}
+            {board && filterNote ? ` · ${filterNote}` : ''}
           </span>
         </div>
       </ShareHeader>

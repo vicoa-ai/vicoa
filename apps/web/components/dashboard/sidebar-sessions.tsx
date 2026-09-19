@@ -1298,7 +1298,12 @@ export function SidebarSessions({
                             <DropdownMenuItem
                               className="cursor-pointer gap-2 text-xs"
                               onSelect={() =>
-                                setShareTarget({ kind: 'project', projectId: dbProject.id, name: dbProject.name })
+                                setShareTarget({
+                                  kind: 'project',
+                                  projectId: dbProject.id,
+                                  name: dbProject.name,
+                                  initialScope: 'sessions',
+                                })
                               }
                             >
                               <Share className="h-3.5 w-3.5" />

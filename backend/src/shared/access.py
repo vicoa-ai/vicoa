@@ -466,16 +466,22 @@ class ShareGrant:
     """What a live share-link token confers (§3.4).
 
     Always a read. `allow_comments` is the single write a URL can carry, and
-    only for a signed-in visitor on an `authenticated` link — the resolver
+    only for a signed-in visitor (whatever the link's audience) — the resolver
     hands it back as a fact; the comment endpoint is where it is enforced.
     The visible-sessions predicate lives in `share_queries` because it needs
-    the kind-specific filters; this object just says what the link points at.
+    the per-scope filters; this object just says what the link points at.
+
+    `scopes` is which halves of a project the link carries ('tasks',
+    'sessions'); empty for a session link. Every project-shaped endpoint asks
+    `covers()` first, so a link that carries only tasks 404s on sessions the
+    same way an unknown token does.
     """
 
     link: ShareLink
     kind: str
     audience: str
     allow_comments: bool
+    scopes: frozenset[str]
     filters: dict
     instance_id: UUID | None
     project_id: UUID | None
@@ -483,6 +489,14 @@ class ShareGrant:
     @property
     def id(self) -> UUID:
         return self.link.id
+
+    def covers(self, scope: str) -> bool:
+        return scope in self.scopes
+
+    def scope_filters(self, scope: str) -> dict:
+        """The narrowing for one scope; `{}` when the link sets none."""
+        value = self.filters.get(scope)
+        return dict(value) if isinstance(value, dict) else {}
 
 
 def resolve_share(
@@ -517,6 +531,7 @@ def resolve_share(
         kind=link.kind,
         audience=link.audience,
         allow_comments=bool(link.allow_comments and user_id is not None),
+        scopes=frozenset(link.scopes or ()),
         filters=dict(link.filters) if isinstance(link.filters, dict) else {},
         instance_id=link.agent_instance_id,
         project_id=link.project_id,

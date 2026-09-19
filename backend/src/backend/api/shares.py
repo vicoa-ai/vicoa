@@ -8,7 +8,8 @@ Two routers on purpose:
 * ``public_router`` — ``/public/shares/{token}/…``: **no auth dependency**. The
   token is the capability. ``get_optional_current_user`` is consulted only so
   an ``authenticated``-audience link can tell a signed-in visitor from an
-  anonymous one, and so a comment is attributed to a real account.
+  anonymous one, so a comment is attributed to a real account, and so the
+  owner can be told apart from a visitor when the link hides them.
 
 Public-surface rules (§10.5), all enforced here rather than left to callers:
 uniform ``404 {"detail": "Share not found"}`` for unknown / revoked / expired
@@ -80,6 +81,7 @@ def create_share_link_endpoint(
             kind=request.kind,
             agent_instance_id=request.agent_instance_id,
             project_id=request.project_id,
+            scopes=request.scopes,
             audience=request.audience,
             filters=request.filters,
             allow_comments=request.allow_comments,
@@ -213,8 +215,9 @@ def list_public_sessions(
     grant: access.ShareGrant = Depends(resolve_grant),
     db: Session = Depends(get_db),
 ) -> PublicSessionsPage:
-    """kind='project_sessions': the covered sessions, newest first. A session
-    link answers its one session; a board link answers an empty page."""
+    """The sessions this link covers, newest first. A session link answers its
+    one session; a project link that does not carry `sessions` answers an
+    empty page."""
     return share_queries.public_sessions(db, grant, limit=limit, offset=offset)
 
 
@@ -293,7 +296,8 @@ def get_public_board(
     grant: access.ShareGrant = Depends(resolve_grant),
     db: Session = Depends(get_db),
 ) -> PublicBoardResponse:
-    """kind='project_board': the project, its visible tasks, its labels."""
+    """A project link carrying `tasks`: the project, its visible tasks, its
+    labels. Any other link 404s, like an unknown token."""
     try:
         board = share_queries.public_board(db, grant)
     except ShareTargetNotFoundError:
@@ -322,7 +326,9 @@ def get_public_task_timeline(
     signed-in visitor; an anonymous one simply never has any."""
     task = _covered_task(db, grant, task_id)
     viewer_id = viewer.id if viewer is not None else UUID(int=0)
-    return task_timeline_queries.build_timeline(db, task, viewer_id)
+    return share_queries.public_timeline(
+        task_timeline_queries.build_timeline(db, task, viewer_id), grant
+    )
 
 
 @public_router.post(
@@ -341,11 +347,10 @@ def create_public_task_comment(
     link with `allow_comments`, posting a comment attributed to their own
     account. No grant row is created; revoking the link ends it instantly.
 
-    The audience check has already run in `resolve_grant` (an anonymous caller
-    on an authenticated link got the 404), so a 401 here means "this link
-    could take your comment if you signed in" — which is what the composer's
-    sign-in prompt needs to know — and a 403 means the link simply does not
-    allow comments.
+    Comments do not depend on the audience: a public link can allow them, and
+    then an anonymous reader gets a 401 here — "this link could take your
+    comment if you signed in", which is what the composer's sign-in prompt
+    needs to know — while a 403 means the link simply does not allow comments.
     """
     if viewer is None:
         raise HTTPException(
@@ -372,4 +377,6 @@ def create_public_task_comment(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
-    return task_timeline_queries.build_timeline(db, task, viewer.id)
+    return share_queries.public_timeline(
+        task_timeline_queries.build_timeline(db, task, viewer.id), grant
+    )

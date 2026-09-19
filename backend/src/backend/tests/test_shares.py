@@ -29,6 +29,7 @@ from backend.db import share_queries
 from backend.main import app
 from shared import ratelimit, storage
 from shared.auth.tokens import TokenClaims
+from shared.database.actor import Actor, set_session_actor
 from shared.database import (
     AgentInstance,
     AgentType,
@@ -243,27 +244,46 @@ class TestOwnerApi:
         _as(client, world.owner)
         bad = [
             {"kind": "session", "project_id": str(world.project.id)},
-            {"kind": "project_board", "agent_instance_id": str(world.instance.id)},
             {
-                "kind": "project_board",
-                "project_id": str(world.project.id),
-                "allow_comments": True,  # public audience
+                "kind": "project",
+                "scopes": ["tasks"],
+                "agent_instance_id": str(world.instance.id),
             },
             {
-                "kind": "project_sessions",
+                "kind": "project",
+                "scopes": ["sessions"],
                 "project_id": str(world.project.id),
-                "allow_comments": True,
-                "audience": "authenticated",  # comments only on a board
+                "allow_comments": True,  # comments need the tasks scope
             },
             {
-                "kind": "project_board",
+                # A project link must carry something.
+                "kind": "project",
+                "scopes": [],
                 "project_id": str(world.project.id),
-                "filters": {"bogus": 1},
             },
             {
-                "kind": "project_sessions",
+                "kind": "session",
+                "agent_instance_id": str(world.instance.id),
+                "scopes": ["tasks"],  # a session link has no scopes
+            },
+            {
+                "kind": "project",
+                "scopes": ["tasks"],
                 "project_id": str(world.project.id),
-                "filters": {"statuses": ["DELETED"]},
+                "filters": {"tasks": {"bogus": 1}},
+            },
+            {
+                "kind": "project",
+                "scopes": ["sessions"],
+                "project_id": str(world.project.id),
+                "filters": {"sessions": {"statuses": ["DELETED"]}},
+            },
+            {
+                # Filters are keyed by scope now; a flat dict is not a shape.
+                "kind": "project",
+                "scopes": ["tasks"],
+                "project_id": str(world.project.id),
+                "filters": {"statuses": ["todo"]},
             },
         ]
         for body in bad:
@@ -275,7 +295,11 @@ class TestOwnerApi:
         assert (
             client.post(
                 "/api/v1/shares",
-                json={"kind": "project_board", "project_id": str(inbox.id)},
+                json={
+                    "kind": "project",
+                    "scopes": ["tasks"],
+                    "project_id": str(inbox.id),
+                },
             ).status_code
             == 404
         )
@@ -313,8 +337,16 @@ class TestOwnerApi:
         _as(client, subject)
         for body in (
             {"kind": "session", "agent_instance_id": str(world.instance.id)},
-            {"kind": "project_board", "project_id": str(world.project.id)},
-            {"kind": "project_sessions", "project_id": str(world.project.id)},
+            {
+                "kind": "project",
+                "scopes": ["tasks"],
+                "project_id": str(world.project.id),
+            },
+            {
+                "kind": "project",
+                "scopes": ["sessions"],
+                "project_id": str(world.project.id),
+            },
         ):
             assert client.post("/api/v1/shares", json=body).status_code == expected, (
                 body
@@ -337,14 +369,22 @@ class TestOwnerApi:
         assert (
             client.post(
                 "/api/v1/shares",
-                json={"kind": "project_board", "project_id": str(world.project.id)},
+                json={
+                    "kind": "project",
+                    "scopes": ["tasks"],
+                    "project_id": str(world.project.id),
+                },
             ).status_code
             == 201
         )
         assert (
             client.post(
                 "/api/v1/shares",
-                json={"kind": "project_sessions", "project_id": str(world.project.id)},
+                json={
+                    "kind": "project",
+                    "scopes": ["sessions"],
+                    "project_id": str(world.project.id),
+                },
             ).status_code
             == 404
         )
@@ -352,7 +392,12 @@ class TestOwnerApi:
     def test_revoke_is_idempotent_and_drops_from_list(self, client, world):
         _as(client, world.owner)
         link = _mint(
-            client, {"kind": "project_board", "project_id": str(world.project.id)}
+            client,
+            {
+                "kind": "project",
+                "scopes": ["tasks"],
+                "project_id": str(world.project.id),
+            },
         )
         assert client.delete(f"/api/v1/shares/{link['id']}").status_code == 204
         assert client.delete(f"/api/v1/shares/{link['id']}").status_code == 204
@@ -538,7 +583,12 @@ class TestPublicSession:
         assert polled["worktree_name"] == "wt-1"
         _as(client, world.owner)
         plain = _mint(
-            client, {"kind": "project_sessions", "project_id": str(world.project.id)}
+            client,
+            {
+                "kind": "project",
+                "scopes": ["sessions"],
+                "project_id": str(world.project.id),
+            },
         )
         _as(client, None)
         rows = client.get(f"/api/v1/public/shares/{plain['token']}/sessions").json()
@@ -619,9 +669,13 @@ class TestPublicSession:
 class TestPublicProjectSessions:
     def _link(self, client, world, filters=None) -> str:
         _as(client, world.owner)
-        body = {"kind": "project_sessions", "project_id": str(world.project.id)}
+        body = {
+            "kind": "project",
+            "scopes": ["sessions"],
+            "project_id": str(world.project.id),
+        }
         if filters is not None:
-            body["filters"] = filters
+            body["filters"] = {"sessions": filters}
         link = _mint(client, body)
         _as(client, None)
         return link["token"]
@@ -694,9 +748,16 @@ class TestPublicProjectSessions:
 class TestPublicBoard:
     def _link(self, client, world, **extra) -> dict:
         _as(client, world.owner)
+        if "filters" in extra:
+            extra["filters"] = {"tasks": extra["filters"]}
         link = _mint(
             client,
-            {"kind": "project_board", "project_id": str(world.project.id), **extra},
+            {
+                "kind": "project",
+                "scopes": ["tasks"],
+                "project_id": str(world.project.id),
+                **extra,
+            },
         )
         _as(client, None)
         return link
@@ -752,10 +813,20 @@ class TestPublicBoard:
         assert response.status_code == 403
 
     def test_allow_comments_is_the_one_write(self, client, world):
-        link = self._link(client, world, audience="authenticated", allow_comments=True)
+        # Comments do not need the authenticated audience: a public board can
+        # take them, from visitors who sign in.
+        link = self._link(client, world, allow_comments=True)
         token = link["token"]
-        meta_anon = client.get(f"/api/v1/public/shares/{token}")
-        assert meta_anon.json() == NOT_FOUND  # authenticated audience
+        meta_anon = client.get(f"/api/v1/public/shares/{token}").json()
+        assert meta_anon["allow_comments"] is False  # not for *this* visitor
+        assert meta_anon["comments_available"] is True  # the sign-in prompt
+        assert (
+            client.post(
+                f"/api/v1/public/shares/{token}/tasks/{world.task.id}/comments",
+                json={"body": "anon"},
+            ).status_code
+            == 401
+        )
 
         visitor = _user(world.db, "v@example.com", "Visitor")
         world.db.commit()
@@ -799,6 +870,113 @@ class TestPublicBoard:
             == NOT_FOUND
         )
 
+    def _owner_footprint(self, client, world):
+        """The owner assigns themselves, changes status and comments, so their
+        principal sits in every slot of the public payload."""
+        _as(client, world.owner)
+        # `_as` bypasses the real dependency, which is what stamps the actor
+        # the activity listener attributes rows to.
+        set_session_actor(world.db, Actor(type="user", id=world.owner.id))
+        try:
+            assert (
+                client.patch(
+                    f"/api/v1/tasks/{world.task.id}",
+                    json={
+                        "assignee_type": "user",
+                        "assignee_id": str(world.owner.id),
+                        "status": "in_progress",
+                    },
+                ).status_code
+                == 200
+            )
+        finally:
+            set_session_actor(world.db, None)
+        assert (
+            client.post(
+                f"/api/v1/tasks/{world.task.id}/comments", json={"body": "mine"}
+            ).status_code
+            == 201
+        )
+        assert (
+            client.put(
+                f"/api/v1/tasks/{world.task.id}/reactions",
+                json={
+                    "target_type": "task",
+                    "target_id": str(world.task.id),
+                    "emoji": "👍",
+                },
+            ).status_code
+            == 200
+        )
+
+    def _public_task_and_timeline(self, client, world, token):
+        _as(client, None)
+        board = client.get(f"/api/v1/public/shares/{token}/board").json()
+        task = next(t for t in board["tasks"] if t["id"] == str(world.task.id))
+        timeline = client.get(
+            f"/api/v1/public/shares/{token}/tasks/{world.task.id}/timeline"
+        ).json()
+        return task, timeline
+
+    def test_hidden_owner_is_hidden_everywhere(self, client, world):
+        """`show_owner=False` anonymises the owner in every principal slot —
+        assignee, comment author, activity actor, reactor — not just the
+        sidebar card; the page reads "Owner" and carries no id or avatar."""
+        self._owner_footprint(client, world)
+        token = self._link(client, world)["token"]  # show_owner defaults off
+        task, timeline = self._public_task_and_timeline(client, world, token)
+
+        anon = {"type": "user", "id": None, "name": "Owner"}
+        assert {k: task["assignee"][k] for k in anon} == anon
+        assert task["assignee"]["avatar_image_uri"] is None
+        assert task["assignee_id"] is None
+        assert timeline["comments"][0]["author"]["name"] == "Owner"
+        assert timeline["comments"][0]["author"]["id"] is None
+        actors = {row["actor"]["name"] for row in timeline["activity"] if row["actor"]}
+        assert actors == {"Owner"}
+        assert [r["name"] for r in timeline["reactions"][0]["reactors"]] == ["Owner"]
+        assert (
+            str(world.owner.id)
+            not in client.get(f"/api/v1/public/shares/{token}/board").text
+        )
+
+    def test_shown_owner_keeps_name_and_id(self, client, world):
+        self._owner_footprint(client, world)
+        token = self._link(client, world, show_owner=True)["token"]
+        task, timeline = self._public_task_and_timeline(client, world, token)
+        assert task["assignee"]["name"] == "Test User"
+        assert task["assignee"]["id"] == str(world.owner.id)
+        assert timeline["comments"][0]["author"]["name"] == "Test User"
+        actors = {row["actor"]["name"] for row in timeline["activity"] if row["actor"]}
+        assert actors == {"Test User"}
+
+    def test_shown_owner_without_display_name_reads_owner(self, client, world):
+        """A shown owner with no display name is "Owner", never "Unknown"; the
+        avatar and id stay because the link opted in."""
+        world.owner.display_name = None
+        world.db.commit()
+        self._owner_footprint(client, world)
+        token = self._link(client, world, show_owner=True)["token"]
+        task, timeline = self._public_task_and_timeline(client, world, token)
+        assert task["assignee"]["name"] == "Owner"
+        assert task["assignee"]["id"] == str(world.owner.id)
+        assert timeline["comments"][0]["author"]["name"] == "Owner"
+
+    def test_visitor_comments_keep_their_name_when_owner_is_hidden(self, client, world):
+        self._owner_footprint(client, world)
+        token = self._link(client, world, allow_comments=True)["token"]
+        visitor = _user(world.db, "v@example.com", "Visitor")
+        world.db.commit()
+        _as(client, visitor)
+        timeline = client.post(
+            f"/api/v1/public/shares/{token}/tasks/{world.task.id}/comments",
+            json={"body": "theirs"},
+        ).json()
+        by_author = {c["body"]: c["author"] for c in timeline["comments"]}
+        assert by_author["mine"]["name"] == "Owner" and by_author["mine"]["id"] is None
+        assert by_author["theirs"]["name"] == "Visitor"
+        assert by_author["theirs"]["id"] == str(visitor.id)
+
     def test_comment_needs_a_covered_task(self, client, world):
         token = self._link(
             client,
@@ -817,6 +995,98 @@ class TestPublicBoard:
             ).json()
             == NOT_FOUND
         )
+
+
+# ---------------------------------------------------------------------------
+# Public side: one project link, both halves
+# ---------------------------------------------------------------------------
+
+
+class TestProjectScopes:
+    """A project is shared once, with a content selection — not once per kind
+    of content. Every project-shaped endpoint asks the link what it carries."""
+
+    def _link(self, client, world, scopes, **extra) -> dict:
+        _as(client, world.owner)
+        link = _mint(
+            client,
+            {
+                "kind": "project",
+                "scopes": scopes,
+                "project_id": str(world.project.id),
+                **extra,
+            },
+        )
+        _as(client, None)
+        return link
+
+    def test_both_scopes_are_one_link(self, client, world):
+        link = self._link(client, world, ["sessions", "tasks"])
+        assert link["scopes"] == ["tasks", "sessions"]  # stored in a stable order
+        token = link["token"]
+        meta = client.get(f"/api/v1/public/shares/{token}").json()
+        assert meta["kind"] == "project"
+        assert sorted(meta["scopes"]) == ["sessions", "tasks"]
+        # One token reaches both halves.
+        board = client.get(f"/api/v1/public/shares/{token}/board").json()
+        assert {t["identifier"] for t in board["tasks"]} == {"SHB-1", "SHB-2"}
+        page = client.get(f"/api/v1/public/shares/{token}/sessions").json()
+        assert [s["id"] for s in page["items"]] == [str(world.instance.id)]
+
+    def test_each_half_is_filtered_under_its_own_key(self, client, world):
+        token = self._link(
+            client,
+            world,
+            ["sessions", "tasks"],
+            filters={
+                "tasks": {"statuses": ["todo"]},
+                "sessions": {"statuses": ["COMPLETED"]},
+            },
+        )["token"]
+        board = client.get(f"/api/v1/public/shares/{token}/board").json()
+        assert [t["identifier"] for t in board["tasks"]] == ["SHB-1"]
+        page = client.get(f"/api/v1/public/shares/{token}/sessions").json()
+        # The archived session is the only COMPLETED one.
+        assert [s["id"] for s in page["items"]] == [str(world.archived.id)]
+
+    def test_a_scope_the_link_does_not_carry_is_404(self, client, world):
+        """Not "forbidden" — the same 404 an unknown token gets (§10.5)."""
+        tasks_only = self._link(client, world, ["tasks"])["token"]
+        assert (
+            client.get(f"/api/v1/public/shares/{tasks_only}/sessions").json()["items"]
+            == []
+        )
+        assert (
+            client.get(
+                f"/api/v1/public/shares/{tasks_only}/sessions/{world.instance.id}"
+            ).json()
+            == NOT_FOUND
+        )
+        sessions_only = self._link(client, world, ["sessions"])["token"]
+        assert (
+            client.get(f"/api/v1/public/shares/{sessions_only}/board").json()
+            == NOT_FOUND
+        )
+        assert (
+            client.get(
+                f"/api/v1/public/shares/{sessions_only}/tasks/{world.task.id}/timeline"
+            ).json()
+            == NOT_FOUND
+        )
+
+    def test_dropping_a_scope_drops_its_filters(self, client, world):
+        """Filters for a half the link does not carry are not stored — they
+        would be dead weight that a later scope change silently revived."""
+        link = self._link(
+            client,
+            world,
+            ["tasks"],
+            filters={
+                "tasks": {"statuses": ["todo"]},
+                "sessions": {"statuses": ["COMPLETED"]},
+            },
+        )
+        assert link["filters"] == {"tasks": {"statuses": ["todo"]}}
 
 
 # ---------------------------------------------------------------------------
@@ -909,6 +1179,10 @@ def test_resolve_share_never_widens(world):
     grant = access.resolve_share(db, "t" * 43, user_id=world.owner.id)
     assert grant is not None and grant.instance_id == world.instance.id
     assert grant.allow_comments is False
+    # A session link carries no project scopes, so every project-shaped
+    # question it is asked answers "no".
+    assert grant.scopes == frozenset()
+    assert not grant.covers("tasks") and not grant.covers("sessions")
     assert access.resolve_share(db, "", user_id=world.owner.id) is None
     assert access.resolve_share(db, "t" * 44, user_id=world.owner.id) is None
     link.revoked_at = datetime.now(timezone.utc)
@@ -933,7 +1207,8 @@ def test_account_deletion_takes_the_links_with_it(client, world, monkeypatch):
     )
     _as(client, world.owner)
     token = _mint(
-        client, {"kind": "project_board", "project_id": str(world.project.id)}
+        client,
+        {"kind": "project", "scopes": ["tasks"], "project_id": str(world.project.id)},
     )["token"]
     owner_id = world.owner.id
     delete_user_account(world.db, owner_id)

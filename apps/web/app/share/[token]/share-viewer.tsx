@@ -7,14 +7,10 @@
 // polls.
 
 import { Suspense, useCallback, useState } from 'react';
-import { KanbanSquare } from 'lucide-react';
-import { ProjectIcon, STATUS_CONFIG } from '@/components/dashboard/task-ui';
-import type { PublicSessionSummary, PublicShareResponse, ShareBoardFilters } from '@/lib/backend-api';
-import { cn } from '@/lib/utils';
-import { SHARE_ROW_SELECTED, ShareShell, ShareSidebarSection } from './share-shell';
+import type { PublicSessionSummary, PublicShareResponse } from '@/lib/backend-api';
+import { ShareShell, ShareSidebarSection } from './share-shell';
 import { SharedSessionView } from './shared-session-view';
-import { ProjectSessionsShare, SharedSessionRow } from './shared-project-sessions-view';
-import { SharedBoardView } from './shared-board-view';
+import { ProjectShare, SharedSessionRow } from './shared-project-view';
 
 function isOwnerViewing(share: PublicShareResponse): boolean {
   return share.viewer_is_owner;
@@ -45,62 +41,17 @@ function SessionShare({ token, share, initial }: { token: string; share: PublicS
   );
 }
 
-/** A project's task board: the sidebar shows the project and the one nav row. */
-function BoardShare({ token, share }: { token: string; share: PublicShareResponse }) {
-  const project = share.project;
-  const filters = (share.filters ?? null) as ShareBoardFilters | null;
-  const statuses = filters?.statuses ?? [];
-  const labelCount = filters?.label_ids?.length ?? 0;
-  return (
-    <ShareShell
-      share={share}
-      sidebar={
-        project && (
-          <ShareSidebarSection
-            label={
-              <>
-                <ProjectIcon project={{ id: project.id, name: project.name, icon: project.icon }} className="size-4" />
-                <span className="truncate">{project.name}</span>
-              </>
-            }
-          >
-            <div
-              aria-current="page"
-              className={cn('flex items-center gap-2 rounded-md px-2 py-1.5 text-xs', SHARE_ROW_SELECTED)}
-            >
-              <KanbanSquare className="h-3.5 w-3.5 shrink-0" />
-              <span className="min-w-0 flex-1 truncate">Task board</span>
-            </div>
-            {(statuses.length > 0 || labelCount > 0) && (
-              <div className="px-2 pt-1.5 text-[11px] text-muted-foreground">
-                Showing{' '}
-                {statuses.length > 0 ? statuses.map((s) => STATUS_CONFIG[s].label).join(', ') : 'every status'}
-                {labelCount > 0 ? ` · ${labelCount} label${labelCount === 1 ? '' : 's'}` : ''}
-              </div>
-            )}
-          </ShareSidebarSection>
-        )
-      }
-    >
-      <SharedBoardView token={token} share={share} openHref={isOwnerViewing(share) ? '/dashboard/tasks' : null} />
-    </ShareShell>
-  );
-}
-
 export function ShareViewer({ token, share }: { token: string; share: PublicShareResponse }) {
   if (share.kind === 'session' && share.session) {
     return <SessionShare token={token} share={share} initial={share.session} />;
   }
-  if (share.kind === 'project_sessions' && share.project) {
+  if (share.kind === 'project' && share.project) {
     return (
       // useSearchParams needs a Suspense boundary for prerender.
       <Suspense fallback={null}>
-        <ProjectSessionsShare token={token} share={share} project={share.project} />
+        <ProjectShare token={token} share={share} project={share.project} />
       </Suspense>
     );
-  }
-  if (share.kind === 'project_board' && share.project) {
-    return <BoardShare token={token} share={share} />;
   }
   return null;
 }

@@ -10,7 +10,9 @@
 // account slot and an "Open in Vicoa" action. An anonymous visitor gets the
 // dashboard's nav rows (each opens a small sign-in panel beside the sidebar),
 // Log in / Sign up in the header and a sign-up card at the bottom — that is
-// the growth loop.
+// the growth loop. A project link that carries tasks turns the Tasks nav row
+// into this page's own — clicking it shows the shared board, and it is marked
+// current while you are there, the same way the dashboard marks it.
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
@@ -101,7 +103,16 @@ function offsetToSidebarEdge(row: HTMLElement): number {
   return Math.max(0, Math.round(gap)) + EDGE_GAP;
 }
 
-const NAV: { label: string; icon: LucideIcon; href: string; pitch: string }[] = [
+/** The nav rows a share page can stand in for. */
+export type ShareNav = 'tasks';
+
+/** A nav row the share page owns: it selects a view here instead of leaving. */
+export interface ShareNavTarget {
+  active: boolean;
+  onSelect: () => void;
+}
+
+const NAV: { key?: ShareNav; label: string; icon: LucideIcon; href: string; pitch: string }[] = [
   {
     label: 'New Session',
     icon: Plus,
@@ -109,6 +120,7 @@ const NAV: { label: string; icon: LucideIcon; href: string; pitch: string }[] = 
     pitch: 'Start Claude Code, Codex or another agent on any of your machines, from here or from your phone.',
   },
   {
+    key: 'tasks',
     label: 'Tasks',
     icon: ListTodo,
     href: '/dashboard/tasks',
@@ -133,19 +145,45 @@ const NAV: { label: string; icon: LucideIcon; href: string; pitch: string }[] = 
  * anonymous one gets a panel beside the sidebar that says what the tab is
  * and offers the two auth buttons — the same anchoring as the worktree PR
  * panel, so it overlays the content area instead of covering sibling rows.
+ * A row the page owns (`tasksNav`) is neither: it selects a view in place.
  */
-function NavRows({ signedIn, returnHref }: { signedIn: boolean; returnHref: string }) {
+function NavRows({
+  signedIn,
+  returnHref,
+  tasksNav,
+}: {
+  signedIn: boolean;
+  returnHref: string;
+  tasksNav?: ShareNavTarget;
+}) {
   const [openLabel, setOpenLabel] = useState<string | null>(null);
   const [sideOffset, setSideOffset] = useState(EDGE_GAP);
   return (
     <div className="px-2">
-      {NAV.map(({ label, icon: Icon, href, pitch }, index) => {
+      {NAV.map(({ key, label, icon: Icon, href, pitch }, index) => {
         const row = (
           <>
             <Icon className="mr-2 h-4 w-4" />
             {label}
           </>
         );
+        if (key === 'tasks' && tasksNav) {
+          return (
+            <Button
+              key={label}
+              variant="subtle"
+              aria-current={tasksNav.active ? 'page' : undefined}
+              onClick={tasksNav.onSelect}
+              className={cn(
+                'h-auto w-full justify-start py-1.5 text-xs',
+                index > 0 && 'mt-1',
+                tasksNav.active && SHARE_ROW_SELECTED,
+              )}
+            >
+              {row}
+            </Button>
+          );
+        }
         if (signedIn) {
           return (
             <Button
@@ -199,11 +237,14 @@ function NavRows({ signedIn, returnHref }: { signedIn: boolean; returnHref: stri
 export function ShareShell({
   share,
   sidebar,
+  tasksNav,
   children,
 }: {
   share: PublicShareResponse;
-  /** The kind-specific middle of the sidebar (the shared session rows, the board nav). */
+  /** The subject-specific middle of the sidebar (the shared session rows). */
   sidebar: React.ReactNode;
+  /** Present when this page carries the shared tasks: the Tasks row selects them. */
+  tasksNav?: ShareNavTarget;
   children: React.ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -245,7 +286,7 @@ export function ShareShell({
             </Button>
           </div>
 
-          <NavRows signedIn={signedIn} returnHref={returnHref} />
+          <NavRows signedIn={signedIn} returnHref={returnHref} tasksNav={tasksNav} />
 
           <div className="mx-2 my-2 h-px bg-muted/30" />
 
@@ -255,7 +296,7 @@ export function ShareShell({
               <PrincipalAvatar principal={owner} size="sm" />
               <div className="min-w-0">
                 <div className="truncate text-xs">{owner.name ?? 'A Vicoa user'}</div>
-                <div className="truncate text-[11px] text-muted-foreground">shared this · read-only</div>
+                <div className="truncate text-[11px] text-muted-foreground">shared this with you</div>
               </div>
             </div>
           )}

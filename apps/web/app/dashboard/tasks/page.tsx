@@ -784,13 +784,13 @@ function TasksPageInner() {
             size="sm"
             variant="outline"
             className="h-7 gap-1 text-xs"
-            title="Share this board with a link"
+            title="Share this project with a link"
             onClick={() =>
               setShareTarget({
                 kind: 'project',
                 projectId: filterProject.id,
                 name: filterProject.name,
-                initialKind: 'project_board',
+                initialScope: 'tasks',
               })
             }
           >

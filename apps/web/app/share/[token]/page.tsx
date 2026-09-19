@@ -25,10 +25,17 @@ async function loadShare(token: string): Promise<PublicShareResponse | null> {
   }
 }
 
+/** "Tasks", "Sessions", "Tasks and sessions" — what a project link carries. */
+function scopeWords(share: PublicShareResponse): string {
+  const tasks = share.scopes.includes('tasks');
+  const sessions = share.scopes.includes('sessions');
+  if (tasks && sessions) return 'Tasks and sessions';
+  return tasks ? 'Tasks' : 'Sessions';
+}
+
 function shareTitle(share: PublicShareResponse): string {
   if (share.kind === 'session') return share.session?.name || 'Shared session';
-  if (share.kind === 'project_board') return `${share.project?.name ?? 'Project'} · Board`;
-  return `${share.project?.name ?? 'Project'} · Sessions`;
+  return `${share.project?.name ?? 'Project'} · ${scopeWords(share)}`;
 }
 
 function shareDescription(share: PublicShareResponse): string {
@@ -36,10 +43,9 @@ function shareDescription(share: PublicShareResponse): string {
   if (share.kind === 'session') {
     const agent = share.session?.agent_profile?.name ?? share.session?.agent_type_name ?? 'an agent';
     const count = share.session?.message_count ?? 0;
-    return `A ${agent} session${by} with ${count} message${count === 1 ? '' : 's'}. Shared read-only via Vicoa.`;
+    return `A ${agent} session${by} with ${count} message${count === 1 ? '' : 's'}. Shared live via Vicoa.`;
   }
-  if (share.kind === 'project_board') return `A task board${by}. Shared read-only via Vicoa.`;
-  return `Agent sessions${by}. Shared read-only via Vicoa.`;
+  return `${scopeWords(share)} in a Vicoa project${by}. Shared live via Vicoa.`;
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ token: string }> }): Promise<Metadata> {

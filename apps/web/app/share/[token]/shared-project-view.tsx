@@ -1,10 +1,13 @@
 'use client';
 
-// A project's shared sessions: the list lives in the sidebar (the dashboard's
-// own time buckets, newest first) and the picked one
-// opens in the main pane — deep-linkable via `?session=`, newest selected by
-// default so the page never opens on an empty pane. The list polls slowly:
-// new sessions matter on the order of minutes, not seconds.
+// A shared project: one link, one page, carrying whichever halves the link
+// says (`share.scopes`). Tasks are the sidebar's Tasks row — the dashboard's
+// own nav row, standing in for its page — and sessions are the list below it,
+// in the dashboard's time buckets, newest first. Both are deep-linkable
+// (`?view=tasks`, `?session=<id>`), and the page opens on something rather
+// than on a "pick one" pane: the tasks when it carries them, else the newest
+// session. The session list polls slowly: new sessions matter on the order of
+// minutes, not seconds.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -19,6 +22,7 @@ import type { PublicProjectSummary, PublicSessionSummary, PublicShareResponse } 
 import { ShareNotFoundError, fetchPublicSession, fetchPublicSessions } from '@/lib/public-share-api';
 import { cn } from '@/lib/utils';
 import { SHARE_ROW_SELECTED, ShareHeader, ShareShell, ShareSidebarSection, useShareChrome } from './share-shell';
+import { SharedBoardView } from './shared-board-view';
 import { SharedSessionView, isSessionLive } from './shared-session-view';
 import { POLL_IDLE_MS, useSharePoll } from './use-share-poll';
 
@@ -82,14 +86,17 @@ export function SharedSessionRow({
   );
 }
 
-/** The project's shared session list, polled slowly, plus the deep-linked selection. */
-function useSharedSessions(token: string) {
+/** The project's shared session list, polled slowly, plus the deep-linked
+ * selection. `token` is null when the link does not carry sessions: nothing is
+ * fetched, and the page is the board alone. */
+function useSharedSessions(token: string | null) {
   const [sessions, setSessions] = useState<PublicSessionSummary[] | null>(null);
   const [total, setTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<'gone' | 'error' | null>(null);
 
   const load = useCallback(async () => {
+    if (!token) return;
     try {
       const page = await fetchPublicSessions(token, { limit: PAGE_SIZE });
       setSessions((prev) => {
@@ -108,10 +115,10 @@ function useSharedSessions(token: string) {
   useEffect(() => {
     void load();
   }, [load]);
-  useSharePoll(load, { intervalMs: POLL_IDLE_MS, enabled: true });
+  useSharePoll(load, { intervalMs: POLL_IDLE_MS, enabled: token !== null });
 
   const loadMore = useCallback(async () => {
-    if (!sessions || loadingMore) return;
+    if (!token || !sessions || loadingMore) return;
     setLoadingMore(true);
     try {
       const page = await fetchPublicSessions(token, { limit: PAGE_SIZE, offset: sessions.length });
@@ -135,7 +142,7 @@ function useSharedSessions(token: string) {
   return { sessions, total, loadingMore, error, loadMore, patch };
 }
 
-export function ProjectSessionsShare({
+export function ProjectShare({
   token,
   share,
   project,
@@ -147,8 +154,15 @@ export function ProjectSessionsShare({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const requestedId = searchParams.get('session');
-  const { sessions, total, loadingMore, error, loadMore, patch } = useSharedSessions(token);
+  const sharesTasks = share.scopes.includes('tasks');
+  const sharesSessions = share.scopes.includes('sessions');
+  const requestedId = sharesSessions ? searchParams.get('session') : null;
+  // Tasks is the default view when the link carries them: it is the project's
+  // overview, and the sessions are one click away in the same sidebar.
+  const viewingTasks = sharesTasks && (!sharesSessions || searchParams.get('view') === 'tasks' || !requestedId);
+  const { sessions, total, loadingMore, error, loadMore, patch } = useSharedSessions(
+    sharesSessions ? token : null,
+  );
 
   // Newest by default: a project link should open on something, not on a
   // "pick one" pane. Chosen once, when the list first arrives — a newer
@@ -158,7 +172,7 @@ export function ProjectSessionsShare({
   useEffect(() => {
     if (defaultId === null && sessions && sessions.length > 0) setDefaultId(sessions[0].id);
   }, [defaultId, sessions]);
-  const selectedId = requestedId ?? defaultId;
+  const selectedId = viewingTasks ? null : (requestedId ?? defaultId);
 
   // The session behind `?session=` when it is not (or not yet) in the list.
   const [resolved, setResolved] = useState<PublicSessionSummary | null>(null);
@@ -189,16 +203,24 @@ export function ProjectSessionsShare({
   const select = useCallback(
     (id: string) => {
       const params = new URLSearchParams(searchParams.toString());
+      params.delete('view');
       params.set('session', id);
       router.replace(`${pathname}?${params.toString()}`, { scroll: false });
     },
     [router, pathname, searchParams],
   );
 
+  const selectTasks = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('session');
+    params.set('view', 'tasks');
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [router, pathname, searchParams]);
+
   const groups = useMemo(() => groupByTime(sessions ?? []), [sessions]);
   const isOwner = share.viewer_is_owner;
 
-  const sidebar = (
+  const sidebar = !sharesSessions ? null : (
     <ShareSidebarSection
       label={
         <>
@@ -250,9 +272,14 @@ export function ProjectSessionsShare({
     </ShareSidebarSection>
   );
 
+  const tasksNav = sharesTasks ? { active: viewingTasks, onSelect: selectTasks } : undefined;
+  const openBoardHref = isOwner ? '/dashboard/tasks' : null;
+
   return (
-    <ShareShell share={share} sidebar={sidebar}>
-      {selected ? (
+    <ShareShell share={share} sidebar={sidebar} tasksNav={tasksNav}>
+      {viewingTasks ? (
+        <SharedBoardView token={token} share={share} openHref={openBoardHref} />
+      ) : selected ? (
         <SharedSessionView
           key={selected.id}
           token={token}

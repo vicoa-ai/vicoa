@@ -1,8 +1,10 @@
 """Share links (collaboration §3.4, P4) — the capability a URL carries.
 
 A share link is the third and narrowest layer of the access model (§2): an
-anonymous or link-scoped *read* of one session, of a project's sessions, or
-of a project's task board. The token is the capability itself — 256-bit
+anonymous or link-scoped *read* of one session, or of a project — its
+sessions, its tasks, or both, whichever `scopes` says, the same two words a
+project *grant* uses. One project is one link with a content selection, not
+one link per kind of content. The token is the capability itself — 256-bit
 urlsafe, so the row never needs to know who will open it — and the only write
 it can ever confer is `allow_comments`: a signed-in visitor, comments only,
 attributed to their real account, no grant row created, dead the instant the
@@ -54,8 +56,19 @@ class ShareLink(Base):
     __tablename__ = "share_links"
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('session','project_sessions','project_board')",
+            "kind IN ('session','project')",
             name="ck_share_links_kind",
+        ),
+        # A project link carries at least one scope; a session link carries
+        # none — the session is the whole subject.
+        CheckConstraint(
+            "(kind = 'project') = (jsonb_array_length(scopes) > 0)",
+            name="ck_share_links_scopes",
+        ),
+        # Comments live on tasks, so a link without them cannot allow any.
+        CheckConstraint(
+            "NOT allow_comments OR scopes @> '[\"tasks\"]'::jsonb",
+            name="ck_share_links_comments_need_tasks",
         ),
         CheckConstraint(
             "audience IN ('public','authenticated')",
@@ -69,11 +82,6 @@ class ShareLink(Base):
         CheckConstraint(
             "(kind <> 'session') = (project_id IS NOT NULL)",
             name="ck_share_links_project_target",
-        ),
-        # Comments are attributed to a real account, so they need one.
-        CheckConstraint(
-            "NOT allow_comments OR audience = 'authenticated'",
-            name="ck_share_links_comments_need_auth",
         ),
         Index(
             "ix_share_links_instance",
@@ -109,12 +117,16 @@ class ShareLink(Base):
         nullable=True,
         default=None,
     )
+    # Which halves of the project the link carries: any of ('tasks',
+    # 'sessions'), empty for a session link. Same vocabulary and storage as
+    # `ProjectGrant.scopes` — they narrow the same thing.
+    scopes: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
     audience: Mapped[str] = mapped_column(String(16), default="public")
-    # Kind-specific narrowing, evaluated at view time so a link keeps matching
-    # what arrives later (that is the point of sharing a project):
-    #   project_board:    {label_ids: [uuid], statuses: [str], assignee_ids: [uuid]}
-    #   project_sessions: {date_from, date_to, machine_ids: [uuid],
-    #                      agent_types: [str], statuses: [str]}
+    # Per-scope narrowing, evaluated at view time so a link keeps matching what
+    # arrives later (that is the point of sharing a project):
+    #   {"tasks":    {label_ids: [uuid], statuses: [str], assignee_ids: [uuid]},
+    #    "sessions": {date_from, date_to, machine_ids: [uuid],
+    #                 agent_types: [str], statuses: [str]}}
     filters: Mapped[dict | None] = mapped_column(JSONB, nullable=True, default=None)
     allow_comments: Mapped[bool] = mapped_column(
         default=False, server_default=text("false")

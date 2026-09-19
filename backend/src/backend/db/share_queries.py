@@ -24,6 +24,7 @@ import logging
 import secrets
 import threading
 import time
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -56,6 +57,8 @@ from ..models import (
     PublicShareResponse,
     ShareLinkResponse,
     TaskLabelResponse,
+    TaskResponse,
+    TaskTimelineResponse,
 )
 from .queries import _get_instance_message_stats, _live_state_for
 from .task_queries import _project_vocabulary_filter
@@ -116,6 +119,80 @@ def _agent_profile_principal(profile: AgentProfile | None) -> PrincipalResponse 
     )
 
 
+# --- the owner on a public page --------------------------------------------------
+
+# How the link's creator reads on a public page that does not name them. No id,
+# so nothing on the page correlates back to an account; no avatar, so the
+# client draws its generic glyph — the honest picture of "someone".
+ANONYMOUS_OWNER_NAME = "Owner"
+
+
+def _public_principal(
+    principal: PrincipalResponse, link: ShareLink
+) -> PrincipalResponse:
+    """The owner as a public page may show them (§10.4).
+
+    A link that hides the owner (`show_owner=False`) hides them *everywhere* —
+    as a task's assignee, a comment's author, an activity's actor, a reactor —
+    not only in the sidebar card; otherwise "don't show my name" would remove
+    the card and leave the name on every row under it. A link that shows the
+    owner keeps their name and avatar, but an account with no display name
+    still reads "Owner" rather than the "Unknown" a client falls back to.
+    Everyone else passes through: a visitor who comments through the link
+    chose to do so as themselves.
+    """
+    if (
+        principal.type != "user"
+        or principal.id is None
+        or principal.id != link.created_by_user_id
+    ):
+        return principal
+    if not link.show_owner:
+        return PrincipalResponse(type="user", id=None, name=ANONYMOUS_OWNER_NAME)
+    if not (principal.name or "").strip():
+        return principal.model_copy(update={"name": ANONYMOUS_OWNER_NAME})
+    return principal
+
+
+def _public_reactors(
+    reactors: list[PrincipalResponse], link: ShareLink
+) -> list[PrincipalResponse]:
+    return [_public_principal(r, link) for r in reactors]
+
+
+def public_tasks(
+    db: Session, grant: access.ShareGrant, tasks: list[Task]
+) -> list[TaskResponse]:
+    """`serialize_tasks` with the owner rule applied to each assignee."""
+    rows = serialize_tasks(db, tasks)
+    for row in rows:
+        if row.assignee is None:
+            continue
+        shown = _public_principal(row.assignee, grant.link)
+        if shown is not row.assignee:
+            row.assignee = shown
+            # The bare id would say what the principal no longer does.
+            row.assignee_id = shown.id
+    return rows
+
+
+def public_timeline(
+    timeline: TaskTimelineResponse, grant: access.ShareGrant
+) -> TaskTimelineResponse:
+    """A built timeline with the owner rule applied to every principal in it."""
+    link = grant.link
+    for comment in timeline.comments:
+        comment.author = _public_principal(comment.author, link)
+        for reaction in comment.reactions:
+            reaction.reactors = _public_reactors(reaction.reactors, link)
+    for row in timeline.activity:
+        if row.actor is not None:
+            row.actor = _public_principal(row.actor, link)
+    for reaction in timeline.reactions:
+        reaction.reactors = _public_reactors(reaction.reactors, link)
+    return timeline
+
+
 # --- owner side ----------------------------------------------------------------
 
 
@@ -126,13 +203,15 @@ def _require_target_admin(
     kind: str,
     agent_instance_id: UUID | None,
     project_id: UUID | None,
+    scopes: Sequence[str] = (),
 ) -> None:
-    """`admin` on the link's target, with the area the kind exposes.
+    """`admin` on the link's target, over every scope the link would expose.
 
     Invisible ⇒ ShareTargetNotFoundError (404); visible but below admin ⇒
-    AccessDenied (403 via the app handler). A board link needs standing that
-    covers `tasks`; a sessions link, `sessions` — a tasks-only admin cannot
-    publish the transcripts they themselves cannot see.
+    AccessDenied (403 via the app handler). A link carrying `sessions` needs
+    standing over sessions, one carrying `tasks` needs it over tasks, and one
+    carrying both needs both — a tasks-only admin cannot publish the
+    transcripts they themselves cannot see.
     """
     if kind == "session":
         instance = (
@@ -151,11 +230,16 @@ def _require_target_admin(
     project = db.get(Project, project_id) if project_id is not None else None
     if project is None or project.is_inbox:
         raise ShareTargetNotFoundError("Project not found")
-    scope = "tasks" if kind == "project_board" else "sessions"
-    role = access.project_role(db, user_id, project, grant_scope=scope)
-    if role is None:
-        raise ShareTargetNotFoundError("Project not found")
-    access.require(role, "admin")
+    for scope in scopes:
+        role = access.project_role(
+            db,
+            user_id,
+            project,
+            grant_scope=scope,  # type: ignore[arg-type]  # validated by the request model
+        )
+        if role is None:
+            raise ShareTargetNotFoundError("Project not found")
+        access.require(role, "admin")
 
 
 def _link_response(link: ShareLink) -> ShareLinkResponse:
@@ -165,6 +249,7 @@ def _link_response(link: ShareLink) -> ShareLinkResponse:
         kind=link.kind,  # type: ignore[arg-type]
         agent_instance_id=link.agent_instance_id,
         project_id=link.project_id,
+        scopes=list(link.scopes or []),  # type: ignore[arg-type]
         audience=link.audience,  # type: ignore[arg-type]
         filters=link.filters,
         allow_comments=link.allow_comments,
@@ -186,6 +271,7 @@ def create_share_link(
     kind: str,
     agent_instance_id: UUID | None,
     project_id: UUID | None,
+    scopes: Sequence[str],
     audience: str,
     filters: dict | None,
     allow_comments: bool,
@@ -201,6 +287,7 @@ def create_share_link(
         kind=kind,
         agent_instance_id=agent_instance_id,
         project_id=project_id,
+        scopes=scopes,
     )
     link = ShareLink(
         token=secrets.token_urlsafe(32),
@@ -208,6 +295,7 @@ def create_share_link(
         kind=kind,
         agent_instance_id=agent_instance_id,
         project_id=project_id,
+        scopes=list(scopes),
         audience=audience,
         filters=filters or None,
         allow_comments=allow_comments,
@@ -248,8 +336,8 @@ def list_share_links(
         )
         target = ShareLink.agent_instance_id == agent_instance_id
     else:
-        # Either project kind is fine for listing; check the broader of the two
-        # standings so a sessions-only admin still sees the board links exist.
+        # Listing needs standing on the project, not on a particular scope, so
+        # a sessions-only admin still sees that tasks links exist.
         project = db.get(Project, project_id)
         if project is None or project.is_inbox:
             raise ShareTargetNotFoundError("Project not found")
@@ -297,21 +385,22 @@ def revoke_share_link(db: Session, user_id: UUID, link_id: UUID) -> None:
 def visible_instances_select(grant: access.ShareGrant):
     """Sessions this grant covers, as a SELECT of ids.
 
-    `session` → the one. `project_sessions` → the project's sessions narrowed
-    by the link's filters, never DELETED, and — unless the link names statuses
-    explicitly — never archived (COMPLETED) either (§10.9). Evaluated at view
-    time, so a link keeps matching sessions that start later. `project_board`
-    → none: viewing a board is viewing tasks, not transcripts.
+    A session link → the one. A project link carrying `sessions` → the
+    project's sessions narrowed by that scope's filters, never DELETED, and —
+    unless the link names statuses explicitly — never archived (COMPLETED)
+    either (§10.9). Evaluated at view time, so a link keeps matching sessions
+    that start later. A project link without the scope → none: it shares the
+    tasks, not the transcripts.
     """
     if grant.kind == "session":
         return select(AgentInstance.id).where(
             AgentInstance.id == grant.instance_id,
             AgentInstance.status != AgentStatus.DELETED,
         )
-    if grant.kind != "project_sessions":
+    if not grant.covers("sessions"):
         return select(AgentInstance.id).where(false())
 
-    f = grant.filters
+    f = grant.scope_filters("sessions")
     conds = [
         AgentInstance.project_id == grant.project_id,
         AgentInstance.status != AgentStatus.DELETED,
@@ -366,10 +455,11 @@ def covered_instance(
 
 
 def _visible_tasks_query(db: Session, grant: access.ShareGrant):
-    """Tasks a board grant reaches: the project's, narrowed by the filters."""
-    if grant.kind != "project_board":
+    """Tasks this grant reaches: the project's, narrowed by the `tasks`
+    filters — nothing at all unless the link carries that scope."""
+    if not grant.covers("tasks"):
         return db.query(Task).filter(false())
-    f = grant.filters
+    f = grant.scope_filters("tasks")
     query = db.query(Task).filter(Task.project_id == grant.project_id)
     if f.get("statuses"):
         query = query.filter(Task.status.in_(list(f["statuses"])))
@@ -504,6 +594,7 @@ def public_share(
     return PublicShareResponse(
         id=link.id,
         kind=grant.kind,  # type: ignore[arg-type]
+        scopes=sorted(grant.scopes),  # type: ignore[arg-type]
         audience=grant.audience,  # type: ignore[arg-type]
         allow_comments=grant.allow_comments,
         comments_available=bool(link.allow_comments),
@@ -641,7 +732,7 @@ def public_board(db: Session, grant: access.ShareGrant) -> PublicBoardResponse:
     """The board: the project, its visible tasks, and the label vocabulary the
     cards reference (so chips render with their colours)."""
     project = db.get(Project, grant.project_id)
-    if project is None or grant.kind != "project_board":
+    if project is None or not grant.covers("tasks"):
         raise ShareTargetNotFoundError("Share not found")
     tasks = (
         _visible_tasks_query(db, grant)
@@ -656,7 +747,7 @@ def public_board(db: Session, grant: access.ShareGrant) -> PublicBoardResponse:
     )
     return PublicBoardResponse(
         project=_public_project(project),
-        tasks=serialize_tasks(db, tasks),
+        tasks=public_tasks(db, grant, tasks),
         labels=[TaskLabelResponse.model_validate(label) for label in labels],
     )
 
