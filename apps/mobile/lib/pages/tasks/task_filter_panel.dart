@@ -162,15 +162,24 @@ class _TaskFilterPanelState extends State<TaskFilterPanel> {
                           ),
                           for (final p in m.projects)
                             _buildOptionRow(
-                              label: tutils.projectIsInbox(p)
-                                  ? l10n.tasksInbox
-                                  : tutils.projectName(p),
+                              label: tutils.projectName(p),
                               isSelected:
                                   m.projectFilter == tutils.projectId(p),
                               onTap: () =>
                                   _selectProject(tutils.projectId(p)),
                               leading: TaskProjectIcon(project: p, size: 15.0),
                             ),
+                          // Unfiled tasks, pinned last like the sidebar's
+                          // No project bucket.
+                          _buildOptionRow(
+                            label: l10n.tasksNoProject,
+                            isSelected:
+                                m.projectFilter == tutils.kNoProjectFilter,
+                            onTap: () =>
+                                _selectProject(tutils.kNoProjectFilter),
+                            leading: const TaskProjectIcon(
+                                project: null, size: 15.0),
+                          ),
                         ],
                       ),
                     ),

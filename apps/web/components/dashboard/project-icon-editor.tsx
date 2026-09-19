@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils';
 
 type IconProject = Pick<
   ProjectResponse,
-  'id' | 'name' | 'icon' | 'icon_image_uri' | 'updated_at' | 'is_inbox'
+  'id' | 'name' | 'icon' | 'icon_image_uri' | 'updated_at'
 >;
 
 const MAX_ICON_BYTES = 8 * 1024 * 1024;

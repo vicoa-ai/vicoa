@@ -61,24 +61,18 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
   }
 
   List<dynamic> get filteredTasks {
-    if (projectFilter == null) return tasks;
-    return tasks
-        .where((t) => tutils.taskProjectId(t) == projectFilter)
-        .toList();
+    final filter = projectFilter;
+    if (filter == null) return tasks;
+    if (filter == tutils.kNoProjectFilter) {
+      return tasks.where((t) => tutils.taskProjectId(t) == null).toList();
+    }
+    return tasks.where((t) => tutils.taskProjectId(t) == filter).toList();
   }
 
   dynamic projectById(String? id) {
     if (id == null) return null;
     for (final p in projects) {
       if (tutils.projectId(p) == id) return p;
-    }
-    return null;
-  }
-
-  /// The non-deletable Inbox ("No project") project, if present.
-  dynamic get inboxProject {
-    for (final p in projects) {
-      if (tutils.projectIsInbox(p)) return p;
     }
     return null;
   }

@@ -2,8 +2,8 @@ import 'package:flutter/foundation.dart';
 
 import 'index.dart';
 
-/// GET /api/v1/projects — the user's projects, including the non-deletable
-/// Inbox ("No project") bucket. Used read-only on mobile to resolve a task's
+/// GET /api/v1/projects — the user's projects. "No project" is not a row but a
+/// null `project_id` on the task. Used read-only on mobile to resolve a task's
 /// project chip and to populate the project picker. Returns [] on error.
 Future<List<dynamic>> apiGetProjects() async {
   try {

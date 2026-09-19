@@ -15,7 +15,6 @@ import {
   CornerDownRight,
   CornerUpRight,
   Folder,
-  Inbox,
   MoreHorizontal,
   Pencil,
   Play,
@@ -146,10 +145,12 @@ export const PRIORITY_CONFIG: Record<
   none: { label: 'No priority', bars: 0, color: 'text-muted-foreground', badgeBg: 'bg-muted', badgeText: 'text-muted-foreground' },
 };
 
-/** The Inbox project is shown by its own name everywhere — calling it "Inbox"
- *  in the filter but "No project" on a task read as two different buckets. */
+/** A project's name, or "No project" for the unfiled bucket (a null
+ *  `project_id`, not a project row) — one label for it on every surface. */
+export const NO_PROJECT_LABEL = 'No project';
+
 export function projectLabel(project: ProjectResponse | undefined | null): string {
-  return project?.name ?? 'Inbox';
+  return project?.name ?? NO_PROJECT_LABEL;
 }
 
 export function formatTaskDate(iso: string | null): string | null {
@@ -393,9 +394,10 @@ export function PriorityIcon({
 /**
  * A project's icon, rendering the full fallback chain (identity-unification
  * §5d): uploaded/seeded image → emoji `icon` → a generated initial-square
- * (paseo-style hashed color + first letter) → Inbox/Folder glyph when there's no
- * name to seed one. `className` sizes the box (default `size-3.5`); the image and
- * square fill it, so a larger box just needs a bigger `size-*`.
+ * (paseo-style hashed color + first letter) → Folder glyph when there's no
+ * name to seed one (the unfiled "No project" slot). `className` sizes the box
+ * (default `size-3.5`); the image and square fill it, so a larger box just
+ * needs a bigger `size-*`.
  */
 export function ProjectIcon({
   project,
@@ -407,7 +409,6 @@ export function ProjectIcon({
     icon?: string | null;
     icon_image_uri?: string | null;
     updated_at?: string;
-    is_inbox?: boolean;
   } | null;
   className?: string;
 }) {
@@ -443,11 +444,11 @@ export function ProjectIcon({
     );
   }
 
-  // A real (non-Inbox) project with a name and no icon gets a generated square:
-  // a muted paseo-palette fill with a white initial (the palette is tuned for a
-  // white letter on top). Small default radius, matching the image variant;
-  // the Display pane overrides it to a larger shared radius on its big icon.
-  if (project && !project.is_inbox && project.name) {
+  // A project with a name and no icon gets a generated square: a muted
+  // paseo-palette fill with a white initial (the palette is tuned for a white
+  // letter on top). Small default radius, matching the image variant; the
+  // Display pane overrides it to a larger shared radius on its big icon.
+  if (project?.name) {
     const color = projectAvatarColor(project.id ?? project.name);
     return (
       <span
@@ -463,8 +464,7 @@ export function ProjectIcon({
     );
   }
 
-  const Icon = project?.is_inbox ? Inbox : Folder;
-  return <Icon aria-hidden="true" className={cn('text-muted-foreground', box)} />;
+  return <Folder aria-hidden="true" className={cn('text-muted-foreground', box)} />;
 }
 
 /**
@@ -695,7 +695,8 @@ export function ProjectPickerPill({
 }: {
   projects: ProjectResponse[];
   projectId: string | null;
-  onSelect: (projectId: string) => void;
+  /** `null` files the task under No project. */
+  onSelect: (projectId: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
   const current = projects.find((p) => p.id === projectId) ?? null;
@@ -711,6 +712,17 @@ export function ProjectPickerPill({
         </PillButton>
       }
     >
+      {/* The unfiled option leads, like "Unassigned" in the assignee pill. */}
+      <PickerItem
+        selected={!projectId}
+        onClick={() => {
+          onSelect(null);
+          setOpen(false);
+        }}
+      >
+        <ProjectIcon project={null} />
+        <span className="text-muted-foreground">{NO_PROJECT_LABEL}</span>
+      </PickerItem>
       {projects.map((project) => (
         <PickerItem
           key={project.id}
@@ -1495,9 +1507,9 @@ export function StatusHeading({ status, count }: { status: TaskStatus; count: nu
   );
 }
 
-/** Project chip (rounded, muted) used on cards and rows. */
+/** Project chip (rounded, muted) used on cards and rows; nothing when unfiled. */
 export function ProjectChip({ project }: { project: ProjectResponse | undefined }) {
-  if (!project || project.is_inbox) return null;
+  if (!project) return null;
   return (
     <span className="inline-flex max-w-[160px] items-center gap-1 rounded-full bg-muted/60 px-1.5 py-0.5 text-[11px] text-muted-foreground">
       <ProjectIcon project={project} />

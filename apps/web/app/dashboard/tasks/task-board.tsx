@@ -78,7 +78,7 @@ function TaskCard({
   const due = formatTaskDate(task.due_date);
   const isClosed = task.status === 'done' || task.status === 'cancelled';
   const showParent = display.parent && !!parent;
-  const showProject = display.project && !!project && !project.is_inbox;
+  const showProject = display.project && !!project;
   const showLabels = display.labels && task.labels.length > 0;
   const showStart = display.startDate && !!start;
   const showDue = display.dueDate && !!due;

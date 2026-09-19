@@ -36,6 +36,7 @@ import {
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { notifyOnboardingProgress } from '@/lib/onboarding-progress';
 import {
+  NO_PROJECT_LABEL,
   ProjectIcon,
   inlineLabelColor,
   projectLabel,
@@ -59,6 +60,7 @@ import { TaskDisplayMenu } from './task-display-menu';
 import { TaskListSkeleton } from './task-skeleton';
 import { getTasksCache, setTasksCache } from './task-cache';
 import {
+  NO_PROJECT_FILTER,
   TaskView,
   cloneView,
   compareTasks,
@@ -609,7 +611,11 @@ function TasksPageInner() {
 
   const visibleTasks = useMemo(() => {
     const filtered = tasks.filter((t) => {
-      if (projectFilter !== 'all' && t.project_id !== projectFilter) return false;
+      if (projectFilter === NO_PROJECT_FILTER) {
+        if (t.project_id !== null) return false;
+      } else if (projectFilter !== 'all' && t.project_id !== projectFilter) {
+        return false;
+      }
       // "Show sub-tasks" off → hide anything with a parent (parents only).
       if (!showSubTasks && t.parent_task_id) return false;
       return true;
@@ -671,7 +677,6 @@ function TasksPageInner() {
   const canShareBoard =
     !isDesktopLocal() &&
     filterProject !== undefined &&
-    !filterProject.is_inbox &&
     projectRoleAtLeast(filterProject.role, 'admin');
 
   return (
@@ -715,7 +720,11 @@ function TasksPageInner() {
                 <ProjectIcon project={filterProject} />
               )}
               <span className="hidden md:inline">
-                {projectFilter === 'all' ? 'All projects' : projectLabel(filterProject)}
+                {projectFilter === 'all'
+                  ? 'All projects'
+                  : projectFilter === NO_PROJECT_FILTER
+                    ? NO_PROJECT_LABEL
+                    : projectLabel(filterProject)}
               </span>
             </Button>
           </DropdownMenuTrigger>
@@ -735,6 +744,12 @@ function TasksPageInner() {
                 {projectFilter === project.id && <Check className="ml-auto h-3 w-3" />}
               </DropdownMenuItem>
             ))}
+            {/* Unfiled tasks, pinned last like the sidebar's No project bucket. */}
+            <DropdownMenuItem onSelect={() => updateActiveView({ projectFilter: NO_PROJECT_FILTER })}>
+              <ProjectIcon project={null} className="mr-2" />
+              {NO_PROJECT_LABEL}
+              {projectFilter === NO_PROJECT_FILTER && <Check className="ml-auto h-3 w-3" />}
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => setProjectDialogOpen(true)}>
               <Plus className="mr-2 h-3.5 w-3.5" />

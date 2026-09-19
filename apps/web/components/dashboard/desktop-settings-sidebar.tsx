@@ -179,7 +179,6 @@ function DesktopSettingsSidebarInner() {
                       projectsById.get(target.key) ?? {
                         id: target.key,
                         name: target.label,
-                        is_inbox: false,
                       }
                     }
                   />

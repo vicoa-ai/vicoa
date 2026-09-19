@@ -1212,13 +1212,12 @@ export function SidebarSessions({
                 // link's project identity.
                 const dbProject = groupBy === 'project' ? projectsById.get(key) : undefined;
                 const canArchiveProject =
-                  dbProject !== undefined && !dbProject.is_inbox && !dbProject.is_archived;
+                  dbProject !== undefined && !dbProject.is_archived;
                 // Share links need the DB project and admin standing on it
                 // (an absent role reads as viewer — never as owner).
                 const canShareProject =
                   canShare &&
                   dbProject !== undefined &&
-                  !dbProject.is_inbox &&
                   projectRoleAtLeast(dbProject.role, 'admin');
                 // "Project settings" opens the per-project pane in Settings:
                 // Display (name/icon) keys off project_id; the worktree-config
@@ -1264,7 +1263,7 @@ export function SidebarSessions({
                           groups have no project identity, so no icon (§5a). */}
                       {groupBy === 'project' && (
                         <ProjectIcon
-                          project={dbProject ?? { id: key, name: label, is_inbox: false }}
+                          project={dbProject ?? { id: key, name: label }}
                           className="size-4"
                         />
                       )}

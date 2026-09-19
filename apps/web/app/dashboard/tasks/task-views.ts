@@ -133,11 +133,17 @@ export const TASK_PROPERTY_OPTIONS: { key: keyof TaskViewProperties; label: stri
   { key: 'parent', label: 'Parent' },
 ];
 
+/**
+ * `projectFilter` value for "unfiled tasks only" (`project_id` null). "No
+ * project" is not a project row, so it needs its own sentinel next to 'all'.
+ */
+export const NO_PROJECT_FILTER = 'none';
+
 export interface TaskView {
   id: string;
   name: string;
   mode: TaskViewMode;
-  /** 'all' or a project id. */
+  /** 'all', NO_PROJECT_FILTER, or a project id. */
   projectFilter: string;
   /** When false, sub-tasks (tasks with a parent) are hidden — parents only. */
   showSubTasks: boolean;

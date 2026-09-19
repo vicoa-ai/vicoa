@@ -39,7 +39,7 @@ class TaskLabelChip extends StatelessWidget {
   }
 }
 
-/// A task's project — the project's emoji (or an inbox/folder glyph) plus its
+/// A task's project — its icon (image / emoji / generated initial) plus its
 /// name, shown plain (no border/background) inline with the other chips.
 class TaskProjectChip extends StatelessWidget {
   const TaskProjectChip({super.key, required this.project, required this.name});

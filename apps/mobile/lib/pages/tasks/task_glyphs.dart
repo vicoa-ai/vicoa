@@ -1,7 +1,12 @@
 import 'dart:math' as math;
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
+import '/backend/supabase/supabase.dart';
+import '/custom_code/actions/vicoa_api_config.dart';
+import '/custom_code/utils/project_icons.dart' as picons;
 import '/custom_code/utils/task_utils.dart' as tutils;
 import '/flutter_flow/flutter_flow_theme.dart';
 
@@ -210,16 +215,56 @@ class _PriorityPainter extends CustomPainter {
       old.bars != bars || old.color != color;
 }
 
-/// A project's emoji `icon`, or a muted inbox/folder line icon when it has none
-/// (mirrors the web `ProjectIcon`).
+/// A project's icon, in the web `ProjectIcon`'s fallback order: the uploaded /
+/// git-seeded image (`icon_image_uri`, fetched with the bearer like an
+/// attachment) → the emoji `icon` → a generated initial-square in the paseo
+/// palette (same hash as the web, so a project keeps its color across devices)
+/// → a muted folder glyph when there is no project at all.
 class TaskProjectIcon extends StatelessWidget {
   const TaskProjectIcon({super.key, required this.project, this.size = 14.0});
 
   final dynamic project;
   final double size;
 
+  /// The web's 3px radius at its 14px default, scaled with the icon.
+  double get _radius => size * 3 / 14;
+
   @override
   Widget build(BuildContext context) {
+    final fallback = _fallback(context);
+    final imageUrl = _imageUrl();
+    if (imageUrl == null) return fallback;
+    final token = SupaFlow.client.auth.currentSession?.accessToken ?? '';
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(_radius),
+      child: CachedNetworkImage(
+        imageUrl: imageUrl,
+        httpHeaders: {'Authorization': 'Bearer $token'},
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        // The generated square stands in while the bytes load — and stays if
+        // they never arrive — since a spinner this small would only flicker.
+        placeholder: (context, _) => fallback,
+        errorWidget: (context, _, __) => fallback,
+      ),
+    );
+  }
+
+  /// `GET /projects/{id}/icon`, cache-busted with `updated_at` the way the web
+  /// does: the served URL is stable across replacements, so the version is
+  /// what makes a new upload show up.
+  String? _imageUrl() {
+    if (tutils.projectIconImageUri(project) == null) return null;
+    final id = tutils.projectId(project);
+    if (id.isEmpty) return null;
+    final version = tutils.projectUpdatedAt(project);
+    final query =
+        version == null ? '' : '?v=${Uri.encodeQueryComponent(version)}';
+    return '${getVicoaApiBaseUrl()}/api/v1/projects/$id/icon$query';
+  }
+
+  Widget _fallback(BuildContext context) {
     final theme = FlutterFlowTheme.of(context);
     final emoji = tutils.projectIcon(project);
     if (emoji != null) {
@@ -232,11 +277,29 @@ class TaskProjectIcon extends StatelessWidget {
         ),
       );
     }
-    final isInbox = tutils.projectIsInbox(project);
-    return Icon(
-      isInbox ? Icons.inbox_rounded : Icons.folder_outlined,
-      size: size,
-      color: theme.secondaryText,
-    );
+    final name = tutils.projectName(project);
+    if (name.isNotEmpty) {
+      final id = tutils.projectId(project);
+      return Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Color(picons.projectAvatarColor(id.isNotEmpty ? id : name)),
+          borderRadius: BorderRadius.circular(_radius),
+        ),
+        child: Text(
+          picons.projectInitial(name),
+          style: GoogleFonts.sourceSans3(
+            color: Colors.white,
+            // The web's 10px letter in a 14px box.
+            fontSize: size * 10 / 14,
+            fontWeight: FontWeight.w600,
+            height: 1.0,
+          ),
+        ),
+      );
+    }
+    return Icon(Icons.folder_outlined, size: size, color: theme.secondaryText);
   }
 }

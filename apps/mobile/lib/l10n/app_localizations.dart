@@ -182,11 +182,11 @@ abstract class AppLocalizations {
   /// **'Display'**
   String get tasksDisplay;
 
-  /// No description provided for @tasksInbox.
+  /// No description provided for @tasksNoProject.
   ///
   /// In en, this message translates to:
-  /// **'Inbox'**
-  String get tasksInbox;
+  /// **'No project'**
+  String get tasksNoProject;
 
   /// No description provided for @tasksLabelsButton.
   ///

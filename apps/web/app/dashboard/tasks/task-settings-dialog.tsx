@@ -358,13 +358,7 @@ function ProjectRow({
               e.currentTarget.blur();
             }
           }}
-          disabled={project.is_inbox}
-          className={cn(
-            'min-w-0 flex-1 rounded-md bg-transparent px-1.5 py-1 text-sm outline-none',
-            project.is_inbox
-              ? 'cursor-default text-muted-foreground'
-              : 'hover:bg-accent/40 focus-visible:bg-accent/40',
-          )}
+          className="min-w-0 flex-1 rounded-md bg-transparent px-1.5 py-1 text-sm outline-none hover:bg-accent/40 focus-visible:bg-accent/40"
         />
 
         {project.is_archived && (
@@ -373,53 +367,47 @@ function ProjectRow({
           </span>
         )}
 
-        {/* Inbox is the "No project" bucket — it can't be renamed, archived,
-            deleted, or linked to a folder (the backend rejects each). */}
-        {!project.is_inbox && (
-          <>
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <FolderOpen className="size-3.5" />
+          {project.directories.length > 0
+            ? `${project.directories.length} folder${project.directories.length > 1 ? 's' : ''}`
+            : 'Link folder'}
+          <ChevronRight className={cn('size-3 transition-transform', expanded && 'rotate-90')} />
+        </button>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
             <button
               type="button"
-              onClick={onToggle}
-              className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              aria-label={`Actions for ${project.name}`}
+              className="shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
-              <FolderOpen className="size-3.5" />
-              {project.directories.length > 0
-                ? `${project.directories.length} folder${project.directories.length > 1 ? 's' : ''}`
-                : 'Link folder'}
-              <ChevronRight className={cn('size-3 transition-transform', expanded && 'rotate-90')} />
+              <MoreHorizontal className="size-4" />
             </button>
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={`Actions for ${project.name}`}
-                  className="shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                >
-                  <MoreHorizontal className="size-4" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40 text-xs">
-                <DropdownMenuItem
-                  onSelect={() =>
-                    void handlers.updateProject(project.id, {
-                      is_archived: !project.is_archived,
-                    })
-                  }
-                >
-                  {project.is_archived ? 'Unarchive' : 'Archive'}
-                </DropdownMenuItem>
-                <DropdownMenuItem variant="destructive" onSelect={onRequestDelete}>
-                  <Trash2 className="mr-2 size-3.5" />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </>
-        )}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-40 text-xs">
+            <DropdownMenuItem
+              onSelect={() =>
+                void handlers.updateProject(project.id, {
+                  is_archived: !project.is_archived,
+                })
+              }
+            >
+              {project.is_archived ? 'Unarchive' : 'Archive'}
+            </DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" onSelect={onRequestDelete}>
+              <Trash2 className="mr-2 size-3.5" />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
-      {expanded && !project.is_inbox && (
+      {expanded && (
         <div className="space-y-1 border-t px-2 py-2">
           {project.directories.map((directory) => {
             const machine = machines.find((m) => m.machine_id === directory.machine_id);

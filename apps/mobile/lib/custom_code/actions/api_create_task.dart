@@ -2,9 +2,9 @@ import 'package:flutter/foundation.dart';
 
 import 'index.dart';
 
-/// POST /api/v1/tasks. Omitting [projectId] sends the task to the user's Inbox
-/// ("No project") bucket, exactly like the web client. Returns the created task
-/// map, or null on error.
+/// POST /api/v1/tasks. Omitting [projectId] leaves the task under No project
+/// (`project_id` null, no identifier), exactly like the web client. Returns the
+/// created task map, or null on error.
 Future<dynamic> apiCreateTask({
   required String title,
   String? description,

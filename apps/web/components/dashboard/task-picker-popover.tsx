@@ -24,9 +24,10 @@ import {
  * spawned instance back to the task (status auto-linkage §4).
  *
  * Fetches open tasks (not done/cancelled) grouped by project each time the
- * popover opens. A search box filters the groups by task title/description or
- * project name, since browsing every open task gets unwieldy fast. Selection
- * closes the popover; "No task" clears it.
+ * popover opens, unfiled tasks in a "No project" group pinned last. A search
+ * box filters the groups by task title/description or project name, since
+ * browsing every open task gets unwieldy fast. Selection closes the popover;
+ * "No task" clears it.
  */
 export interface TaskPickerPopoverProps {
   selectedTask: TaskResponse | null;
@@ -103,23 +104,25 @@ export function TaskPickerPopover({
   const needle = query.trim().toLowerCase();
 
   const groups = useMemo(() => {
-    const matches = (task: TaskResponse, project: ProjectResponse) =>
+    const matches = (task: TaskResponse, project: ProjectResponse | null) =>
       !needle ||
       task.title.toLowerCase().includes(needle) ||
       (task.description ?? "").toLowerCase().includes(needle) ||
       projectLabel(project).toLowerCase().includes(needle);
+    const byStatus = (a: TaskResponse, b: TaskResponse) =>
+      statusRank(a.status) - statusRank(b.status) ||
+      a.position - b.position ||
+      a.created_at.localeCompare(b.created_at);
 
-    return projects
+    return [...projects, null]
       .map((project) => ({
         project,
         tasks: tasks
-          .filter((task) => task.project_id === project.id && matches(task, project))
-          .sort(
-            (a, b) =>
-              statusRank(a.status) - statusRank(b.status) ||
-              a.position - b.position ||
-              a.created_at.localeCompare(b.created_at),
-          ),
+          .filter(
+            (task) =>
+              task.project_id === (project?.id ?? null) && matches(task, project),
+          )
+          .sort(byStatus),
       }))
       .filter((group) => group.tasks.length > 0);
   }, [projects, tasks, needle]);
@@ -208,7 +211,7 @@ export function TaskPickerPopover({
         {!loading && !error && groups.length > 0 && (
           <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar pr-1">
             {groups.map(({ project, tasks: projectTasks }) => (
-              <div key={project.id} className="space-y-0.5">
+              <div key={project?.id ?? "none"} className="space-y-0.5">
                 <div className="flex items-center gap-1 text-[11px] text-muted-foreground font-mono px-2.5">
                   <ProjectIcon project={project} />
                   {projectLabel(project)}

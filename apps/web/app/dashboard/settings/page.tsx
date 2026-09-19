@@ -79,7 +79,7 @@ function SettingsContent() {
   useEffect(() => {
     getBackendAPI(true)
       .listProjects()
-      .then((list) => setDbProjects(list.filter((p) => !p.is_inbox)))
+      .then(setDbProjects)
       .catch(() => setDbProjects([]));
   }, []);
 

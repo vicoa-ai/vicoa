@@ -45,6 +45,7 @@ import {
   PriorityPickerPill,
   ProjectPickerPill,
   PropertyRows,
+  projectLabel,
   StatusPickerPill,
   toDateOnly,
   dateOnlyToLocalDate,
@@ -311,7 +312,7 @@ export default function TaskDetailPage() {
                   {task.identifier}
                 </span>
               )}
-              <span>{projects.find((p) => p.id === task.project_id)?.name ?? 'Inbox'}</span>
+              <span>{projectLabel(projects.find((p) => p.id === task.project_id))}</span>
             </div>
             <EditableTitle
               value={task.title}

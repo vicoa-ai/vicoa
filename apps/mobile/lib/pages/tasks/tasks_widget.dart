@@ -142,12 +142,11 @@ class _TasksWidgetState extends State<TasksWidget> {
     }
   }
 
-  /// Where a newly-created task lands: the active project filter if one is set,
-  /// otherwise the Inbox.
+  /// Where a newly-created task lands: the project being filtered on, if any,
+  /// otherwise No project.
   String? _defaultProjectId() {
-    if (_model.projectFilter != null) return _model.projectFilter;
-    final inbox = _model.inboxProject;
-    return inbox != null ? tutils.projectId(inbox) : null;
+    final filter = _model.projectFilter;
+    return filter == tutils.kNoProjectFilter ? null : filter;
   }
 
   Future<void> _createTask() async {

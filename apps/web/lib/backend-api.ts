@@ -617,7 +617,7 @@ export interface UpdateProjectRequest {
 export interface CreateTaskRequest {
   title: string;
   description?: string | null;
-  /** Omitted → the user's Inbox ("No project"). */
+  /** Omitted → No project (unfiled: no identifier). */
   project_id?: string | null;
   status?: TaskStatus;
   priority?: TaskPriority;

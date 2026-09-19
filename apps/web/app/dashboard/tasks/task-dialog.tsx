@@ -70,6 +70,7 @@ type OptionalField = 'parent' | 'subtasks' | 'start' | 'due';
 export interface TaskFormValues {
   title: string;
   description: string;
+  /** '' = No project (sent as null). */
   project_id: string;
   status: TaskStatus;
   priority: TaskPriority;
@@ -129,11 +130,10 @@ export function TaskDialog({
   /** Returns the created/updated task so create-mode can attach sub-tasks. */
   onSubmit: (values: TaskFormValues) => Promise<TaskResponse | void>;
 }) {
-  const inbox = projects.find((p) => p.is_inbox);
   const [values, setValues] = useState<TaskFormValues>(() => ({
     title: '',
     description: '',
-    project_id: inbox?.id ?? '',
+    project_id: '',
     status: 'backlog',
     priority: 'none',
     label_ids: [],
@@ -190,7 +190,7 @@ export function TaskDialog({
     setValues({
       title: task?.title ?? '',
       description: task?.description ?? '',
-      project_id: task?.project_id ?? defaults?.project_id ?? inbox?.id ?? '',
+      project_id: task?.project_id ?? defaults?.project_id ?? '',
       status: task?.status ?? defaults?.status ?? 'backlog',
       priority: task?.priority ?? 'none',
       label_ids: task?.labels.map((label) => label.id) ?? [],
@@ -503,7 +503,7 @@ export function TaskDialog({
           <ProjectPickerPill
             projects={projects}
             projectId={values.project_id || null}
-            onSelect={(id) => set('project_id', id)}
+            onSelect={(id) => set('project_id', id ?? '')}
           />
           <LabelPickerPill
             labels={labels}

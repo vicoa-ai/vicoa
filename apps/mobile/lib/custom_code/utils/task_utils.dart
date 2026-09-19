@@ -100,14 +100,29 @@ String projectName(dynamic p) => (p is Map ? p['name'] : null)?.toString() ?? ''
 String? projectColorHex(dynamic p) =>
     (p is Map ? p['color'] : null)?.toString();
 
-/// The project's emoji glyph (`icon` field), or null → caller falls back to an
-/// inbox/folder line icon.
+/// Project-filter value for "unfiled tasks only" (`project_id` null). A null
+/// filter is "all projects"; anything else is a project id. Mirrors the web's
+/// `NO_PROJECT_FILTER`.
+const String kNoProjectFilter = 'none';
+
+/// The project's emoji glyph (`icon` field), or null → the caller falls back
+/// to a generated initial-square (see `TaskProjectIcon`).
 String? projectIcon(dynamic p) {
   final s = (p is Map ? p['icon'] : null)?.toString();
   return (s == null || s.isEmpty) ? null : s;
 }
 
-bool projectIsInbox(dynamic p) => (p is Map ? p['is_inbox'] : null) == true;
+/// Backend-relative URL of the project's uploaded / git-seeded image icon, or
+/// null. Wins over the emoji when set (the web's fallback order).
+String? projectIconImageUri(dynamic p) {
+  final s = (p is Map ? p['icon_image_uri'] : null)?.toString();
+  return (s == null || s.isEmpty) ? null : s;
+}
+
+/// `updated_at` as sent — the cache-buster for the image icon, whose URL is
+/// stable across replacements.
+String? projectUpdatedAt(dynamic p) =>
+    (p is Map ? p['updated_at'] : null)?.toString();
 
 // --- Ordering & grouping ----------------------------------------------------
 

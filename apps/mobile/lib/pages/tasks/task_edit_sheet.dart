@@ -107,7 +107,7 @@ class _TaskEditSheetState extends State<_TaskEditSheet> {
 
   /// The selected project's linked directories (machine_id + absolute
   /// local_path), used to scope the description field's `@` file search and
-  /// project-local `/` commands. Empty for the Inbox or an unlinked project.
+  /// project-local `/` commands. Empty under No project or an unlinked project.
   List<dynamic> get _projectDirectories {
     final p = _selectedProject;
     if (p is Map) {
@@ -186,22 +186,28 @@ class _TaskEditSheetState extends State<_TaskEditSheet> {
   }
 
   Future<void> _pickProject(AppLocalizations l10n) async {
-    if (widget.projects.isEmpty) return;
+    // The picker pops null on dismiss, so No project rides as '' and maps back.
     final picked = await showAnchoredSingleSelect<String>(
       context: context,
       anchorKey: _projectKey,
-      selected: _projectId,
+      selected: _projectId ?? '',
       options: [
+        PickerOption(
+          value: '',
+          leading: const TaskProjectIcon(project: null, size: 16.0),
+          label: l10n.tasksNoProject,
+        ),
         for (final p in widget.projects)
           PickerOption(
             value: tutils.projectId(p),
             leading: TaskProjectIcon(project: p, size: 16.0),
-            label:
-                tutils.projectIsInbox(p) ? l10n.tasksInbox : tutils.projectName(p),
+            label: tutils.projectName(p),
           ),
       ],
     );
-    if (picked != null) setState(() => _projectId = picked);
+    if (picked != null) {
+      setState(() => _projectId = picked.isEmpty ? null : picked);
+    }
   }
 
   Future<void> _pickLabels(AppLocalizations l10n) async {
@@ -219,8 +225,7 @@ class _TaskEditSheetState extends State<_TaskEditSheet> {
 
   String _projectPillLabel(AppLocalizations l10n) {
     final p = _selectedProject;
-    if (p == null) return l10n.tasksInbox;
-    return tutils.projectIsInbox(p) ? l10n.tasksInbox : tutils.projectName(p);
+    return p == null ? l10n.tasksNoProject : tutils.projectName(p);
   }
 
   String _labelsPillLabel(AppLocalizations l10n) {

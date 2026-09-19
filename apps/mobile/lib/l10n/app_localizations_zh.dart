@@ -51,7 +51,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get tasksDisplay => '显示';
 
   @override
-  String get tasksInbox => '收件箱';
+  String get tasksNoProject => '无项目';
 
   @override
   String get tasksLabelsButton => '标签';

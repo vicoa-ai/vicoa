@@ -52,7 +52,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get tasksDisplay => 'Display';
 
   @override
-  String get tasksInbox => 'Inbox';
+  String get tasksNoProject => 'No project';
 
   @override
   String get tasksLabelsButton => 'Labels';

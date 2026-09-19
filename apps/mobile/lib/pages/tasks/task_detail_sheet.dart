@@ -57,7 +57,7 @@ class _TaskDetailSheet extends StatelessWidget {
     final closed = tutils.taskIsClosed(task);
     final description = tutils.taskDescription(task);
     final labels = tutils.taskLabels(task);
-    final showProject = project != null && !tutils.projectIsInbox(project);
+    final showProject = project != null;
 
     final chips = <Widget>[
       TaskMetaChip(

@@ -24,7 +24,7 @@ class TaskCard extends StatelessWidget {
 
   final dynamic task;
 
-  /// The resolved project for [task] (or null / inbox → no project chip).
+  /// The resolved project for [task] (null → no project chip).
   final dynamic project;
   final VoidCallback onTap;
   final bool showStatus;
@@ -39,7 +39,7 @@ class TaskCard extends StatelessWidget {
     final labels = tutils.taskLabels(task);
     final status = tutils.taskStatus(task);
     final showProjectChip =
-        showProject && project != null && !tutils.projectIsInbox(project);
+        showProject && project != null;
 
     final metaRow = <Widget>[
       if (showPriority) TaskPriorityIcon(priority: tutils.taskPriority(task)),
