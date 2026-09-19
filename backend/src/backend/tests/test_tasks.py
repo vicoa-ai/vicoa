@@ -1830,12 +1830,12 @@ class TestProjectLinkAdoption:
         test_db.refresh(taken)
         assert taken.project_id == other.id
 
-    def test_autocreate_adopts_sessions_that_predate_the_project(
+    def test_autocreate_does_not_adopt_earlier_sessions(
         self, test_db, test_user, test_agent_type
     ):
-        """The habit_rewards shape: sessions ran in the folder, then the first
-        registration after the matcher shipped minted the project — the old
-        sessions must land in it, not in a basename twin."""
+        """Plan rule: auto-create never runs the adoption backfill. Sessions
+        that ran in the folder before the project existed stay unfiled until
+        the user links the directory (the adopt affordance)."""
         from shared.database.project_matching import (
             resolve_or_create_project_id_for_session,
         )
@@ -1844,13 +1844,8 @@ class TestProjectLinkAdoption:
         legacy = self._instance(
             test_db, test_user.id, test_agent_type.id, machine.id, "~/habit_rewards"
         )
-        # The opencode_workspace shape: registered with no daemon on the box,
-        # left unfiled by the machine-less rule, then a daemon showed up.
         machineless = self._instance(
             test_db, test_user.id, test_agent_type.id, None, "~/habit_rewards/lib"
-        )
-        unrelated = self._instance(
-            test_db, test_user.id, test_agent_type.id, machine.id, "~/other"
         )
 
         pid = resolve_or_create_project_id_for_session(
@@ -1864,68 +1859,54 @@ class TestProjectLinkAdoption:
         )
         test_db.commit()
         assert pid is not None
-        for inst in (legacy, machineless, unrelated):
+        for inst in (legacy, machineless):
             test_db.refresh(inst)
-        assert legacy.project_id == pid
-        assert machineless.project_id == pid
-        assert unrelated.project_id is None
+        assert legacy.project_id is None
+        assert machineless.project_id is None
 
-    def test_remote_match_on_new_machine_adopts_that_machines_sessions(
+    def test_delete_then_new_session_does_not_resurrect_history(
         self, test_db, test_user, test_agent_type
     ):
-        """Tier-1 match creates the first link on a second box: the sessions
-        that ran there before are adopted, the first box's are untouched."""
+        """Delete must feel deleted: the non-cascading delete unfiles the
+        project's sessions; the next session in that folder auto-creates a
+        same-named project, and the old sessions must NOT follow it."""
+        from backend.db import task_queries
         from shared.database.project_matching import (
             resolve_or_create_project_id_for_session,
         )
 
-        laptop = _make_machine(test_db, test_user.id)
-        server = _make_machine(test_db, test_user.id, display_name="Server")
-        project = Project(
-            user_id=test_user.id,
-            name="alpha",
+        machine = _make_machine(test_db, test_user.id)
+        args = dict(
             git_remote_url="git@github.com:x/alpha.git",
-        )
-        test_db.add(project)
-        test_db.flush()
-        test_db.add(
-            ProjectDirectory(
-                user_id=test_user.id,
-                project_id=project.id,
-                machine_id=laptop.id,
-                local_path="~/alpha",
-            )
-        )
-        test_db.commit()
-        on_server = self._instance(
-            test_db, test_user.id, test_agent_type.id, server.id, "~/srv/alpha"
-        )
-        on_laptop_unfiled = self._instance(
-            test_db, test_user.id, test_agent_type.id, laptop.id, "~/alpha"
-        )
-
-        pid = resolve_or_create_project_id_for_session(
-            test_db,
-            test_user.id,
-            server.id,
-            "~/srv/alpha",
-            git_remote_url="git@github.com:x/alpha.git",
-            repo_root="~/srv/alpha",
+            repo_root="~/alpha",
             home_dir="/home/nick",
         )
-        test_db.commit()
-        assert pid == project.id
-        test_db.refresh(on_server)
-        test_db.refresh(on_laptop_unfiled)
-        assert on_server.project_id == project.id
-        # The laptop link already existed, so this call did not touch its rows.
-        assert on_laptop_unfiled.project_id is None
-        assert (
-            test_db.query(ProjectDirectory)
-            .filter(ProjectDirectory.project_id == project.id)
-            .count()
-            == 2
+        first = resolve_or_create_project_id_for_session(
+            test_db, test_user.id, machine.id, "~/alpha", **args
         )
+        test_db.commit()
+        assert first is not None
+        history = self._instance(
+            test_db,
+            test_user.id,
+            test_agent_type.id,
+            machine.id,
+            "~/alpha",
+            project_id=first,
+        )
+
+        task_queries.delete_project(test_db, test_user.id, first)
+        test_db.commit()
+        test_db.refresh(history)
+        assert history.project_id is None
+
+        second = resolve_or_create_project_id_for_session(
+            test_db, test_user.id, machine.id, "~/alpha", **args
+        )
+        test_db.commit()
+        assert second is not None and second != first
+        test_db.refresh(history)
+        assert history.project_id is None  # still deleted-feeling
 
 
 class TestSharedProjectMatching:

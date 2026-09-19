@@ -13,11 +13,13 @@ points share one matcher:
     plan §4a). It also **self-heals**: activity in an archived project
     un-archives it (running an agent there contradicts "no active work"), it
     ensures a ``project_directories`` row for this machine so subsequent
-    path-tier matches hit (and, like a manual "save directory", adopts the
-    unfiled sessions that already ran under that path — see
-    ``backfill_project_id_for_directory``), and it stamps the git remote onto
-    a project that was linked by folder alone so later sessions (other
-    machines, worktrees) can match it by identity.
+    path-tier matches hit, and it stamps the git remote onto a project that was
+    linked by folder alone so later sessions (other machines, worktrees) can
+    match it by identity. It deliberately does **not** adopt the unfiled
+    sessions already under that path (``backfill_project_id_for_directory`` is
+    the user's link endpoint only): deleting a project unfiles its sessions,
+    and the next session in that folder auto-creates a same-named project —
+    if that adopted, delete would resurrect the whole history.
 
 The matcher intentionally does **not** filter out archived projects: a session
 in a repo the user archived must re-match (and un-archive) that project, never
@@ -257,15 +259,14 @@ def _ensure_directory_row(
     project_id: UUID,
     machine_id: UUID | None,
     local_path: str | None,
-) -> ProjectDirectory | None:
+) -> None:
     """Insert a ``project_directories`` row for this machine if absent.
 
     Insert-only: never overwrites an existing (project, machine) link, so a
     session in ``/repo/subdir`` can't narrow a link the user made to ``/repo``.
-    Returns the row when this call created it, else ``None``.
     """
     if machine_id is None or not local_path:
-        return None
+        return
     exists = (
         db.query(ProjectDirectory.id)
         .filter(
@@ -275,16 +276,16 @@ def _ensure_directory_row(
         .first()
     )
     if exists is not None:
-        return None
-    row = ProjectDirectory(
-        user_id=user_id,
-        project_id=project_id,
-        machine_id=machine_id,
-        local_path=local_path.rstrip("/") or local_path,
+        return
+    db.add(
+        ProjectDirectory(
+            user_id=user_id,
+            project_id=project_id,
+            machine_id=machine_id,
+            local_path=local_path.rstrip("/") or local_path,
+        )
     )
-    db.add(row)
     db.flush()
-    return row
 
 
 def _backfill_remote(
@@ -417,26 +418,15 @@ def resolve_or_create_project_id_for_session(
         repo_root=repo_root,
         home_dir=home_dir,
     )
-    linked = _ensure_directory_row(
+    # No adoption backfill here — see the module docstring (delete must feel
+    # deleted); the user's "save directory" is the adopt affordance.
+    _ensure_directory_row(
         db,
         user_id=user_id,
         project_id=project.id,
         machine_id=machine_id,
         local_path=name_source,
     )
-    if linked is not None:
-        # A new link is a link — sessions that already ran under this path
-        # (before the project existed, or without a machine) must group the
-        # same way they would after a manual "save directory", or the sidebar
-        # shows a basename twin of the project next to it forever.
-        assert machine_id is not None  # _ensure_directory_row needs one
-        backfill_project_id_for_directory(
-            db,
-            user_id=user_id,
-            project_id=project.id,
-            machine_id=machine_id,
-            local_path=linked.local_path,
-        )
     return project.id
 
 
@@ -450,10 +440,10 @@ def backfill_project_id_for_directory(
 ) -> int:
     """Stamp ``project_id`` on unlinked sessions under ``local_path``.
 
-    Called when a project directory is linked — by the user (save directory) or
-    by the matcher (auto-create, first session of a remote-matched project on a
-    new machine) — so sessions that ran there *before* the link get attached too
-    (link-after-run must still group). Matches either the session's cwd
+    Called when the user (re)links a project directory — and only then; the
+    matcher's auto-create never adopts (see the module docstring) — so sessions
+    that ran there *before* the link get attached too (link-after-run must
+    still group). Matches either the session's cwd
     (``project``) OR its reported source repo root
     (``instance_metadata->>'repo_root'``), so a linked worktree — whose cwd sits
     outside the repo — is picked up by its repo root.
