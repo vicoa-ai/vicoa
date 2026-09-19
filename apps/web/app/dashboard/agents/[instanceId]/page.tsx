@@ -24,7 +24,7 @@ import { getMessageStore } from '@/lib/message-store';
 import { useMessageStream } from '@/lib/hooks/use-ws-stream';
 import { extractMessageOptions, formatTaskNotifications } from '@/components/ui/message-markdown-utils';
 import { GitBranchBadge } from '@/components/dashboard/git-branch-badge';
-import { resolveAgentType, vibingMessages, getMessageVisibleText } from '@/components/dashboard/chat-message-item';
+import { resolveAgentType, vibingMessages, getMessageVisibleText, VibingText } from '@/components/dashboard/chat-message-item';
 import { ChatFindBar } from '@/components/dashboard/chat-find-bar';
 import { FindHighlightProvider } from '@/components/dashboard/chat-find-context';
 import { FileLinkProvider } from '@/components/dashboard/file-link-context';
@@ -1352,23 +1352,22 @@ function AgentInstanceContent() {
   // Peek reveals the chat beneath the file layer (sticky button or held key).
   const peeking = peekSticky || peekHold;
 
-  // Flatten groups + thinking indicator into a single list of items for Virtuoso.
-  // `key` is stable per item (separator uses date, messages use id) so Virtuoso
-  // can correctly preserve scroll position when older history is prepended.
-  // Header/footer are module-level components (see VIRTUOSO_COMPONENTS); what
-  // they show comes through Virtuoso's `context` prop instead of closures.
+  // Flatten groups into a single list of items for Virtuoso. `key` is stable
+  // per item (separator uses date, messages use id) so Virtuoso can correctly
+  // preserve scroll position when older history is prepended. The "working…"
+  // indicator is NOT a row here — it lives inside the list's fixed-height
+  // Footer (see VIRTUOSO_COMPONENTS), so it never resizes the list.
+  // Header/footer are module-level components; what they show comes through
+  // Virtuoso's `context` prop instead of closures.
+  const showVibing = showThinking && thinkingSettingEnabled !== false;
   const virtuosoContext = useMemo<TranscriptListContext>(
-    () => ({ loadingOlder: hasOlderMessages || isLoadingOlder }),
-    [hasOlderMessages, isLoadingOlder],
+    () => ({ loadingOlder: hasOlderMessages || isLoadingOlder, vibing: showVibing ? vibingMessage : null }),
+    [hasOlderMessages, isLoadingOlder, showVibing, vibingMessage],
   );
 
   const chatItems = useMemo<ChatItem[]>(
-    () =>
-      buildTranscriptItems(groupedMessages, {
-        agentTypeName: instance?.agent_type_name,
-        showThinking: showThinking && thinkingSettingEnabled !== false,
-      }),
-    [groupedMessages, showThinking, thinkingSettingEnabled, instance?.agent_type_name],
+    () => buildTranscriptItems(groupedMessages, { agentTypeName: instance?.agent_type_name }),
+    [groupedMessages, instance?.agent_type_name],
   );
 
   // Turn-end lookup for the hover footer: only the last agent message of each
@@ -1378,9 +1377,9 @@ function AgentInstanceContent() {
   // tool-group or a thinking card is inside the turn but never anchors it.
   const turnCopyText = useMemo(() => computeTranscriptTurns(chatItems), [chatItems]);
 
-  // Whether the list has any real message rows. A lone "thinking" item doesn't
-  // count — we render the SessionEmptyState (not the virtual list) until a real
-  // message arrives, so the Virtuoso-tied overlays/buttons gate on this too.
+  // Whether the list has any real message rows. We render the SessionEmptyState
+  // (not the virtual list) until a real message arrives, so the Virtuoso-tied
+  // overlays/buttons gate on this too.
   const hasMessageItems = hasTranscriptMessages(chatItems);
 
   // Expanded tool rows/groups (and subagent-groups — same key-space, no
@@ -2449,7 +2448,6 @@ function AgentInstanceContent() {
                 expandedKeys={expandedToolItems}
                 onToggleExpanded={toggleToolItem}
                 findActiveKey={findActiveKey}
-                vibingMessage={vibingMessage}
                 onOptionClick={handleOptionClick}
                 onAskUserQuestionSubmit={handleAskUserQuestionSubmit}
                 onAskUserQuestionCancel={handleAskUserQuestionCancel}
@@ -2714,9 +2712,11 @@ function AgentInstanceContent() {
   );
 }
 
-/** What the transcript list's header needs to know; passed via Virtuoso `context`. */
+/** What the transcript list's header/footer need to know; passed via Virtuoso `context`. */
 interface TranscriptListContext {
   loadingOlder: boolean;
+  /** The "working…" word to show under the last message, or null while idle. */
+  vibing: string | null;
 }
 
 // Virtuoso treats each entry as a React component *type*, so these must be
@@ -2731,7 +2731,22 @@ const VIRTUOSO_COMPONENTS = {
     ) : (
       <div className="h-6" />
     ),
-  Footer: () => <div className="h-32" />,
+  // Tail spacer, and the home of the "working…" indicator. The word sits at
+  // the top of this fixed-height block (in the message column, at the offset
+  // the old inline row had), so it reads as the tail of the conversation —
+  // but because the block is the same height whether or not the word is
+  // showing, the list never grows or shrinks when the agent starts or stops.
+  // A data row did: every appear pushed the transcript up and every
+  // disappear dropped it back.
+  Footer: ({ context }: { context?: TranscriptListContext }) => (
+    <div className="h-32 max-w-4xl mx-auto px-6" role="status">
+      {context?.vibing && (
+        <div className="px-4 pt-6 text-sm text-muted-foreground animate-in fade-in duration-200">
+          <VibingText text={context.vibing} />
+        </div>
+      )}
+    </div>
+  ),
 };
 
 export default function AgentInstancePage() {

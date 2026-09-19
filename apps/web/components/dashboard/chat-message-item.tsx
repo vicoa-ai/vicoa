@@ -269,31 +269,43 @@ export const DateSeparator = memo(function DateSeparator({ date }: { date: strin
   );
 });
 
-// "Agent is thinking" indicator with the wavy "vibing" animation.
+// The wavy "vibing" word: every character blinks on a staggered wave.
+// Inline (a span), so a caller decides where it lives — the read-only
+// transcript's tail row (ThinkingIndicator) or the session page's fixed
+// status slot above the composer.
+export const VibingText = memo(function VibingText({ text }: { text: string }) {
+  return (
+    <span className="vibing-text font-mono">
+      <style>{`
+        @keyframes blink-wave {
+          0% { opacity: 0.3; }
+          50% { opacity: 0.8; }
+          100% { opacity: 0.3; }
+        }
+        .vibing-text span {
+          display: inline-block;
+          animation: blink-wave 6s ease-in-out infinite;
+        }
+      `}</style>
+      {text.split('').map((char, index) => (
+        <span key={index} style={{ animationDelay: `${index * 0.15}s` }}>
+          {char}
+        </span>
+      ))}
+    </span>
+  );
+});
+
+// "Agent is thinking" indicator as a transcript row (used by the read-only
+// SessionTranscript). The live session page renders VibingText in a fixed
+// slot instead, so the list doesn't shift when the indicator comes and goes.
 export const ThinkingIndicator = memo(function ThinkingIndicator({ vibingMessage }: { vibingMessage: string }) {
   return (
     <div className="flex gap-3 justify-start mt-3 mb-3">
       <div className="flex gap-3 w-full">
         <div className="rounded-xl px-4 py-3 text-foreground rounded-tl-sm">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <style>{`
-              @keyframes blink-wave {
-                0% { opacity: 0.3; }
-                50% { opacity: 0.8; }
-                100% { opacity: 0.3; }
-              }
-              .vibing-text span {
-                display: inline-block;
-                animation: blink-wave 6s ease-in-out infinite;
-              }
-            `}</style>
-            <span className="vibing-text font-mono">
-              {vibingMessage.split('').map((char, index) => (
-                <span key={index} style={{ animationDelay: `${index * 0.15}s` }}>
-                  {char}
-                </span>
-              ))}
-            </span>
+            <VibingText text={vibingMessage} />
           </div>
         </div>
       </div>

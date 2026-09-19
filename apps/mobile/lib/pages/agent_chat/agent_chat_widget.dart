@@ -67,8 +67,24 @@ class AgentChatWidget extends StatefulWidget {
 }
 
 class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, TickerProviderStateMixin, WidgetsBindingObserver {
-  static const double _trailingSpacerHeight = 16.0;
-  static const int _trailingSpacerCount = 1;
+  /// The list's tail item: a fixed-height slot that shows the "working…"
+  /// indicator while the agent is busy and stays empty otherwise. Because the
+  /// slot is the same height either way, the list never grows or shrinks when
+  /// the agent starts or stops — a dedicated indicator row did, pushing the
+  /// transcript up on every appear and dropping it back on every disappear.
+  /// It doubles as the trailing spacer above the composer. Same shape as the
+  /// web transcript's fixed-height Virtuoso Footer.
+  ///
+  /// Sized so the word keeps clear of the composer: 6 above the ~22px line,
+  /// then ~36 below it before the list's own 16px bottom padding — about the
+  /// distance the old bubble's bottom edge had. The idle gap under the last
+  /// message is the same 64, the price of the slot never changing size.
+  static const double _tailSlotHeight = 64.0;
+  static const int _tailSlotCount = 1;
+  /// The list's own bottom padding; scrolls with the content after the slot.
+  static const double _listBottomPadding = 16.0;
+  /// The message list's render box, for [_scrollToBottom]'s alignment math.
+  final GlobalKey _messageListKey = GlobalKey();
   static const Duration _scrollThrottleInterval = Duration(milliseconds: 100);
   late AgentChatModel _model;
   // late List<AnimationController> _dotAnimationControllers;
@@ -557,11 +573,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     return status == 'ACTIVE';
   }
 
-  int get _listItemCount {
-    final baseCount = _model.messages.length;
-    final typingCount = _shouldShowTypingIndicator ? 1 : 0;
-    return baseCount + typingCount + _trailingSpacerCount;
-  }
+  int get _listItemCount => _model.messages.length + _tailSlotCount;
 
   void _rebuildMessageMetadataCache() {
     // Clear old caches
@@ -677,15 +689,9 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       }
     }
 
-    // At bottom when the last index (newest content) is visible
-    // Account for typing indicator - if it just appeared, we're still conceptually "at bottom"
-    final lastIndex = totalItems - 1;
+    // At bottom when the last message (newest content) is visible — the only
+    // item after it is the fixed tail slot.
     final lastMessageIndex = _model.messages.length - 1;
-
-    // Consider "at bottom" if we're viewing either:
-    // 1. The actual last item (spacer), OR
-    // 2. The typing indicator, OR
-    // 3. The last message (if no typing indicator)
     final atBottom = maxVisibleIndex >= lastMessageIndex;
 
     if (_isAtListBottom != atBottom) {
@@ -995,12 +1001,12 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
   }
 
   void _scrollToBottom({bool animate = false}) {
-    if (_model.messages.isEmpty && !_shouldShowTypingIndicator) {
+    if (_model.messages.isEmpty) {
       return;
     }
 
     void performScroll() {
-      // With reverse:false, scroll to the last index (the trailing spacer)
+      // With reverse:false, scroll to the last index (the tail slot)
       // This ensures we scroll to the very bottom
       final targetIndex = _listItemCount - 1;
 
@@ -1008,10 +1014,22 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
         return;
       }
 
-      // For reverse:false with trailing spacer at the end:
-      // alignment: 1.0 = align item's trailing edge to viewport's trailing edge (bottom)
-      // This should scroll to show the spacer at the very bottom
-      const alignmentValue = 0.945;
+      // `alignment` is where the item's *top* lands, as a fraction of the
+      // viewport. Aim the tail slot's top at exactly (slot + list padding)
+      // above the bottom edge, so the whole slot is on screen. A fixed
+      // fraction (the old 0.945, tuned for a 16px spacer) put the slot's top
+      // ~40px above the bottom whatever its height, leaving the lower part of
+      // the slot — the gap under the vibing word — below the fold.
+      final viewportHeight =
+          (_messageListKey.currentContext?.findRenderObject() as RenderBox?)
+              ?.size
+              .height;
+      const tailExtent = _tailSlotHeight + _listBottomPadding;
+      final alignmentValue = viewportHeight == null
+          ? 0.9
+          : viewportHeight > tailExtent
+              ? 1.0 - tailExtent / viewportHeight
+              : 0.0;
 
       // Mark as programmatic scroll to prevent keyboard dismissal
       _isProgrammaticScroll = true;
@@ -2125,31 +2143,21 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     }
   }
 
-  Widget _buildTypingIndicator() {
-    return RepaintBoundary(
-      child: Container(
-      margin: const EdgeInsetsDirectional.fromSTEB(16.0, 6.0, 16.0, 6.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Flexible(
-            child: Container(
-              padding: const EdgeInsetsDirectional.fromSTEB(8.0, 12.0, 16.0, 12.0),
-              decoration: BoxDecoration(
-                color: FlutterFlowTheme.of(context).secondaryBackground,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(20.0),
-                  topRight: Radius.circular(20.0),
-                  bottomLeft: Radius.circular(20.0),
-                  bottomRight: Radius.circular(20.0),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Vibing message text with wave animation
-                  VibingTextWidget(
+  /// The list's tail item (see [_tailSlotHeight]). The vibing word sits at
+  /// the slot's top, inset to the agent bubble's text edge (16 margin + 8
+  /// padding), so it reads as the tail of the conversation; the slot itself is
+  /// the same fixed height whether or not the word is showing.
+  Widget _buildTailSlot() {
+    return SizedBox(
+      key: const ValueKey('tail_slot'),
+      height: _tailSlotHeight,
+      child: _shouldShowTypingIndicator
+          ? Align(
+              alignment: AlignmentDirectional.topStart,
+              child: Padding(
+                padding: const EdgeInsetsDirectional.fromSTEB(24.0, 6.0, 16.0, 0.0),
+                child: RepaintBoundary(
+                  child: VibingTextWidget(
                     message: _currentVibingMessage,
                     textColor: FlutterFlowTheme.of(context).secondaryText.withValues(
                           alpha: Theme.of(context).brightness == Brightness.dark
@@ -2158,20 +2166,10 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
                         ),
                     fontSize: 16.0,
                   ),
-                  // const SizedBox(width: 8.0),
-                  // Animated dots
-                  // _buildTypingDot(0),
-                  // const SizedBox(width: 4.0),
-                  // _buildTypingDot(1),
-                  // const SizedBox(width: 4.0),
-                  // _buildTypingDot(2),
-                ],
+                ),
               ),
-            ),
-          ),
-        ],
-      ),
-    ),
+            )
+          : null,
     );
   }
 
@@ -3068,6 +3066,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
                           return false;
                         },
                         child: ScrollablePositionedList.builder(
+                          key: _messageListKey,
                           itemScrollController:
                               _model.itemScrollController,
                           itemPositionsListener:
@@ -3080,15 +3079,12 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
                             0.0,
                             16.0,
                             0.0,
-                            16.0,
+                            _listBottomPadding,
                           ),
                           itemCount: _listItemCount,
                           itemBuilder: (context, index) {
                             // With reverse:false, index = actual position (no conversion needed)
                             final actualIndex = index;
-                            final hasTypingIndicator = _shouldShowTypingIndicator;
-                            final typingIndex = _model.messages.length;
-                            final spacerIndex = typingIndex + (hasTypingIndicator ? 1 : 0);
 
                             if (actualIndex < _model.messages.length) {
                               final message = _model.messages[actualIndex];
@@ -3112,12 +3108,8 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
                               );
                             }
 
-                            if (hasTypingIndicator && actualIndex == typingIndex) {
-                              return _buildTypingIndicator();
-                            }
-
-                            if (actualIndex == spacerIndex) {
-                              return const SizedBox(height: _trailingSpacerHeight);
+                            if (actualIndex == _model.messages.length) {
+                              return _buildTailSlot();
                             }
 
                             return const SizedBox.shrink();
