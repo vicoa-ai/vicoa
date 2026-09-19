@@ -4,11 +4,14 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from unittest.mock import patch, Mock
 
+import pytest
 from fastapi import BackgroundTasks
 from sqlalchemy import event
+from sqlalchemy.orm import sessionmaker
 
 from backend.auth.dependencies import get_current_user
 from shared.auth.tokens import TokenClaims
+from shared.database import users as users_module
 from shared.database.models import User, APIKey
 
 
@@ -80,6 +83,26 @@ class TestAuthEndpoints:
         # Verify display name was updated
         test_db.refresh(test_user)
         assert test_user.display_name == "Synced Name"
+
+    def test_sync_user_never_clears_a_name(
+        self, authenticated_client, test_user, test_db
+    ):
+        """The web syncs on every sign-in from whatever the provider published;
+        a provider that publishes none must not wipe the name the user set."""
+        test_user.display_name = "Chosen Name"
+        test_db.commit()
+        for value in (None, "   "):
+            response = authenticated_client.post(
+                "/api/v1/auth/sync-user",
+                json={
+                    "id": str(test_user.id),
+                    "email": test_user.email,
+                    "display_name": value,
+                },
+            )
+            assert response.status_code == 200
+            test_db.refresh(test_user)
+            assert test_user.display_name == "Chosen Name"
 
     def test_sync_user_forbidden(self, authenticated_client, test_user):
         """Test syncing a different user is forbidden."""
@@ -282,6 +305,61 @@ class TestAuthPathIsReadOnly:
         assert user.id == test_user.id
         assert writes == [], f"auth path must not write: {writes}"
         assert background_tasks.tasks == [], "existing user must not be welcomed again"
+
+
+class TestDisplayNameBackfill:
+    """`ensure_local_user` writes `display_name` only when it inserts the row,
+    so an account whose provider published a name later (or whose claim was
+    not read at signup) would keep a NULL forever — and a person with no name
+    falls back to a placeholder wherever they appear, including a shared page
+    that opted into showing the owner. The backfill converges those, without
+    writing on the auth path itself."""
+
+    @pytest.fixture(autouse=True)
+    def _task_uses_test_engine(self, test_db, monkeypatch):
+        """The task opens its own `SessionLocal`; point it at the test DB."""
+        local = sessionmaker(bind=test_db.get_bind(), autoflush=False, autocommit=False)
+        monkeypatch.setattr(users_module, "SessionLocal", local)
+
+    async def _authenticate(self, test_db, user, display_name):
+        background_tasks = BackgroundTasks()
+        await get_current_user(
+            background_tasks=background_tasks,
+            claims=TokenClaims(
+                user_id=user.id, email=user.email, display_name=display_name
+            ),
+            db=test_db,
+        )
+        for task in background_tasks.tasks:
+            task.func(*task.args, **task.kwargs)
+        test_db.expire_all()
+
+    async def test_nameless_row_takes_the_idp_name(self, test_db, test_user):
+        test_user.display_name = None
+        test_db.commit()
+        await self._authenticate(test_db, test_user, "  Ada Lovelace  ")
+        assert test_user.display_name == "Ada Lovelace"
+
+    async def test_existing_name_is_never_overwritten(self, test_db, test_user):
+        """A name set in Settings outranks whatever the provider still has."""
+        test_user.display_name = "Chosen Name"
+        test_db.commit()
+        await self._authenticate(test_db, test_user, "Stale IdP Name")
+        assert test_user.display_name == "Chosen Name"
+
+    async def test_no_claim_enqueues_nothing(self, test_db, test_user):
+        """The built-in provider and Apple publish no name; nothing to queue."""
+        test_user.display_name = None
+        test_db.commit()
+        background_tasks = BackgroundTasks()
+        await get_current_user(
+            background_tasks=background_tasks,
+            claims=TokenClaims(
+                user_id=test_user.id, email=test_user.email, display_name="   "
+            ),
+            db=test_db,
+        )
+        assert background_tasks.tasks == []
 
 
 class TestCreateCliKey:

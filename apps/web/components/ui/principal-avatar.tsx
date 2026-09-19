@@ -124,7 +124,11 @@ export function PrincipalAvatar({
     );
   }
 
-  const initial = principalInitial(principal.name);
+  // A principal with no id is a placeholder, not a person — "Owner" on a public
+  // page whose link hides the owner, "Deleted user" — and a monogram would
+  // invent an identity mark for it. Those get the glyph (`principalForAvatar`
+  // makes the same call for a name-less viewer).
+  const initial = principal.id ? principalInitial(principal.name) : null;
   if (initial) {
     return (
       <span

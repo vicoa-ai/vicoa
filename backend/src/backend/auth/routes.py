@@ -123,9 +123,15 @@ async def sync_user(
     if str(claims.user_id) != request.id:
         raise HTTPException(status_code=403, detail="Cannot sync different user")
 
-    # Update user profile if needed
-    if current_user.display_name != request.display_name:
-        current_user.display_name = request.display_name
+    # A name the client does not know is "no information", never "clear it".
+    # The web syncs on every sign-in from whatever the provider published, so
+    # honouring an empty value here let one login wipe a name the user had set
+    # — and everything the backend renders (a task's activity, a comment, a
+    # shared page's owner) fell back to a placeholder from then on. Clearing a
+    # name is possible, deliberately, through PATCH /auth/me.
+    name = (request.display_name or "").strip()
+    if name and current_user.display_name != name:
+        current_user.display_name = name
         db.commit()
 
     return {"message": "User synced successfully"}

@@ -100,7 +100,13 @@ describe('principalDisplayName', () => {
   });
 
   it('does not borrow the viewer label for someone else', () => {
-    expect(principalDisplayName({ type: 'user', id: 'u2', name: null }, viewer)).toBe('Unknown');
+    expect(principalDisplayName({ type: 'user', id: 'u2', name: null }, viewer)).toBe(
+      'Vicoa user',
+    );
+  });
+
+  it('keeps Unknown for a change nobody is attributed with', () => {
+    expect(principalDisplayName(null, viewer)).toBe('Unknown');
   });
 
   it('names a nameless agent as an agent', () => {

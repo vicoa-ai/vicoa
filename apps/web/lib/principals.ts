@@ -111,7 +111,11 @@ export function principalDisplayName(
     if (own) return own;
     return 'You';
   }
-  return principal?.type === 'agent' ? 'Agent' : 'Unknown';
+  if (principal?.type === 'agent') return 'Agent';
+  // A real account that has not set a name is a person we cannot name, not an
+  // unknown actor; "Unknown" reads as something having gone wrong. No
+  // principal at all (an unattributed background change) keeps that label.
+  return principal ? 'Vicoa user' : 'Unknown';
 }
 
 /**

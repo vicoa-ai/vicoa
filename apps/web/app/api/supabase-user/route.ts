@@ -6,16 +6,28 @@ import { getSupabaseToken } from '@/lib/auth/supabase-helpers';
 
 /**
  * The backend's copy of the caller's identity — the avatar lives there, not in
- * Supabase (we re-host it rather than hot-link the IdP's CDN). Best-effort: a
- * backend hiccup must not sign the user out of the dashboard, it just means
- * `<PrincipalAvatar>` falls back to initials this render.
+ * Supabase (we re-host it rather than hot-link the IdP's CDN), and so does the
+ * name that every *other* surface renders: a task's activity, a comment, a
+ * shared page's owner. The chrome reads it from here too, so it cannot show a
+ * name those surfaces do not have (Supabase's `profiles` table held one for
+ * accounts whose backend row had none, which read as the name silently not
+ * working everywhere else).
+ *
+ * Best-effort: a backend hiccup must not sign the user out of the dashboard,
+ * it just means the Supabase-side name and initials are used this render.
  */
-async function fetchBackendAvatar(): Promise<{
+async function fetchBackendProfile(): Promise<{
+  displayName: string | null;
   avatarImageUri: string | null;
   avatarEmoji: string | null;
   updatedAt: string | null;
 }> {
-  const empty = { avatarImageUri: null, avatarEmoji: null, updatedAt: null };
+  const empty = {
+    displayName: null,
+    avatarImageUri: null,
+    avatarEmoji: null,
+    updatedAt: null,
+  };
   try {
     const token = await getSupabaseToken(true);
     if (!token) return empty;
@@ -27,12 +39,13 @@ async function fetchBackendAvatar(): Promise<{
     if (!response.ok) return empty;
     const profile = await response.json();
     return {
+      displayName: profile?.display_name?.trim() || null,
       avatarImageUri: profile?.avatar_image_uri ?? null,
       avatarEmoji: profile?.avatar_emoji ?? null,
       updatedAt: profile?.updated_at ?? null,
     };
   } catch (error) {
-    console.error('Failed to load backend profile avatar:', error);
+    console.error('Failed to load the backend profile:', error);
     return empty;
   }
 }
@@ -46,12 +59,13 @@ export async function GET() {
       if (!claims) {
         return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
       }
+      const { displayName, ...avatar } = await fetchBackendProfile();
       return NextResponse.json({
         id: claims.sub,
-        name: claims.name ?? '',
+        name: displayName ?? claims.name ?? '',
         email: claims.email ?? '',
         role: 'member',
-        ...(await fetchBackendAvatar()),
+        ...avatar,
       });
     }
 
@@ -77,14 +91,16 @@ export async function GET() {
       displayName = profileById.data.display_name ?? '';
     }
 
-    // Return user data in a format compatible with the dashboard
+    // Return user data in a format compatible with the dashboard. The backend
+    // name wins: it is the one every other surface renders from.
+    const { displayName: backendName, ...avatar } = await fetchBackendProfile();
     const userData = {
       id: user.id,
-      name: displayName || user.user_metadata?.name || '',
+      name: backendName || displayName || user.user_metadata?.name || '',
       email: user.email,
       createdAt: user.created_at,
       role: user.user_metadata?.role || 'member',
-      ...(await fetchBackendAvatar()),
+      ...avatar,
     };
 
     return NextResponse.json(userData);

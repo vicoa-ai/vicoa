@@ -11,7 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from shared.database.models import User
 from shared.database.actor import Actor, set_session_actor
 from shared.database.session import get_db
-from shared.database.users import ensure_local_user
+from shared.database.users import backfill_display_name, ensure_local_user
 from sqlalchemy.orm import Session
 
 from shared.auth import Principal, verify_user_token
@@ -152,6 +152,25 @@ def _maybe_seed_avatar(
         background_tasks.add_task(seed_user_avatar, user.id, avatar_url)
 
 
+def _maybe_backfill_display_name(
+    background_tasks: BackgroundTasks, user: User, display_name: str | None
+) -> None:
+    """Queue the IdP display-name backfill when this user still has none.
+
+    Checked on EVERY authenticated request for the same reason as the avatar
+    seed above: `ensure_local_user` writes the name only when it inserts the
+    row, so a signup-only seed leaves every older account NULL forever — and a
+    person with no name falls back to a placeholder everywhere they appear,
+    including a shared page whose link opted into showing the owner.
+
+    Queued rather than written here: the steady-state auth path must not write
+    on the request session (`TestAuthPathIsReadOnly`). The task re-checks
+    eligibility in its own session and never overwrites a name.
+    """
+    if not user.display_name and (display_name or "").strip():
+        background_tasks.add_task(backfill_display_name, user.id, display_name)
+
+
 async def get_current_user(
     background_tasks: BackgroundTasks,
     claims: Principal = Depends(get_current_claims),
@@ -168,6 +187,7 @@ async def get_current_user(
         # no such step — they are matched by email at read time.
         attach_pending_grants(db, user)
     _maybe_seed_avatar(background_tasks, user, claims.avatar_url)
+    _maybe_backfill_display_name(background_tasks, user, claims.display_name)
     # Attribution for anything this request's session flushes (collaboration
     # §3.5): the task-activity listener has no request context of its own, and
     # this dependency is the one place every authenticated dashboard route
@@ -199,4 +219,5 @@ async def get_optional_current_user(
         if created:
             _schedule_signup_side_effects(background_tasks, user)
         _maybe_seed_avatar(background_tasks, user, claims.avatar_url)
+        _maybe_backfill_display_name(background_tasks, user, claims.display_name)
     return user

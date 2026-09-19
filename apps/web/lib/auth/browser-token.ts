@@ -44,16 +44,30 @@ export async function readBrowserIdentity(): Promise<BrowserIdentity | null> {
   }
   try {
     const { createClient } = await import('./supabase-client');
+    const client = createClient();
     const {
       data: { user },
-    } = await createClient().auth.getUser();
-    return user
-      ? {
-          id: user.id,
-          email: user.email ?? '',
-          display_name: user.user_metadata?.display_name ?? null,
-        }
-      : null;
+    } = await client.auth.getUser();
+    if (!user) return null;
+    // Same precedence the backend reads off the token (`_display_name` in
+    // shared/auth/supabase_provider.py) — a Google sign-in publishes
+    // `full_name`, not `display_name`, and reading only the latter sent a null
+    // that the backend used to write over a perfectly good name.
+    const metadata = user.user_metadata ?? {};
+    let name: string | null =
+      metadata.display_name?.trim() || metadata.full_name?.trim() || metadata.name?.trim() || null;
+    if (!name) {
+      // The legacy Supabase-side copy: accounts that set a name before the
+      // backend owned one have it only here. Sync carries it over once; a
+      // failure just means the account keeps no name for now.
+      const { data } = await client
+        .from('profiles')
+        .select('display_name')
+        .eq('id', user.id)
+        .maybeSingle();
+      name = data?.display_name?.trim() || null;
+    }
+    return { id: user.id, email: user.email ?? '', display_name: name };
   } catch (error) {
     console.error('Error reading the browser identity:', error);
     return null;
