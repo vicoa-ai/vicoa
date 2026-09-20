@@ -290,8 +290,9 @@ class _DirectoryTextField extends StatelessWidget {
 }
 
 /// The projects linked to a folder on the selected machine: icon + name, the
-/// folder in muted mono beneath, a check on the one the current folder falls
-/// under. Tapping picks the project's folder.
+/// folder in muted mono beneath, a plain check on the one the current folder
+/// falls under (no accent border or tint — the same quiet selected state as
+/// the Tasks pickers). Tapping picks the project's folder.
 class _ProjectList extends StatelessWidget {
   const _ProjectList({required this.projects, required this.selectedProjectId, required this.onTap});
   final List<ProjectPickerEntry> projects;
@@ -317,7 +318,6 @@ class _ProjectList extends StatelessWidget {
             decoration: BoxDecoration(
               color: theme.primaryBackground,
               borderRadius: BorderRadius.circular(12.0),
-              border: selected ? Border.all(color: theme.primary, width: 1.0) : null,
             ),
             child: Row(children: [
               TaskProjectIcon(project: entry.project, size: 18.0),
@@ -338,7 +338,7 @@ class _ProjectList extends StatelessWidget {
               ),
               if (selected) ...[
                 const SizedBox(width: 8.0),
-                Icon(Icons.check_rounded, color: theme.primary, size: 18.0),
+                Icon(Icons.check_rounded, color: theme.primaryText, size: 18.0),
               ],
             ]),
           ),
