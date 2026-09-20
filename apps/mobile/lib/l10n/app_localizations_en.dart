@@ -741,7 +741,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get directoryPickerRecent => 'Recent';
 
   @override
-  String get directoryPickerWorkingDirectory => 'Working Directory';
+  String get directoryPickerProject => 'Project';
 
   @override
   String get errorStateDisplaySignInAgain => 'Sign In Again';
@@ -1396,7 +1396,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'This could be due to:\n\n• The machine is not responding\n• Network connection issues\n• The directory path is invalid\n\nPlease check machine status and try again.';
 
   @override
-  String get newSessionWorkingDirectory => 'Working Directory';
+  String get newSessionProject => 'Project';
 
   @override
   String get newSessionWorktree => 'Worktree';

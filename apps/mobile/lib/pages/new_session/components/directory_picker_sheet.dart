@@ -8,9 +8,11 @@ import '/flutter_flow/flutter_flow_theme.dart';
 import '/l10n/app_localizations.dart';
 import '/pages/tasks/task_glyphs.dart' show TaskProjectIcon;
 
-/// Bottom-sheet for picking the working directory. Styled to match the
-/// message_selection_sheet pattern: full-bleed container (90% screen height)
-/// with a handle bar, Close / Title / Done header, and a scrollable body.
+/// Bottom-sheet for picking the project folder. Styled to match the
+/// message_selection_sheet pattern: full-bleed container (65% screen height)
+/// with a handle bar, Close / Title / Done header, and a scrollable body. With
+/// the keyboard up it collapses to the header + path input and sits on top of
+/// the keyboard.
 ///
 /// Two callers, two lists. The new-session screen passes [projects] — the
 /// projects linked to a folder on the selected machine, newest activity first
@@ -94,66 +96,84 @@ class _DirectoryPickerSheetState extends State<_DirectoryPickerSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = FlutterFlowTheme.of(context);
-    return Container(
-      width: double.infinity,
-      height: MediaQuery.of(context).size.height * 0.65,
-      decoration: BoxDecoration(
-        color: theme.secondaryBackground,
-        borderRadius: const BorderRadius.only(topLeft: Radius.circular(24.0), topRight: Radius.circular(24.0)),
-      ),
-      // Tap anywhere outside the text field to dismiss the keyboard.
-      child: GestureDetector(
-        onTap: () => FocusScope.of(context).unfocus(),
-        behavior: HitTestBehavior.translucent,
-        child: Column(mainAxisSize: MainAxisSize.max, children: [
-        _SheetHandle(),
-        _SheetHeader(
-          title: AppLocalizations.of(context).directoryPickerWorkingDirectory,
-          canConfirm: _canConfirm,
-          onClose: () { HapticFeedback.lightImpact(); Navigator.pop(context); },
-          onConfirm: _confirm,
+    final l10n = AppLocalizations.of(context);
+    final media = MediaQuery.of(context);
+    // While a path is being typed the lists are dead weight: they collapse and
+    // the sheet shrinks to header + input, riding on top of the keyboard,
+    // instead of squeezing a fixed-height column into whatever is left above
+    // it (which is where a sub-pixel overflow came from on tall keyboards).
+    final keyboardUp = media.viewInsets.bottom > 0;
+    final showProjects = widget.projects.isNotEmpty && !keyboardUp;
+    final showRecent = widget.recent.isNotEmpty && !keyboardUp;
+    return Padding(
+      padding: EdgeInsets.only(bottom: media.viewInsets.bottom),
+      // Slide the header down as the keyboard rises (and back up once it is
+      // gone) rather than snapping between the two heights.
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        alignment: Alignment.bottomCenter,
+        child: Container(
+          width: double.infinity,
+          height: keyboardUp ? null : media.size.height * 0.65,
+          decoration: BoxDecoration(
+            color: theme.secondaryBackground,
+            borderRadius: const BorderRadius.only(topLeft: Radius.circular(24.0), topRight: Radius.circular(24.0)),
+          ),
+          // Tap anywhere outside the text field to dismiss the keyboard.
+          child: GestureDetector(
+            onTap: () => FocusScope.of(context).unfocus(),
+            behavior: HitTestBehavior.translucent,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              _SheetHandle(),
+              _SheetHeader(
+                title: l10n.directoryPickerProject,
+                canConfirm: _canConfirm,
+                onClose: () { HapticFeedback.lightImpact(); Navigator.pop(context); },
+                onConfirm: _confirm,
+              ),
+              // Projects first (the common case is picking one), the path input
+              // for everything else beneath. When the caller passes plain recent
+              // folders instead (the automation editor), those take the list slot.
+              if (showProjects) ...[
+                Padding(
+                  padding: const EdgeInsetsDirectional.fromSTEB(16.0, 16.0, 16.0, 8.0),
+                  child: Align(alignment: AlignmentDirectional.centerStart, child: _sectionLabel(context, l10n.directoryPickerProjects)),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsetsDirectional.fromSTEB(16.0, 0.0, 16.0, 0.0),
+                    child: _ProjectList(projects: widget.projects, selectedProjectId: widget.selectedProjectId, onTap: _pickRecent),
+                  ),
+                ),
+              ],
+              Padding(
+                padding: const EdgeInsetsDirectional.fromSTEB(16.0, 16.0, 16.0, 8.0),
+                child: Align(alignment: AlignmentDirectional.centerStart, child: _sectionLabel(context, l10n.directoryPickerFolder)),
+              ),
+              Padding(
+                padding: const EdgeInsetsDirectional.fromSTEB(16.0, 0.0, 16.0, 0.0),
+                child: _DirectoryTextField(controller: _controller, focusNode: _focusNode, onSubmit: (_) => _confirm()),
+              ),
+              if (showRecent) ...[
+                Padding(
+                  padding: const EdgeInsetsDirectional.fromSTEB(16.0, 20.0, 16.0, 8.0),
+                  child: Align(alignment: AlignmentDirectional.centerStart, child: _sectionLabel(context, l10n.directoryPickerRecent)),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsetsDirectional.fromSTEB(16.0, 0.0, 16.0, 0.0),
+                    child: _RecentDirectoryList(directories: widget.recent, onTap: _pickRecent),
+                  ),
+                ),
+              ] else if (!keyboardUp && widget.projects.isEmpty)
+                const Expanded(child: SizedBox.shrink()),
+              // Clear of the home indicator; `padding.bottom` is already 0 once
+              // the keyboard covers it, so this never double-counts.
+              SizedBox(height: 16.0 + media.padding.bottom),
+            ]),
+          ),
         ),
-        // Projects first (the common case is picking one), the path input
-        // for everything else beneath. When the caller passes plain recent
-        // folders instead (the automation editor), those take the list slot.
-        if (widget.projects.isNotEmpty) ...[
-          Padding(
-            padding: const EdgeInsetsDirectional.fromSTEB(16.0, 16.0, 16.0, 8.0),
-            child: Align(alignment: AlignmentDirectional.centerStart, child: _sectionLabel(context, AppLocalizations.of(context).directoryPickerProjects)),
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsetsDirectional.fromSTEB(16.0, 0.0, 16.0, 0.0),
-              child: _ProjectList(projects: widget.projects, selectedProjectId: widget.selectedProjectId, onTap: _pickRecent),
-            ),
-          ),
-        ],
-        Padding(
-          padding: const EdgeInsetsDirectional.fromSTEB(16.0, 16.0, 16.0, 8.0),
-          child: Align(alignment: AlignmentDirectional.centerStart, child: _sectionLabel(context, AppLocalizations.of(context).directoryPickerFolder)),
-        ),
-        Padding(
-          padding: const EdgeInsetsDirectional.fromSTEB(16.0, 0.0, 16.0, 0.0),
-          child: _DirectoryTextField(controller: _controller, focusNode: _focusNode, onSubmit: (_) => _confirm()),
-        ),
-        if (widget.recent.isNotEmpty) ...[
-          Padding(
-            padding: const EdgeInsetsDirectional.fromSTEB(16.0, 20.0, 16.0, 8.0),
-            child: Align(alignment: AlignmentDirectional.centerStart, child: _sectionLabel(context, AppLocalizations.of(context).directoryPickerRecent)),
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsetsDirectional.fromSTEB(16.0, 0.0, 16.0, 0.0),
-              child: _RecentDirectoryList(directories: widget.recent, onTap: _pickRecent),
-            ),
-          ),
-        ] else if (widget.projects.isEmpty)
-          const Expanded(child: SizedBox.shrink())
-        else
-          const SizedBox(height: 16.0),
-        // Push content above the keyboard when it's open.
-        SizedBox(height: MediaQuery.of(context).viewInsets.bottom),
-      ]),
       ),
     );
   }

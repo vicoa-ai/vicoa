@@ -1448,11 +1448,11 @@ abstract class AppLocalizations {
   /// **'Recent'**
   String get directoryPickerRecent;
 
-  /// No description provided for @directoryPickerWorkingDirectory.
+  /// No description provided for @directoryPickerProject.
   ///
   /// In en, this message translates to:
-  /// **'Working Directory'**
-  String get directoryPickerWorkingDirectory;
+  /// **'Project'**
+  String get directoryPickerProject;
 
   /// No description provided for @errorStateDisplaySignInAgain.
   ///
@@ -2624,11 +2624,11 @@ abstract class AppLocalizations {
   /// **'This could be due to:\n\n• The machine is not responding\n• Network connection issues\n• The directory path is invalid\n\nPlease check machine status and try again.'**
   String get newSessionUnableToStartBody;
 
-  /// No description provided for @newSessionWorkingDirectory.
+  /// No description provided for @newSessionProject.
   ///
   /// In en, this message translates to:
-  /// **'Working Directory'**
-  String get newSessionWorkingDirectory;
+  /// **'Project'**
+  String get newSessionProject;
 
   /// No description provided for @newSessionWorktree.
   ///

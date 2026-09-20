@@ -196,7 +196,7 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
               _buildOfflineHint(),
             ],
             SizedBox(height: 28.0),
-            _sectionLabel(AppLocalizations.of(context).newSessionWorkingDirectory),
+            _sectionLabel(AppLocalizations.of(context).newSessionProject),
             SizedBox(height: 12.0),
             _buildDirectoryCard(),
             SizedBox(height: 28.0),
