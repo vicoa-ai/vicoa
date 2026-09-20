@@ -633,7 +633,7 @@ class TestLabelsAndTasksUnderTheLens:
             is None
         )
         assert project.id not in {
-            p.id for p, _ in task_queries.list_projects(test_db, other.id)
+            p.id for p, _, _ in task_queries.list_projects(test_db, other.id)
         }
 
     def test_identifier_prefers_own_project(self, test_db, test_user, other):

@@ -1892,11 +1892,11 @@ abstract class AppLocalizations {
   /// **'Last 7 Days'**
   String get filterLast7Days;
 
-  /// No description provided for @filterNotClosed.
+  /// No description provided for @filterActive.
   ///
   /// In en, this message translates to:
   /// **'Active'**
-  String get filterNotClosed;
+  String get filterActive;
 
   /// No description provided for @filterProject.
   ///
@@ -1999,6 +1999,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Failed to load sessions. Please try again.'**
   String get homeErrorLoadSessionsFailed;
+
+  /// No description provided for @homeEmptyFilteredSessions.
+  ///
+  /// In en, this message translates to:
+  /// **'No {status} sessions'**
+  String homeEmptyFilteredSessions(String status);
+
+  /// No description provided for @homeEmptySessions.
+  ///
+  /// In en, this message translates to:
+  /// **'No sessions'**
+  String get homeEmptySessions;
 
   /// No description provided for @homeErrorOffline.
   ///

@@ -67,6 +67,28 @@ function projectDisplayName(
   return first?.project ? getLastPathPart(first.project) : key;
 }
 
+/**
+ * Fold a reordering of the project groups on screen back into the full
+ * project order.
+ *
+ * `full` ranks every project the user has — including ones with no session in
+ * the current list (filtered out, archived-only, or simply idle) — and is what
+ * gets synced to the backend; `rendered` is the on-screen subset in its new
+ * order. The rendered keys are dealt back into the slots rendered keys held
+ * before, so an off-screen project keeps its place instead of being dropped
+ * from the order (and silently reset to recency) every time the user drags
+ * with a status filter on. Keys not in `full` yet (a group whose project has
+ * not loaded, or a basename group with no project) are appended first, so a
+ * drag onto them still lands where it was dropped.
+ */
+export function mergeRenderedOrder(full: string[], rendered: string[]): string[] {
+  const known = new Set(full);
+  const base = [...full, ...rendered.filter((key) => !known.has(key))];
+  const onScreen = new Set(rendered);
+  const queue = [...rendered];
+  return base.map((key) => (onScreen.has(key) ? queue.shift()! : key));
+}
+
 /** Distinct project groups present in the list, as `{ key, label }` pairs. */
 export function distinctProjects(
   instances: AgentInstanceResponse[],
@@ -102,9 +124,16 @@ export interface ProjectSettingsTarget {
  * "+" and "Project settings" action use, so the config resolves to the repo
  * root rather than a worktree. Groups with no reachable machine or no directory
  * (nothing to route a file RPC to) are dropped.
+ *
+ * With `projectsById` (the backend's project list, in its order) the targets
+ * read and sort exactly like the sidebar's project groups: DB name for the
+ * label, and the user's synced drag order then recency — so the settings
+ * nav is the sidebar's list, not a re-alphabetised copy of it. Keys the map
+ * doesn't know trail alphabetically.
  */
 export function projectSettingsTargets(
   instances: AgentInstanceResponse[],
+  projectsById?: Map<string, ProjectResponse>,
 ): ProjectSettingsTarget[] {
   const byKey = new Map<string, AgentInstanceResponse[]>();
   for (const instance of instances) {
@@ -119,9 +148,20 @@ export function projectSettingsTargets(
     const machineId = list[0]?.machine_id ?? null;
     const dir = list.find((i) => !i.worktree_name)?.project ?? list[0]?.project ?? null;
     if (!machineId || !dir) continue;
-    targets.push({ key, label: projectDisplayName(list), machineId, dir });
+    targets.push({ key, label: projectDisplayName(list, projectsById), machineId, dir });
   }
-  return targets.sort((a, b) => a.label.localeCompare(b.label));
+  const rank = new Map<string, number>();
+  if (projectsById) {
+    for (const id of projectsById.keys()) rank.set(id, rank.size);
+  }
+  return targets.sort((a, b) => {
+    const rankA = rank.get(a.key);
+    const rankB = rank.get(b.key);
+    if (rankA !== undefined && rankB !== undefined) return rankA - rankB;
+    if (rankA !== undefined) return -1;
+    if (rankB !== undefined) return 1;
+    return a.label.localeCompare(b.label);
+  });
 }
 
 /** Distinct agent type names present in the list (for the Agent filter menu). */
@@ -399,10 +439,13 @@ export function groupSessions(
       if (!projectMap.has(key)) projectMap.set(key, []);
       projectMap.get(key)!.push(instance);
     }
-    // User-dragged order first (indices in projectOrder), then unranked
-    // projects alphabetically, no-project always last. `key` is the project_id
-    // (or basename fallback); the display label is derived separately so a
-    // linked project never shows its raw id.
+    // `projectOrder` first (indices in it) — the sidebar feeds it the backend's
+    // project list, which is the user's synced drag order and then recency, so
+    // a never-dragged project still lands by recency rather than by the
+    // arbitrary id order below — then keys it doesn't know (a basename group
+    // with no project, or before the list loads) sorted by key, no-project
+    // always last. `key` is the project_id (or basename fallback); the display
+    // label is derived separately so a linked project never shows its raw id.
     groups = Array.from(projectMap.entries())
       .sort(([a], [b]) => {
         if (a === NO_PROJECT_KEY) return 1;

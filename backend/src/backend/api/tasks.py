@@ -58,9 +58,11 @@ from ..models import (
     CreateProjectRequest,
     CreateTaskLabelRequest,
     CreateTaskRequest,
+    ProjectOrderResponse,
     ProjectResponse,
     ProjectSummaryResponse,
     SetProjectDirectoryRequest,
+    SetProjectOrderRequest,
     TaskLabelResponse,
     TaskPriorityLiteral,
     TaskResponse,
@@ -94,7 +96,7 @@ def list_projects_endpoint(
     rows = task_queries.list_projects(
         db, current_user.id, include_archived, sharing=True, machine_id=machine_id
     )
-    projects = [project for project, _ in rows]
+    projects = [project for project, _, _ in rows]
     accesses = access.project_accesses(db, current_user.id, projects)
     # Lazy, best-effort default-icon seed (§4e): first fetch of a git-backed
     # project with no icon set kicks off a background owner-avatar seed. The
@@ -111,9 +113,30 @@ def list_projects_endpoint(
         ):
             background_tasks.add_task(project_icons.seed_project_icon, project.id)
     return [
-        _project_response(p, accesses.get(p.id), last_activity_at=last_at)
-        for p, last_at in rows
+        _project_response(
+            p, accesses.get(p.id), last_activity_at=last_at, position=position
+        )
+        for p, last_at, position in rows
     ]
+
+
+# Declared before the `/projects/{project_id}` routes on purpose: a literal
+# segment only wins over a path parameter if it is matched first, and
+# `{project_id}` is typed UUID, so "order" would otherwise be a 422.
+@router.put("/projects/order", response_model=ProjectOrderResponse)
+def set_project_order_endpoint(
+    request: SetProjectOrderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProjectOrderResponse:
+    """Replace the caller's manual project order (sidebar drag-and-drop). It
+    is the caller's own view, so any project they can see — shared ones
+    included — may be ranked, and ranking never touches the project itself.
+    Ids the caller cannot see are dropped, not rejected (see the query)."""
+    stored = task_queries.set_project_order(
+        db, current_user.id, request.project_ids, sharing=True
+    )
+    return ProjectOrderResponse(project_ids=stored)
 
 
 def _project_response(
@@ -121,20 +144,23 @@ def _project_response(
     project_access: access.ProjectAccess | None,
     *,
     last_activity_at: datetime | None = None,
+    position: int | None = None,
 ) -> ProjectResponse:
     """Serialize with the caller's standing on the project.
 
     Every project response goes through here. `role` / `scopes` describe the
     caller, not the row, so they have to be resolved per request — the model
     defaults them to the least privilege precisely so that forgetting is a
-    hidden button rather than a phantom one. `last_activity_at` is only known
-    to the list query; single-project responses leave it unset.
+    hidden button rather than a phantom one. `last_activity_at` and `position`
+    are only known to the list query; single-project responses leave them
+    unset.
     """
     response = ProjectResponse.model_validate(project)
     if project_access is not None:
         response.role = project_access.role
         response.scopes = list(project_access.scopes)  # type: ignore[assignment]
     response.last_activity_at = last_activity_at
+    response.position = position
     return response
 
 

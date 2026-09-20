@@ -13,7 +13,7 @@ const Map<String, IconData> _kGroupByIcons = {
 };
 const List<String> _kStatusOptions = [
   'All',
-  'Not closed',
+  'Active',
   'In progress',
   'In review',
   'Done',

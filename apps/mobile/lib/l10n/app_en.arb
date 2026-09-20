@@ -456,7 +456,7 @@
   "filterInProgress": "In progress",
   "filterInReview": "In review",
   "filterLast7Days": "Last 7 Days",
-  "filterNotClosed": "Active",
+  "filterActive": "Active",
   "filterProject": "Project",
   "filterStatus": "Status",
   "filterStatusHeader": "STATUS",
@@ -474,6 +474,15 @@
   "homeDeleteFailed": "Failed to delete session. Please try again.",
   "homeErrorConnecting": "Connecting to the server. If this persists, sign in again from Account Page.",
   "homeErrorLoadSessionsFailed": "Failed to load sessions. Please try again.",
+  "homeEmptyFilteredSessions": "No {status} sessions",
+  "@homeEmptyFilteredSessions": {
+    "placeholders": {
+      "status": {
+        "type": "String"
+      }
+    }
+  },
+  "homeEmptySessions": "No sessions",
   "homeErrorOffline": "No internet connection. Please check your connection.",
   "homeErrorOfflineCached": "No internet connection. Showing cached data.",
   "homeErrorServiceUnavailable": "Unable to reach the service right now.",

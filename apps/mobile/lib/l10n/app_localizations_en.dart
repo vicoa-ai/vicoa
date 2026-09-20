@@ -1001,7 +1001,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get filterLast7Days => 'Last 7 Days';
 
   @override
-  String get filterNotClosed => 'Active';
+  String get filterActive => 'Active';
 
   @override
   String get filterProject => 'Project';
@@ -1055,6 +1055,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get homeErrorLoadSessionsFailed =>
       'Failed to load sessions. Please try again.';
+
+  @override
+  String homeEmptyFilteredSessions(String status) {
+    return 'No $status sessions';
+  }
+
+  @override
+  String get homeEmptySessions => 'No sessions';
 
   @override
   String get homeErrorOffline =>

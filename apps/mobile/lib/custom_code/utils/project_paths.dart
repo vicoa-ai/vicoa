@@ -152,7 +152,14 @@ List<ProjectPickerEntry> projectsOnMachine(
       break;
     }
   }
+  // The user's drag order first (`position`, from the sidebar), then newest
+  // activity, then name — the same order the backend lists projects in.
   rows.sort((a, b) {
+    final pa = a.project['position'];
+    final pb = b.project['position'];
+    if (pa is int && pb is int) return pa.compareTo(pb);
+    if (pa is int) return -1;
+    if (pb is int) return 1;
     final at = a.project['last_activity_at']?.toString() ?? '';
     final bt = b.project['last_activity_at']?.toString() ?? '';
     if (at != bt) return at.compareTo(bt) > 0 ? -1 : 1;

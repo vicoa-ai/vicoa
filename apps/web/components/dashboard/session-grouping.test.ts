@@ -6,7 +6,9 @@ import {
   filterWantsActiveOnly,
   getLastPathPart,
   groupSessions,
+  mergeRenderedOrder,
   projectGroupKey,
+  projectSettingsTargets,
   splitProjectByWorktree,
   worktreeSessionPaths,
   type LiveWorktree,
@@ -145,6 +147,61 @@ describe('groupSessions project order', () => {
 
     const groups = groupSessions([a, b, c, none], 'all', 'project', 'all', ['gamma', 'alpha']);
     expect(groups.map((g) => g.label)).toEqual(['gamma', 'alpha', 'beta', null]);
+  });
+});
+
+describe('mergeRenderedOrder', () => {
+  it('deals the on-screen keys into the slots they held, off-screen keys stay put', () => {
+    // X and Y have no session on screen (filtered out); the user drags C to the top.
+    expect(mergeRenderedOrder(['A', 'X', 'B', 'Y', 'C'], ['C', 'A', 'B'])).toEqual([
+      'C', 'X', 'A', 'Y', 'B',
+    ]);
+  });
+
+  it('keeps a plain reorder when everything is on screen', () => {
+    expect(mergeRenderedOrder(['A', 'B', 'C'], ['B', 'C', 'A'])).toEqual(['B', 'C', 'A']);
+  });
+
+  it('appends keys the full order does not know, and still honours their drop slot', () => {
+    // N is a basename group (session with no project link): not rankable
+    // server-side, but dragging it to the top must still take effect locally.
+    expect(mergeRenderedOrder(['A', 'B'], ['N', 'A', 'B'])).toEqual(['N', 'A', 'B']);
+    expect(mergeRenderedOrder(['A', 'X', 'B'], ['B', 'N', 'A'])).toEqual(['B', 'X', 'N', 'A']);
+  });
+
+  it('is the rendered order when nothing was ranked yet', () => {
+    expect(mergeRenderedOrder([], ['B', 'A'])).toEqual(['B', 'A']);
+  });
+
+  it('drops nothing when the rendered subset is a strict subset', () => {
+    expect(mergeRenderedOrder(['A', 'B', 'C'], ['C', 'B'])).toEqual(['A', 'C', 'B']);
+  });
+});
+
+describe('projectSettingsTargets', () => {
+  const sessions = [
+    make({ id: 'a', project_id: 'p-alpha', project: '/x/alpha-folder', machine_id: 'm1' }),
+    make({ id: 'b', project_id: 'p-beta', project: '/x/beta-folder', machine_id: 'm1' }),
+    make({ id: 'c', project_id: 'p-gamma', project: '/x/gamma-folder', machine_id: 'm1' }),
+    make({ id: 'u', project: '/x/unlinked', machine_id: 'm1' }),
+    make({ id: 'n', project: null, machine_id: 'm1' }),
+  ];
+
+  it('without the project list: basenames, alphabetical', () => {
+    expect(projectSettingsTargets(sessions).map((t) => t.label)).toEqual([
+      'alpha-folder', 'beta-folder', 'gamma-folder', 'unlinked',
+    ]);
+  });
+
+  it('with the project list: DB names in the list order, unknown keys trail alphabetically', () => {
+    // The backend's order: the user dragged Gamma above Beta above Alpha.
+    const projectsById = new Map(
+      [proj({ id: 'p-gamma', name: 'Gamma' }), proj({ id: 'p-beta', name: 'Beta' }), proj({ id: 'p-alpha', name: 'Alpha' })]
+        .map((p) => [p.id, p]),
+    );
+    const targets = projectSettingsTargets(sessions, projectsById);
+    expect(targets.map((t) => t.label)).toEqual(['Gamma', 'Beta', 'Alpha', 'unlinked']);
+    expect(targets.map((t) => t.key)).toEqual(['p-gamma', 'p-beta', 'p-alpha', 'unlinked']);
   });
 });
 

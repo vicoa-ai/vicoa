@@ -87,8 +87,9 @@ export function resolveProjectForDirectory(
   return best;
 }
 
-/** The projects linked to a folder on `machineId`, newest activity first
- * (the picker's list), each with that folder. */
+/** The projects linked to a folder on `machineId` (the picker's list), each
+ * with that folder: the user's drag order first (`position`, from the
+ * sidebar), then newest activity, then name — the backend's own list order. */
 export function projectsOnMachine(
   projects: readonly ProjectResponse[],
   machineId: string,
@@ -100,6 +101,11 @@ export function projectsOnMachine(
     if (link) rows.push({ project, path: link.local_path });
   }
   return rows.sort((a, b) => {
+    const pa = a.project.position ?? null;
+    const pb = b.project.position ?? null;
+    if (pa !== null && pb !== null) return pa - pb;
+    if (pa !== null) return -1;
+    if (pb !== null) return 1;
     const at = a.project.last_activity_at ?? '';
     const bt = b.project.last_activity_at ?? '';
     if (at !== bt) return at > bt ? -1 : 1;

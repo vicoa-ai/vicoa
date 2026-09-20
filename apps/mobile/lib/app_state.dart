@@ -201,6 +201,18 @@ class FFAppState extends ChangeNotifier {
       }
     });
     _safeInit(() {
+      final projectsJson = prefs.getString('ff_cachedProjects') ?? '[]';
+      try {
+        final decoded = jsonDecode(projectsJson);
+        if (decoded is List) {
+          _cachedProjects = decoded;
+        }
+      } catch (e) {
+        print("Can't decode cached projects. Error: $e.");
+        _cachedProjects = [];
+      }
+    });
+    _safeInit(() {
       final branchesJson = prefs.getString('ff_cachedCheckoutBranches') ?? '{}';
       try {
         final decoded = jsonDecode(branchesJson);
@@ -721,6 +733,16 @@ class FFAppState extends ChangeNotifier {
     debugLogAppState(this);
   }
 
+  // The user's projects (GET /projects, in the backend's order) so the home
+  // page's "Project" grouping paints with real names in the synced order
+  // before the refresh lands.
+  List<dynamic> _cachedProjects = [];
+  List<dynamic> get cachedProjects => _cachedProjects;
+  set cachedProjects(List<dynamic> value) {
+    _cachedProjects = value;
+    prefs.setString('ff_cachedProjects', jsonEncode(value));
+  }
+
   // Current git branch per session checkout ("machineId|cwd" -> branch) so
   // the home page's cards paint their branch from cache before the RPC lands.
   Map<String, String> _cachedCheckoutBranches = {};
@@ -780,6 +802,7 @@ class FFAppState extends ChangeNotifier {
     cachedAgentsTimestamp = null;
     cachedMachines = [];
     cachedMachinesTimestamp = null;
+    cachedProjects = [];
     cachedCheckoutBranches = {};
     clearLastWebPreviewUrl();
     setLastWebPreviewDesktopMode(false);

@@ -31,6 +31,7 @@ job, not this column's.
 
 import logging
 import re
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -45,6 +46,7 @@ from shared.database import (
     Machine,
     Project,
     ProjectDirectory,
+    ProjectPosition,
     Task,
     TaskActivity,
     TaskComment,
@@ -221,13 +223,16 @@ def list_projects(
     *,
     sharing: bool = False,
     machine_id: UUID | None = None,
-) -> list[tuple[Project, datetime | None]]:
+) -> list[tuple[Project, datetime | None, int | None]]:
     """The projects the caller can see, each paired with its newest session
-    start (``None`` when no session ever ran there): most-recent activity
-    first, then name. Under the sharing lens that includes team-owned projects
-    the caller is an active member of and projects granted to them or their
-    teams. With ``machine_id``, only projects linked to a folder on that machine
-    — what the new-session picker lists.
+    start (``None`` when no session ever ran there) and the caller's manual
+    rank (``None`` when unranked): ranked projects first in rank order, then
+    the rest by most-recent activity, then name. The rank is the viewer's own
+    (``project_positions``), so the same shared project can sit in a different
+    slot for each person. Under the sharing lens that includes team-owned
+    projects the caller is an active member of and projects granted to them
+    or their teams. With ``machine_id``, only projects linked to a folder on
+    that machine — what the new-session picker lists.
 
     Opportunistically auto-archives stale projects (on every fetch, including
     the sidebar's include_archived read) so the counterweight to auto-create
@@ -236,8 +241,16 @@ def list_projects(
     autoarchive_stale_projects(db, user_id)
 
     latest = _latest_activity_subquery(db, user_id)
-    query = db.query(Project, latest.c.last_at).outerjoin(
-        latest, latest.c.pid == Project.id
+    query = (
+        db.query(Project, latest.c.last_at, ProjectPosition.position)
+        .outerjoin(latest, latest.c.pid == Project.id)
+        .outerjoin(
+            ProjectPosition,
+            and_(
+                ProjectPosition.project_id == Project.id,
+                ProjectPosition.user_id == user_id,
+            ),
+        )
     )
     if sharing:
         query = query.filter(Project.id.in_(access.visible_project_select(user_id)))
@@ -254,10 +267,58 @@ def list_projects(
             )
         )
     rows = query.order_by(
+        ProjectPosition.position.asc().nullslast(),
         latest.c.last_at.desc().nullslast(),
         Project.name.asc(),
     ).all()
-    return [(project, last_at) for project, last_at in rows]
+    return [(project, last_at, position) for project, last_at, position in rows]
+
+
+def set_project_order(
+    db: Session,
+    user_id: UUID,
+    project_ids: Sequence[UUID],
+    *,
+    sharing: bool = False,
+) -> list[UUID]:
+    """Replace the caller's manual project order with ``project_ids``.
+
+    The whole order is rewritten on every call (the client always sends the
+    full list it renders), so a project dropped from the list simply becomes
+    unranked again. Duplicates keep their first slot; ids the caller cannot see
+    are dropped rather than rejected — an invisible project must stay
+    indistinguishable from a nonexistent one (the 404-vs-403 rule), and a
+    project deleted on another device between load and drag must not fail the
+    whole save. Returns the ids actually stored, in order.
+    """
+    visible = (
+        access.visible_project_select(user_id)
+        if sharing
+        else select(Project.id).where(_owner_only_project_filter(user_id))
+    )
+    wanted: list[UUID] = []
+    seen: set[UUID] = set()
+    for project_id in project_ids:
+        if project_id not in seen:
+            seen.add(project_id)
+            wanted.append(project_id)
+    allowed = {
+        row[0]
+        for row in db.execute(
+            select(Project.id).where(Project.id.in_(wanted), Project.id.in_(visible))
+        )
+    }
+    kept = [project_id for project_id in wanted if project_id in allowed]
+
+    db.query(ProjectPosition).filter(ProjectPosition.user_id == user_id).delete(
+        synchronize_session=False
+    )
+    db.add_all(
+        ProjectPosition(user_id=user_id, project_id=project_id, position=index)
+        for index, project_id in enumerate(kept)
+    )
+    db.commit()
+    return kept
 
 
 def create_project(

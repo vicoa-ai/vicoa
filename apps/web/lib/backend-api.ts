@@ -472,6 +472,13 @@ export interface ProjectResponse {
    * endpoint knows it; single-project responses leave it null.
    */
   last_activity_at?: string | null;
+  /**
+   * The caller's manual rank (0-based) from `setProjectOrder`, null when they
+   * never dragged this project into place. The list already comes back in
+   * rank order (ranked first, then recency), so this only answers "does the
+   * user have a custom order at all?". Only the list endpoint sets it.
+   */
+  position?: number | null;
   directories: ProjectDirectory[];
   created_at: string;
   updated_at: string;
@@ -484,6 +491,11 @@ export interface ProjectResponse {
    */
   role?: ProjectRole;
   scopes?: GrantScope[];
+}
+
+/** Echo of `setProjectOrder`: the ids actually stored, in order. */
+export interface ProjectOrderResponse {
+  project_ids: string[];
 }
 
 /** What deleting the project would file under No project — for the confirm dialog. */
@@ -1623,6 +1635,18 @@ class BackendAPI {
     if (options.machineId) params.append('machine_id', options.machineId);
     const endpoint = `/api/v1/projects${params.toString() ? `?${params.toString()}` : ''}`;
     return this.request<ProjectResponse[]>(endpoint);
+  }
+
+  /**
+   * Replace the caller's manual project order (sidebar drag-and-drop), first
+   * to last. Per viewer, so ranking a shared project never moves it for anyone
+   * else. Ids the caller cannot see are dropped; the echo is what got stored.
+   */
+  async setProjectOrder(projectIds: string[]): Promise<ProjectOrderResponse> {
+    return this.request<ProjectOrderResponse>('/api/v1/projects/order', {
+      method: 'PUT',
+      body: JSON.stringify({ project_ids: projectIds }),
+    });
   }
 
   /** What deleting the project would file under No project — for the confirm dialog. */

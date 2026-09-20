@@ -134,6 +134,26 @@ describe('projectsOnMachine', () => {
     expect(rows.map((r) => r.project.name)).toEqual(['new', 'old', 'never']);
     expect(rows[0].path).toBe('/b');
   });
+
+  it('puts the projects the user ranked first, in rank order, ahead of recency', () => {
+    const rows = projectsOnMachine(
+      [
+        project('newest', [{ machine_id: 'm1', local_path: '/a' }], {
+          last_activity_at: '2026-03-01T00:00:00Z',
+        }),
+        project('second', [{ machine_id: 'm1', local_path: '/b' }], {
+          position: 1,
+          last_activity_at: '2026-01-01T00:00:00Z',
+        }),
+        project('first', [{ machine_id: 'm1', local_path: '/c' }], { position: 0 }),
+        project('older', [{ machine_id: 'm1', local_path: '/d' }], {
+          last_activity_at: '2026-02-01T00:00:00Z',
+        }),
+      ],
+      'm1',
+    );
+    expect(rows.map((r) => r.project.name)).toEqual(['first', 'second', 'newest', 'older']);
+  });
 });
 
 describe('directoryChipLabel', () => {

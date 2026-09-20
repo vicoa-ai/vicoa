@@ -64,8 +64,6 @@ function DesktopSettingsSidebarInner() {
   const activeMachineId = searchParams.get('machineId') ?? '';
   const activeDir = searchParams.get('dir') ?? '';
   const { recentInstances } = useAgentDashboard();
-  const projectTargets = useMemo(() => projectSettingsTargets(recentInstances), [recentInstances]);
-
   // The DB projects, by id — the source of truth for each row's icon/image/emoji
   // (identity-unification §5d), mirroring the app sidebar. A target's `key` is
   // the linked `project_id` (see projectGroupKey), so this map resolves it; an
@@ -89,6 +87,14 @@ function DesktopSettingsSidebarInner() {
     window.addEventListener('focus', load);
     return () => window.removeEventListener('focus', load);
   }, [searchKey]);
+
+  // Same rows, names and order as the app sidebar's project groups (the
+  // project map carries the backend's order — the user's synced drag order,
+  // then recency). Until it loads, basenames in alphabetical order.
+  const projectTargets = useMemo(
+    () => projectSettingsTargets(recentInstances, projectsById),
+    [recentInstances, projectsById],
+  );
 
   const backToApp = useCallback(() => {
     let target: string | null = null;

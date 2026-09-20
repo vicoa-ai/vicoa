@@ -5,6 +5,8 @@ import '/custom_code/actions/index.dart' as actions;
 import '/auth/supabase_auth/auth_util.dart';
 import 'home_widget.dart' show HomeWidget;
 import 'checkout_branches.dart';
+import 'project_groups.dart';
+import 'session_status.dart';
 import 'session_card_text.dart' show sessionWorktreeBranch;
 import 'dart:async';
 import 'dart:collection';
@@ -22,6 +24,10 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
 
   // Agent instances (sessions) state
   List<dynamic> agentInstances = [];
+  // The user's projects in the backend's order (their drag order first, then
+  // recency) — names + order for the "Project" grouping. Seeded from cache so
+  // the groups paint in the right order before the refresh lands.
+  List<dynamic> projects = [];
   LoadingState loadingState = LoadingState.initial;
   bool showFilters = false;
   String selectedTab = 'All';
@@ -76,7 +82,9 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     debugLogWidgetClass(this);
     final prefs = FFAppState().userPreferences;
     selectedGroupBy = prefs.homeFilterGroupBy;
-    selectedTab = prefs.homeFilterStatus;
+    // 'Active' was stored as 'Not closed' before the rename; carry it over.
+    selectedTab =
+        prefs.homeFilterStatus == 'Not closed' ? 'Active' : prefs.homeFilterStatus;
     _checkoutBranches = CheckoutBranchResolver(
       call: actions.VicoaWsClient.instance.callRpc,
       onChanged: () => _notifyUI?.call(),
@@ -138,6 +146,7 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
   // Load cached data immediately for instant display
   void _loadCachedData() {
     final appState = FFAppState();
+    projects = appState.cachedProjects;
 
     // Load cached data if available
     if (appState.cachedAgentInstances.isNotEmpty) {
@@ -328,10 +337,20 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
       // and preserve the rest of the local tail.
       final pagesToRefresh = _highestLoadedPage < 1 ? 1 : _highestLoadedPage;
       final refreshFetchSize = (pagesToRefresh * pageSize).clamp(pageSize, 100);
+      // Alongside the sessions, not after: the project grouping needs both.
+      // Best effort — `apiGetProjects` answers [] on failure, and an empty
+      // answer never evicts the cached list (a user with no projects has no
+      // linked sessions to group anyway).
+      final projectsFuture = actions.apiGetProjects();
       final response = await actions.apiGetAllAgentInstances(
         page: 1,
         pageSize: refreshFetchSize,
       );
+      final refreshedProjects = await projectsFuture;
+      if (refreshedProjects.isNotEmpty) {
+        projects = refreshedProjects;
+        appState.cachedProjects = refreshedProjects;
+      }
       final newInstances = (response['items'] as List?) ?? <dynamic>[];
       final pagesFetched = (newInstances.length / pageSize).ceil();
       // For a true full-range refresh, treat the fetched window as authoritative
@@ -647,11 +666,12 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
   List<dynamic> getFilteredSessions() {
     List<dynamic> filtered = agentInstances;
 
-    // Filter by status
+    // Filter by status — same sets as the web sidebar (session_status.dart).
+    // The extra names on each branch are values older builds persisted.
     if (selectedTab != 'All') {
-      if (selectedTab == 'In progress' || selectedTab == 'Running' || selectedTab == 'Active') {
+      if (selectedTab == 'In progress' || selectedTab == 'Running') {
         filtered = filtered
-            .where((instance) => instance['status'] == 'ACTIVE')
+            .where((instance) => isInProgressStatus(instance['status'] as String?))
             .toList();
       } else if (selectedTab == 'In review' || selectedTab == 'Need Input' || selectedTab == 'Waiting') {
         filtered = filtered
@@ -661,23 +681,13 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
         filtered = filtered
             .where((instance) => instance['status'] == 'REVIEWED')
             .toList();
-      } else if (selectedTab == 'Not closed') {
+      } else if (selectedTab == 'Active' || selectedTab == 'Not closed') {
         filtered = filtered
-            .where((instance) {
-              final status = instance['status'];
-              return status == 'ACTIVE' ||
-                  status == 'AWAITING_INPUT' ||
-                  status == 'REVIEWED';
-            })
+            .where((instance) => !isClosedStatus(instance['status'] as String?))
             .toList();
       } else if (selectedTab == 'Closed') {
         filtered = filtered
-            .where((instance) {
-              final status = instance['status'];
-              return status != 'ACTIVE' &&
-                  status != 'AWAITING_INPUT' &&
-                  status != 'REVIEWED';
-            })
+            .where((instance) => isClosedStatus(instance['status'] as String?))
             .toList();
       }
     }
@@ -787,42 +797,8 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     return grouped;
   }
 
-  Map<String, List<dynamic>> _groupByProject(List<dynamic> sessions) {
-    // Map from full project path -> (display label, sessions list)
-    final Map<String, String> pathToLabel = {};
-    final Map<String, List<dynamic>> pathToSessions = LinkedHashMap<String, List<dynamic>>();
-
-    for (final session in sessions) {
-      final project = session['project']?.toString().trim() ?? '';
-      String path;
-      String label;
-      if (project.isEmpty) {
-        path = '';
-        label = 'No Project';
-      } else {
-        final clean = project.endsWith('/') ? project.substring(0, project.length - 1) : project;
-        path = clean;
-        final last = clean.split('/').last;
-        label = last.isNotEmpty ? last : 'No Project';
-      }
-      pathToLabel[path] = label;
-      pathToSessions.putIfAbsent(path, () => []).add(session);
-    }
-
-    // Sort groups by full project path alphabetically so group order is stable
-    final sortedPaths = pathToSessions.keys.toList()..sort((a, b) {
-      if (a.isEmpty) return 1;
-      if (b.isEmpty) return -1;
-      return a.compareTo(b);
-    });
-
-    final Map<String, List<dynamic>> grouped = LinkedHashMap<String, List<dynamic>>();
-    for (final path in sortedPaths) {
-      final label = pathToLabel[path]!;
-      grouped.putIfAbsent(label, () => []).addAll(pathToSessions[path]!);
-    }
-    return grouped;
-  }
+  Map<String, List<dynamic>> _groupByProject(List<dynamic> sessions) =>
+      groupSessionsByProject(sessions, projects);
 
   Map<String, List<dynamic>> _groupByStatus(List<dynamic> sessions) {
     const order = ['In progress', 'In review', 'Done', 'Closed'];
@@ -830,16 +806,19 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     for (final label in order) {
       grouped[label] = [];
     }
+    // Same buckets as the web's status grouping. A live session that fits no
+    // named bucket (STARTING, PAUSED) files under "In progress" rather than
+    // vanishing — a session the "Active" filter shows must land somewhere.
     for (final session in sessions) {
       final status = session['status'] as String? ?? '';
-      if (status == 'ACTIVE') {
-        grouped['In progress']!.add(session);
-      } else if (status == 'AWAITING_INPUT') {
+      if (status == 'AWAITING_INPUT') {
         grouped['In review']!.add(session);
       } else if (status == 'REVIEWED') {
         grouped['Done']!.add(session);
-      } else {
+      } else if (isClosedStatus(status)) {
         grouped['Closed']!.add(session);
+      } else {
+        grouped['In progress']!.add(session);
       }
     }
     return grouped;
@@ -974,8 +953,9 @@ String localizedFilterLabel(String value) {
       return l.filterTime;
     case 'All':
       return l.filterAll;
-    case 'Not closed':
-      return l.filterNotClosed;
+    case 'Active':
+    case 'Not closed': // legacy stored value
+      return l.filterActive;
     case 'In progress':
       return l.filterInProgress;
     case 'In review':

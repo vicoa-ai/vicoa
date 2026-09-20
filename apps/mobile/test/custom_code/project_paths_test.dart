@@ -10,6 +10,7 @@ Map<String, dynamic> project(
   String name,
   List<Map<String, String>> directories, {
   String? lastActivityAt,
+  int? position,
   bool archived = false,
 }) =>
     {
@@ -17,6 +18,7 @@ Map<String, dynamic> project(
       'name': name,
       'is_archived': archived,
       'last_activity_at': lastActivityAt,
+      'position': position,
       'directories': directories,
     };
 
@@ -120,6 +122,22 @@ void main() {
       );
       expect(rows.map((r) => r.name).toList(), ['new', 'old', 'never']);
       expect(rows.first.path, '/b');
+    });
+
+    test('puts the projects the user ranked first, in rank order, ahead of recency', () {
+      final rows = projectsOnMachine(
+        [
+          project('newest', [{'machine_id': 'm1', 'local_path': '/a'}],
+              lastActivityAt: '2026-03-01T00:00:00Z'),
+          project('second', [{'machine_id': 'm1', 'local_path': '/b'}],
+              position: 1, lastActivityAt: '2026-01-01T00:00:00Z'),
+          project('first', [{'machine_id': 'm1', 'local_path': '/c'}], position: 0),
+          project('older', [{'machine_id': 'm1', 'local_path': '/d'}],
+              lastActivityAt: '2026-02-01T00:00:00Z'),
+        ],
+        'm1',
+      );
+      expect(rows.map((r) => r.name).toList(), ['first', 'second', 'newest', 'older']);
     });
   });
 

@@ -6,7 +6,7 @@ and the instance-status → task-status linkage.
 """
 
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -106,6 +106,236 @@ class TestProjectsAPI:
         assert resp.status_code == 404
         resp = authenticated_client.delete(f"/api/v1/projects/{foreign.id}")
         assert resp.status_code == 404
+
+
+def _session_in(db, user_id, agent_type_id, project_id, started_at):
+    """A session in `project_id` started at `started_at` — recency for the
+    project list is the newest session start."""
+    from shared.database import AgentInstance
+
+    instance = AgentInstance(
+        id=uuid4(),
+        agent_type_id=agent_type_id,
+        user_id=user_id,
+        project_id=project_id,
+        status=AgentStatus.COMPLETED,
+        started_at=started_at,
+    )
+    db.add(instance)
+    db.commit()
+    return instance
+
+
+class TestProjectOrder:
+    """PUT /projects/order — the viewer's manual sidebar order, synced across
+    devices (it used to be a per-device local preference)."""
+
+    def _create(self, client, *names):
+        return [
+            client.post("/api/v1/projects", json={"name": name}).json()["id"]
+            for name in names
+        ]
+
+    def _listed(self, client):
+        return [
+            (p["name"], p["position"]) for p in client.get("/api/v1/projects").json()
+        ]
+
+    def test_default_is_recency_then_name(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        alpha, beta, gamma = self._create(
+            authenticated_client, "Alpha", "Beta", "Gamma"
+        )
+        _session_in(
+            test_db,
+            test_user.id,
+            test_agent_type.id,
+            gamma,
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        _session_in(
+            test_db,
+            test_user.id,
+            test_agent_type.id,
+            beta,
+            datetime(2026, 2, 1, tzinfo=timezone.utc),
+        )
+
+        assert self._listed(authenticated_client) == [
+            ("Beta", None),
+            ("Gamma", None),
+            ("Alpha", None),
+        ]
+
+    def test_ranked_first_then_recency(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        """Dragged projects keep their slot; everything else trails by recency,
+        so a project that was never dragged still sorts sensibly."""
+        alpha, beta, gamma, delta = self._create(
+            authenticated_client, "Alpha", "Beta", "Gamma", "Delta"
+        )
+        _session_in(
+            test_db,
+            test_user.id,
+            test_agent_type.id,
+            alpha,
+            datetime(2026, 3, 1, tzinfo=timezone.utc),
+        )
+        _session_in(
+            test_db,
+            test_user.id,
+            test_agent_type.id,
+            gamma,
+            datetime(2026, 2, 1, tzinfo=timezone.utc),
+        )
+
+        resp = authenticated_client.put(
+            "/api/v1/projects/order", json={"project_ids": [delta, beta]}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"project_ids": [delta, beta]}
+
+        assert self._listed(authenticated_client) == [
+            ("Delta", 0),
+            ("Beta", 1),
+            ("Alpha", None),
+            ("Gamma", None),
+        ]
+        # The picker's machine-scoped list and the archived view rank the same way.
+        listed = authenticated_client.get(
+            "/api/v1/projects?include_archived=true"
+        ).json()
+        assert [p["name"] for p in listed] == ["Delta", "Beta", "Alpha", "Gamma"]
+
+    def test_put_replaces_whole_order_and_dedupes(self, authenticated_client):
+        alpha, beta, gamma = self._create(
+            authenticated_client, "Alpha", "Beta", "Gamma"
+        )
+
+        authenticated_client.put(
+            "/api/v1/projects/order", json={"project_ids": [gamma, beta, alpha]}
+        )
+        resp = authenticated_client.put(
+            "/api/v1/projects/order", json={"project_ids": [beta, beta, alpha]}
+        )
+        assert resp.json() == {"project_ids": [beta, alpha]}
+        # Gamma dropped out of the list → unranked, trails the ranked ones.
+        assert self._listed(authenticated_client) == [
+            ("Beta", 0),
+            ("Alpha", 1),
+            ("Gamma", None),
+        ]
+
+        resp = authenticated_client.put(
+            "/api/v1/projects/order", json={"project_ids": []}
+        )
+        assert resp.json() == {"project_ids": []}
+        assert all(pos is None for _, pos in self._listed(authenticated_client))
+
+    def test_invisible_ids_are_dropped_not_rejected(
+        self, authenticated_client, test_db, test_user, other_user
+    ):
+        """A stranger's project id in the body is silently skipped: the
+        response must not reveal that it exists, and a project deleted on
+        another device mid-drag must not fail the save."""
+        foreign = Project(user_id=other_user.id, name="Theirs")
+        test_db.add(foreign)
+        test_db.commit()
+        (alpha,) = self._create(authenticated_client, "Alpha")
+
+        resp = authenticated_client.put(
+            "/api/v1/projects/order",
+            json={"project_ids": [str(foreign.id), alpha, str(uuid4())]},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"project_ids": [alpha]}
+
+        from shared.database import ProjectPosition
+
+        stored = test_db.query(ProjectPosition).all()
+        assert [(r.user_id, r.project_id, r.position) for r in stored] == [
+            (test_user.id, UUID(alpha), 0)
+        ]
+
+    def test_order_is_per_viewer_on_a_shared_project(
+        self, authenticated_client, test_db, test_user, other_user
+    ):
+        """A grantee arranges the shared project in THEIR sidebar without
+        moving it in the owner's, and vice versa."""
+        from backend.db import task_queries
+
+        alpha, shared = self._create(authenticated_client, "Alpha", "Shared")
+        test_db.add(
+            ProjectGrant(
+                project_id=shared,
+                principal_type="user",
+                principal_id=other_user.id,
+                role="viewer",
+                scopes=["tasks"],
+            )
+        )
+        mine = Project(user_id=other_user.id, name="Mine")
+        test_db.add(mine)
+        test_db.commit()
+
+        authenticated_client.put(
+            "/api/v1/projects/order", json={"project_ids": [alpha, shared]}
+        )
+        stored = task_queries.set_project_order(
+            test_db, other_user.id, [UUID(shared), mine.id, UUID(alpha)], sharing=True
+        )
+        # `alpha` is invisible to the grantee → dropped from their order.
+        assert stored == [UUID(shared), mine.id]
+
+        theirs = task_queries.list_projects(test_db, other_user.id, sharing=True)
+        assert [(p.name, pos) for p, _, pos in theirs] == [("Shared", 0), ("Mine", 1)]
+        assert self._listed(authenticated_client) == [("Alpha", 0), ("Shared", 1)]
+
+    def test_owner_only_lens_cannot_rank_a_granted_project(
+        self, authenticated_client, test_db, other_user
+    ):
+        """The agent-facing lens stays owner-only (AGENTS.md invariant)."""
+        from backend.db import task_queries
+
+        (shared,) = self._create(authenticated_client, "Shared")
+        test_db.add(
+            ProjectGrant(
+                project_id=shared,
+                principal_type="user",
+                principal_id=other_user.id,
+                role="editor",
+                scopes=["tasks"],
+            )
+        )
+        test_db.commit()
+        assert (
+            task_queries.set_project_order(test_db, other_user.id, [UUID(shared)]) == []
+        )
+
+    def test_deleting_a_project_drops_its_rank(self, authenticated_client, test_db):
+        from shared.database import ProjectPosition
+
+        alpha, beta = self._create(authenticated_client, "Alpha", "Beta")
+        authenticated_client.put(
+            "/api/v1/projects/order", json={"project_ids": [beta, alpha]}
+        )
+        assert (
+            authenticated_client.delete(f"/api/v1/projects/{beta}").status_code == 204
+        )
+        assert [r.project_id for r in test_db.query(ProjectPosition).all()] == [
+            UUID(alpha)
+        ]
+        assert self._listed(authenticated_client) == [("Alpha", 1)]
+
+    def test_order_route_is_not_shadowed_by_project_id(self, authenticated_client):
+        """`/projects/order` must be declared before `/projects/{project_id}`;
+        otherwise "order" is parsed as a UUID and 422s."""
+        resp = authenticated_client.put(
+            "/api/v1/projects/order", json={"project_ids": []}
+        )
+        assert resp.status_code == 200
 
 
 class TestProjectDirectoriesAPI:

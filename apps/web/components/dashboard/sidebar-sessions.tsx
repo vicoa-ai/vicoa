@@ -59,6 +59,7 @@ import {
   distinctAgentNames,
   filterWantsActiveOnly,
   groupSessions,
+  mergeRenderedOrder,
   splitProjectByWorktree,
   worktreeSessionPaths,
   GROUP_BY_STORAGE_KEY,
@@ -99,6 +100,22 @@ import type { PrInfo } from '@/components/dashboard/pr-status';
 
 // Selected-row highlight, shared between session rows and the view-options menu.
 const ITEM_SELECTED = 'bg-foreground/[0.08] dark:bg-foreground/10 text-foreground';
+
+/** The locally cached project order, or null when unset / malformed. */
+function readSavedProjectOrder(): string[] | null {
+  const saved = getPref<unknown>(PROJECT_ORDER_STORAGE_KEY);
+  return Array.isArray(saved) && saved.every((k) => typeof k === 'string')
+    ? (saved as string[])
+    : null;
+}
+
+/** Cache the order locally (first-paint seed); skips a no-op rewrite, since
+    on desktop every write lands in settings.json. */
+function cacheProjectOrder(order: string[]): void {
+  const saved = readSavedProjectOrder();
+  if (saved && saved.length === order.length && saved.every((k, i) => k === order[i])) return;
+  setPref(PROJECT_ORDER_STORAGE_KEY, order);
+}
 
 // Group-by options. Order + labels mirror the web sidebar.
 const GROUP_BY_OPTIONS: { value: GroupBy; label: string }[] = [
@@ -361,21 +378,35 @@ export function SidebarSessions({
   const [displayWorktrees, setDisplayWorktrees] = useState(false);
   const worktreesOn = enableWorktrees && displayWorktrees;
 
+  // Custom project order (drag-and-drop when grouped by project): the full
+  // ranked list of project ids, first to last. The backend is the source of
+  // truth (`PUT /projects/order`, per viewer), which is what makes the same
+  // order show up in another browser and on mobile; the local pref is only
+  // the first-paint seed — and the whole store on the logged-out desktop,
+  // whose local daemon has no projects API. Mirrored in a ref because the
+  // drag handlers read and write it between renders.
+  const [projectOrder, setProjectOrder] = useState<string[]>([]);
+  const projectOrderRef = useRef<string[]>([]);
+  const applyProjectOrder = useCallback((next: string[]) => {
+    projectOrderRef.current = next;
+    setProjectOrder(next);
+  }, []);
+  const [draggingProject, setDraggingProject] = useState<string | null>(null);
+  const draggingProjectRef = useRef<string | null>(null);
+
   useEffect(() => {
     const savedGroupBy = getPref<GroupBy>(GROUP_BY_STORAGE_KEY);
     if (savedGroupBy) setGroupBy(savedGroupBy);
     const savedAgent = getPref<string>(AGENT_FILTER_STORAGE_KEY);
     if (savedAgent) setAgentFilter(savedAgent);
-    const savedOrder = getPref<string[]>(PROJECT_ORDER_STORAGE_KEY);
-    if (Array.isArray(savedOrder) && savedOrder.every((k) => typeof k === 'string')) {
-      setProjectOrder(savedOrder);
-    }
+    const savedOrder = readSavedProjectOrder();
+    if (savedOrder) applyProjectOrder(savedOrder);
     const savedWorktrees = getPref<boolean>(DISPLAY_WORKTREE_STORAGE_KEY);
     if (typeof savedWorktrees === 'boolean') setDisplayWorktrees(savedWorktrees);
     const filter = getPref<StatusFilter>(STATUS_FILTER_STORAGE_KEY) ?? DEFAULT_STATUS_FILTER;
     setStatusFilter(filter);
     setActiveOnly(filterWantsActiveOnly(filter));
-  }, [setActiveOnly]);
+  }, [setActiveOnly, applyProjectOrder]);
 
   const handleSetGroupBy = useCallback((value: GroupBy) => {
     setGroupBy(value);
@@ -416,17 +447,66 @@ export function SidebarSessions({
     }
     return Array.from(ids).sort().join(',');
   }, [recentInstances]);
+  // Whether the project order is synced through the backend. The logged-out
+  // desktop only talks to its local daemon, which has no projects API at all,
+  // so there the local pref stays the whole store exactly as before.
+  const syncProjectOrder = !isDesktopLocal();
+  // Saves still on the wire. A list refetch that races one (window focus,
+  // route change) carries the pre-save order, so it must not be applied.
+  const orderSavesInFlightRef = useRef(0);
+  const persistProjectOrder = useCallback((ids: string[]) => {
+    if (!api) return;
+    orderSavesInFlightRef.current += 1;
+    api
+      .setProjectOrder(ids)
+      .catch((err) => console.error('Failed to save project order:', err))
+      .finally(() => {
+        orderSavesInFlightRef.current -= 1;
+      });
+  }, [api]);
+
+  // The list comes back ranked-first-then-recency, so the list *is* the
+  // order — for projects the user never dragged that means recency, the same
+  // order the Tasks board and the new-session picker show. Skipped mid-drag
+  // and while a save is in flight so a refetch never yanks the groups out
+  // from under the user.
+  const legacyOrderImportedRef = useRef(false);
+  const applyServerProjectOrder = useCallback((list: ProjectResponse[]) => {
+    if (draggingProjectRef.current !== null || orderSavesInFlightRef.current > 0) return;
+    const serverOrder = list.map((p) => p.id);
+    if (!list.some((p) => p.position != null) && !legacyOrderImportedRef.current) {
+      legacyOrderImportedRef.current = true;
+      // One-time import of the pre-sync per-device order. Before the backend
+      // held it, whatever this device had is the best guess at what the user
+      // wants everywhere; it only ever runs while the backend has no order at
+      // all, so a second device opened later never clobbers the first.
+      const known = new Set(serverOrder);
+      const legacy = (readSavedProjectOrder() ?? []).filter((key) => known.has(key));
+      if (legacy.length > 0) {
+        const ranked = new Set(legacy);
+        applyProjectOrder([...legacy, ...serverOrder.filter((id) => !ranked.has(id))]);
+        persistProjectOrder(legacy);
+        return;
+      }
+    }
+    applyProjectOrder(serverOrder);
+    cacheProjectOrder(serverOrder);
+  }, [applyProjectOrder, persistProjectOrder]);
+
   const refreshProjects = useCallback(() => {
     if (!api) return;
     // include_archived so the map carries the archived flag (grouping needs it
     // to drop archived groups); an unknown/loading id defaults to visible.
     api
       .listProjects(true)
-      .then((list) => setProjectsById(new Map(list.map((p) => [p.id, p]))))
+      .then((list) => {
+        setProjectsById(new Map(list.map((p) => [p.id, p])));
+        if (syncProjectOrder) applyServerProjectOrder(list);
+      })
       .catch(() => {
         /* best-effort: grouping falls back to basenames until it loads */
       });
-  }, [api]);
+  }, [api, syncProjectOrder, applyServerProjectOrder]);
   useEffect(() => {
     refreshProjects();
     // Re-run when a session's project link appears/changes (linkedProjectIds)
@@ -464,11 +544,6 @@ export function SidebarSessions({
     },
     [api, refreshProjects],
   );
-
-  // Custom project order (drag-and-drop when grouped by project). Reordered
-  // live during dragover, persisted on drag end.
-  const [projectOrder, setProjectOrder] = useState<string[]>([]);
-  const [draggingProject, setDraggingProject] = useState<string | null>(null);
 
   // Worktree display is applied in a second pass (renderLayout) with live git
   // data, so grouping itself stays a pure function of the sessions.
@@ -628,32 +703,44 @@ export function SidebarSessions({
     }
   }, [worktreeDelete, performWorktreeRemove, markAsComplete]);
 
-  // Move the dragged project group so it lands at the hovered group's slot.
-  const handleProjectDragOver = useCallback((overKey: string) => {
-    if (draggingProject === null || draggingProject === overKey) return;
-    setProjectOrder((prev) => {
-      const rendered = sidebarGroups
-        .filter((g) => g.key !== 'PINNED' && g.label !== null)
-        .map((g) => g.key);
-      const withoutDragged = rendered.filter((k) => k !== draggingProject);
-      const overIndex = withoutDragged.indexOf(overKey);
-      if (overIndex === -1) return prev;
-      const fromIndex = rendered.indexOf(draggingProject);
-      const toIndex = rendered.indexOf(overKey);
-      const insertAt = fromIndex < toIndex ? overIndex + 1 : overIndex;
-      const next = [...withoutDragged];
-      next.splice(insertAt, 0, draggingProject);
-      return next;
-    });
-  }, [draggingProject, sidebarGroups]);
-
-  const handleProjectDragEnd = useCallback(() => {
-    setDraggingProject(null);
-    setProjectOrder((current) => {
-      setPref(PROJECT_ORDER_STORAGE_KEY, current);
-      return current;
-    });
+  const handleProjectDragStart = useCallback((key: string) => {
+    draggingProjectRef.current = key;
+    setDraggingProject(key);
   }, []);
+
+  // Move the dragged project group so it lands at the hovered group's slot
+  // (live, on every dragover). Only the groups on screen move; the merge
+  // keeps every off-screen project's rank, so a drag with a status filter on
+  // never resets the hidden ones to recency.
+  const handleProjectDragOver = useCallback((overKey: string) => {
+    const dragging = draggingProjectRef.current;
+    if (dragging === null || dragging === overKey) return;
+    const rendered = sidebarGroups
+      .filter((g) => g.key !== 'PINNED' && g.label !== null)
+      .map((g) => g.key);
+    const withoutDragged = rendered.filter((k) => k !== dragging);
+    const overIndex = withoutDragged.indexOf(overKey);
+    if (overIndex === -1) return;
+    const fromIndex = rendered.indexOf(dragging);
+    const toIndex = rendered.indexOf(overKey);
+    const insertAt = fromIndex < toIndex ? overIndex + 1 : overIndex;
+    const nextRendered = [...withoutDragged];
+    nextRendered.splice(insertAt, 0, dragging);
+    applyProjectOrder(mergeRenderedOrder(projectOrderRef.current, nextRendered));
+  }, [sidebarGroups, applyProjectOrder]);
+
+  // Persist on drop: locally always, and to the backend when signed in. Only
+  // DB projects can be ranked server-side — a basename group (a session with
+  // no project link) keeps its slot on this device only.
+  const handleProjectDragEnd = useCallback(() => {
+    draggingProjectRef.current = null;
+    setDraggingProject(null);
+    const order = projectOrderRef.current;
+    cacheProjectOrder(order);
+    if (syncProjectOrder) {
+      persistProjectOrder(order.filter((key) => projectsById.has(key)));
+    }
+  }, [syncProjectOrder, persistProjectOrder, projectsById]);
 
   // Collapsible groups: clicking a group label hides/shows its sessions.
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -1242,7 +1329,7 @@ export function SidebarSessions({
                         ? (event) => {
                             event.dataTransfer.effectAllowed = 'move';
                             event.dataTransfer.setData('text/plain', key);
-                            setDraggingProject(key);
+                            handleProjectDragStart(key);
                           }
                         : undefined
                     }

@@ -713,6 +713,11 @@ class ProjectResponse(BaseModel):
     # and the new-session picker). Only the list endpoint knows it; single
     # project responses leave it None.
     last_activity_at: datetime | None = None
+    # The caller's manual rank (0-based) from PUT /projects/order, None when
+    # they never dragged this project into place. The list endpoint already
+    # returns projects in rank order, so clients only need this to tell "has
+    # a custom order" from "recency"; single project responses leave it None.
+    position: int | None = None
     # Inlined rather than a separate endpoint: the lists are tiny and both the
     # Tasks page and the new-session directory resolver need them alongside the
     # project itself.
@@ -734,6 +739,19 @@ class ProjectSummaryResponse(BaseModel):
 class SetProjectDirectoryRequest(BaseModel):
     machine_id: UUID
     local_path: str = Field(..., min_length=1, max_length=4096)
+
+
+class SetProjectOrderRequest(BaseModel):
+    """The caller's full sidebar order, first to last. Replaces the previous
+    order wholesale; an empty list resets everything to recency."""
+
+    project_ids: list[UUID] = Field(default_factory=list, max_length=1000)
+
+
+class ProjectOrderResponse(BaseModel):
+    """The order actually stored — ids the caller cannot see are dropped."""
+
+    project_ids: list[UUID]
 
 
 class CreateProjectRequest(BaseModel):

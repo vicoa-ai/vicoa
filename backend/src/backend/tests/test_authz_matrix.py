@@ -412,6 +412,17 @@ ENDPOINTS: list[Endpoint] = [
         lambda c, w: c.get("/api/v1/projects"),
         listed_ids=_ids(),
     ),
+    # The caller's own sidebar order: any visible project may be ranked (it
+    # never touches the row), an invisible one is dropped from the echo.
+    Endpoint(
+        "PUT /projects/order",
+        "project",
+        "viewer",
+        lambda c, w: c.put(
+            "/api/v1/projects/order", json={"project_ids": [str(w.project.id)]}
+        ),
+        listed_ids=lambda r: {str(i) for i in r.json()["project_ids"]},
+    ),
     Endpoint(
         "PATCH /projects/{id}",
         "project",
@@ -681,6 +692,7 @@ ENDPOINTS: list[Endpoint] = [
 # What each list endpoint should (not) contain for the world's object.
 _LISTED_OBJECT: dict[str, Callable[[World], str]] = {
     "GET /projects": lambda w: str(w.project.id),
+    "PUT /projects/order": lambda w: str(w.project.id),
     "GET /tasks": lambda w: str(w.task.id),
     "GET /agent-instances?scope=all": lambda w: str(w.instance.id),
     "GET /automations": lambda w: str(w.automation.id),

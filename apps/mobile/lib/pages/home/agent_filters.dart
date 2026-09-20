@@ -88,7 +88,7 @@ class HomeFilterBar extends StatelessWidget {
                   await showFilterModal(
                     context: context,
                     title: 'Status',
-                    options: const ['All', 'Not closed', 'In progress', 'In review', 'Done', 'Closed'],
+                    options: const ['All', 'Active', 'In progress', 'In review', 'Done', 'Closed'],
                     selectedValue: model.selectedTab,
                     onSelected: (value) async {
                       model.selectTab(value);

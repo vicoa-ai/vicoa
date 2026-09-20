@@ -964,7 +964,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get filterLast7Days => '最近 7 天';
 
   @override
-  String get filterNotClosed => '未关闭';
+  String get filterActive => '活跃';
 
   @override
   String get filterProject => '项目';
@@ -1016,6 +1016,14 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get homeErrorLoadSessionsFailed => '加载任务失败，请重试。';
+
+  @override
+  String homeEmptyFilteredSessions(String status) {
+    return '没有$status的会话';
+  }
+
+  @override
+  String get homeEmptySessions => '没有会话';
 
   @override
   String get homeErrorOffline => '无网络连接，请检查网络。';

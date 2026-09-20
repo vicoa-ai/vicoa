@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '/flutter_flow/app_locale.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 
 class EmptyFilterStateWidget extends StatelessWidget {
@@ -12,7 +13,11 @@ class EmptyFilterStateWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = statusLabel.isEmpty ? 'No Sessions' : 'No $statusLabel Sessions';
+    // The whole sentence is localized (not just the status word dropped into
+    // an English frame), so it reads naturally in every language.
+    final label = statusLabel.isEmpty
+        ? tr().homeEmptySessions
+        : tr().homeEmptyFilteredSessions(statusLabel);
     return Container(
       width: double.infinity,
       margin: const EdgeInsetsDirectional.fromSTEB(18.0, 12.0, 18.0, 0.0),

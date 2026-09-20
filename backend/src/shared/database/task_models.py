@@ -246,6 +246,36 @@ class ProjectDirectory(Base):
         return self.machine.display_name or self.machine.hostname
 
 
+class ProjectPosition(Base):
+    """A viewer's manual ordering of the projects they can see.
+
+    One row per (user, project) the user has dragged into place; a project
+    with no row for the viewer is unranked and falls back to recency. It is
+    per *viewer*, not a column on `projects`: a shared or team-owned project
+    appears in several people's sidebars, and how one person arranges theirs
+    must not rearrange anyone else's. Rows follow the project (deleting it
+    drops the rank); a project the viewer loses access to keeps a stale row
+    that the list query never joins and the next full rewrite discards.
+    """
+
+    __tablename__ = "project_positions"
+    __table_args__ = (Index("ix_project_positions_project", "project_id"),)
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        type_=PostgresUUID(as_uuid=True),
+        primary_key=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        type_=PostgresUUID(as_uuid=True),
+        primary_key=True,
+    )
+    # 0-based rank within the viewer's ordered projects; contiguous after
+    # every rewrite, but the reader only relies on ascending order.
+    position: Mapped[int] = mapped_column(Integer)
+
+
 class TaskLabel(Base):
     """Label vocabulary (multica issue_label).
 

@@ -35,6 +35,7 @@ from .share_models import (
 from .task_models import (
     Project,
     ProjectDirectory,
+    ProjectPosition,
     Task,
     TaskActivity,
     TaskComment,
@@ -97,6 +98,7 @@ __all__ = [
     "FileMentions",
     "Project",
     "ProjectDirectory",
+    "ProjectPosition",
     "Task",
     "TaskActivity",
     "TaskComment",
