@@ -2400,6 +2400,7 @@ function NewSessionContent() {
                             <PrincipalAvatar
                               principal={agentPrincipal(selectedProfile)}
                               size="xs"
+                              plain
                             />
                             <span className="min-w-0 truncate">{selectedProfile.name}</span>
                           </>
@@ -2439,6 +2440,7 @@ function NewSessionContent() {
                                     <PrincipalAvatar
                                       principal={agentPrincipal(profile)}
                                       size="xs"
+                                      plain
                                     />
                                   }
                                   isSelected={profile.id === selectedProfileId}

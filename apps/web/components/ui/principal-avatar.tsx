@@ -16,7 +16,8 @@
  * thing, not a face"), but the distinction cost more than it bought: every
  * editor affordance drawn on top of an avatar (the hover scrim, the camera
  * badge) is round, so a square agent avatar hovered into a grey circle that did
- * not fit it. One shape, one hover state, everywhere.
+ * not fit it. One shape, one hover state, everywhere. The one opt-out is
+ * `plain`, which drops the disc for rows that sit beside bare provider glyphs.
  *
  * Nothing else should render an avatar `<img>`: hot-linking an identity
  * provider's CDN leaks a viewer's IP to it, and hashed-email services like
@@ -57,6 +58,22 @@ const SIZES: Record<
   xl: { box: 'size-20', text: 'text-xl', emoji: 'text-5xl', glyph: 'size-9' },
 };
 
+// `plain` marks are sized like the icons they sit beside — at `xs`, a 12px
+// provider glyph in a 16px text row: the slot is as tall as the disc would be
+// (`line` is that height as a line-height, see the prop) but only as wide as
+// the icon, so the label after a plain mark starts where it does after an
+// icon, and the mark's left edge sits on the same column.
+const PLAIN: Record<
+  PrincipalAvatarSize,
+  { box: string; line: string; image: string; glyph: string }
+> = {
+  xs: { box: 'h-4 w-3', line: 'leading-4', image: 'size-3', glyph: 'size-3' },
+  sm: { box: 'h-6 w-4', line: 'leading-6', image: 'size-4', glyph: 'size-4' },
+  md: { box: 'h-8 w-5', line: 'leading-8', image: 'size-5', glyph: 'size-5' },
+  lg: { box: 'h-14 w-7', line: 'leading-14', image: 'size-7', glyph: 'size-7' },
+  xl: { box: 'h-20 w-9', line: 'leading-20', image: 'size-9', glyph: 'size-9' },
+};
+
 // A team is a bag of people; an agent is not a person at all. Only the user
 // falls back to the single-person glyph.
 const GLYPHS: Record<PrincipalType, typeof UserIcon> = {
@@ -70,15 +87,32 @@ export function PrincipalAvatar({
   size = 'md',
   className,
   title,
+  plain = false,
 }: {
   principal: Principal;
   size?: PrincipalAvatarSize;
   className?: string;
   /** Tooltip text. Defaults to `principal.name`. */
   title?: string;
+  /**
+   * No disc: the mark sits directly on the row, the way a provider glyph does,
+   * at the icon's size (`PLAIN`). For a list that mixes saved agents with bare
+   * provider icons (the agent picker), a disc on every other row is the odd
+   * one out. A stored image keeps its circular clip — a picture needs a
+   * shape, a glyph does not.
+   *
+   * A plain emoji or initial is typeset like the text beside it — inherited
+   * font size, line-height equal to the box — so it sits on the same baseline
+   * as that text, which is the alignment emoji fonts are drawn for. Centring
+   * a smaller glyph in the box instead (the disc's recipe) leaves an emoji
+   * visibly high: its ink is not centred on its own em box.
+   */
+  plain?: boolean;
 }) {
   const dims = SIZES[size];
-  const box = cn('shrink-0 overflow-hidden rounded-full', dims.box, className);
+  const flat = PLAIN[size];
+  const box = cn('shrink-0', plain ? flat.box : dims.box, className);
+  const disc = cn('shrink-0 overflow-hidden rounded-full', plain ? flat.image : dims.box, className);
   const label = title ?? principal.name ?? undefined;
 
   const src = principalAvatarSrc(principal);
@@ -99,7 +133,7 @@ export function PrincipalAvatar({
         alt=""
         aria-hidden="true"
         title={label}
-        className={cn('object-cover', box)}
+        className={cn('object-cover', disc)}
         onError={() => setFailedSrc(src)}
       />
     );
@@ -108,15 +142,20 @@ export function PrincipalAvatar({
   // On `bg-muted`, not the hash-palette colour the initial uses: an emoji already
   // carries its own colour, and a saturated disc behind it puts two hues in the
   // same 24px circle. Same neutral the glyph fallback sits on.
+  // Plain: flush left, not centred. An emoji glyph's advance box is wider than
+  // its ink (Apple Color Emoji carries a right-side bearing) and wider than
+  // the slot, so centring it hangs the ink over the column's left edge by a
+  // pixel or so; starting it at the edge lines it up with the icon column.
   if (principal.emoji) {
     return (
       <span
         title={label}
         aria-hidden="true"
         className={cn(
-          'inline-flex items-center justify-center bg-muted leading-none',
-          dims.emoji,
-          box,
+          'inline-flex items-center',
+          plain
+            ? cn('justify-start', flat.line, box)
+            : cn('justify-center bg-muted leading-none', dims.emoji, disc),
         )}
       >
         {principal.emoji}
@@ -130,15 +169,19 @@ export function PrincipalAvatar({
   // makes the same call for a name-less viewer).
   const initial = principal.id ? principalInitial(principal.name) : null;
   if (initial) {
+    // Without a disc the letter is the whole mark, so it takes the palette
+    // colour itself, and the 0.25-0.30 ratio above no longer applies: that is
+    // about fitting inside a circle, and there is no circle to fit.
     return (
       <span
         title={label}
         aria-hidden="true"
-        style={{ backgroundColor: principalColor(principal) }}
+        style={plain ? { color: principalColor(principal) } : { backgroundColor: principalColor(principal) }}
         className={cn(
-          'inline-flex items-center justify-center font-normal leading-none text-white uppercase',
-          dims.text,
-          box,
+          'inline-flex items-center justify-center uppercase',
+          plain
+            ? cn('font-semibold', flat.line, box)
+            : cn('font-normal leading-none text-white', dims.text, disc),
         )}
       >
         {initial}
@@ -151,9 +194,12 @@ export function PrincipalAvatar({
     <span
       title={label}
       aria-hidden="true"
-      className={cn('inline-flex items-center justify-center bg-muted text-muted-foreground', box)}
+      className={cn(
+        'inline-flex items-center justify-center text-muted-foreground',
+        plain ? box : cn('bg-muted', disc),
+      )}
     >
-      <Glyph className={dims.glyph} />
+      <Glyph className={plain ? flat.glyph : dims.glyph} />
     </span>
   );
 }
