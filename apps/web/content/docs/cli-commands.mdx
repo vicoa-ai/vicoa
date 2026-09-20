@@ -504,6 +504,40 @@ Give it a session config with the convenience flags, or a full JSON blob:
 
 > **An automation needs a machine to run on.** Run `vicoa daemon` on the target box first — it auto-registers and becomes the default target — or pass `--machine-id`. Also note `automation update` has no `--agent` flag; change the agent by replacing the whole config with `--session-config-json '{"agent":"…"}'`.
 
+## vicoa worktree
+
+A repository can declare **worktree setup commands** in a committed `.vicoa/config.json` (or root `vicoa.json`) — copy `.env` files, install dependencies, link a shared database — and the daemon runs them in the background every time it creates a worktree for a new session, whichever device you started it from. `vicoa worktree setup` is the same run, on demand, from a terminal:
+
+```bash
+vicoa worktree setup                 # set up the worktree you're in
+vicoa worktree setup ~/path/to/worktree
+vicoa worktree setup --dry-run       # just list the commands
+vicoa worktree setup --trust         # …and let the daemon auto-run this repo's setup from now on
+```
+
+```json
+// .vicoa/config.json, committed in the source repository
+{
+  "worktree": {
+    "setup": [
+      "cp \"$VICOA_ROOT_PATH/.env\" \"$VICOA_WORKTREE_PATH/.env\"",
+      "pnpm install"
+    ],
+    "teardown": ["echo bye"]
+  }
+}
+```
+
+Each command is echoed, then run in the worktree under a login shell with `$VICOA_WORKTREE_PATH`, `$VICOA_ROOT_PATH` (the main checkout the config came from) and `$VICOA_BRANCH_NAME` set; the run stops at the first failure and the command's exit code is returned. The config is always read from the **source** repository's working tree, so a linked worktree runs the same setup as the checkout it was forked from. Use it to re-run after a failed automatic setup, to try a config while you are editing it, or — from an agent — to bring up a worktree whose setup did not run.
+
+| Flag | Meaning |
+|---|---|
+| `--dry-run` | Print the numbered command list; run nothing |
+| `--trust` | Mark the source repository as trusted on this machine so new worktrees set up automatically |
+| `--force` | Run even while another setup run for the same worktree is in progress |
+
+> **Trust.** A cloned repository's `vicoa.json` can contain arbitrary shell, so the daemon only **auto-runs** setup for repositories you have approved on that machine (the dashboard asks the first time). Typing `vicoa worktree setup` yourself is that approval for one run — nothing is gated — and `--trust` records it for the future. The run's progress and log are what the session header's setup badge shows in the dashboard.
+
 ## Machine-readable output
 
 Every `session`, `task`, and `automation` subcommand — plus `vicoa ls` — accepts `--json`, which emits raw JSON instead of the human-readable table. Prefer it whenever you're parsing a field in a script rather than scraping the table.

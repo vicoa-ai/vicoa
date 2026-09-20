@@ -146,10 +146,12 @@ function markSessionHasPrompt(instanceId: string, hasPrompt: boolean) {
 }
 
 /**
- * Hand a new worktree's setup commands (from the spawn-session result) to the
- * session view, which auto-opens a terminal and runs them there — visibly. Same
- * one-app-run sessionStorage hand-off as markSessionHasPrompt; the FilesGitPanel
- * reads and clears it once, so setup never re-runs on a later visit.
+ * Hand a new worktree's setup commands the daemon did NOT run (from the
+ * spawn-session result) to the session view. Same one-app-run sessionStorage
+ * hand-off as markSessionHasPrompt; the FilesGitPanel reads and clears it once,
+ * so setup never re-runs on a later visit. The daemon runs a trusted repo's
+ * setup itself and returns no commands — the header's WorktreeSetupBadge shows
+ * that run's progress instead.
  *
  * `trusted` is the daemon's verdict on the committed vicoa.json (false for a repo
  * the user hasn't approved on this machine → the panel confirms before running);
@@ -162,6 +164,12 @@ function markSessionSetupCommands(
     trusted: boolean;
     sourceRepo: string;
     env: Record<string, string>;
+    /** The daemon is the executor (it returned `worktree_setup`): a trusted repo
+     * is already running there and a confirmed untrusted one is handed back to
+     * it over `worktree-run-setup`. Absent → an old daemon that never runs setup
+     * itself, so the session view types the commands into its terminal. */
+    daemonRuns: boolean;
+    worktreePath: string;
   },
 ) {
   try {
@@ -1620,8 +1628,15 @@ function NewSessionContent() {
       const newInstanceId = String(result.agent_instance_id ?? '');
       // A prompt or images both mean a first message is on its way.
       markSessionHasPrompt(newInstanceId, !!finalPrompt || images.length > 0);
-      // A fresh worktree may carry setup commands (committed vicoa.json) for the
-      // session view to auto-run in its terminal. Absent for non-worktree spawns.
+      // A fresh worktree may carry setup commands (committed vicoa.json). The
+      // daemon runs them itself on a trusted repo and then omits
+      // `setup_commands`; they're only present when the daemon did NOT run them
+      // (untrusted → the session view confirms first; old daemon → it types them
+      // into its terminal). Absent for non-worktree spawns.
+      const worktreeSetup =
+        result.worktree_setup && typeof result.worktree_setup === 'object'
+          ? (result.worktree_setup as { worktree_path?: unknown })
+          : null;
       markSessionSetupCommands(newInstanceId, {
         commands: Array.isArray(result.setup_commands)
           ? result.setup_commands.filter((c): c is string => typeof c === 'string')
@@ -1638,6 +1653,13 @@ function NewSessionContent() {
                 ),
               )
             : {},
+        daemonRuns: worktreeSetup !== null,
+        worktreePath:
+          typeof worktreeSetup?.worktree_path === 'string'
+            ? worktreeSetup.worktree_path
+            : typeof result.worktree_path === 'string'
+              ? result.worktree_path
+              : '',
       });
       await getWsClient().waitForEntity('agent_instances', newInstanceId);
 

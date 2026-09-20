@@ -37,6 +37,7 @@ from .utils import get_project_path
 from .commands.automation import add_automation_subparser, run_automation_command
 from .commands.plugin import add_plugin_subparser, run_plugin_command
 from .commands.provider import add_provider_subparser, run_provider_command
+from .commands.worktree import add_worktree_subparser, run_worktree_command
 from .commands.instance import run_session_command
 from .commands.ls import cmd_ls as _cmd_ls
 from .commands.stop import cmd_stop
@@ -1930,6 +1931,11 @@ Examples:
     # can run (commands/provider.py). Edits ~/.vicoa/config.json directly.
     add_provider_subparser(subparsers)
 
+    # 'worktree' subcommand — run a checkout's committed worktree.setup by hand
+    # (commands/worktree.py). Machine-local: same engine and run record as the
+    # daemon's automatic run, no login or daemon needed.
+    add_worktree_subparser(subparsers)
+
     # 'session' subcommand — inspect the user's agent sessions from the backend.
     # Distinct from `vicoa ls` (local processes only): this spans every machine
     # and finished sessions, and can print a session's message transcript.
@@ -2316,6 +2322,8 @@ Examples:
         sys.exit(run_session_command(args))
     elif args.command == "plugin":
         sys.exit(run_plugin_command(args))
+    elif args.command == "worktree":
+        sys.exit(run_worktree_command(args))
     elif args.command == "provider":
         sys.exit(run_provider_command(args))
     elif args.command in {"claude", "codex", "opencode"}:

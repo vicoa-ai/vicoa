@@ -8,6 +8,7 @@ to end.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -66,10 +67,14 @@ def _patch_popen(monkeypatch: pytest.MonkeyPatch, calls: dict, *, fail: bool = F
     real_popen = subprocess.Popen
 
     def fake_popen(command, *args, **kw):
-        # Only intercept the daemon's agent launch (it alone passes
-        # start_new_session=True). git's subprocess.run calls also route
-        # through Popen and must reach the real implementation.
-        if not kw.get("start_new_session"):
+        # Only intercept the daemon's agent launch: it alone detaches stdio to
+        # DEVNULL in its own session. git's subprocess.run calls, and the setup
+        # engine's `bash -lc` children (own session too, but piped stdout), must
+        # reach the real implementation.
+        if (
+            not kw.get("start_new_session")
+            or kw.get("stdout") is not subprocess.DEVNULL
+        ):
             return real_popen(command, *args, **kw)
         calls["called"] = True
         calls["cwd"] = kw.get("cwd")
@@ -108,15 +113,16 @@ def test_spawn_with_new_worktree_creates_and_spawns_in_it(
     assert Path(result["worktree_path"]).is_dir()
 
 
-def test_spawn_new_worktree_surfaces_setup_commands(
+def test_spawn_new_worktree_untrusted_hands_setup_to_the_client(
     monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
 ):
     import json
 
-    # Config in the source repo working tree (need not be committed) — the client
-    # runs these, visibly, in the new session's terminal.
+    # Config in the source repo working tree (need not be committed). The repo
+    # is untrusted, so the daemon must NOT run it — the client confirms first.
+    marker = committed_repo / "must_not_run"
     (committed_repo / "vicoa.json").write_text(
-        json.dumps({"worktree": {"setup": ["npm ci", "npm run build"]}})
+        json.dumps({"worktree": {"setup": [f"touch {marker}", "npm run build"]}})
     )
     daemon = _prep_daemon(monkeypatch)
     _patch_popen(monkeypatch, {})
@@ -131,9 +137,15 @@ def test_spawn_new_worktree_surfaces_setup_commands(
         }
     )
 
-    assert result.get("setup_commands") == ["npm ci", "npm run build"]
-    # Untrusted by default — the web asks before auto-running a cloned repo's setup.
+    # Contract: `setup_commands` present ⇔ the daemon did not run them. An old
+    # web shows its confirm and types these into the terminal itself.
+    assert result.get("setup_commands") == [f"touch {marker}", "npm run build"]
     assert result.get("setup_trusted") is False
+    assert result.get("worktree_setup") == {
+        "status": "untrusted",
+        "total": 2,
+        "worktree_path": result["worktree_path"],
+    }
     # The client exports these before typing setup into the terminal (that shell
     # doesn't inherit the hook env the engine sets in its own subprocess).
     setup_env = result.get("setup_env")
@@ -141,17 +153,25 @@ def test_spawn_new_worktree_surfaces_setup_commands(
     assert setup_env["VICOA_ROOT_PATH"] == str(committed_repo)
     assert setup_env["VICOA_WORKTREE_PATH"] == result["worktree_path"]
     assert setup_env["VICOA_BRANCH_NAME"] == result["branch"]
+    assert not marker.exists()
 
 
-def test_spawn_new_worktree_setup_trusted_after_grant(
+@pytest.mark.skipif(os.name == "nt", reason="setup engine assumes bash")
+def test_spawn_new_worktree_trusted_runs_setup_on_the_daemon(
     monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
 ):
     import json
+    import time
 
     from vicoa.rpc.worktree_trust import grant_repo_trust
 
+    # Marker outside the worktree so it survives; the command also proves the
+    # hook env reaches the daemon-run shell.
+    marker = committed_repo / "daemon_setup_ran"
     (committed_repo / "vicoa.json").write_text(
-        json.dumps({"worktree": {"setup": ["npm ci"]}})
+        json.dumps(
+            {"worktree": {"setup": [f'echo "$VICOA_BRANCH_NAME" > {marker}', "true"]}}
+        )
     )
     grant_repo_trust(str(committed_repo))
     daemon = _prep_daemon(monkeypatch)
@@ -167,8 +187,31 @@ def test_spawn_new_worktree_setup_trusted_after_grant(
         }
     )
 
-    assert result.get("setup_commands") == ["npm ci"]
-    assert result.get("setup_trusted") is True
+    # The daemon ran it, so nothing is handed to the client to run (an old web
+    # would otherwise type them into its terminal → two runs).
+    assert "setup_commands" not in result
+    assert "setup_env" not in result
+    assert result.get("worktree_setup") == {
+        "status": "running",
+        "total": 2,
+        "worktree_path": result["worktree_path"],
+    }
+    # Background thread — poll for the effect, then for the recorded outcome.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        status = daemon._handle_rpc_request(
+            {
+                "method": "worktree-setup-status",
+                "params": {"worktree_path": result["worktree_path"]},
+            }
+        )
+        if status.get("status") in ("succeeded", "failed"):
+            break
+        time.sleep(0.05)
+    assert marker.read_text().strip() == result["branch"]
+    assert status["status"] == "succeeded"
+    assert [c["status"] for c in status["commands"]] == ["ok", "ok"]
+    assert status["source_repo"] == str(committed_repo)
 
 
 def test_spawn_new_worktree_without_config_has_no_setup_commands(

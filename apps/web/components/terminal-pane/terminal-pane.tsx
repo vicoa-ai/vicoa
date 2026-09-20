@@ -51,8 +51,8 @@ export interface TerminalPaneProps {
   cwd: string;
   className?: string;
   /** Written to the shell once, right after its first output (or a short
-   *  fallback delay) — worktree setup commands run here, visibly. Sent on the
-   *  first spawn only; a manual restart does not resend it. */
+   *  fallback delay) — the legacy old-daemon path types worktree setup here.
+   *  Sent on the first spawn only; a manual restart does not resend it. */
   initialInput?: string;
 }
 

@@ -257,15 +257,23 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
     restoreSession(instanceId, machineId);
   }, [desktop, isWindows, machineId, cwd, instanceId, restoreSession]);
 
-  // Run a worktree's setup. Where a terminal is available (desktop/web, non-
-  // Windows) it runs — visibly — in a new terminal tab, typed stop-on-failure via
-  // `&&`, leaving an interactive shell after (Paseo-style). Where no PTY exists
-  // (Windows) it falls back to a background run on the daemon (output → daemon
-  // log); `sourceRepo` is the config source + trust key for that path.
+  // Run a worktree's setup. The daemon is the executor: it runs setup in the
+  // background on the machine and the header's WorktreeSetupBadge shows the
+  // progress. `daemonRuns` false means an OLD daemon that never runs setup
+  // itself — there we keep the legacy path: type the commands into a new
+  // terminal tab (stop-on-failure via `&&`, interactive shell left after), or,
+  // with no PTY (Windows), the same daemon RPC. `sourceRepo` is the config
+  // source + trust key; `worktreePath` is the worktree root (the session's cwd
+  // may be a subfolder of it for monorepo sessions).
   const startWorktreeSetup = useCallback(
-    (commands: string[], sourceRepo: string, env: Record<string, string>) => {
+    (
+      commands: string[],
+      sourceRepo: string,
+      env: Record<string, string>,
+      opts: { daemonRuns: boolean; worktreePath: string },
+    ) => {
       if (!cwd) return;
-      if (canUseTerminal) {
+      if (!opts.daemonRuns && canUseTerminal) {
         const id = addSessionTerminal(
           instanceId,
           termMachineId,
@@ -275,11 +283,12 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
         focusTerminal(instanceId, id);
         return;
       }
-      // No terminal (Windows): let the daemon run it in the background.
       if (sourceRepo) {
-        void rpcWorktreeRunSetup(termMachineId, cwd, sourceRepo).catch(() => {
-          /* daemon offline / untrusted — setup just doesn't run this time */
-        });
+        void rpcWorktreeRunSetup(termMachineId, opts.worktreePath || cwd, sourceRepo).catch(
+          () => {
+            /* daemon offline / untrusted — setup just doesn't run this time */
+          },
+        );
       }
     },
     [canUseTerminal, cwd, addSessionTerminal, instanceId, termMachineId, focusTerminal],
@@ -291,13 +300,17 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
     commands: string[];
     sourceRepo: string;
     env: Record<string, string>;
+    daemonRuns: boolean;
+    worktreePath: string;
   } | null>(null);
 
-  // A freshly-created worktree may carry setup commands (committed vicoa.json),
-  // handed over by the new-session page via sessionStorage. Run them once, then
-  // clear the hand-off so a later visit or panel remount never reruns setup. A
-  // trusted repo runs straight away; an untrusted one asks first. Runs on every
-  // platform — the terminal-vs-background choice is inside startWorktreeSetup.
+  // A freshly-created worktree may carry setup commands (committed vicoa.json)
+  // the daemon did NOT run, handed over by the new-session page via
+  // sessionStorage. Consume the hand-off once, then clear it so a later visit
+  // or panel remount never reruns setup. Untrusted → ask first (the normal
+  // case now: a trusted repo's setup already runs on the daemon and no
+  // commands are handed over). Trusted + commands only happens with an old
+  // daemon → run them straight away, the legacy way.
   useEffect(() => {
     if (!cwd || typeof window === 'undefined') return;
     const key = `vicoa.session.${instanceId}.setupCommands`;
@@ -316,11 +329,13 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
       return;
     }
     if (typeof payload !== 'object' || payload === null) return;
-    const { commands, trusted, sourceRepo, env } = payload as {
+    const { commands, trusted, sourceRepo, env, daemonRuns, worktreePath } = payload as {
       commands?: unknown;
       trusted?: unknown;
       sourceRepo?: unknown;
       env?: unknown;
+      daemonRuns?: unknown;
+      worktreePath?: unknown;
     };
     const setup = Array.isArray(commands)
       ? commands.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
@@ -328,16 +343,21 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
     if (setup.length === 0) return;
     const repo = typeof sourceRepo === 'string' ? sourceRepo : '';
     const envMap = asStringRecord(env);
+    const opts = {
+      daemonRuns: daemonRuns === true,
+      worktreePath: typeof worktreePath === 'string' ? worktreePath : '',
+    };
     if (trusted === true) {
-      startWorktreeSetup(setup, repo, envMap);
+      startWorktreeSetup(setup, repo, envMap, opts);
     } else {
-      setPendingSetup({ commands: setup, sourceRepo: repo, env: envMap });
+      setPendingSetup({ commands: setup, sourceRepo: repo, env: envMap, ...opts });
     }
   }, [cwd, instanceId, startWorktreeSetup]);
 
   // Confirm → trust the repo for next time (persisted daemon-side, per repo/
-  // machine) and run setup now. A grant failure (daemon offline) still runs it
-  // this once; the next spawn re-asks.
+  // machine) and run setup now. With the daemon as executor the grant must land
+  // before the run (the RPC is trust-gated); on the legacy terminal path a grant
+  // failure (daemon offline) still runs it this once and the next spawn re-asks.
   const confirmWorktreeSetup = useCallback(async () => {
     const p = pendingSetup;
     if (!p) return;
@@ -349,7 +369,10 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
         /* grant failed — run once anyway; trust just isn't remembered */
       }
     }
-    startWorktreeSetup(p.commands, p.sourceRepo, p.env);
+    startWorktreeSetup(p.commands, p.sourceRepo, p.env, {
+      daemonRuns: p.daemonRuns,
+      worktreePath: p.worktreePath,
+    });
   }, [pendingSetup, termMachineId, startWorktreeSetup]);
 
   // Split layout: terminals dock below/above the files area instead of being

@@ -574,6 +574,11 @@ class MachineDaemon:
         self._spawn_executor = ThreadPoolExecutor(
             max_workers=4, thread_name_prefix="spawn"
         )
+        # Worktrees (resolved paths) with a setup run in flight, so a spawn and
+        # a client's `worktree-run-setup` for the same worktree never race two
+        # `npm ci`s against each other.
+        self._worktree_setup_running: set[str] = set()
+        self._worktree_setup_lock = Lock()
 
     # ------------------------------------------------------------------
     # Persistence helpers — each daemon owns its own per-base-url entry.
@@ -2165,7 +2170,19 @@ class MachineDaemon:
             # never ran. Best-effort + non-fatal: a bad teardown must not block
             # the removal.
             self._run_worktree_teardown_best_effort(params)
-            return worktree_ops.remove_worktree(**params)
+            removed = worktree_ops.remove_worktree(**params)
+            if "error" not in removed and isinstance(params.get("worktree_path"), str):
+                from vicoa.rpc.worktree_setup import clear_setup_record
+
+                clear_setup_record(params["worktree_path"])
+            return removed
+        if method == "worktree-setup-status":
+            from vicoa.rpc.worktree_setup import read_setup_status
+
+            worktree_path = (frame.get("params") or {}).get("worktree_path")
+            if not isinstance(worktree_path, str) or not worktree_path.strip():
+                return {"error": "worktree-setup-status requires a worktree_path"}
+            return read_setup_status(worktree_path)
         if method == "worktree-trust-grant":
             from vicoa.rpc.worktree_trust import grant_repo_trust
 
@@ -2270,6 +2287,7 @@ class MachineDaemon:
             "git-worktree-remove",
             "worktree-trust-grant",
             "worktree-run-setup",
+            "worktree-setup-status",
             "list-open-apps",
             "open-path",
             "scan-agents",
@@ -2613,46 +2631,138 @@ class MachineDaemon:
             # project=worktree path, which stays the source of truth.
             result["worktree_path"] = worktree_info["path"]
             result["branch"] = worktree_info["branch"]
-            # Setup commands the client runs — visibly — in the new session's
-            # terminal (committed `vicoa.json` in the source repo working tree).
-            # The daemon owns config discovery; the client only decides where to
-            # show it. Best-effort: never fail a launched spawn over setup.
+            # Worktree setup (committed `vicoa.json` in the source repo working
+            # tree). The daemon is the executor — it runs the commands here, in
+            # the background, so every spawn path gets them: web, mobile, an
+            # automation fired by the scheduler with no client attached. The
+            # client only observes, over `worktree-setup-status`.
+            #
+            # Contract: `setup_commands` in the result ⇔ the daemon did NOT run
+            # them. A trusted repo runs here and the field is omitted; an
+            # untrusted one keeps today's `setup_commands` + `setup_trusted:
+            # false` + `setup_env` so the client can confirm, grant trust and
+            # ask for the run (an old web types them into its terminal instead).
+            # That invariant is what keeps every client/daemon version pairing
+            # to exactly one run. Best-effort: never fail a launched spawn.
             try:
                 from vicoa.rpc.worktree_setup import (
                     read_committed_config_commands,
                     worktree_env_vars,
                 )
-                from vicoa.rpc.worktree_trust import is_repo_trusted
 
                 source_repo = str(worktree_info["repo_root"])
+                worktree_path = str(worktree_info["path"])
                 setup_commands = read_committed_config_commands(source_repo, "setup")
                 if setup_commands:
-                    result["setup_commands"] = setup_commands
-                    # The web auto-runs these in the terminal; `setup_trusted`
-                    # tells it whether to run silently or ask first (a cloned
-                    # repo's vicoa.json is untrusted until the user approves it).
-                    result["setup_trusted"] = is_repo_trusted(source_repo)
-                    # The terminal shell doesn't inherit the hook env the engine
-                    # sets, so hand the client the same VICOA_* vars to export
-                    # before it types setup — else `$VICOA_BRANCH_NAME` & co. are
-                    # empty there. The daemon is the source of truth for these.
-                    result["setup_env"] = worktree_env_vars(
-                        worktree_path=str(worktree_info["path"]),
-                        source_repo=source_repo,
-                        branch_name=str(worktree_info["branch"]),
+                    started = self._start_worktree_setup(
+                        worktree_path, source_repo, commands=setup_commands
                     )
+                    if started.get("error") == "untrusted":
+                        result["setup_commands"] = setup_commands
+                        result["setup_trusted"] = False
+                        result["setup_env"] = worktree_env_vars(
+                            worktree_path=worktree_path,
+                            source_repo=source_repo,
+                            branch_name=str(worktree_info["branch"]),
+                        )
+                        status = "untrusted"
+                    elif "error" in started:
+                        status = "failed"
+                    else:
+                        status = "running"
+                    result["worktree_setup"] = {
+                        "status": status,
+                        "total": len(setup_commands),
+                        "worktree_path": worktree_path,
+                    }
             except Exception as exc:  # noqa: BLE001 - setup resolve is best-effort
                 print(f"[daemon] worktree setup resolve failed: {exc}")
         return result
 
-    def _run_worktree_setup_background(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Run a worktree's setup commands in a background thread (no terminal).
+    def _start_worktree_setup(
+        self,
+        worktree_path: str,
+        source_repo: str,
+        *,
+        commands: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Kick off a worktree's setup in a background thread; return at once.
 
-        The fallback for clients that can't open a PTY (Windows today): the web
-        can't stream setup into a terminal there, so it asks the daemon to run it
-        and the output goes to the daemon log. Trust-gated on the source repo —
-        the web grants trust (confirm dialog) before calling this. Returns at once;
-        the run is best-effort and never blocks the caller.
+        The single entry point for both spawn and the `worktree-run-setup` RPC.
+        Trust-gated on the source repo (`{"error": "untrusted"}` when the user
+        hasn't approved its vicoa.json on this machine). One run per worktree at
+        a time — a second request while one is in flight answers
+        `already_running` instead of racing two installs. Progress goes to a
+        `SetupRunRecorder` (read back over `worktree-setup-status`) and, as
+        before, to the daemon log.
+        """
+        from vicoa.rpc.worktree_setup import (
+            HookResult,
+            SetupEvent,
+            SetupRunRecorder,
+            read_committed_config_commands,
+            run_worktree_setup,
+        )
+        from vicoa.rpc.worktree_trust import is_repo_trusted
+
+        if not is_repo_trusted(source_repo):
+            return {"error": "untrusted"}
+        if commands is None:
+            commands = read_committed_config_commands(source_repo, "setup")
+        if not commands:
+            return {"ok": True, "started": False, "total": 0}
+
+        key = os.path.realpath(os.path.expanduser(worktree_path))
+        with self._worktree_setup_lock:
+            if key in self._worktree_setup_running:
+                return {"ok": True, "started": False, "already_running": True}
+            self._worktree_setup_running.add(key)
+
+        try:
+            recorder = SetupRunRecorder(
+                worktree_path=worktree_path,
+                source_repo=source_repo,
+                commands=commands,
+            )
+        except Exception as exc:  # noqa: BLE001 - recording must not block the run
+            print(f"[daemon] worktree setup recorder unavailable: {exc}")
+            recorder = None
+
+        def _log(event: SetupEvent) -> None:
+            if recorder is not None:
+                recorder(event)
+            if event.type == "output" and event.chunk:
+                print(f"[worktree-setup] {event.chunk}", end="")
+            elif event.type == "command_completed":
+                print(f"[worktree-setup] $ {event.command} -> exit {event.exit_code}")
+
+        def _run() -> None:
+            try:
+                result: HookResult = run_worktree_setup(
+                    worktree_path, source_repo, on_event=_log
+                )
+                if recorder is not None:
+                    recorder.finish(result)
+                if result.results and not result.ok:
+                    print(f"[daemon] worktree setup reported failures: {worktree_path}")
+            except Exception as exc:  # noqa: BLE001 - background setup is best-effort
+                if recorder is not None:
+                    recorder.fail(str(exc))
+                print(f"[daemon] worktree background setup failed: {exc}")
+            finally:
+                with self._worktree_setup_lock:
+                    self._worktree_setup_running.discard(key)
+
+        Thread(target=_run, daemon=True, name="worktree-setup").start()
+        return {"ok": True, "started": True, "total": len(commands)}
+
+    def _run_worktree_setup_background(self, params: dict[str, Any]) -> dict[str, Any]:
+        """`worktree-run-setup`: a client asks for a worktree's setup to run now.
+
+        Used after the user confirms an untrusted repo's vicoa.json (the client
+        grants trust, then calls this), and by old-daemon-era Windows clients.
+        Trust-gated on the source repo. Returns at once; see
+        `_start_worktree_setup` for the run itself.
         """
         worktree_path = params.get("worktree_path")
         directory = params.get("directory")
@@ -2660,32 +2770,7 @@ class MachineDaemon:
             return {"error": "worktree-run-setup requires a worktree_path"}
         if not isinstance(directory, str) or not directory.strip():
             return {"error": "worktree-run-setup requires a directory"}
-        from vicoa.rpc.worktree_trust import is_repo_trusted
-
-        if not is_repo_trusted(directory):
-            return {"error": "untrusted"}
-
-        def _run() -> None:
-            try:
-                from vicoa.rpc.worktree_setup import SetupEvent, run_worktree_setup
-
-                def _log(event: SetupEvent) -> None:
-                    if event.type == "output" and event.chunk:
-                        print(f"[worktree-setup] {event.chunk}", end="")
-                    elif event.type == "command_completed":
-                        print(
-                            f"[worktree-setup] $ {event.command} "
-                            f"-> exit {event.exit_code}"
-                        )
-
-                result = run_worktree_setup(worktree_path, directory, on_event=_log)
-                if result.results and not result.ok:
-                    print(f"[daemon] worktree setup reported failures: {worktree_path}")
-            except Exception as exc:  # noqa: BLE001 - background setup is best-effort
-                print(f"[daemon] worktree background setup failed: {exc}")
-
-        Thread(target=_run, daemon=True).start()
-        return {"ok": True, "started": True}
+        return self._start_worktree_setup(worktree_path, directory)
 
     def _run_worktree_teardown_best_effort(self, params: dict[str, Any]) -> None:
         """Run a worktree's teardown commands before removal; swallow failures.

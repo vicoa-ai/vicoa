@@ -24,6 +24,7 @@ import { getMessageStore } from '@/lib/message-store';
 import { useMessageStream } from '@/lib/hooks/use-ws-stream';
 import { extractMessageOptions, formatTaskNotifications } from '@/components/ui/message-markdown-utils';
 import { GitBranchBadge } from '@/components/dashboard/git-branch-badge';
+import { WorktreeSetupBadge } from '@/components/dashboard/worktree-setup-badge';
 import { resolveAgentType, vibingMessages, getMessageVisibleText, VibingText } from '@/components/dashboard/chat-message-item';
 import { ChatFindBar } from '@/components/dashboard/chat-find-bar';
 import { FindHighlightProvider } from '@/components/dashboard/chat-find-context';
@@ -2340,6 +2341,12 @@ function AgentInstanceContent() {
           </div>
         </TooltipProvider>
         <div style={NO_DRAG} className="flex items-center gap-0.5">
+          {/* Worktree setup progress lives on the right with the other
+              transient/action controls, not beside the branch: it comes and
+              goes, and this cluster is right-anchored, so its appearance never
+              shifts the ⋯ menu or the edge buttons (and this div is already
+              NO_DRAG for its click). */}
+          <WorktreeSetupBadge machineId={instance.machine_id ?? null} cwd={instance.project ?? null} />
           {/* Share sits next to the panel toggle (same visual weight); the
               ⋯ menu keeps its entry too. Same gate as the menu entry. */}
           {!isDesktopLocal() && instance.is_owner !== false && (

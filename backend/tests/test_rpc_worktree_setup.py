@@ -240,3 +240,113 @@ class TestRunWorktreeTeardown:
         result = ws.run_worktree_teardown(str(worktree), str(tmp_path))
         assert not result.ok
         assert result.results[0].exit_code == 1
+
+
+class TestSetupRunRecorder:
+    """Run records: what `worktree-setup-status` reads back."""
+
+    @pytest.fixture(autouse=True)
+    def _home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        # Records live under ~/.vicoa; keep the suite hermetic.
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        (tmp_path / "home").mkdir()
+
+    def test_records_each_step_and_the_outcome(self, tmp_path: Path) -> None:
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+        commands = ["echo one", "exit 2", "echo never"]
+        recorder = ws.SetupRunRecorder(
+            worktree_path=str(worktree), source_repo=str(tmp_path), commands=commands
+        )
+        # Fresh record: running, every step pending.
+        initial = ws.read_setup_status(str(worktree))
+        assert initial["status"] == "running"
+        assert initial["total"] == 3
+        assert [c["status"] for c in initial["commands"]] == ["pending"] * 3
+        assert initial["source_repo"] == str(tmp_path)
+
+        result = _run(commands, worktree=worktree, on_event=recorder)
+        recorder.finish(result)
+
+        status = ws.read_setup_status(str(worktree))
+        assert status["status"] == "failed"
+        assert status["finished_at"] is not None
+        assert [c["status"] for c in status["commands"]] == ["ok", "failed", "pending"]
+        assert status["commands"][0]["exit_code"] == 0
+        assert status["commands"][1]["exit_code"] == 2
+        assert status["commands"][1]["duration_ms"] is not None
+        # The log carries the command echo, its output, and each exit.
+        tail = status["output_tail"]
+        assert "$ echo one" in tail
+        assert "one" in tail
+        assert "→ exit 2" in tail
+        assert Path(status["log_path"]).is_file()
+
+    def test_success_and_same_path_variants_share_a_record(
+        self, tmp_path: Path
+    ) -> None:
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+        recorder = ws.SetupRunRecorder(
+            worktree_path=str(worktree), source_repo=str(tmp_path), commands=["true"]
+        )
+        recorder.finish(_run(["true"], worktree=worktree, on_event=recorder))
+        # Trailing slash / symlink-free variants resolve to the same record.
+        assert ws.read_setup_status(str(worktree) + "/")["status"] == "succeeded"
+
+    def test_tail_is_bounded_and_starts_on_a_line(self, tmp_path: Path) -> None:
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+        recorder = ws.SetupRunRecorder(
+            worktree_path=str(worktree),
+            source_repo=str(tmp_path),
+            commands=["seq 1 5000"],
+        )
+        recorder.finish(_run(["seq 1 5000"], worktree=worktree, on_event=recorder))
+        status = ws.read_setup_status(str(worktree), tail_bytes=1024)
+        tail = status["output_tail"]
+        assert len(tail.encode()) <= 1024
+        assert tail.endswith("→ exit 0\n")
+        # Dropped the partial first line, so the tail begins with a whole number.
+        first = tail.split("\n", 1)[0]
+        assert first.isdigit()
+
+    def test_engine_exception_is_recorded_as_failed(self, tmp_path: Path) -> None:
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+        recorder = ws.SetupRunRecorder(
+            worktree_path=str(worktree), source_repo=str(tmp_path), commands=["true"]
+        )
+        recorder.fail("boom")
+        status = ws.read_setup_status(str(worktree))
+        assert status["status"] == "failed"
+        assert "boom" in status["output_tail"]
+
+    def test_clear_forgets_the_record(self, tmp_path: Path) -> None:
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+        recorder = ws.SetupRunRecorder(
+            worktree_path=str(worktree), source_repo=str(tmp_path), commands=["true"]
+        )
+        recorder.finish(_run(["true"], worktree=worktree, on_event=recorder))
+        ws.clear_setup_record(str(worktree))
+        assert ws.read_setup_status(str(worktree)) == {"status": "none"}
+        # Idempotent.
+        ws.clear_setup_record(str(worktree))
+
+    def test_missing_record_reads_none(self, tmp_path: Path) -> None:
+        assert ws.read_setup_status(str(tmp_path / "nope")) == {"status": "none"}
+
+    def test_status_is_found_from_a_subfolder_of_the_worktree(
+        self, tmp_path: Path
+    ) -> None:
+        worktree = tmp_path / "wt"
+        (worktree / "apps" / "web").mkdir(parents=True)
+        recorder = ws.SetupRunRecorder(
+            worktree_path=str(worktree), source_repo=str(tmp_path), commands=["true"]
+        )
+        recorder.finish(_run(["true"], worktree=worktree, on_event=recorder))
+        # A monorepo session's cwd is a subfolder; the record is keyed by the root.
+        status = ws.read_setup_status(str(worktree / "apps" / "web"))
+        assert status["status"] == "succeeded"
+        assert status["worktree_path"] == str(worktree)

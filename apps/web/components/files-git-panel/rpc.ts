@@ -531,10 +531,12 @@ export async function rpcWorktreeTrustGrant(
   }
 }
 
-/** Run a worktree's setup commands in the background on the daemon (no terminal).
- *  The fallback where the client can't open a PTY (Windows) — output goes to the
- *  daemon log. `directory` is the SOURCE repo (trust key + config source);
- *  `worktreePath` is where the commands run. Requires the repo to be trusted. */
+/** Ask the daemon to run a worktree's setup commands now (background thread on
+ *  the machine; progress readable via `rpcWorktreeSetupStatus`). The daemon runs
+ *  setup itself on a trusted repo's spawn — this is for after the user confirms
+ *  an untrusted one (grant trust first). `directory` is the SOURCE repo (trust key
+ *  + config source); `worktreePath` is where the commands run. A run already in
+ *  flight for the worktree is not duplicated (`already_running`). */
 export async function rpcWorktreeRunSetup(
   machineId: string,
   worktreePath: string,
@@ -547,6 +549,49 @@ export async function rpcWorktreeRunSetup(
   if (typeof result.error === 'string') {
     throw new RpcError(result.error);
   }
+}
+
+export type WorktreeSetupStepStatus = 'pending' | 'running' | 'ok' | 'failed';
+
+export interface WorktreeSetupStep {
+  index: number;
+  command: string;
+  status: WorktreeSetupStepStatus;
+  exit_code: number | null;
+  duration_ms: number | null;
+  timed_out: boolean;
+  aborted: boolean;
+}
+
+/** The daemon's record of a worktree's setup run. `status: 'none'` when it has
+ *  never run one there (no config, untrusted and never confirmed, or an old
+ *  daemon that left the run to the client's terminal). */
+export type WorktreeSetupStatus =
+  | { status: 'none' }
+  | {
+      status: 'running' | 'succeeded' | 'failed';
+      worktree_path: string;
+      source_repo: string;
+      started_at: number;
+      finished_at: number | null;
+      total: number;
+      commands: WorktreeSetupStep[];
+      /** Last ~16 KiB of the combined log, starting on a whole line. */
+      output_tail: string;
+      log_path: string;
+    };
+
+export async function rpcWorktreeSetupStatus(
+  machineId: string,
+  worktreePath: string,
+): Promise<WorktreeSetupStatus> {
+  const result = await getRpcClient(machineId).callRpc(machineId, 'worktree-setup-status', {
+    worktree_path: worktreePath,
+  });
+  if (typeof result.error === 'string') {
+    throw new RpcError(result.error);
+  }
+  return result as unknown as WorktreeSetupStatus;
 }
 
 // ── Commit history (git-log / git-commit-files / git-commit-diff) ─────────────

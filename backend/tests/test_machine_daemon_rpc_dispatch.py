@@ -7,6 +7,7 @@ enough to run inline.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -318,6 +319,123 @@ def test_worktree_run_setup_requires_paths(daemon: MachineDaemon):
     assert "error" in result
 
 
+def test_worktree_setup_status_none_without_a_record(
+    daemon: MachineDaemon, committed_repo: Path, home: Path
+):
+    result = daemon._handle_rpc_request(
+        {
+            "method": "worktree-setup-status",
+            "params": {"worktree_path": str(committed_repo / "never-set-up")},
+        }
+    )
+    assert result == {"status": "none"}
+    assert "error" in daemon._handle_rpc_request(
+        {"method": "worktree-setup-status", "params": {}}
+    )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="setup engine assumes bash")
+def test_worktree_run_setup_records_progress_and_dedupes(
+    daemon: MachineDaemon, committed_repo: Path, home: Path
+):
+    import json
+    import time
+
+    from vicoa.rpc.worktree_ops import create_worktree
+    from vicoa.rpc.worktree_trust import grant_repo_trust
+
+    grant_repo_trust(str(committed_repo))
+    created = create_worktree(str(committed_repo))
+    # A gate the test releases, so the run is observably in flight.
+    gate = committed_repo / "gate"
+    (committed_repo / "vicoa.json").write_text(
+        json.dumps(
+            {
+                "worktree": {
+                    "setup": [
+                        "echo step-one",
+                        f"while [ ! -e {gate} ]; do sleep 0.02; done",
+                        "exit 7",
+                        "echo never",
+                    ]
+                }
+            }
+        )
+    )
+    params = {"worktree_path": created["path"], "directory": str(committed_repo)}
+    first = daemon._handle_rpc_request(
+        {"method": "worktree-run-setup", "params": params}
+    )
+    assert first == {"ok": True, "started": True, "total": 4}
+
+    # A second request for the same worktree while it runs must not start a
+    # second install alongside the first.
+    second = daemon._handle_rpc_request(
+        {"method": "worktree-run-setup", "params": params}
+    )
+    assert second == {"ok": True, "started": False, "already_running": True}
+
+    def status() -> dict:
+        return daemon._handle_rpc_request(
+            {
+                "method": "worktree-setup-status",
+                "params": {"worktree_path": created["path"]},
+            }
+        )
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        s = status()
+        if s.get("status") == "running" and s["commands"][1]["status"] == "running":
+            break
+        time.sleep(0.02)
+    assert s["status"] == "running"
+    assert s["total"] == 4
+    assert s["commands"][0]["status"] == "ok"
+    assert "step-one" in s["output_tail"]
+
+    gate.touch()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        s = status()
+        if s.get("status") != "running":
+            break
+        time.sleep(0.02)
+    assert s["status"] == "failed"
+    # Stops at the first failure; the fourth command never ran.
+    assert [c["status"] for c in s["commands"]] == ["ok", "ok", "failed", "pending"]
+    assert s["commands"][2]["exit_code"] == 7
+    assert s["finished_at"] is not None
+
+    # Finished → the slot is free again for a rerun.
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        again = daemon._handle_rpc_request(
+            {"method": "worktree-run-setup", "params": params}
+        )
+        if again.get("started"):
+            break
+        time.sleep(0.02)
+    assert again.get("started") is True
+
+    # Removing the worktree forgets its record.
+    deadline = time.monotonic() + 5
+    while status().get("status") == "running" and time.monotonic() < deadline:
+        time.sleep(0.02)
+    removed = daemon._handle_rpc_request(
+        {
+            "method": "git-worktree-remove",
+            "params": {
+                "cwd": str(committed_repo),
+                "worktree_path": created["path"],
+                "force": True,
+            },
+        }
+    )
+    assert "error" not in removed
+    assert status() == {"status": "none"}
+
+
 def test_git_worktree_check_name_dispatched_to_handler(
     daemon: MachineDaemon, committed_repo: Path, home: Path
 ):
@@ -337,6 +455,7 @@ def test_worktree_methods_are_advertised(daemon: MachineDaemon):
     assert "git-worktree-remove" in advertised
     assert "worktree-trust-grant" in advertised
     assert "worktree-run-setup" in advertised
+    assert "worktree-setup-status" in advertised
     # The name field is feature-detected separately from `worktree`: an old
     # daemon drops `worktree.name` silently and spawns a random slug.
     assert "worktree-name" in daemon._capabilities()

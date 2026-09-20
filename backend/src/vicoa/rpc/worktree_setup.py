@@ -19,6 +19,8 @@ top-level imports; Vicoa ships a Windows daemon.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import subprocess
@@ -167,9 +169,9 @@ def worktree_env_vars(
     """The ``VICOA_*`` variables a worktree hook's environment carries.
 
     Single source of truth for the hook env contract, shared by the engine
-    (which runs hooks in a subprocess with these set) and the spawn result (so
-    the web can export the *same* vars before typing setup into a terminal —
-    otherwise ``$VICOA_BRANCH_NAME`` & co. are empty in that shell).
+    (which runs hooks in a subprocess with these set) and the untrusted-repo
+    spawn result (an old web types setup into a terminal itself and exports the
+    *same* vars first — otherwise ``$VICOA_BRANCH_NAME`` & co. are empty there).
     """
     env: dict[str, str] = {
         # Absolute, ~-expanded, slash-normalised paths. The web exports these
@@ -479,8 +481,6 @@ def read_committed_config_commands(source_repo: str, hook: HookName) -> list[str
     read/parse error yields ``[]`` — a broken file must never break a spawn.
     Import kept local so the daemon's hot import path stays lean.
     """
-    import json
-
     from protocol.worktree_config import (
         COMMITTED_CONFIG_FILES,
         WorktreeConfig,
@@ -502,7 +502,7 @@ def read_committed_config_commands(source_repo: str, hook: HookName) -> list[str
     return config.setup if hook == "setup" else config.teardown
 
 
-def _current_branch(path: str) -> str:
+def current_branch(path: str) -> str:
     """Best-effort branch of the repo at ``path`` (``""`` when detached/broken)."""
     try:
         proc = subprocess.run(
@@ -529,10 +529,10 @@ def run_worktree_setup(
 ) -> HookResult:
     """Run a worktree's setup commands in the worktree (blocking).
 
-    The daemon-side fallback for clients without a terminal (Windows): reads
-    ``setup`` from the source repo working tree and runs it in ``worktree_path``.
-    Non-visible — callers stream ``on_event`` to a log. The visible path is the
-    web terminal; this exists only where no PTY is available.
+    The daemon is the executor: reads ``setup`` from the source repo working
+    tree and runs it in ``worktree_path``. Callers stream ``on_event`` into a
+    :class:`SetupRunRecorder` so any client (web, mobile, an automation with no
+    client at all) can read progress back over ``worktree-setup-status``.
     """
     commands = read_committed_config_commands(source_repo, "setup")
     if not commands:
@@ -542,7 +542,7 @@ def run_worktree_setup(
         hook="setup",
         worktree_path=worktree_path,
         source_repo=source_repo,
-        branch_name=_current_branch(worktree_path),
+        branch_name=current_branch(worktree_path),
         project_id=project_id,
         on_event=on_event,
         abort=abort,
@@ -572,8 +572,219 @@ def run_worktree_teardown(
         hook="teardown",
         worktree_path=worktree_path,
         source_repo=repo_dir,
-        branch_name=_current_branch(worktree_path),
+        branch_name=current_branch(worktree_path),
         project_id=project_id,
         on_event=on_event,
         abort=abort,
     )
+
+
+# ── Run records ───────────────────────────────────────────────────────────────
+#
+# The daemon runs setup in a background thread with no terminal attached, so the
+# only way a client learns what happened is to ask. One record per worktree,
+# on disk (not just in memory): a session opened later — or after a daemon
+# restart — can still show "setup failed at step 3" instead of nothing.
+
+RunStatus = Literal["running", "succeeded", "failed"]
+StepStatus = Literal["pending", "running", "ok", "failed"]
+
+# How much of the log a status read hands back by default. Enough for a client
+# to show the failing command's tail; the full log stays on disk.
+DEFAULT_TAIL_BYTES = 16 * 1024
+
+
+def setup_records_root() -> Path:
+    """Where run records live; resolved at call time so a redirected HOME (tests) holds."""
+    return Path.home() / ".vicoa" / "worktree_setup"
+
+
+def _record_dir(worktree_path: str) -> Path:
+    # Keyed by the resolved worktree path — the same worktree reached through a
+    # symlink or a trailing slash must land on the same record.
+    canonical = str(Path(os.path.expanduser(worktree_path)).resolve())
+    digest = hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:16]
+    return setup_records_root() / digest
+
+
+def _find_record_dir(path: str) -> Path | None:
+    """The record dir for ``path`` or the nearest ancestor that has one."""
+    current = Path(os.path.expanduser(path)).resolve()
+    for candidate in (current, *current.parents):
+        record_dir = _record_dir(str(candidate))
+        if (record_dir / "status.json").is_file():
+            return record_dir
+    return None
+
+
+def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
+    """Write via tmp + rename so a concurrent status read never sees a torn file."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+class SetupRunRecorder:
+    """Persists one setup run's progress as ``status.json`` + ``output.log``.
+
+    Feed it :class:`SetupEvent`s (it is a valid ``on_event``) and call
+    :meth:`finish` with the :class:`HookResult`. Thread-safe for the single
+    producer the engine is; readers go through :func:`read_setup_status`.
+    """
+
+    def __init__(
+        self,
+        *,
+        worktree_path: str,
+        source_repo: str,
+        commands: list[str],
+    ) -> None:
+        self.dir = _record_dir(worktree_path)
+        self.status_path = self.dir / "status.json"
+        self.log_path = self.dir / "output.log"
+        self._lock = threading.Lock()
+        self._state: dict[str, Any] = {
+            "status": "running",
+            "worktree_path": os.path.normpath(os.path.expanduser(worktree_path)),
+            "source_repo": os.path.normpath(os.path.expanduser(source_repo)),
+            "started_at": time.time(),
+            "finished_at": None,
+            "total": len(commands),
+            "commands": [
+                {
+                    "index": i,
+                    "command": cmd,
+                    "status": "pending",
+                    "exit_code": None,
+                    "duration_ms": None,
+                    "timed_out": False,
+                    "aborted": False,
+                }
+                for i, cmd in enumerate(commands, start=1)
+            ],
+        }
+        self.dir.mkdir(parents=True, exist_ok=True)
+        # A fresh run replaces the previous run's log for this worktree.
+        self.log_path.write_text("", encoding="utf-8")
+        self._flush()
+
+    def _flush(self) -> None:
+        try:
+            _atomic_write_json(self.status_path, self._state)
+        except OSError:
+            # Recording is diagnostics; a full disk must not abort the run.
+            pass
+
+    def _step(self, index: int) -> dict[str, Any] | None:
+        steps = self._state["commands"]
+        if 1 <= index <= len(steps):
+            return steps[index - 1]
+        return None
+
+    def __call__(self, event: SetupEvent) -> None:
+        """``on_event`` entry point."""
+        with self._lock:
+            step = self._step(event.index)
+            if event.type == "command_started":
+                if step is not None:
+                    step["status"] = "running"
+                self._append_log(f"$ {event.command}\n")
+                self._flush()
+            elif event.type == "output":
+                if event.chunk:
+                    self._append_log(event.chunk)
+            elif event.type == "command_completed":
+                if step is not None:
+                    ok = (
+                        event.exit_code == 0
+                        and not event.timed_out
+                        and not event.aborted
+                    )
+                    step["status"] = "ok" if ok else "failed"
+                    step["exit_code"] = event.exit_code
+                    step["duration_ms"] = event.duration_ms
+                    step["timed_out"] = event.timed_out
+                    step["aborted"] = event.aborted
+                suffix = (
+                    " (timed out)"
+                    if event.timed_out
+                    else " (aborted)"
+                    if event.aborted
+                    else ""
+                )
+                self._append_log(f"→ exit {event.exit_code}{suffix}\n")
+                self._flush()
+
+    def _append_log(self, text: str) -> None:
+        try:
+            with open(self.log_path, "a", encoding="utf-8") as fh:
+                fh.write(text)
+        except OSError:
+            pass
+
+    def finish(self, result: HookResult) -> None:
+        with self._lock:
+            self._state["status"] = "succeeded" if result.ok else "failed"
+            self._state["finished_at"] = time.time()
+            self._flush()
+
+    def fail(self, message: str) -> None:
+        """The run died outside any command (engine exception)."""
+        with self._lock:
+            self._state["status"] = "failed"
+            self._state["finished_at"] = time.time()
+            self._append_log(f"!! {message}\n")
+            self._flush()
+
+
+def read_setup_status(
+    worktree_path: str, *, tail_bytes: int = DEFAULT_TAIL_BYTES
+) -> dict[str, Any]:
+    """The recorded run for ``worktree_path`` plus the last ``tail_bytes`` of its log.
+
+    ``worktree_path`` may be a folder *inside* the worktree (a monorepo session's
+    cwd is ``<worktree>/apps/web``; the record is keyed by the worktree root), so
+    the lookup walks up to the nearest ancestor with a record.
+    ``{"status": "none"}`` when nothing was ever recorded (no config, untrusted,
+    or an old daemon ran it in the client's terminal).
+    """
+    record_dir = _find_record_dir(worktree_path)
+    if record_dir is None:
+        return {"status": "none"}
+    try:
+        state = json.loads((record_dir / "status.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"status": "none"}
+    if not isinstance(state, dict):
+        return {"status": "none"}
+    tail = ""
+    try:
+        log_path = record_dir / "output.log"
+        size = log_path.stat().st_size
+        with open(log_path, "rb") as fh:
+            if size > tail_bytes:
+                fh.seek(size - tail_bytes)
+            tail = fh.read().decode("utf-8", errors="replace")
+            if size > tail_bytes:
+                # Drop the partial first line so the tail starts clean.
+                nl = tail.find("\n")
+                tail = tail[nl + 1 :] if nl != -1 else tail
+    except OSError:
+        pass
+    state["output_tail"] = tail
+    state["log_path"] = str(record_dir / "output.log")
+    return state
+
+
+def clear_setup_record(worktree_path: str) -> None:
+    """Forget a worktree's run record (on worktree removal). Best-effort."""
+    record_dir = _record_dir(worktree_path)
+    for name in ("status.json", "status.json.tmp", "output.log"):
+        try:
+            (record_dir / name).unlink()
+        except OSError:
+            pass
+    try:
+        record_dir.rmdir()
+    except OSError:
+        pass
