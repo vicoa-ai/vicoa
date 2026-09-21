@@ -116,7 +116,7 @@ export function TasksSettingsSection() {
           </div>
         )}
         {loadError && (
-          <p className="mt-2 text-xs text-destructive">Couldn&apos;t load labels — check your connection.</p>
+          <p className="mt-2 text-xs text-destructive">Couldn&apos;t load labels. Check your connection.</p>
         )}
       </div>
 

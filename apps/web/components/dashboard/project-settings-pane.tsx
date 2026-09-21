@@ -19,7 +19,17 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ChevronRight, Circle, GitBranch, Loader2, Plus, X } from 'lucide-react';
+import {
+  Archive,
+  ArchiveRestore,
+  ChevronRight,
+  Circle,
+  GitBranch,
+  Loader2,
+  Plus,
+  Trash2,
+  X,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -401,6 +411,9 @@ function DangerZone({
     ? `${plural(summary.task_count, 'task')} and ${plural(summary.session_count, 'session')} move to No project`
     : 'Its tasks and sessions move to No project';
 
+  // Same icons as the session row's Archive / Delete actions.
+  const ArchiveIcon = project.is_archived ? ArchiveRestore : Archive;
+
   return (
     <div className="space-y-3">
       <SectionHeading title="Danger zone" />
@@ -419,17 +432,16 @@ function DangerZone({
           <Button
             variant="outline"
             size="sm"
-            className="shrink-0 cursor-pointer"
+            className="shrink-0 cursor-pointer whitespace-nowrap"
             disabled={archiving}
             onClick={() => void toggleArchive()}
           >
             {archiving ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : project.is_archived ? (
-              'Unarchive'
             ) : (
-              'Archive'
+              <ArchiveIcon className="h-3.5 w-3.5" />
             )}
+            {project.is_archived ? 'Unarchive' : 'Archive'}
           </Button>
         </div>
         <div className="flex items-center justify-between gap-4 px-4 py-3">
@@ -443,10 +455,11 @@ function DangerZone({
           <Button
             variant="outline"
             size="sm"
-            className="shrink-0 cursor-pointer text-destructive hover:text-destructive"
+            className="shrink-0 cursor-pointer whitespace-nowrap text-destructive hover:text-destructive"
             onClick={openDelete}
           >
-            Delete…
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete
           </Button>
         </div>
       </SectionCard>
@@ -585,6 +598,20 @@ function WorktreeTab({
 
 const KEY_PATTERN = /^[A-Z][A-Z0-9]{1,7}$/;
 
+/**
+ * The key the backend would derive from the name (task_identity.derive_key_base):
+ * first three letters/digits, leading digits dropped, "PRJ" when too short.
+ * Shown as the placeholder for a project that has no key yet.
+ */
+function derivedKeyBase(name: string): string {
+  const base = name
+    .replace(/[^A-Za-z0-9]+/g, '')
+    .replace(/^[0-9]+/, '')
+    .slice(0, 3)
+    .toUpperCase();
+  return base.length >= 2 ? base : 'PRJ';
+}
+
 function TasksTab({
   project,
   onUpdated,
@@ -603,12 +630,13 @@ function TasksTab({
     const next = key.trim().toUpperCase();
     setKey(next);
     if (!next || next === project.key) {
+      // Clearing is not a way to unset: an existing key stays.
       setKey(project.key ?? '');
       setError(null);
       return;
     }
     if (!KEY_PATTERN.test(next)) {
-      setError('2–8 letters and digits, starting with a letter.');
+      setError('2 to 8 letters and digits, starting with a letter.');
       return;
     }
     setSaving(true);
@@ -629,56 +657,56 @@ function TasksTab({
     }
   };
 
-  // Null until the project's first task — the backend derives one then.
-  const unset = project.key === null;
+  // Null until the first task, when the backend picks one from the name.
+  // Setting it here first wins over that derivation.
+  const suggested = derivedKeyBase(project.name);
+  const preview = project.key ?? suggested;
 
   return (
     <div className="flex flex-col gap-8">
       <div className="space-y-3">
-        <SectionHeading
-          title="Task key"
-          description="The prefix in this project's task identifiers — VIC makes them read VIC-42. Changing it renames every task."
-        />
-        <div className="flex items-center gap-3">
-          <Label htmlFor="project-key" className="sr-only">
-            Task key
-          </Label>
-          <input
-            id="project-key"
-            value={key}
-            disabled={unset || saving}
-            maxLength={8}
-            spellCheck={false}
-            autoCapitalize="characters"
-            placeholder={unset ? 'Set on the first task' : 'KEY'}
-            onChange={(e) => {
-              setKey(e.target.value.toUpperCase());
-              setError(null);
-            }}
-            onBlur={() => void commitKey()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') e.currentTarget.blur();
-              if (e.key === 'Escape') {
-                setKey(project.key ?? '');
-                setError(null);
-                e.currentTarget.blur();
-              }
-            }}
-            className="h-9 w-32 rounded-md border bg-transparent px-2.5 font-mono text-sm uppercase outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
-            aria-label="Task key"
-          />
-          {saving && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-          {!saving && project.key && (
-            <span className="text-xs text-muted-foreground">
-              e.g. <span className="font-mono">{project.key}-42</span>
-            </span>
-          )}
-        </div>
-        {unset && (
-          <p className="text-xs text-muted-foreground">
-            Assigned automatically when this project gets its first task.
-          </p>
-        )}
+        <SectionHeading title="Task key" />
+        <SectionCard>
+          <div className="flex items-center justify-between gap-4 px-4 py-3">
+            <div className="min-w-0 space-y-0.5">
+              <Label htmlFor="project-key" className="text-sm font-normal text-foreground">
+                Prefix for task ids
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Tasks in this project read <span className="font-mono">{preview}-42</span>.
+                {project.key
+                  ? ' Changing it renames every task.'
+                  : ' Not set yet: picked from the project name with the first task, or choose one now.'}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {saving && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+              <input
+                id="project-key"
+                value={key}
+                disabled={saving}
+                maxLength={8}
+                spellCheck={false}
+                autoCapitalize="characters"
+                placeholder={suggested}
+                onChange={(e) => {
+                  setKey(e.target.value.toUpperCase());
+                  setError(null);
+                }}
+                onBlur={() => void commitKey()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') e.currentTarget.blur();
+                  if (e.key === 'Escape') {
+                    setKey(project.key ?? '');
+                    setError(null);
+                    e.currentTarget.blur();
+                  }
+                }}
+                className="h-7 w-24 rounded-md border border-border/70 bg-foreground/[0.06] px-2.5 font-mono text-xs uppercase outline-none placeholder:text-muted-foreground/50 focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
+              />
+            </div>
+          </div>
+        </SectionCard>
         {error && <p className="text-xs text-destructive">{error}</p>}
       </div>
 
