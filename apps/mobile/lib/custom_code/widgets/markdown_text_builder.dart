@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/custom_code/utils/ansi_text.dart';
+import '/custom_code/utils/edited_files.dart';
 import '/custom_code/utils/markdown_diff_utils.dart';
 import '/custom_code/widgets/syntax_highlighted_code_block.dart';
 import '/custom_code/widgets/tool_icon.dart';
@@ -26,6 +27,7 @@ Widget buildMarkdownText(
   String? agentTypeName,
   bool toolUseIsFirst = true,
   bool toolUseIsLast = true,
+  void Function(String path, String name)? onOpenFile,
 }) {
   // debugPrint('buildMarkdownText: $content');
   final textStyle = FlutterFlowTheme.of(context).bodyMedium.override(
@@ -68,7 +70,7 @@ Widget buildMarkdownText(
   if (filteredContent.trim().startsWith('Using tool:') || filteredContent.trim().startsWith('🔧 Using tool:') ||
       filteredContent.trim().startsWith('**Exec:**') ||
       (filteredContent.contains('✏️ Applying patch to') && filteredContent.contains('file (+'))) {
-    return _buildUsingToolMessage(context, filteredContent, agentTypeName: agentTypeName, toolUseIsFirst: toolUseIsFirst, toolUseIsLast: toolUseIsLast);
+    return _buildUsingToolMessage(context, filteredContent, agentTypeName: agentTypeName, toolUseIsFirst: toolUseIsFirst, toolUseIsLast: toolUseIsLast, onOpenFile: onOpenFile);
   }
 
   final children = <Widget>[];
@@ -1831,6 +1833,10 @@ Widget _toolBorderedBox(
 /// tool row) showing the run's aggregate [label] and a chevron. Tapping toggles
 /// the whole run. Top-rounded; bottom-rounded only when [isLast] (i.e.
 /// collapsed, with no rows beneath it).
+///
+/// [below] sits under the label inside the same box — the run's edited files
+/// (`EditedFilesList`). Its rows carry their own taps, which win over the
+/// header's toggle; anything in it without one falls through to the toggle.
 Widget buildToolGroupHeader(
   BuildContext context,
   String label, {
@@ -1839,7 +1845,32 @@ Widget buildToolGroupHeader(
   required VoidCallback onToggle,
   String? iconToolName,
   String? agentTypeName,
+  Widget? below,
 }) {
+  final headerRow = Row(
+    children: [
+      if (iconToolName != null && iconToolName.isNotEmpty) ...[
+        ToolIcon(toolName: iconToolName, agentTypeName: agentTypeName),
+        const SizedBox(width: 8.0),
+      ],
+      Expanded(
+        child: Text.rich(
+          TextSpan(
+            text: label,
+            style: FlutterFlowTheme.of(context).bodyMedium.override(
+                  fontWeight: FontWeight.bold,
+                  color: FlutterFlowTheme.of(context).primaryText,
+                  fontSize: 15.0,
+                ),
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+      const SizedBox(width: 6.0),
+      _toolChevron(context, expanded),
+    ],
+  );
   return GestureDetector(
     behavior: HitTestBehavior.opaque,
     onTap: () {
@@ -1850,35 +1881,41 @@ Widget buildToolGroupHeader(
       context,
       isFirst: true,
       isLast: isLast,
-      child: Row(
-        children: [
-          if (iconToolName != null && iconToolName.isNotEmpty) ...[
-            ToolIcon(toolName: iconToolName, agentTypeName: agentTypeName),
-            const SizedBox(width: 8.0),
-          ],
-          Expanded(
-            child: Text.rich(
-              TextSpan(
-                text: label,
-                style: FlutterFlowTheme.of(context).bodyMedium.override(
-                      fontWeight: FontWeight.bold,
-                      color: FlutterFlowTheme.of(context).primaryText,
-                      fontSize: 15.0,
-                    ),
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+      child: below == null
+          ? headerRow
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [headerRow, below],
             ),
-          ),
-          const SizedBox(width: 6.0),
-          _toolChevron(context, expanded),
-        ],
-      ),
     ),
   );
 }
 
-Widget _buildUsingToolMessage(BuildContext context, String content, {String? agentTypeName, bool toolUseIsFirst = true, bool toolUseIsLast = true, bool collapsible = false, bool expanded = false, VoidCallback? onToggle}) {
+/// The file an edit row's description names, when [onOpenFile] can open it:
+/// the description is a lone backticked path (with an optional trailing
+/// `+N -M`) and the path resolves inside the project. Null otherwise, and the
+/// description renders as plain inline code.
+({String path, String name, String display, String suffix})? _openableEditPath(
+  String toolName,
+  String inlineDesc,
+  void Function(String path, String name)? onOpenFile,
+) {
+  if (onOpenFile == null || !isFileEditToolName(toolName)) return null;
+  final m = RegExp(r'^`([^`\s]+)`(\s+\+\d+\s+-\d+)?\s*$').firstMatch(inlineDesc.trim());
+  if (m == null) return null;
+  final display = m.group(1)!;
+  final relative = workspaceRelativePath(display);
+  if (relative == null) return null;
+  final segments = relative.split('/');
+  return (
+    path: relative,
+    name: segments.last,
+    display: display,
+    suffix: m.group(2) ?? '',
+  );
+}
+
+Widget _buildUsingToolMessage(BuildContext context, String content, {String? agentTypeName, bool toolUseIsFirst = true, bool toolUseIsLast = true, bool collapsible = false, bool expanded = false, VoidCallback? onToggle, void Function(String path, String name)? onOpenFile}) {
   final toolFormat = _formatToolPattern(content);
   final toolName = toolFormat.toolName;
   final inlineDesc = toolFormat.isMultilineDescription ? null : toolFormat.toolDescription;
@@ -1930,7 +1967,29 @@ Widget _buildUsingToolMessage(BuildContext context, String content, {String? age
           color: FlutterFlowTheme.of(context).primary,
           decoration: TextDecoration.underline,
         );
-        _parseLineFormatting(context, inlineDesc, textStyle, codeStyle, linkStyle, descriptionSpans);
+        final openable = _openableEditPath(toolName, inlineDesc, onOpenFile);
+        if (openable != null) {
+          // An edit's path is a tap that opens the file in the viewer — the
+          // same target as its row under the run header, coloured like a link. A TextSpan
+          // (not a WidgetSpan) so the header still measures for the
+          // single-line ellipsis below; its recognizer wins over the row's
+          // toggle since it sits deeper in the hit-test path.
+          descriptionSpans.add(TextSpan(
+            text: openable.display,
+            style: codeStyle.copyWith(color: FlutterFlowTheme.of(context).primary),
+            mouseCursor: SystemMouseCursors.click,
+            recognizer: TapGestureRecognizer()
+              ..onTap = () {
+                HapticFeedback.lightImpact();
+                onOpenFile!(openable.path, openable.name);
+              },
+          ));
+          if (openable.suffix.isNotEmpty) {
+            descriptionSpans.add(TextSpan(text: openable.suffix, style: textStyle));
+          }
+        } else {
+          _parseLineFormatting(context, inlineDesc, textStyle, codeStyle, linkStyle, descriptionSpans);
+        }
         firstLineSpans.addAll(descriptionSpans);
       }
     }
@@ -2180,7 +2239,8 @@ String sanitizeToolContent(
 /// (output/code/todos) collapsed behind a right-chevron in the header row. A
 /// header too long for one line is ellipsized and expands the same way, so pass
 /// [onToggle] unconditionally — the row decides whether it's expandable.
-/// [content] must already be sanitized (see [sanitizeToolContent]).
+/// [content] must already be sanitized (see [sanitizeToolContent]). With
+/// [onOpenFile], an edit row's path is a tap that opens the file.
 Widget buildCollapsibleToolRow(
   BuildContext context,
   String content, {
@@ -2189,6 +2249,7 @@ Widget buildCollapsibleToolRow(
   bool toolUseIsLast = true,
   bool expanded = false,
   VoidCallback? onToggle,
+  void Function(String path, String name)? onOpenFile,
 }) =>
     _buildUsingToolMessage(
       context,
@@ -2199,6 +2260,7 @@ Widget buildCollapsibleToolRow(
       collapsible: true,
       expanded: expanded,
       onToggle: onToggle,
+      onOpenFile: onOpenFile,
     );
 
 /// Returns true when [content] (trimmed) is exactly one fenced code block.

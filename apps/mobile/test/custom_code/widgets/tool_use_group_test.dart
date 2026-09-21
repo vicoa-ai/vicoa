@@ -3,6 +3,7 @@
 // `describeToolRun` behaviour ported for the Flutter chat.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:vicoa/custom_code/utils/edited_files.dart';
 import 'package:vicoa/custom_code/widgets/subagent_group.dart';
 import 'package:vicoa/custom_code/widgets/tool_use_group.dart';
 
@@ -275,6 +276,72 @@ void main() {
       expect(s.name, 'Bash');
       expect(s.isShell, isTrue);
       expect(s.fileName, isNull);
+    });
+
+    test('keeps the stat a Codex patch card reports, off the path', () {
+      final s = sum('✏️ Applying patch to 1 file (+3 -1)\n└ src/app.ts\n**src/app.ts**');
+      expect(s.name, 'Edited');
+      expect(s.description, 'src/app.ts');
+      expect(s.fileName, 'app.ts');
+      expect(s.diffStat, const DiffStat(3, 1));
+    });
+
+    test('derives the diff stat from the fenced diff when none is reported '
+        '(Claude)', () {
+      final s = sum('🔧 Using tool: **Edit** - `lib/a.dart`\n\n'
+          '```diff\n-old\n+new\n+more\n```');
+      expect(s.description, 'lib/a.dart');
+      expect(s.diffStat, const DiffStat(2, 1));
+    });
+
+    test('no stat anywhere is null', () {
+      expect(sum('Using tool: **Write** - `lib/a.dart`').diffStat, isNull);
+    });
+  });
+
+  group('editedFilesInRun', () {
+    test('one entry per file in first-edit order; only editing tools with a '
+        'file count', () {
+      final files = editedFilesInRun([
+        sum('Using tool: **Read** - `lib/z.dart`'),
+        sum('Using tool: **Edit** - `lib/b.dart`'),
+        sum('Using tool: **Bash** - `ls`'),
+        sum('Using tool: **Write** - `lib/a.dart`'),
+        sum('Using tool: **Write**'),
+      ]);
+      expect(files.map((f) => f.path), ['lib/b.dart', 'lib/a.dart']);
+      expect(files.map((f) => f.fileName), ['b.dart', 'a.dart']);
+      expect(files.map((f) => f.toolName), ['Edit', 'Write']);
+    });
+
+    test('repeated edits to a file fold into the first entry: its tool label '
+        'stays and the known stats add up', () {
+      final files = editedFilesInRun([
+        sum('Using tool: **Edit** - `lib/a.dart`\n\n```diff\n-x\n+y\n```'),
+        sum('Using tool: **Bash** - `flutter test`'),
+        sum('Using tool: **Write** - `lib/a.dart`\n\n```diff\n+p\n+q\n```'),
+        sum('Using tool: **Edit** - `lib/a.dart`'), // no stat: leaves the sum alone
+      ]);
+      expect(files, hasLength(1));
+      expect(files.single.toolName, 'Edit');
+      expect(files.single.diffStat, const DiffStat(3, 1));
+    });
+
+    test('a file whose edits carry no stat has none', () {
+      final files = editedFilesInRun([
+        sum('Using tool: **Edit** - `lib/a.dart`'),
+        sum('Using tool: **Edit** - `lib/a.dart`'),
+      ]);
+      expect(files.single.diffStat, isNull);
+    });
+
+    test('a Codex patch card is an edit', () {
+      final files = editedFilesInRun([
+        sum('✏️ Applying patch to 1 file (+3 -1)\n└ src/app.ts\n**src/app.ts**'),
+      ]);
+      expect(files.single.fileName, 'app.ts');
+      expect(files.single.toolName, 'Edited');
+      expect(files.single.diffStat, const DiffStat(3, 1));
     });
   });
 }

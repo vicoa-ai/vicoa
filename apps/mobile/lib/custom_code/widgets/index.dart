@@ -6,7 +6,11 @@ export 'markdown_text_builder.dart' show buildMarkdownText;
 export 'tool_icon.dart'
     show ToolIcon, iconForToolName, isAgentToolName, representativeToolName;
 export 'tool_use_group.dart'
-    show ToolUseGroup, isCollapsibleToolUseMessage, isAskUserQuestionToolContent;
+    show
+        OpenFileCallback,
+        ToolUseGroup,
+        isCollapsibleToolUseMessage,
+        isAskUserQuestionToolContent;
 export 'subagent_group.dart'
     show
         SubagentGroup,

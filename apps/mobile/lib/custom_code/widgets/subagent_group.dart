@@ -20,7 +20,13 @@ import '/custom_code/widgets/markdown_text_builder.dart'
         buildToolGroupHeader,
         sanitizeToolContent;
 import '/custom_code/widgets/tool_use_group.dart'
-    show describeToolRun, summarizeToolMessage;
+    show
+        EditedFilesList,
+        OpenFileCallback,
+        ToolUseSummary,
+        describeToolRun,
+        editedFilesInRun,
+        summarizeToolMessage;
 
 /// Reads a message's `message_metadata.subagent.tool_use_id`, or null when
 /// [message] isn't tagged as sub-agent activity (not a Map, no metadata, or a
@@ -169,6 +175,7 @@ class SubagentGroup extends StatefulWidget {
     this.onBeforeToggle,
     this.agentTypeName,
     this.filterProjectRoot,
+    this.onOpenFile,
   });
 
   /// e.g. "Explore", "general-purpose" — from `subagent_type`.
@@ -190,6 +197,11 @@ class SubagentGroup extends StatefulWidget {
   final VoidCallback? onBeforeToggle;
   final String? agentTypeName;
   final String Function(String content)? filterProjectRoot;
+
+  /// Opens an edited file in the viewer (a file row under the header or the
+  /// path of an expanded edit row); null leaves them plain. Mirrors
+  /// [ToolUseGroup.onOpenFile].
+  final OpenFileCallback? onOpenFile;
 
   @override
   State<SubagentGroup> createState() => _SubagentGroupState();
@@ -217,9 +229,9 @@ class _SubagentGroupState extends State<SubagentGroup> {
   /// The collapsed header line. Same vocabulary a collapsed [ToolUseGroup]
   /// uses ("Run 2 commands, edit 2 files"), because a sub-agent that rewrote
   /// three files otherwise announced itself as one line naming neither the
-  /// work nor the files. [toolContents] is the run's tool-use members only —
+  /// work nor the files. [toolSummaries] is the run's tool-use members only —
   /// prose and thinking cards aren't actions and would inflate the counts.
-  String _label(List<String> toolContents) {
+  String _label(List<ToolUseSummary> toolSummaries) {
     final type = widget.subagentType.trim();
     var header = 'Sub-agent: ${type.isEmpty ? 'agent' : type}';
     // 'completed' is the normal ending and needs no marker; anything else does.
@@ -229,9 +241,8 @@ class _SubagentGroupState extends State<SubagentGroup> {
     }
     final desc = widget.description?.trim();
     if (desc != null && desc.isNotEmpty) header = '$header — $desc';
-    if (toolContents.isEmpty) return header;
-    final runLabel =
-        describeToolRun([for (final c in toolContents) summarizeToolMessage(c)]);
+    if (toolSummaries.isEmpty) return header;
+    final runLabel = describeToolRun(toolSummaries);
     return runLabel.isEmpty ? header : '$header · $runLabel';
   }
 
@@ -250,8 +261,16 @@ class _SubagentGroupState extends State<SubagentGroup> {
       filterProjectRoot: widget.filterProjectRoot,
     );
 
-    final label =
-        _label([for (final c in contents) if (_isToolUseContent(c)) c]);
+    final toolSummaries = [
+      for (final c in contents)
+        if (_isToolUseContent(c)) summarizeToolMessage(c),
+    ];
+    final label = _label(toolSummaries);
+    // The files behind "edit N files", listed under the label.
+    final editedFiles = editedFilesInRun(toolSummaries);
+    final filesList = editedFiles.isEmpty
+        ? null
+        : EditedFilesList(files: editedFiles, onOpenFile: widget.onOpenFile);
 
     if (!widget.expanded) {
       return buildToolGroupHeader(
@@ -262,6 +281,7 @@ class _SubagentGroupState extends State<SubagentGroup> {
         onToggle: _toggleRun,
         iconToolName: 'Task',
         agentTypeName: widget.agentTypeName,
+        below: filesList,
       );
     }
 
@@ -282,6 +302,7 @@ class _SubagentGroupState extends State<SubagentGroup> {
           onToggle: _toggleRun,
           iconToolName: 'Task',
           agentTypeName: widget.agentTypeName,
+          below: filesList,
         ),
         if (!firstIsTool && contents.isNotEmpty) const SizedBox(height: 8.0),
         ..._buildChildren(context, contents),
@@ -320,6 +341,7 @@ class _SubagentGroupState extends State<SubagentGroup> {
             toolUseIsLast: k == j - 1,
             expanded: _expandedChildren.contains(k),
             onToggle: () => _toggleChild(k),
+            onOpenFile: widget.onOpenFile,
           ));
         }
         i = j;

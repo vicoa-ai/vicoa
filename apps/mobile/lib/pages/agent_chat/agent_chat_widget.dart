@@ -21,7 +21,7 @@ import '/pages/confirm_dialog/confirm_dialog_widget.dart';
 import '/pages/agent_chat/components/queued_messages_bar.dart';
 import '/pages/agent_chat/components/session_loading_indicator.dart';
 import '/pages/agent_chat/components/chat_block_spacing.dart';
-import '/pages/files_screen/file_viewer/file_viewer_widget.dart' show kFileViewerAddToContextKey;
+import '/pages/files_screen/file_viewer/file_viewer_widget.dart' show FileViewerWidget, kFileViewerAddToContextKey;
 import '/components/welcome_demo/welcome_demo_cta.dart';
 import '/components/welcome_demo/welcome_demo_chat_actions.dart';
 import '/components/realtime_status_banner/realtime_status_banner_widget.dart';
@@ -1309,6 +1309,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
                       },
                       agentTypeName: agentType,
                       filterProjectRoot: _model.filterProjectRootFromContent,
+                      onOpenFile: _openFileCallback(),
                     ),
                     if (runIsLastAgent)
                       _buildMessageActionsRow(_model.messages[runIndices.last]),
@@ -1440,6 +1441,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
                       },
                       agentTypeName: agentType,
                       filterProjectRoot: _model.filterProjectRootFromContent,
+                      onOpenFile: _openFileCallback(),
                     ),
                     if (runIsLastAgent)
                       _buildMessageActionsRow(_model.messages[runIndices.last]),
@@ -1848,6 +1850,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
             widget.instanceData?['agent_type_name'],
         toolUseIsFirst: toolUseIsFirst,
         toolUseIsLast: toolUseIsLast,
+        onOpenFile: isUser ? null : _openFileCallback(),
       ),
     );
 
@@ -2701,14 +2704,44 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     if (mounted) safeSetState(() {});
   }
 
-  // Pushes the Files screen for the current session. Null when the session
-  // pre-dates the machine_id column — folder button stays hidden in that case.
-  // If the user picks "Add to context" inside the viewer, FilesScreen forwards
-  // the result here and we drop `@<path> ` into the chat input.
-  VoidCallback? _openFilesCallback() {
+  // The machine this session's files live on, or null when the session
+  // pre-dates the machine_id column — then there is nowhere to browse or open
+  // a file, and the folder button / edited-file rows stay hidden or plain.
+  String? _filesMachineId() {
     final machineId = (_model.instanceData?['machine_id'] ?? widget.instanceData?['machine_id'])?.toString();
-    if (machineId == null || machineId.isEmpty) return null;
-    final cwd = (_model.instanceData?['project'] ?? widget.instanceData?['project'])?.toString() ?? '';
+    return (machineId == null || machineId.isEmpty) ? null : machineId;
+  }
+
+  String _filesCwd() => (_model.instanceData?['project'] ?? widget.instanceData?['project'])?.toString() ?? '';
+
+  // "Add to context" from the file viewer (reached via the Files screen or
+  // straight from an edited-file row in the chat) pops with the file's path: drop `@<path> `
+  // into the chat input.
+  void _applyFileViewerResult(Object? result) {
+    if (result is! Map || result[kFileViewerAddToContextKey] is! String) return;
+    final relPath = result[kFileViewerAddToContextKey] as String;
+    final mention = '@$relPath ';
+    final controller = _model.messageController;
+    final current = controller.text;
+    // Append a space if the user already had non-trailing-space text so
+    // the mention doesn't fuse with whatever was there.
+    final separator = current.isEmpty || current.endsWith(' ') ? '' : ' ';
+    controller.text = '$current$separator$mention';
+    controller.selection = TextSelection.fromPosition(
+      TextPosition(offset: controller.text.length),
+    );
+    _model.filterFileMentions(controller.text);
+    safeSetState(() {});
+  }
+
+  // Pushes the Files screen for the current session. Null when the session
+  // has no machine — folder button stays hidden in that case. If the user
+  // picks "Add to context" inside the viewer, FilesScreen forwards the result
+  // here.
+  VoidCallback? _openFilesCallback() {
+    final machineId = _filesMachineId();
+    if (machineId == null) return null;
+    final cwd = _filesCwd();
     final projectName = (_model.instanceData?['name'] ?? widget.instanceData?['name'])?.toString();
     return () async {
       final result = await context.pushNamed(
@@ -2720,21 +2753,31 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
         },
       );
       if (!mounted) return;
-      if (result is Map && result[kFileViewerAddToContextKey] is String) {
-        final relPath = result[kFileViewerAddToContextKey] as String;
-        final mention = '@$relPath ';
-        final controller = _model.messageController;
-        final current = controller.text;
-        // Append a space if the user already had non-trailing-space text so
-        // the mention doesn't fuse with whatever was there.
-        final separator = current.isEmpty || current.endsWith(' ') ? '' : ' ';
-        controller.text = '$current$separator$mention';
-        controller.selection = TextSelection.fromPosition(
-          TextPosition(offset: controller.text.length),
-        );
-        _model.filterFileMentions(controller.text);
-        safeSetState(() {});
-      }
+      _applyFileViewerResult(result);
+    };
+  }
+
+  // Opens one file straight in the viewer — the target of an edited-file row
+  // under a tool run's header and of the path on an expanded edit row.
+  // [path] is relative to the session's working directory, the shape the
+  // Files tree hands the viewer. Null when the session has no machine, which
+  // leaves those rows plain.
+  custom_widgets.OpenFileCallback? _openFileCallback() {
+    final machineId = _filesMachineId();
+    if (machineId == null) return null;
+    final cwd = _filesCwd();
+    return (String path, String name) async {
+      final result = await context.pushNamed(
+        FileViewerWidget.routeName,
+        extra: <String, dynamic>{
+          'machineId': machineId,
+          'cwd': cwd,
+          'path': path,
+          'name': name,
+        },
+      );
+      if (!mounted) return;
+      _applyFileViewerResult(result);
     };
   }
 
