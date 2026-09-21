@@ -150,6 +150,20 @@ local-first with background sync.
   asking in prose.
 - **Mind the blast radius** — see the next section before killing processes
   or touching services, ports, or files you did not create.
+- **Bring your session along when you move into a worktree** — Vicoa files a
+  session under the folder it was started in, so if you create or switch to a
+  git worktree mid-session, re-file the session there or the app keeps showing
+  it under the main checkout (and resumes it there):
+
+  ```bash
+  vicoa session update "$VICOA_AGENT_INSTANCE_ID" --worktree <branch>
+  ```
+
+  `<branch>` is the worktree's checked-out branch (the main checkout's branch
+  moves it back). `VICOA_AGENT_INSTANCE_ID` is set when you run under Vicoa;
+  otherwise find the id with `vicoa session ls --active` (plain `session ls`
+  also lists finished sessions). Run it on the session's machine — it resolves
+  the worktree with local git.
 
 ## Shared machine: blast radius
 
