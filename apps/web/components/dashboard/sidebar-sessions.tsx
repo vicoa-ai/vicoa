@@ -47,6 +47,7 @@ import { NewSessionButton } from '@/components/dashboard/new-session-button';
 import { WorktreeSubGroupHeader } from '@/components/dashboard/worktree-sub-group-header';
 import type { AgentInstanceResponse, ProjectResponse } from '@/lib/backend-api';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
+import { projectSettingsHref as settingsHrefForProject } from '@/lib/project-settings-route';
 import {
   formatSidebarTime,
   getSessionTitle,
@@ -1362,7 +1363,6 @@ export function SidebarSessions({
                 const { isDraggableProject, split, newSessionDirectory, subs } = entry;
                 if (!split && instances.length === 0) return null;
                 const isGroupCollapsed = label !== null && collapsedGroups.has(key);
-                const projectMachineId = instances[0]?.machine_id ?? null;
                 // The DB project this group maps to (only meaningful when
                 // grouping by project — time/status keys aren't project ids).
                 // Drives the leading icon, the Archive action, and the settings
@@ -1376,18 +1376,10 @@ export function SidebarSessions({
                   canShare &&
                   dbProject !== undefined &&
                   projectRoleAtLeast(dbProject.role, 'admin');
-                // "Project settings" opens the per-project pane in Settings:
-                // Display (name/icon) keys off project_id; the worktree-config
-                // section needs a machine + repo dir to route its daemon RPC.
-                const projectSettingsHref = (() => {
-                  if (!dbProject && !(projectMachineId && newSessionDirectory)) return null;
-                  const params = new URLSearchParams({ tab: 'project' });
-                  if (dbProject) params.set('projectId', dbProject.id);
-                  if (projectMachineId) params.set('machineId', projectMachineId);
-                  if (newSessionDirectory) params.set('dir', newSessionDirectory);
-                  if (label) params.set('label', label);
-                  return `/dashboard/settings?${params.toString()}`;
-                })();
+                // "Project settings" opens the per-project pane in Settings,
+                // routed by the DB project id (the pane resolves folders and
+                // worktree config from the project's own directory rows).
+                const projectSettingsHref = dbProject ? settingsHrefForProject(dbProject.id) : null;
                 const projectHeader = label ? (
                   // Wrapper carries the drag handle and hover group so the
                   // collapse toggle, actions menu, and "+" can be sibling buttons

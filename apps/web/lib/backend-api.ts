@@ -624,6 +624,12 @@ export interface UpdateProjectRequest {
   icon?: string | null;
   git_remote_url?: string | null;
   is_archived?: boolean;
+  /**
+   * Task-identifier prefix ("VIC" → "VIC-42"): 2–8 letters/digits, starting
+   * with a letter; the backend uppercases it. Unique within the owner — a
+   * clash comes back as 409.
+   */
+  key?: string;
 }
 
 export interface CreateTaskRequest {

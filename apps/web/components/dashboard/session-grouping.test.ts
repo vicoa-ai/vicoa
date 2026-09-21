@@ -8,7 +8,6 @@ import {
   groupSessions,
   mergeRenderedOrder,
   projectGroupKey,
-  projectSettingsTargets,
   splitProjectByWorktree,
   worktreeSessionPaths,
   type LiveWorktree,
@@ -175,33 +174,6 @@ describe('mergeRenderedOrder', () => {
 
   it('drops nothing when the rendered subset is a strict subset', () => {
     expect(mergeRenderedOrder(['A', 'B', 'C'], ['C', 'B'])).toEqual(['A', 'C', 'B']);
-  });
-});
-
-describe('projectSettingsTargets', () => {
-  const sessions = [
-    make({ id: 'a', project_id: 'p-alpha', project: '/x/alpha-folder', machine_id: 'm1' }),
-    make({ id: 'b', project_id: 'p-beta', project: '/x/beta-folder', machine_id: 'm1' }),
-    make({ id: 'c', project_id: 'p-gamma', project: '/x/gamma-folder', machine_id: 'm1' }),
-    make({ id: 'u', project: '/x/unlinked', machine_id: 'm1' }),
-    make({ id: 'n', project: null, machine_id: 'm1' }),
-  ];
-
-  it('without the project list: basenames, alphabetical', () => {
-    expect(projectSettingsTargets(sessions).map((t) => t.label)).toEqual([
-      'alpha-folder', 'beta-folder', 'gamma-folder', 'unlinked',
-    ]);
-  });
-
-  it('with the project list: DB names in the list order, unknown keys trail alphabetically', () => {
-    // The backend's order: the user dragged Gamma above Beta above Alpha.
-    const projectsById = new Map(
-      [proj({ id: 'p-gamma', name: 'Gamma' }), proj({ id: 'p-beta', name: 'Beta' }), proj({ id: 'p-alpha', name: 'Alpha' })]
-        .map((p) => [p.id, p]),
-    );
-    const targets = projectSettingsTargets(sessions, projectsById);
-    expect(targets.map((t) => t.label)).toEqual(['Gamma', 'Beta', 'Alpha', 'unlinked']);
-    expect(targets.map((t) => t.key)).toEqual(['p-gamma', 'p-beta', 'p-alpha', 'unlinked']);
   });
 });
 

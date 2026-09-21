@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { GitBranch } from 'lucide-react';
+import { GitBranch, Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -233,6 +233,70 @@ export function WorktreeDeleteDialog({
             onClick={onConfirm}
           >
             {error ? 'Retry' : 'Delete'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Generic destructive-action confirm, the same shape as `DeleteSessionDialog`:
+ * header + consequence copy, the subject echoed in a muted card, Cancel /
+ * destructive Delete. `onConfirm` runs to completion before the dialog closes;
+ * a thrown error stays open so the caller can surface it. Used by the label
+ * and project deletes in Settings.
+ */
+export function ConfirmDeleteDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  subject,
+  confirmLabel = 'Delete',
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  description: React.ReactNode;
+  /** Rendered in the muted card — the row being deleted. */
+  subject?: React.ReactNode;
+  confirmLabel?: string;
+  onConfirm: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const handleConfirm = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onConfirm();
+      onOpenChange(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
+      <DialogContent className="font-mono">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        {subject && <div className="rounded-md border bg-muted/50 p-3">{subject}</div>}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            className="text-destructive-foreground"
+            onClick={() => void handleConfirm()}
+            disabled={busy}
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

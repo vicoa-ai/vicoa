@@ -4,11 +4,10 @@ import { useMemo, useState, useEffect, type FormEvent, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import useSWR, { useSWRConfig } from 'swr';
-import { Loader2, LogOut, Trash2, PlayCircle } from 'lucide-react';
+import { ChevronRight, Loader2, LogOut, Trash2, PlayCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { WorktreeSetupSection } from '@/components/dashboard/worktree-setup-section';
-import { ProjectDisplaySection } from '@/components/dashboard/project-display-section';
+import { ProjectSettingsPane } from '@/components/dashboard/project-settings-pane';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
 import { AvatarEditor } from '@/components/dashboard/avatar-editor';
 import { Input } from '@/components/ui/input';
@@ -31,7 +30,13 @@ import { OnboardingModal, ONBOARDING_KEY } from '@/components/dashboard/onboardi
 import { DesktopSettings } from '@/components/dashboard/desktop-settings';
 import { ProvidersSettingsSection } from '@/components/dashboard/providers-settings-section';
 import { MachinesSettingsSection } from '@/components/dashboard/machines-settings-section';
+import { TasksSettingsSection } from '@/components/dashboard/tasks-settings-section';
 import { ThemeSelect } from '@/components/plugins/theme-select';
+import {
+  PROJECTS_CHANGED_EVENT,
+  projectSettingsHref,
+  projectSettingsSection,
+} from '@/lib/project-settings-route';
 
 // Desktop builds swap the whole settings surface: the shell renders the
 // settings nav in the left panel and this page renders only the tab content.
@@ -62,6 +67,7 @@ const tabs = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'providers', label: 'Providers' },
   { id: 'machines', label: 'Machines' },
+  { id: 'tasks', label: 'Tasks' },
   { id: 'billing', label: 'Billing' },
   { id: 'account', label: 'Account' }
 ] as const;
@@ -75,13 +81,23 @@ function SettingsContent() {
   const { data: supabaseUser } = useSWR<SupabaseUser | null>('/api/supabase-user', fetcher);
   // The Projects nav lists real DB projects (identity source of truth), not
   // session-derived groups — so it works on web even without a live session.
+  // Archived ones ride along under a collapsed group so Unarchive / Delete
+  // stay reachable. Refetched whenever the pane reports a mutation.
   const [dbProjects, setDbProjects] = useState<ProjectResponse[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
   useEffect(() => {
-    getBackendAPI(true)
-      .listProjects()
-      .then(setDbProjects)
-      .catch(() => setDbProjects([]));
+    const load = () => {
+      getBackendAPI(true)
+        .listProjects(true)
+        .then(setDbProjects)
+        .catch(() => setDbProjects([]));
+    };
+    load();
+    window.addEventListener(PROJECTS_CHANGED_EVENT, load);
+    return () => window.removeEventListener(PROJECTS_CHANGED_EVENT, load);
   }, []);
+  const activeProjects = useMemo(() => dbProjects.filter((p) => !p.is_archived), [dbProjects]);
+  const archivedProjects = useMemo(() => dbProjects.filter((p) => p.is_archived), [dbProjects]);
 
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -103,9 +119,14 @@ function SettingsContent() {
   }, [searchParams]);
 
   const projectId = searchParams.get('projectId') ?? '';
-  const projectMachineId = searchParams.get('machineId') ?? '';
-  const projectDir = searchParams.get('dir') ?? '';
-  const projectLabel = searchParams.get('label') ?? '';
+  const projectSection = projectSettingsSection(searchParams.get('section'));
+
+  // Landing on an archived project's pane opens the group so its row is visible.
+  useEffect(() => {
+    if (activeTab === 'project' && archivedProjects.some((p) => p.id === projectId)) {
+      setShowArchived(true);
+    }
+  }, [activeTab, archivedProjects, projectId]);
 
   const handleLogout = async () => {
     if (isLoggingOut) return;
@@ -142,11 +163,9 @@ function SettingsContent() {
   const getNavHref = (tabId: string) => {
     const params = new URLSearchParams(searchParams.toString());
     // Drop the per-project params so a static tab never carries a stale
-    // project id / machine / dir over from a project pane.
+    // project id / section over from a project pane.
     params.delete('projectId');
-    params.delete('machineId');
-    params.delete('dir');
-    params.delete('label');
+    params.delete('section');
     if (tabId === defaultTab) {
       params.delete('tab');
       const qs = params.toString();
@@ -156,17 +175,25 @@ function SettingsContent() {
     return `/dashboard/settings?${params.toString()}`;
   };
 
-  const getProjectHref = (project: ProjectResponse) => {
-    // Prefer the first linked directory so the worktree-setup section (which is
-    // keyed by machine+dir) can render; Display works off project_id regardless.
-    const directory = project.directories[0];
-    const params = new URLSearchParams({ tab: 'project', projectId: project.id });
-    if (directory) {
-      params.set('machineId', directory.machine_id);
-      params.set('dir', directory.local_path);
-    }
-    params.set('label', project.name);
-    return `/dashboard/settings?${params.toString()}`;
+  const projectRow = (project: ProjectResponse) => {
+    const active = activeTab === 'project' && projectId === project.id;
+    return (
+      <Link
+        key={project.id}
+        href={projectSettingsHref(project.id)}
+        className={cn(
+          'flex items-center gap-2 rounded-lg px-4 py-2 text-sm transition-colors',
+          active
+            ? 'bg-muted text-foreground font-medium'
+            : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+          project.is_archived && 'opacity-70',
+        )}
+        scroll={false}
+      >
+        <ProjectIcon project={project} className="size-4" />
+        <span className="truncate">{project.name}</span>
+      </Link>
+    );
   };
 
 
@@ -208,25 +235,24 @@ function SettingsContent() {
                   Projects
                 </div>
                 <div className="rounded-xl border border-border/70 bg-card p-1">
-                  {dbProjects.map((project) => {
-                    const active = activeTab === 'project' && projectId === project.id;
-                    return (
-                      <Link
-                        key={project.id}
-                        href={getProjectHref(project)}
-                        className={cn(
-                          'flex items-center gap-2 rounded-lg px-4 py-2 text-sm transition-colors',
-                          active
-                            ? 'bg-muted text-foreground font-medium'
-                            : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                        )}
-                        scroll={false}
+                  {activeProjects.map(projectRow)}
+                  {archivedProjects.length > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setShowArchived((v) => !v)}
+                        aria-expanded={showArchived}
+                        className="flex w-full cursor-pointer items-center gap-1 px-3 pt-2 pb-1 text-xs font-light text-muted-foreground/70 transition-colors hover:text-foreground"
                       >
-                        <ProjectIcon project={project} className="size-4" />
-                        <span className="truncate">{project.name}</span>
-                      </Link>
-                    );
-                  })}
+                        <ChevronRight
+                          className={cn('h-3 w-3 transition-transform', showArchived && 'rotate-90')}
+                        />
+                        Archived
+                        <span className="text-muted-foreground/50">{archivedProjects.length}</span>
+                      </button>
+                      {showArchived && archivedProjects.map(projectRow)}
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -383,38 +409,23 @@ function SettingsContent() {
               </Card>
             )}
 
-            {activeTab === 'project' && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="truncate">
-                    {projectLabel || 'Project settings'}
-                  </CardTitle>
-                  {projectDir && (
-                    <p className="truncate font-mono text-xs text-muted-foreground">{projectDir}</p>
-                  )}
-                </CardHeader>
-                <CardContent className="space-y-8">
-                  {projectId || (projectMachineId && projectDir) ? (
-                    <>
-                      <ProjectDisplaySection
-                        projectId={projectId || undefined}
-                        machineId={projectMachineId || undefined}
-                        dir={projectDir || undefined}
-                      />
-                      {/* Worktree setup is committed-repo config edited over a
-                          daemon RPC, so it needs a machine + directory. */}
-                      {projectMachineId && projectDir && (
-                        <WorktreeSetupSection machineId={projectMachineId} dir={projectDir} />
-                      )}
-                    </>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">
-                      Pick a project from the list to edit its settings.
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
+            {activeTab === 'project' &&
+              (projectId ? (
+                <ProjectSettingsPane
+                  projectId={projectId}
+                  section={projectSection}
+                  onSectionChange={(next) =>
+                    router.replace(projectSettingsHref(projectId, next), { scroll: false })
+                  }
+                  onProjectDeleted={() => router.replace('/dashboard/settings')}
+                />
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  Pick a project from the list to edit its settings.
+                </div>
+              ))}
+
+            {activeTab === 'tasks' && <TasksSettingsSection />}
 
             {activeTab === 'providers' && <ProvidersSettingsSection />}
 

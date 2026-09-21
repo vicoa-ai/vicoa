@@ -106,64 +106,6 @@ export function distinctProjects(
   );
 }
 
-/** A project the Settings page can open a per-project pane for: its stable
- *  group key + label, plus the machine and repo dir needed to route the
- *  committed-config file RPC (see WorktreeSetupSection). */
-export interface ProjectSettingsTarget {
-  key: string;
-  label: string;
-  machineId: string;
-  dir: string;
-}
-
-/**
- * Per-project settings targets, one per project group present in the list.
- *
- * `dir` is the repo's *main* checkout (a session with no `worktree_name`),
- * falling back to any session's cwd — the same directory the sidebar's project
- * "+" and "Project settings" action use, so the config resolves to the repo
- * root rather than a worktree. Groups with no reachable machine or no directory
- * (nothing to route a file RPC to) are dropped.
- *
- * With `projectsById` (the backend's project list, in its order) the targets
- * read and sort exactly like the sidebar's project groups: DB name for the
- * label, and the user's synced drag order then recency — so the settings
- * nav is the sidebar's list, not a re-alphabetised copy of it. Keys the map
- * doesn't know trail alphabetically.
- */
-export function projectSettingsTargets(
-  instances: AgentInstanceResponse[],
-  projectsById?: Map<string, ProjectResponse>,
-): ProjectSettingsTarget[] {
-  const byKey = new Map<string, AgentInstanceResponse[]>();
-  for (const instance of instances) {
-    const key = projectGroupKey(instance);
-    if (key === NO_PROJECT_KEY) continue;
-    const list = byKey.get(key);
-    if (list) list.push(instance);
-    else byKey.set(key, [instance]);
-  }
-  const targets: ProjectSettingsTarget[] = [];
-  for (const [key, list] of byKey) {
-    const machineId = list[0]?.machine_id ?? null;
-    const dir = list.find((i) => !i.worktree_name)?.project ?? list[0]?.project ?? null;
-    if (!machineId || !dir) continue;
-    targets.push({ key, label: projectDisplayName(list, projectsById), machineId, dir });
-  }
-  const rank = new Map<string, number>();
-  if (projectsById) {
-    for (const id of projectsById.keys()) rank.set(id, rank.size);
-  }
-  return targets.sort((a, b) => {
-    const rankA = rank.get(a.key);
-    const rankB = rank.get(b.key);
-    if (rankA !== undefined && rankB !== undefined) return rankA - rankB;
-    if (rankA !== undefined) return -1;
-    if (rankB !== undefined) return 1;
-    return a.label.localeCompare(b.label);
-  });
-}
-
 /** Distinct agent type names present in the list (for the Agent filter menu). */
 export function distinctAgentNames(instances: AgentInstanceResponse[]): string[] {
   const names = new Set<string>();

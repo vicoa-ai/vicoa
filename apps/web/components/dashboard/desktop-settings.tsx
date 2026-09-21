@@ -73,8 +73,9 @@ import { activeSettingsTab } from './desktop-settings-sidebar';
 import { ProvidersSettingsSection } from './providers-settings-section';
 import { MachinesSettingsSection } from './machines-settings-section';
 import { PluginsSettingsSection } from './plugins-settings-section';
-import { WorktreeSetupSection } from './worktree-setup-section';
-import { ProjectDisplaySection } from './project-display-section';
+import { TasksSettingsSection } from './tasks-settings-section';
+import { ProjectSettingsPane } from './project-settings-pane';
+import { projectSettingsHref, projectSettingsSection } from '@/lib/project-settings-route';
 import { useMobileSidebarHidden, setMobileSidebarHidden } from '@/lib/mobile-sidebar-pref';
 
 /**
@@ -106,12 +107,12 @@ export function DesktopSettings() {
             <MachinesSettingsSection />
           ) : tab === 'plugins' ? (
             <PluginsSettingsSection />
+          ) : tab === 'tasks' ? (
+            <TasksSettingsSection />
           ) : tab === 'project' ? (
             <ProjectSection
               projectId={searchParams.get('projectId') ?? ''}
-              machineId={searchParams.get('machineId') ?? ''}
-              dir={searchParams.get('dir') ?? ''}
-              label={searchParams.get('label') ?? ''}
+              section={searchParams.get('section')}
             />
           ) : (
             <GeneralSection />
@@ -122,41 +123,28 @@ export function DesktopSettings() {
   );
 }
 
-/** Per-project settings pane (worktree setup, room to grow). Reached from the
- *  sidebar project 3-dots → "Project settings" and the settings nav's Projects
- *  group; carries the repo's machineId + dir. */
-function ProjectSection({
-  projectId,
-  machineId,
-  dir,
-  label,
-}: {
-  projectId: string;
-  machineId: string;
-  dir: string;
-  label: string;
-}) {
-  return (
-    <section className="flex flex-col gap-6">
-      <div>
-        <SectionTitle>{label || 'Project settings'}</SectionTitle>
-        {dir && <p className="mt-1 truncate text-xs text-muted-foreground">{dir}</p>}
-      </div>
-      {projectId || (machineId && dir) ? (
-        <>
-          <ProjectDisplaySection
-            projectId={projectId || undefined}
-            machineId={machineId || undefined}
-            dir={dir || undefined}
-          />
-          {machineId && dir && <WorktreeSetupSection machineId={machineId} dir={dir} />}
-        </>
-      ) : (
+/** Per-project settings pane, reached from the sidebar project 3-dots →
+ *  "Project settings" and the settings nav's Projects group. The tab lives in
+ *  the URL (`?section=`) so it survives a reload and back/forward. */
+function ProjectSection({ projectId, section }: { projectId: string; section: string | null }) {
+  const router = useRouter();
+  if (!projectId) {
+    return (
+      <section className="flex flex-col gap-6">
+        <SectionTitle>Project settings</SectionTitle>
         <p className="text-sm text-muted-foreground">
           Pick a project from the list to edit its settings.
         </p>
-      )}
-    </section>
+      </section>
+    );
+  }
+  return (
+    <ProjectSettingsPane
+      projectId={projectId}
+      section={projectSettingsSection(section)}
+      onSectionChange={(next) => router.replace(projectSettingsHref(projectId, next))}
+      onProjectDeleted={() => router.replace('/dashboard/settings')}
+    />
   );
 }
 

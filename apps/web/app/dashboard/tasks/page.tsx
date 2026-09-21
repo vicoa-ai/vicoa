@@ -6,6 +6,7 @@
 // (agent sessions) — this is the human backlog.
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Check,
@@ -13,6 +14,7 @@ import {
   List,
   ListTodo,
   Plus,
+  Settings,
   Share,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -26,7 +28,6 @@ import {
 import {
   AgentInstanceResponse,
   CreateTaskRequest,
-  MachineSummary,
   ProjectResponse,
   TaskLabelResponse,
   TaskResponse,
@@ -47,11 +48,6 @@ import { TaskBoard } from './task-board';
 import { TaskList } from './task-list';
 import { StartSessionDialog } from './start-session-dialog';
 import { CreateProjectDialog, TaskDialog, TaskFormValues } from './task-dialog';
-import {
-  TaskSettingsButton,
-  TaskSettingsDialog,
-  TaskSettingsHandlers,
-} from './task-settings-dialog';
 import { TaskViewsBar } from './task-views-bar';
 import { ShareLinkDialog, type ShareTarget } from '@/components/dashboard/share-link-dialog';
 import { isDesktopLocal } from '@/lib/runtime-config';
@@ -126,13 +122,6 @@ function TasksPageInner() {
     task: TaskResponse;
     subtasks: TaskResponse[];
   } | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  // Only needed to name/pick folders in the settings dialog, so it's fetched
-  // lazily on first open rather than on every visit to the board.
-  const [machines, setMachines] = useState<MachineSummary[]>([]);
-  // The settings dialog also lists archived projects (otherwise "Unarchive"
-  // would be unreachable — archived ones drop out of the board's list).
-  const [allProjects, setAllProjects] = useState<ProjectResponse[]>([]);
 
   const refresh = useCallback(async () => {
     if (!api) return;
@@ -145,28 +134,6 @@ function TasksPageInner() {
     setTasks(taskList);
     setLabels(labelList);
   }, [api]);
-
-  /** Both project lists at once — the board shows active, settings shows all. */
-  const refreshProjects = useCallback(async () => {
-    if (!api) return;
-    const [active, all] = await Promise.all([
-      api.listProjects(),
-      api.listProjects(true),
-    ]);
-    setProjects(active);
-    setAllProjects(all);
-  }, [api]);
-
-  const openSettings = useCallback(() => {
-    setSettingsOpen(true);
-    if (!api) return;
-    void refreshProjects();
-    if (machines.length > 0) return;
-    api
-      .listMachines()
-      .then(setMachines)
-      .catch((err) => console.error('Failed to load machines:', err));
-  }, [api, machines.length, refreshProjects]);
 
   useEffect(() => {
     if (!api) return;
@@ -426,116 +393,6 @@ function TasksPageInner() {
     [api, tasks],
   );
 
-  // Projects/labels management (settings dialog). Each mutation reconciles the
-  // one row it touched; deletes fall back to a full refresh because dropping a
-  // project takes its tasks with it (FK CASCADE) and dropping a label unlinks
-  // it from every task.
-  const settingsHandlers: TaskSettingsHandlers = useMemo(
-    () => ({
-      updateProject: async (projectId, patch) => {
-        if (!api) return;
-        try {
-          await api.updateProject(projectId, patch);
-          // Archiving moves the project between the two lists, so refetch both
-          // rather than splicing the row into one of them.
-          await refreshProjects();
-        } catch (err) {
-          console.error('Failed to update project:', err);
-          alert(err instanceof Error ? err.message : 'Failed to update project');
-          void refreshProjects();
-        }
-      },
-      uploadProjectIcon: async (projectId, file) => {
-        if (!api) return;
-        try {
-          await api.uploadProjectIcon(projectId, file);
-          await refreshProjects();
-        } catch (err) {
-          console.error('Failed to upload project icon:', err);
-          alert(err instanceof Error ? err.message : 'Failed to upload icon');
-        }
-      },
-      clearProjectIcon: async (projectId) => {
-        if (!api) return;
-        try {
-          await api.deleteProjectIcon(projectId);
-          await refreshProjects();
-        } catch (err) {
-          console.error('Failed to clear project icon:', err);
-          alert(err instanceof Error ? err.message : 'Failed to clear icon');
-        }
-      },
-      // Confirmation lives in the settings dialog (ConfirmDeleteDialog), so
-      // these two just delete.
-      deleteProject: async (project) => {
-        if (!api) return;
-        try {
-          await api.deleteProject(project.id);
-          if (projectFilter === project.id) updateActiveView({ projectFilter: 'all' });
-          await Promise.all([refresh(), refreshProjects()]);
-        } catch (err) {
-          console.error('Failed to delete project:', err);
-          alert(err instanceof Error ? err.message : 'Failed to delete project');
-        }
-      },
-      setProjectDirectory: async (projectId, machineId, localPath) => {
-        if (!api) return;
-        try {
-          const updated = await api.setProjectDirectory(projectId, {
-            machine_id: machineId,
-            local_path: localPath,
-          });
-          const splice = (prev: ProjectResponse[]) =>
-            prev.map((p) => (p.id === projectId ? updated : p));
-          setProjects(splice);
-          setAllProjects(splice);
-        } catch (err) {
-          console.error('Failed to link the folder:', err);
-          alert(err instanceof Error ? err.message : 'Failed to link the folder');
-        }
-      },
-      removeProjectDirectory: async (projectId, machineId) => {
-        if (!api) return;
-        try {
-          const updated = await api.deleteProjectDirectory(projectId, machineId);
-          const splice = (prev: ProjectResponse[]) =>
-            prev.map((p) => (p.id === projectId ? updated : p));
-          setProjects(splice);
-          setAllProjects(splice);
-        } catch (err) {
-          console.error('Failed to unlink the folder:', err);
-        }
-      },
-      createLabel,
-      updateLabel: async (labelId, patch) => {
-        if (!api) return;
-        try {
-          const updated = await api.updateTaskLabel(labelId, patch);
-          setLabels((prev) =>
-            prev
-              .map((l) => (l.id === labelId ? updated : l))
-              .sort((a, b) => a.name.localeCompare(b.name)),
-          );
-          // Chips on the board embed the label, so re-read the tasks too.
-          const taskList = await api.listTasks();
-          setTasks(taskList);
-        } catch (err) {
-          console.error('Failed to update label:', err);
-        }
-      },
-      deleteLabel: async (label) => {
-        if (!api) return;
-        try {
-          await api.deleteTaskLabel(label.id);
-          await refresh();
-        } catch (err) {
-          console.error('Failed to delete label:', err);
-        }
-      },
-    }),
-    [api, createLabel, projectFilter, refresh, refreshProjects, updateActiveView],
-  );
-
   // "Start session" seeds a new agent session from the task (plan §7). With
   // sub-tasks, open the picker first so the user can choose which ride along;
   // without, go straight to the New Session page as before.
@@ -694,8 +551,20 @@ function TasksPageInner() {
         <h1 className="shrink-0 text-sm font-medium">Tasks</h1>
 
         <div style={NO_DRAG} className="flex min-w-0 flex-1 items-center gap-2">
-        {/* Projects & labels settings sits next to the title, before the tabs. */}
-        <TaskSettingsButton onClick={openSettings} />
+        {/* Projects and labels are managed in Settings (Projects → <project>,
+            and Settings → Tasks for labels); the gear is just the shortcut. */}
+        <Button
+          asChild
+          variant="ghost"
+          size="sm"
+          className="h-7 w-7 p-0 text-muted-foreground"
+          aria-label="Task settings"
+          title="Labels & projects"
+        >
+          <Link href="/dashboard/settings?tab=tasks">
+            <Settings className="size-3.5" />
+          </Link>
+        </Button>
 
         {/* Saved view tabs */}
         <div className="mx-1 min-w-0 flex-1">
@@ -908,14 +777,6 @@ function TasksPageInner() {
         open={projectDialogOpen}
         onClose={() => setProjectDialogOpen(false)}
         onSubmit={createProject}
-      />
-      <TaskSettingsDialog
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        projects={allProjects}
-        labels={labels}
-        machines={machines}
-        handlers={settingsHandlers}
       />
       <StartSessionDialog
         open={!!sessionDialog}

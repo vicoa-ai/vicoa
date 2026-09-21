@@ -1,98 +1,28 @@
 'use client';
 
-// The "Display" block of /dashboard/settings' per-project pane: edit a project's
-// name + icon (image / emoji / generated) so the sidebar and Tasks board show the
-// same identity (project-identity-unification §5d). The pane is opened by
-// (machineId, dir); this resolves that to the DB project via its linked
-// directories, so the settings entry and the sidebar/Tasks share one identity.
+// The "Display" block of the per-project Settings pane (General tab): edit a
+// project's name + icon (image / emoji / generated) so the sidebar and Tasks
+// board show the same identity (project-identity-unification §5d). The pane
+// owns the project row and passes it in; every mutation reports the server's
+// updated row back through `onUpdated` so the header and nav stay in sync.
 
-import { useCallback, useEffect, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 import { ProjectIconEditor } from '@/components/dashboard/project-icon-editor';
 import { getBackendAPI, type ProjectResponse } from '@/lib/backend-api';
 import { cn } from '@/lib/utils';
 
-/** True when `sessionPath` is `linkedPath` or nested under it (path boundary). */
-function pathAtOrUnder(sessionPath: string, linkedPath: string): boolean {
-  const base = linkedPath.replace(/\/+$/, '');
-  return sessionPath === base || sessionPath.startsWith(base + '/');
-}
-
-/** The project whose directory on `machineId` best matches `dir` (longest wins). */
-function resolveProject(
-  projects: ProjectResponse[],
-  machineId: string,
-  dir: string,
-): ProjectResponse | null {
-  let best: ProjectResponse | null = null;
-  let bestLen = -1;
-  for (const project of projects) {
-    for (const directory of project.directories) {
-      if (directory.machine_id !== machineId) continue;
-      const matches =
-        pathAtOrUnder(dir, directory.local_path) ||
-        pathAtOrUnder(directory.local_path, dir);
-      if (matches && directory.local_path.length > bestLen) {
-        best = project;
-        bestLen = directory.local_path.length;
-      }
-    }
-  }
-  return best;
-}
-
 export function ProjectDisplaySection({
-  projectId,
-  machineId,
-  dir,
+  project,
+  onUpdated,
 }: {
-  /** Preferred: the DB project id (from the Projects nav). */
-  projectId?: string;
-  /** Legacy fallback (sidebar "Project settings" link): resolve by directory. */
-  machineId?: string;
-  dir?: string;
+  project: ProjectResponse;
+  onUpdated: (project: ProjectResponse) => void;
 }) {
-  // undefined = loading, null = no project linked to this directory yet.
-  const [project, setProject] = useState<ProjectResponse | null | undefined>(undefined);
-  const [name, setName] = useState('');
+  const [name, setName] = useState(project.name);
 
-  const refresh = useCallback(async () => {
-    try {
-      const projects = await getBackendAPI(true).listProjects(true);
-      const match = projectId
-        ? (projects.find((p) => p.id === projectId) ?? null)
-        : machineId && dir
-          ? resolveProject(projects, machineId, dir)
-          : null;
-      setProject(match ?? null);
-      if (match) setName(match.name);
-    } catch {
-      setProject(null);
-    }
-  }, [projectId, machineId, dir]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  if (project === undefined) {
-    return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading project…
-      </div>
-    );
-  }
-
-  if (project === null) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        No project is linked to this folder yet. Start a session here and one is created
-        automatically — then its name and icon can be set.
-      </p>
-    );
-  }
+  // Re-seed when the project is replaced by a server response.
+  useEffect(() => setName(project.name), [project.name]);
 
   const api = getBackendAPI(true);
   const isImage = Boolean(project.icon_image_uri);
@@ -105,8 +35,7 @@ export function ProjectDisplaySection({
       return;
     }
     try {
-      await api.updateProject(project.id, { name: trimmed });
-      await refresh();
+      onUpdated(await api.updateProject(project.id, { name: trimmed }));
     } catch (err) {
       console.error('Failed to rename project:', err);
       setName(project.name);
@@ -132,22 +61,18 @@ export function ProjectDisplaySection({
           // small default. Emoji's frame radius comes from the trigger.
           iconClassName={isEmoji ? 'size-9 text-xl' : 'size-9 rounded-md'}
           onUploadImage={async (file) => {
-            await api.uploadProjectIcon(project.id, file);
-            await refresh();
+            onUpdated(await api.uploadProjectIcon(project.id, file));
           }}
           onSetEmoji={async (emoji) => {
             // Emoji wins over a current image (render order image → emoji).
             if (project.icon_image_uri) await api.deleteProjectIcon(project.id);
-            await api.updateProject(project.id, { icon: emoji });
-            await refresh();
+            onUpdated(await api.updateProject(project.id, { icon: emoji }));
           }}
           onClearEmoji={async () => {
-            await api.updateProject(project.id, { icon: null });
-            await refresh();
+            onUpdated(await api.updateProject(project.id, { icon: null }));
           }}
           onResetToDefault={async () => {
-            await api.deleteProjectIcon(project.id);
-            await refresh();
+            onUpdated(await api.deleteProjectIcon(project.id));
           }}
         />
         <input

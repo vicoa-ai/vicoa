@@ -2,20 +2,30 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, Bot, Keyboard, Monitor, Palette, Puzzle, Settings, User } from 'lucide-react';
+import {
+  ArrowLeft,
+  Bot,
+  ChevronRight,
+  Keyboard,
+  ListTodo,
+  Monitor,
+  Palette,
+  Puzzle,
+  Settings,
+  User,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { DesktopTitlebarLead } from '@/components/desktop/window-chrome';
-import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
-import { projectSettingsTargets } from '@/components/dashboard/session-grouping';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
+import { PROJECTS_CHANGED_EVENT, projectSettingsHref } from '@/lib/project-settings-route';
 import { getBackendAPI, type ProjectResponse } from '@/lib/backend-api';
 
 /**
  * Left panel while the desktop app is on /dashboard/settings: replaces the
  * session list with a settings nav — "← Back to app" on top, then one entry
- * per settings tab. The active tab renders in the middle panel
- * (DesktopSettings); there is no right panel on settings routes.
+ * per settings tab, then the user's projects. The active tab renders in the
+ * middle panel (DesktopSettings); there is no right panel on settings routes.
  */
 
 /** sessionStorage key: last non-settings dashboard path, written by the shell,
@@ -28,6 +38,7 @@ export const DESKTOP_SETTINGS_TABS = [
   { id: 'profile', label: 'Profile', Icon: User },
   { id: 'providers', label: 'Providers', Icon: Bot },
   { id: 'machines', label: 'Machines', Icon: Monitor },
+  { id: 'tasks', label: 'Tasks', Icon: ListTodo },
   { id: 'plugins', label: 'Plugins', Icon: Puzzle },
   { id: 'shortcuts', label: 'Keyboard shortcuts', Icon: Keyboard },
 ] as const;
@@ -37,7 +48,7 @@ export type DesktopSettingsTab =
   | 'project';
 
 /** Resolve the ?tab= param to a known tab (general is the default). `project`
-    is the dynamic per-project pane (carries machineId+dir params). */
+    is the dynamic per-project pane (carries a projectId param). */
 export function activeSettingsTab(tabParam: string | null): DesktopSettingsTab {
   if (tabParam === 'project') return 'project';
   return DESKTOP_SETTINGS_TABS.some((tab) => tab.id === tabParam)
@@ -57,44 +68,55 @@ export function DesktopSettingsSidebar() {
   );
 }
 
+const NAV_ROW =
+  'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors';
+const NAV_ROW_ACTIVE = 'bg-foreground/10 text-foreground';
+const NAV_ROW_IDLE =
+  'text-muted-foreground hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground';
+
 function DesktopSettingsSidebarInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tab = activeSettingsTab(searchParams.get('tab'));
-  const activeMachineId = searchParams.get('machineId') ?? '';
-  const activeDir = searchParams.get('dir') ?? '';
-  const { recentInstances } = useAgentDashboard();
-  // The DB projects, by id — the source of truth for each row's icon/image/emoji
-  // (identity-unification §5d), mirroring the app sidebar. A target's `key` is
-  // the linked `project_id` (see projectGroupKey), so this map resolves it; an
-  // unlinked/loading target falls back to a generated initial-square. Refetched
-  // when navigating between panes and on window focus, so an icon edited in the
-  // middle pane shows here (the <img> is cache-busted by updated_at).
-  const [projectsById, setProjectsById] = useState<Map<string, ProjectResponse>>(
-    () => new Map(),
-  );
+  const activeProjectId = searchParams.get('projectId') ?? '';
+  // The DB projects, in the backend's order (the user's synced drag order,
+  // then recency) — the same rows, names and icons as the app sidebar's
+  // project groups, plus the archived ones so Unarchive / Delete stay
+  // reachable. Refetched when navigating between panes, on window focus, and
+  // whenever the middle pane reports a mutation (rename, icon, archive, …).
+  const [projects, setProjects] = useState<ProjectResponse[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
   const searchKey = searchParams.toString();
   useEffect(() => {
     const load = () => {
       getBackendAPI(true)
         .listProjects(true)
-        .then((list) => setProjectsById(new Map(list.map((p) => [p.id, p]))))
+        .then(setProjects)
         .catch(() => {
-          /* best-effort: rows fall back to a generated icon until it loads */
+          /* best-effort: the list keeps its last value until the next load */
         });
     };
     load();
     window.addEventListener('focus', load);
-    return () => window.removeEventListener('focus', load);
+    window.addEventListener(PROJECTS_CHANGED_EVENT, load);
+    return () => {
+      window.removeEventListener('focus', load);
+      window.removeEventListener(PROJECTS_CHANGED_EVENT, load);
+    };
   }, [searchKey]);
 
-  // Same rows, names and order as the app sidebar's project groups (the
-  // project map carries the backend's order — the user's synced drag order,
-  // then recency). Until it loads, basenames in alphabetical order.
-  const projectTargets = useMemo(
-    () => projectSettingsTargets(recentInstances, projectsById),
-    [recentInstances, projectsById],
+  const { active, archived } = useMemo(
+    () => ({
+      active: projects.filter((p) => !p.is_archived),
+      archived: projects.filter((p) => p.is_archived),
+    }),
+    [projects],
   );
+
+  // Landing on an archived project's pane opens the group so its row is visible.
+  useEffect(() => {
+    if (tab === 'project' && archived.some((p) => p.id === activeProjectId)) setShowArchived(true);
+  }, [tab, archived, activeProjectId]);
 
   const backToApp = useCallback(() => {
     let target: string | null = null;
@@ -105,6 +127,21 @@ function DesktopSettingsSidebarInner() {
     }
     router.push(target || '/dashboard');
   }, [router]);
+
+  const projectRow = (project: ProjectResponse) => {
+    const isActive = tab === 'project' && activeProjectId === project.id;
+    return (
+      <button
+        key={project.id}
+        type="button"
+        onClick={() => router.replace(projectSettingsHref(project.id))}
+        className={cn(NAV_ROW, isActive ? NAV_ROW_ACTIVE : NAV_ROW_IDLE, project.is_archived && 'opacity-70')}
+      >
+        <ProjectIcon project={project} />
+        <span className="truncate">{project.name}</span>
+      </button>
+    );
+  };
 
   return (
     <aside className="relative z-10 flex h-full w-64 shrink-0 flex-col border-r border-border bg-surface-nav font-mono text-sm">
@@ -140,58 +177,36 @@ function DesktopSettingsSidebarInner() {
             onClick={() =>
               router.replace(id === 'general' ? '/dashboard/settings' : `/dashboard/settings?tab=${id}`)
             }
-            className={cn(
-              'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
-              tab === id
-                ? 'bg-foreground/10 text-foreground'
-                : 'text-muted-foreground hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground',
-            )}
+            className={cn(NAV_ROW, tab === id ? NAV_ROW_ACTIVE : NAV_ROW_IDLE)}
           >
             <Icon className="h-3.5 w-3.5 shrink-0" />
             {label}
           </button>
         ))}
 
-        {projectTargets.length > 0 && (
+        {projects.length > 0 && (
           <>
             <div className="px-2 pt-4 pb-1 text-xs font-light text-muted-foreground/70">
               Projects
             </div>
-            {projectTargets.map((target) => {
-              const active =
-                tab === 'project' &&
-                activeMachineId === target.machineId &&
-                activeDir === target.dir;
-              return (
+            {active.map(projectRow)}
+            {archived.length > 0 && (
+              <>
                 <button
-                  key={target.key}
                   type="button"
-                  onClick={() =>
-                    router.replace(
-                      `/dashboard/settings?tab=project&machineId=${encodeURIComponent(
-                        target.machineId,
-                      )}&dir=${encodeURIComponent(target.dir)}&label=${encodeURIComponent(target.label)}`,
-                    )
-                  }
-                  className={cn(
-                    'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors',
-                    active
-                      ? 'bg-foreground/10 text-foreground'
-                      : 'text-muted-foreground hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground',
-                  )}
+                  onClick={() => setShowArchived((v) => !v)}
+                  aria-expanded={showArchived}
+                  className="flex w-full cursor-pointer items-center gap-1 px-2 pt-3 pb-1 text-xs font-light text-muted-foreground/70 transition-colors hover:text-foreground"
                 >
-                  <ProjectIcon
-                    project={
-                      projectsById.get(target.key) ?? {
-                        id: target.key,
-                        name: target.label,
-                      }
-                    }
+                  <ChevronRight
+                    className={cn('h-3 w-3 transition-transform', showArchived && 'rotate-90')}
                   />
-                  <span className="truncate">{target.label}</span>
+                  Archived
+                  <span className="text-muted-foreground/50">{archived.length}</span>
                 </button>
-              );
-            })}
+                {showArchived && archived.map(projectRow)}
+              </>
+            )}
           </>
         )}
       </nav>
