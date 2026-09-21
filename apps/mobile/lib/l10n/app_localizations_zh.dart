@@ -495,10 +495,16 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatInputAddToChat => '添加到聊天';
 
   @override
+  String get chatInputAgentStopped => 'Agent 已停止。点击右上角菜单，选择「继续会话」。';
+
+  @override
   String get chatInputBrowseFiles => '浏览文件';
 
   @override
   String get chatInputCliOutdated => 'Vicoa CLI 可能已过期。请升级后访问文件和更改。';
+
+  @override
+  String get chatInputMachineOffline => '你的电脑已离线。重新上线后才能发送消息。';
 
   @override
   String get chatInputModelConfig => '设置';
@@ -513,7 +519,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatInputSessionConfig => '设置';
 
   @override
-  String get chatInputSessionEnded => '任务已结束，聊天已关闭';
+  String get chatInputSessionEnded => '任务已结束。点击右上角菜单，选择「继续会话」。';
 
   @override
   String get chatInputSessionReadOnly => '任务已关闭，配置为只读。';

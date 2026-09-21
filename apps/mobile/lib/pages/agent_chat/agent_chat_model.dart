@@ -2412,13 +2412,13 @@ String? latestWebPreviewUrl;
   String? get liveState => instanceData?['live_state']?.toString();
 
   /// Why the composer is refusing input, or null when it isn't.
-  String? get liveStateHint {
+  String? liveStateHint(AppLocalizations l10n) {
     if (functions.isSessionClosed(
         instanceData?['status']?.toString().toUpperCase() ?? '')) {
       return null;
     }
     if (_withinResumeGrace) return null;
-    return actions.liveStateHint(liveState);
+    return actions.liveStateHint(l10n, liveState);
   }
 
   void _refreshLatestWebPreviewUrl() {

@@ -10,6 +10,7 @@ import 'ws_client.dart' show RpcException;
 // SessionConfig.toSpawnMetadata rebuilds the daemon metadata from the stored
 // config so a resume keeps its model / effort / permission mode.
 import '/backend/agent_catalog.dart';
+import '/l10n/app_localizations.dart';
 
 /// Relaunch a stopped session on the machine it came from.
 ///
@@ -210,12 +211,12 @@ bool liveStateBlocksSending(String? liveState) =>
 /// Why the session can't be reached, phrased as an instruction rather than a
 /// promise — sending is blocked in these states, so "we'll deliver it later"
 /// would be a lie. Null when there is nothing worth saying.
-String? liveStateHint(String? liveState) {
+String? liveStateHint(AppLocalizations l10n, String? liveState) {
   switch (liveState) {
     case kLiveStateAgentStopped:
-      return "This session's agent isn't running. Resume it to send messages.";
+      return l10n.chatInputAgentStopped;
     case kLiveStateMachineOffline:
-      return 'Your computer is offline. Bring it back online to send messages.';
+      return l10n.chatInputMachineOffline;
     default:
       return null;
   }

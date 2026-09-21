@@ -510,11 +510,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatInputAddToChat => 'Add to chat';
 
   @override
+  String get chatInputAgentStopped =>
+      'Agent stopped. Tap the menu in the top right and choose Resume.';
+
+  @override
   String get chatInputBrowseFiles => 'Browse files';
 
   @override
   String get chatInputCliOutdated =>
       'Vicoa CLI could be outdated. Upgrade it to access files and changes.';
+
+  @override
+  String get chatInputMachineOffline =>
+      'Your computer is offline. Bring it back online to send messages.';
 
   @override
   String get chatInputModelConfig => 'Model Config';
@@ -530,7 +538,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatInputSessionConfig => 'Session Config';
 
   @override
-  String get chatInputSessionEnded => 'Session archived. Chat is closed here';
+  String get chatInputSessionEnded =>
+      'Session archived. Tap the menu in the top right and choose Resume.';
 
   @override
   String get chatInputSessionReadOnly =>

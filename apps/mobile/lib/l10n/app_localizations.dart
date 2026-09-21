@@ -1004,6 +1004,12 @@ abstract class AppLocalizations {
   /// **'Add to chat'**
   String get chatInputAddToChat;
 
+  /// No description provided for @chatInputAgentStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent stopped. Tap the menu in the top right and choose Resume.'**
+  String get chatInputAgentStopped;
+
   /// No description provided for @chatInputBrowseFiles.
   ///
   /// In en, this message translates to:
@@ -1015,6 +1021,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Vicoa CLI could be outdated. Upgrade it to access files and changes.'**
   String get chatInputCliOutdated;
+
+  /// No description provided for @chatInputMachineOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Your computer is offline. Bring it back online to send messages.'**
+  String get chatInputMachineOffline;
 
   /// No description provided for @chatInputModelConfig.
   ///
@@ -1043,7 +1055,7 @@ abstract class AppLocalizations {
   /// No description provided for @chatInputSessionEnded.
   ///
   /// In en, this message translates to:
-  /// **'Session archived. Chat is closed here'**
+  /// **'Session archived. Tap the menu in the top right and choose Resume.'**
   String get chatInputSessionEnded;
 
   /// No description provided for @chatInputSessionReadOnly.

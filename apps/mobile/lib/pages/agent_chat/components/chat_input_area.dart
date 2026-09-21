@@ -161,7 +161,7 @@ class ChatInputArea extends StatelessWidget {
                   // be wrong for a session that can simply be resumed.
                   hintText: canSend
                       ? AppLocalizations.of(context).chatInputPlaceholder
-                      : (model.liveStateHint ??
+                      : (model.liveStateHint(AppLocalizations.of(context)) ??
                           AppLocalizations.of(context).chatInputSessionEnded),
                   hintStyle: FlutterFlowTheme.of(context).bodyMedium.override(
                         color: FlutterFlowTheme.of(context).secondaryText,
