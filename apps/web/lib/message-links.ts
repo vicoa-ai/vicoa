@@ -241,7 +241,21 @@ export function parseMessageLink(
   // `file:///C:/Users/…` → `/C:/Users/…` → `C:/Users/…`
   if (fromFileUrl && /^\/[a-z]:[\\/]/i.test(rawPath)) rawPath = rawPath.slice(1);
   if (rawPath === '') return { kind: 'inert' };
+  return classifyWorkspacePath(rawPath, { cwd, homeDir }, line);
+}
 
+/**
+ * Classify a bare path — one an agent's tool row reports rather than a link it
+ * wrote: absolute, `~/`-prefixed, or relative to the session's cwd. The same
+ * resolution a markdown link gets after its URL handling and percent-decoding,
+ * so a tool row's file name and a link to that file open the same thing.
+ */
+export function classifyWorkspacePath(
+  rawPath: string,
+  { cwd, homeDir }: WorkspaceContext,
+  line?: number,
+): MessageLink {
+  if (rawPath === '') return { kind: 'inert' };
   // Without a working directory there is no panel to open the file in.
   if (!cwd) return { kind: 'inert' };
   // Both sides go through the same `~` expansion, so a tilde-stored project and

@@ -5,7 +5,7 @@ import { Bot, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isTextSelectionClick } from '@/lib/text-selection';
 import type { MessageResponse } from '@/lib/backend-api';
-import { ToolRunSummary, ToolUseLine, parseToolUse, type ToolUseAgentType } from '@/components/dashboard/tool-use-display';
+import { HeaderGlyph, HeaderRow, ToolRunSummary, ToolUseLine, parseToolUse, type ToolUseAgentType } from '@/components/dashboard/tool-use-display';
 import { parseAskUserQuestionPayload } from '@/components/dashboard/ask-user-question-panel';
 import { parseThinkingPayload } from '@/components/dashboard/thinking-card';
 import { subagentGroupStatus } from '@/components/dashboard/subagent-grouping';
@@ -71,11 +71,8 @@ export function SubagentGroup({
   // Only the tool uses feed the header summary — prose (the report), thinking
   // cards and question panels aren't actions, and counting them would turn
   // "2 tool uses" into "5".
-  const summaryItems = useMemo(
-    () =>
-      messages
-        .filter((message) => isFusableToolUse(message, agentType))
-        .map((message) => ({ id: message.id, content: message.content })),
+  const summaryContents = useMemo(
+    () => messages.filter((message) => isFusableToolUse(message, agentType)).map((message) => message.content),
     [messages, agentType],
   );
 
@@ -91,35 +88,43 @@ export function SubagentGroup({
           if (!isTextSelectionClick(e)) onToggle();
         }}
         aria-expanded={expanded}
-        className="flex w-full min-w-0 items-center gap-1.5 rounded -mx-0.5 px-0.5 py-0.5 text-left cursor-pointer hover:bg-muted/40 select-text"
+        className="flex w-full min-w-0 items-start gap-1.5 rounded -mx-0.5 px-0.5 py-0.5 text-left cursor-pointer hover:bg-muted/40 select-text"
       >
-        <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden="true" />
-        <span className="min-w-0 shrink-0 text-muted-foreground">{headerLabel}</span>
-        {description && (
-          <span className="min-w-0 truncate text-muted-foreground" title={description}>
-            {description}
-          </span>
-        )}
-        {summaryItems.length > 0 && (
-          <>
-            <span className="shrink-0 text-muted-foreground/40" aria-hidden="true">
-              ·
+        <HeaderGlyph>
+          <Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" aria-hidden="true" />
+        </HeaderGlyph>
+        <HeaderRow>
+          <span className="min-w-0 shrink-0 text-muted-foreground">{headerLabel}</span>
+          {/* A description longer than the row takes a line of its own,
+              truncated; the run summary and its chips flow on from there. */}
+          {description && (
+            <span className="min-w-0 truncate text-muted-foreground" title={description}>
+              {description}
             </span>
-            <ToolRunSummary
-              items={summaryItems}
-              agentType={agentType}
-              projectPath={projectPath}
-              showFileChips={!expanded}
-            />
-          </>
-        )}
-        {failure && <span className="shrink-0 text-red-400">{failure}</span>}
-        <ChevronRight
-          className={cn(
-            'h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform',
-            expanded && 'rotate-90',
           )}
-        />
+          {summaryContents.length > 0 && (
+            <>
+              <span className="shrink-0 text-muted-foreground/40" aria-hidden="true">
+                ·
+              </span>
+              <ToolRunSummary
+                contents={summaryContents}
+                agentType={agentType}
+                projectPath={projectPath}
+                showFileChips={!expanded}
+              />
+            </>
+          )}
+          {failure && <span className="shrink-0 text-red-400">{failure}</span>}
+        </HeaderRow>
+        <HeaderGlyph>
+          <ChevronRight
+            className={cn(
+              'h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform',
+              expanded && 'rotate-90',
+            )}
+          />
+        </HeaderGlyph>
       </button>
       {expanded && (
         <div className="ml-1.5 mt-1.5 space-y-1 border-l border-border/40 pl-2.5">

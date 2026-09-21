@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import {
   ChevronRight,
   Terminal,
@@ -17,19 +17,20 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { isTextSelectionClick } from '@/lib/text-selection';
+import { classifyWorkspacePath } from '@/lib/message-links';
 import { MessageMarkdown } from '@/components/ui/message-markdown';
 import { HighlightedText, useFindHighlight } from '@/components/dashboard/chat-find-context';
+import { useFileLinks } from '@/components/dashboard/file-link-context';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { MessageResponse } from '@/lib/backend-api';
 import {
   describeToolRun,
-  editedFileFromContent,
+  editedFilesInRun,
   isFileEditToolName,
   parseToolUse,
   relativizeFilePath,
   summarizeToolUse,
   toolNamesInRun,
-  type EditedFileSummary,
   type ToolUseAgentType,
 } from './tool-use-parsing';
 
@@ -68,6 +69,13 @@ function DiffStat({ stat }: { stat: string }) {
  * previews it in a tooltip (the code block, rendered like the inline diff);
  * otherwise the full path shows as a plain native title. Reused for the
  * single-line summary and for each edited file on a collapsed group.
+ *
+ * In a session with a machine to read from, the name is also a click that
+ * opens the file in the files panel — resolved exactly like a file link in
+ * prose (file-link-context.tsx), so a path outside the workspace, or a surface
+ * with no panel (task timeline, share viewer), leaves it plain. The click stops
+ * at the chip: the row it sits in is itself a button that toggles its detail,
+ * and opening a file must not also fold or unfold the row.
  */
 function FileChip({
   fileName,
@@ -77,6 +85,7 @@ function FileChip({
   agentType,
   projectPath,
   inline = false,
+  nameOnly = false,
 }: {
   fileName: string;
   fullPath: string | null;
@@ -86,35 +95,87 @@ function FileChip({
   agentType: ToolUseAgentType;
   /** Project root; when the file is under it, the chip shows the relative path. */
   projectPath?: string | null;
-  /** Render as a bordered pill with a start-ellipsized name (group row). */
+  /** Render as a bordered pill (group row). */
   inline?: boolean;
+  /** Show just the basename; the relative path moves to the hover title. A
+   *  collapsed group lists several files side by side and has no room for
+   *  their directories. */
+  nameOnly?: boolean;
 }) {
   const { query: findQuery } = useFindHighlight();
+  const fileLinks = useFileLinks();
   const hasPreview = diffContent.trim().length > 0;
-  const label = relativizeFilePath(fullPath, fileName, projectPath);
+  const relativeLabel = relativizeFilePath(fullPath, fileName, projectPath);
+  const label = nameOnly ? fileName : relativeLabel;
   const labelNode = <HighlightedText text={label} query={findQuery} />;
+
+  const openFile = fileLinks.openFile;
+  const target = openFile && fullPath ? classifyWorkspacePath(fullPath, fileLinks) : null;
+  const file = target?.kind === 'file' ? target.file : null;
+  const open = openFile && file ? () => openFile(file) : null;
+  const onClick = open
+    ? (e: MouseEvent<HTMLElement>) => {
+        e.stopPropagation();
+        if (!isTextSelectionClick(e)) open();
+      }
+    : undefined;
+  const onKeyDown = open
+    ? (e: KeyboardEvent<HTMLElement>) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        e.stopPropagation();
+        open();
+      }
+    : undefined;
+  // Hover text: a basename chip reveals its relative path; a plain name its
+  // absolute one; a chip with a diff preview leaves that to the tooltip.
+  const title = open
+    ? `Open ${relativeLabel}`
+    : nameOnly
+      ? relativeLabel
+      : hasPreview
+        ? undefined
+        : (fullPath ?? undefined);
+  // The chip's row is a <button>, which can't nest another; the name is a
+  // span that behaves as one.
+  const nameProps = open ? { role: 'button', tabIndex: 0, onClick, onKeyDown, title } : { title };
+  const nameClass = cn(
+    'min-w-0 text-muted-foreground',
+    open && 'cursor-pointer underline-offset-2 decoration-dotted hover:text-foreground hover:underline',
+  );
+
   const inner = inline ? (
-    // Bordered pill; the border separates files so no "·" is needed. The name
-    // uses a CSS start-ellipsis (rtl base direction + native text-overflow):
-    // it shows in full whenever it fits and only clips the head (keeping the
-    // basename) when actually squeezed — unlike a measured/JS ellipsis, which
-    // mis-sized inside this shrink-to-fit pill and clipped even with room.
-    <span className="inline-flex min-w-0 items-center gap-1 rounded border border-border px-1.5 py-0.5">
-      <span
-        className="min-w-0 truncate text-muted-foreground"
-        style={{ direction: 'rtl' }}
-        title={label}
-      >
-        <span dir="ltr">{labelNode}</span>
-      </span>
+    // Bordered pill; the border separates files so no "·" is needed. No
+    // vertical padding: the line box has room already, and a pill one text
+    // line tall keeps a row of chips as tall as a row of text, so the header's
+    // icon and chevron (pinned to the first line) sit centred on it.
+    <span
+      className={cn(
+        'inline-flex min-w-0 items-center gap-1 rounded border border-border px-1.5',
+        // A basename is never clipped or wrapped: a pill that doesn't fit its
+        // row moves whole to the next one (the group row wraps its chips).
+        nameOnly && 'shrink-0 whitespace-nowrap',
+      )}
+    >
+      {nameOnly ? (
+        <span className={nameClass} {...nameProps}>
+          {labelNode}
+        </span>
+      ) : (
+        // A relative path uses a CSS start-ellipsis (rtl base direction +
+        // native text-overflow): it shows in full whenever it fits and only
+        // clips the head (keeping the basename) when actually squeezed —
+        // unlike a measured/JS ellipsis, which mis-sized inside this
+        // shrink-to-fit pill and clipped even with room.
+        <span className={cn(nameClass, 'truncate')} style={{ direction: 'rtl' }} {...nameProps}>
+          <span dir="ltr">{labelNode}</span>
+        </span>
+      )}
       {diffStat && <DiffStat stat={diffStat} />}
     </span>
   ) : (
     <span className="flex min-w-0 items-center gap-1.5">
-      <span
-        className="min-w-0 truncate text-muted-foreground"
-        title={hasPreview ? undefined : (fullPath ?? undefined)}
-      >
+      <span className={cn(nameClass, 'truncate')} {...nameProps}>
         {labelNode}
       </span>
       {diffStat && <DiffStat stat={diffStat} />}
@@ -138,7 +199,7 @@ function FileChip({
               className="border-b border-border px-2.5 py-1.5 text-xs text-muted-foreground break-all"
               title={fullPath}
             >
-              {label}
+              {relativeLabel}
             </div>
           )}
           {/* Strip the code block's card chrome (border/bg/padding) so the diff
@@ -219,18 +280,32 @@ function ToolIcon({ name, className }: { name: string; className?: string }) {
   return <Icon className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground/70', className)} aria-hidden="true" />;
 }
 
+/**
+ * The text of a group header (label, description, file chips…), laid out as a
+ * wrapping flex line between the header's icon and chevron. It takes only the
+ * width its content needs — the chevron follows a short header directly — and
+ * wraps once the row runs out, each item moving whole to the next line.
+ */
+export function HeaderRow({ children }: { children: ReactNode }) {
+  return <span className="flex min-w-0 flex-wrap items-center gap-1.5">{children}</span>;
+}
+
+/**
+ * Pins a header's icon or chevron to its first line. A collapsed group's chips
+ * may wrap the header onto several rows; the glyphs belong beside the label on
+ * the first, not floating at the block's middle. `1lh` is the row's own line
+ * height, so a one-line header renders exactly as before.
+ */
+export function HeaderGlyph({ children }: { children: ReactNode }) {
+  return <span className="flex h-[1lh] shrink-0 items-center">{children}</span>;
+}
+
 /** Description long enough that the collapsed line is almost surely truncated. */
 const LONG_DESCRIPTION_CHARS = 80;
 
-/** Cap on edited-file chips shown inline on a collapsed group before "+N more". */
-const MAX_INLINE_FILE_CHIPS = 4;
-
-/** One tool-use message, reduced to what a run summary needs. */
-export interface ToolRunItem {
-  /** Stable identity for the chip list across virtualization (a message id). */
-  id: string;
-  content: string;
-}
+/** Cap on edited-file chips shown on a collapsed group before "+N more" —
+ *  about two rows' worth, so the summary stays a summary. */
+const MAX_INLINE_FILE_CHIPS = 8;
 
 /**
  * What a collapsed run of tool uses says about itself: the aggregate action
@@ -243,22 +318,25 @@ export interface ToolRunItem {
  * this, a sub-agent that rewrote three files announced itself as one line of
  * text naming neither the work nor the files.
  *
- * Renders as a fragment (no wrapper) — the caller owns the row.
+ * Renders as a fragment (no wrapper): a plain label when there are no chips,
+ * otherwise the label and one item per file. The caller owns the row — a
+ * wrapping flex line (see [HeaderRow]) — so chips move whole onto further rows
+ * instead of squeezing into one, and a name is never clipped or split.
  */
 export function ToolRunSummary({
-  items,
+  contents,
   agentType,
   projectPath,
   showFileChips,
 }: {
-  items: ToolRunItem[];
+  /** The run's tool-use message contents, in chat order. */
+  contents: string[];
   agentType: ToolUseAgentType;
   projectPath?: string | null;
   /** Chips are for the collapsed state; expanded rows show their own diffs. */
   showFileChips: boolean;
 }) {
   const { query: findQuery } = useFindHighlight();
-  const contents = useMemo(() => items.map((item) => item.content), [items]);
 
   // "Run 2 commands, edit 2 files, read a file" — distinct tools, first-use order.
   const runLabel = useMemo(() => describeToolRun(contents, agentType), [contents, agentType]);
@@ -271,15 +349,9 @@ export function ToolRunSummary({
     [contents, agentType],
   );
 
-  // Files this run edited, in order. Keyed by message id for a stable list
-  // across virtualization.
-  const editedFiles = useMemo(
-    () =>
-      items
-        .map((item) => ({ id: item.id, edit: editedFileFromContent(item.content, agentType) }))
-        .filter((entry): entry is { id: string; edit: EditedFileSummary } => entry.edit !== null),
-    [items, agentType],
-  );
+  // One chip per distinct file, in first-edit order (repeated edits to a file
+  // fold into one — see editedFilesInRun).
+  const editedFiles = useMemo(() => editedFilesInRun(contents, agentType), [contents, agentType]);
 
   if (!showFileChips || editedFiles.length === 0) {
     if (!runLabel) return null;
@@ -296,28 +368,29 @@ export function ToolRunSummary({
   return (
     <>
       {nonEditLabel && <span className="shrink-0 text-muted-foreground">{nonEditLabel},</span>}
-      <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
-        {inlineFiles.map(({ id, edit }, index) => {
-          // Prefix the file with its tool name ("Edit"/"Write"/…), but only
-          // when it changes — a run of same-tool files shares one label:
-          // "Edit foo.ts bar.ts", "Edit foo.ts Write baz.ts".
-          const showToolLabel = index === 0 || edit.toolName !== inlineFiles[index - 1].edit.toolName;
-          return (
-            <span key={id} className="flex min-w-0 items-center gap-1.5">
-              {showToolLabel && <span className="shrink-0 text-muted-foreground">{edit.toolName}</span>}
-              <FileChip
-                inline
-                fileName={edit.fileName}
-                fullPath={edit.fullPath}
-                diffStat={edit.diffStat}
-                diffContent={edit.diffContent}
-                agentType={agentType}
-                projectPath={projectPath}
-              />
-            </span>
-          );
-        })}
-      </div>
+      {inlineFiles.map((edit, index) => {
+        // Prefix the file with its tool name ("Edit"/"Write"/…), but only
+        // when it changes — a run of same-tool files shares one label:
+        // "Edit foo.ts bar.ts", "Edit foo.ts Write baz.ts". The label rides in
+        // the same flex item as its first chip so a wrap can't strand it at
+        // the end of a row.
+        const showToolLabel = index === 0 || edit.toolName !== inlineFiles[index - 1].toolName;
+        return (
+          <span key={edit.fullPath ?? edit.fileName} className="flex shrink-0 items-center gap-1.5">
+            {showToolLabel && <span className="text-muted-foreground">{edit.toolName}</span>}
+            <FileChip
+              inline
+              nameOnly
+              fileName={edit.fileName}
+              fullPath={edit.fullPath}
+              diffStat={edit.diffStat}
+              diffContent={edit.diffContent}
+              agentType={agentType}
+              projectPath={projectPath}
+            />
+          </span>
+        );
+      })}
       {overflowCount > 0 && (
         <span className="shrink-0 text-muted-foreground/70">+{overflowCount} more</span>
       )}
@@ -491,15 +564,12 @@ export function ToolUseGroup({
   // the row is recycled offscreen by the virtual list, which is acceptable.
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
 
-  const summaryItems = useMemo(
-    () => messages.map((message) => ({ id: message.id, content: message.content })),
-    [messages],
-  );
+  const contents = useMemo(() => messages.map((message) => message.content), [messages]);
 
   // The single icon that stands in for the whole collapsed run.
   const groupIconName = useMemo(
-    () => representativeToolName(toolNamesInRun(messages.map((message) => message.content), agentType)),
-    [messages, agentType],
+    () => representativeToolName(toolNamesInRun(contents, agentType)),
+    [contents, agentType],
   );
 
   if (messages.length === 1) {
@@ -522,21 +592,27 @@ export function ToolUseGroup({
           if (!isTextSelectionClick(e)) onToggle();
         }}
         aria-expanded={expanded}
-        className="flex w-full min-w-0 items-center gap-1.5 rounded -mx-0.5 px-0.5 py-0.5 text-left cursor-pointer hover:bg-muted/40 select-text"
+        className="flex w-full min-w-0 items-start gap-1.5 rounded -mx-0.5 px-0.5 py-0.5 text-left cursor-pointer hover:bg-muted/40 select-text"
       >
-        <ToolIcon name={groupIconName} />
-        <ToolRunSummary
-          items={summaryItems}
-          agentType={agentType}
-          projectPath={projectPath}
-          showFileChips={!expanded}
-        />
-        <ChevronRight
-          className={cn(
-            'h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform',
-            expanded && 'rotate-90',
-          )}
-        />
+        <HeaderGlyph>
+          <ToolIcon name={groupIconName} />
+        </HeaderGlyph>
+        <HeaderRow>
+          <ToolRunSummary
+            contents={contents}
+            agentType={agentType}
+            projectPath={projectPath}
+            showFileChips={!expanded}
+          />
+        </HeaderRow>
+        <HeaderGlyph>
+          <ChevronRight
+            className={cn(
+              'h-3.5 w-3.5 shrink-0 text-muted-foreground/60 transition-transform',
+              expanded && 'rotate-90',
+            )}
+          />
+        </HeaderGlyph>
       </button>
       {expanded && (
         <div className="ml-1.5 mt-1.5 space-y-1 border-l border-border/40 pl-2.5">

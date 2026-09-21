@@ -89,6 +89,14 @@ export type { PanelTab } from './panel-storage';
  */
 export type PanelPendingAction = 'new-terminal';
 
+/** See `FilesGitPanelProps.openFileRequest`. */
+export interface OpenFileRequest {
+  path: string;
+  nonce: number;
+  line?: number;
+  instanceId: string;
+}
+
 interface FilesGitPanelProps {
   machineId: string | null;
   cwd: string | null;
@@ -113,8 +121,10 @@ interface FilesGitPanelProps {
    * in an agent message. The `nonce` bumps per request so repeat-opening the
    * same path still fires; reactive (unlike `pendingAction`) so it works whether
    * the panel was already open or is being opened by this same request. `line`
-   * scrolls a freshly-opened tab to that 1-based line. */
-  openFileRequest?: { path: string; nonce: number; line?: number } | null;
+   * scrolls a freshly-opened tab to that 1-based line. `instanceId` is the
+   * session the request was made in: the request outlives a session switch on
+   * the page, and must not reopen that session's file in the next one. */
+  openFileRequest?: OpenFileRequest | null;
   /** True while the session's agent is mid-turn. The working→idle edge is when
    * the tree and history most likely changed (the agent edited, committed…),
    * so the visible Files/Changes surface refreshes itself on that edge. */
@@ -1130,11 +1140,17 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
     files.openFile(path, { mode: 'diff', preview: !opts?.newTab });
   };
 
-  // Open the file requested by the ⌘P finder (or any parent). Nonce-guarded so
-  // it fires once per request — including on a fresh mount, when the same
-  // request that opened the panel is still the current prop. Mirrors
-  // `openFromTree` (clear the visible terminal, then open in edit mode).
-  const lastOpenFileNonce = useRef(0);
+  // Open the file requested by the ⌘P finder (or any parent) — including on a
+  // fresh mount, when the same request that opened the panel is still the
+  // current prop. Mirrors `openFromTree` (clear the visible terminal, then open
+  // in edit mode). Keyed on the request identity and the session only: the
+  // effect must re-run whenever React re-runs the mount effects (StrictMode's
+  // simulated remount), because `useFilesTab`'s reset effect wipes the tabs
+  // each time — a once-per-nonce ref guard here left the first click with an
+  // open panel and no file (the second click, with the panel already mounted,
+  // then worked). A request from another session is ignored, not replayed.
+  const splitActiveRef = useRef(splitActive);
+  splitActiveRef.current = splitActive;
   // The line to jump to once that file's surface is up, for a request that
   // carried one (a file link in the chat). Held here rather than on the tab
   // because it is a one-shot navigation, not remembered scroll position — the
@@ -1144,16 +1160,15 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
     { path: string; line: number; nonce: number } | null
   >(null);
   useEffect(() => {
-    if (!openFileRequest || openFileRequest.nonce === lastOpenFileNonce.current) return;
-    lastOpenFileNonce.current = openFileRequest.nonce;
-    if (!splitActive) setActiveTerminal(instanceId, null);
+    if (!openFileRequest || openFileRequest.instanceId !== instanceId) return;
+    if (!splitActiveRef.current) setActiveTerminal(instanceId, null);
     const { path, line, nonce } = openFileRequest;
     setRevealLine(line ? { path, line, nonce } : null);
     files.openFile(path, { preview: false, scrollLine: line });
-    // `files`/`setActiveTerminal` are stable enough; the nonce guard makes a
-    // spurious re-run a no-op, so key the effect on the request identity.
+    // `files`/`setActiveTerminal` are stable enough; key the effect on the
+    // request identity (and the session it must match) alone.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openFileRequest, instanceId, splitActive]);
+  }, [openFileRequest, instanceId]);
   const clearRevealLine = useCallback(() => setRevealLine(null), []);
   // Commit the staged set; the history pane below shows the new commit, so
   // refresh it on success (the hook already refreshes the working-tree status).

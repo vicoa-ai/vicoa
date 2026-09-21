@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import Markdown from 'react-markdown';
 import { describe, test, expect } from 'vitest';
 import {
+  classifyWorkspacePath,
   messageUrlTransform,
   parseMessageLink,
   type MessageLink,
@@ -276,5 +277,40 @@ describe('parseMessageLink — refusals', () => {
 
   test('without a working directory nothing is openable', () => {
     expect(resolve('src/foo.ts', { cwd: null, homeDir: null })).toEqual({ kind: 'inert' });
+  });
+});
+
+describe("classifyWorkspacePath — a tool row's path, not a link", () => {
+  test('resolves the shapes tool rows report the same way a link does', () => {
+    const file = (path: string): MessageLink => ({ kind: 'file', file: { path } });
+    expect(classifyWorkspacePath('src/foo.ts', POSIX)).toEqual(file('src/foo.ts'));
+    expect(classifyWorkspacePath('/Users/nick/proj/src/foo.ts', POSIX)).toEqual(file('src/foo.ts'));
+    expect(classifyWorkspacePath('~/proj/src/foo.ts', POSIX)).toEqual(file('src/foo.ts'));
+    expect(classifyWorkspacePath('C:\\Users\\Nick\\proj\\src\\foo.ts', WINDOWS)).toEqual(file('src/foo.ts'));
+    // A tilde-stored project against an absolute path (how sessions are stored).
+    expect(
+      classifyWorkspacePath('/Users/nick/proj/src/foo.ts', { cwd: '~/proj', homeDir: '/Users/nick' }),
+    ).toEqual(file('src/foo.ts'));
+  });
+
+  test('takes the path literally — no percent-decoding, no line splitting', () => {
+    // A tool row names the file as it is on disk; `%20` and `:42` are part of
+    // the name here, unlike in a rendered link.
+    expect(classifyWorkspacePath('src/my%20file.ts', POSIX)).toEqual({
+      kind: 'file',
+      file: { path: 'src/my%20file.ts' },
+    });
+    expect(classifyWorkspacePath('src/foo.ts:42', POSIX)).toEqual({
+      kind: 'file',
+      file: { path: 'src/foo.ts:42' },
+    });
+  });
+
+  test('refuses what a link would refuse', () => {
+    expect(classifyWorkspacePath('/etc/passwd', POSIX)).toEqual({ kind: 'outside', path: '/etc/passwd' });
+    expect(classifyWorkspacePath('../other/x.ts', POSIX)).toEqual({ kind: 'outside', path: '../other/x.ts' });
+    expect(classifyWorkspacePath('/Users/nick/proj', POSIX)).toEqual({ kind: 'inert' });
+    expect(classifyWorkspacePath('', POSIX)).toEqual({ kind: 'inert' });
+    expect(classifyWorkspacePath('src/foo.ts', { cwd: null, homeDir: null })).toEqual({ kind: 'inert' });
   });
 });

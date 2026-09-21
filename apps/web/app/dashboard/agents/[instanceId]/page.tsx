@@ -41,7 +41,7 @@ import {
 import { getChatItemSearchText } from '@/lib/chat-search';
 import { buildForkTranscript, saveForkContext } from '@/lib/fork-session';
 import { loadFullHistory } from '@/lib/fork-history';
-import { FilesGitPanel, FilesGitPanelToggle, OpenInSubMenu, usePanelState, type PanelPendingAction } from '@/components/files-git-panel';
+import { FilesGitPanel, FilesGitPanelToggle, OpenInSubMenu, usePanelState, type OpenFileRequest, type PanelPendingAction } from '@/components/files-git-panel';
 import { ChatInput, PermissionModeValue, OpencodeAgentModeValue, type ChatUploadedAttachment, type ChatInputHandle } from '@/components/chat-input';
 import { collectComposerDrop } from '@/lib/chat-drop';
 import { matchesShortcut, getShortcutCombo } from '@/lib/desktop-shortcuts';
@@ -252,9 +252,7 @@ function AgentInstanceContent() {
   // through `openFileRequest`, whose bumped nonce makes the panel open it even
   // when it's already mounted / already showing another file.
   const [fileSearchOpen, setFileSearchOpen] = useState(false);
-  const [openFileRequest, setOpenFileRequest] = useState<{ path: string; nonce: number; line?: number } | null>(
-    null,
-  );
+  const [openFileRequest, setOpenFileRequest] = useState<OpenFileRequest | null>(null);
   // Focus-mode chat peek (design A): temporarily reveal the chat beneath the
   // maximized file layer. `sticky` toggles from the header button; `hold` is the
   // spring-loaded key (peek while held). Either one reveals the chat.
@@ -1610,8 +1608,8 @@ function AgentInstanceContent() {
   const { setOpen: setPanelOpen } = panel;
   const handleOpenSearchedFile = useCallback((path: string, line?: number) => {
     setPanelOpen(true);
-    setOpenFileRequest((prev) => ({ path, line, nonce: (prev?.nonce ?? 0) + 1 }));
-  }, [setPanelOpen]);
+    setOpenFileRequest((prev) => ({ path, line, instanceId, nonce: (prev?.nonce ?? 0) + 1 }));
+  }, [setPanelOpen, instanceId]);
 
   // Same, for a file path an agent cited as a link in its message. Only offered
   // once the session has a machine to read the file from — otherwise the links

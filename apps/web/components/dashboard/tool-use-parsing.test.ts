@@ -3,6 +3,7 @@ import {
   computeDiffStatFromContent,
   describeToolRun,
   editedFileFromContent,
+  editedFilesInRun,
   isFileEditToolName,
   isToolUseContent,
   parseToolUse,
@@ -204,5 +205,49 @@ describe('editedFileFromContent', () => {
     expect(editedFileFromContent('Using tool: **Read** - `/p/a.ts`\n```\nx\n```', 'claude')).toBeNull();
     expect(editedFileFromContent('Using tool: **Bash** - `ls`', 'claude')).toBeNull();
     expect(editedFileFromContent('plain text', 'claude')).toBeNull();
+  });
+});
+
+describe('editedFilesInRun', () => {
+  const edit = (path: string, diff: string) => `Using tool: **Edit** - \`${path}\`\n\`\`\`diff\n${diff}\n\`\`\``;
+
+  it('lists each file once, in first-edit order, skipping non-edits', () => {
+    const files = editedFilesInRun(
+      [
+        edit('/p/a.ts', '+ 1'),
+        'Using tool: **Bash** - `pnpm test`',
+        edit('/p/b.ts', '+ 1'),
+        'Using tool: **Read** - `/p/a.ts`\n```\nx\n```',
+        edit('/p/a.ts', '- 1'),
+        edit('/p/a.ts', '+ 1\n+ 2'),
+      ],
+      'claude',
+    );
+    expect(files.map((f) => f.fullPath)).toEqual(['/p/a.ts', '/p/b.ts']);
+  });
+
+  it('folds repeated edits: stats add up and the diffs concatenate', () => {
+    const [a] = editedFilesInRun([edit('/p/a.ts', '- old\n+ new'), edit('/p/a.ts', '+ 1\n+ 2')], 'claude');
+    expect(a.diffStat).toBe('+3 -1');
+    expect(a.diffContent).toBe('```diff\n- old\n+ new\n```\n\n```diff\n+ 1\n+ 2\n```');
+  });
+
+  it('keeps the first tool label and sums only the known stats', () => {
+    // A Write dumps the file body (no +/- lines, so no stat); the fix-up Edit
+    // that follows has one. The chip stays "Write" and shows the edit's stat.
+    const files = editedFilesInRun(
+      ['Using tool: **Write** - `/p/new.ts`\n```ts\nexport {};\n```', edit('/p/new.ts', '+ 1')],
+      'claude',
+    );
+    expect(files).toHaveLength(1);
+    expect(files[0].toolName).toBe('Write');
+    expect(files[0].diffStat).toBe('+1 -0');
+  });
+
+  it('handles codex reported stats across repeated patches', () => {
+    const patch = (stat: string) => `✏️ Applying patch to 1 file (${stat})\n└ src/a.ts\n\`\`\`\npatch\n\`\`\``;
+    const [a] = editedFilesInRun([patch('+12 -3'), patch('+1 -1')], 'codex');
+    expect(a.fileName).toBe('a.ts');
+    expect(a.diffStat).toBe('+13 -4');
   });
 });

@@ -355,6 +355,47 @@ export function editedFileFromContent(
   };
 }
 
+/** `+N -M` + `+P -Q` → `+(N+P) -(M+Q)`; a side that is unknown is skipped. */
+function addDiffStats(a: string | null, b: string | null): string | null {
+  const parse = (stat: string | null) => {
+    const m = stat ? /^\+(\d+)\s+-(\d+)$/.exec(stat) : null;
+    return m ? { plus: Number(m[1]), minus: Number(m[2]) } : null;
+  };
+  const x = parse(a);
+  const y = parse(b);
+  if (!x) return y ? b : null;
+  if (!y) return a;
+  return `+${x.plus + y.plus} -${x.minus + y.minus}`;
+}
+
+/**
+ * The files a run edited, one entry per file in first-edit order. An agent
+ * usually touches the same file several times in a run (an Edit per hunk, a
+ * Write then a fix-up), and listing every message as its own chip repeated the
+ * file over and over. Repeats fold into the first entry: its tool label stays
+ * (so a chip doesn't flip between "Edit" and "Write" as a live run streams),
+ * the `+N -M` stats add up across the known ones, and the diff bodies are
+ * concatenated so the hover preview shows the whole run's changes to it.
+ */
+export function editedFilesInRun(contents: string[], agentType: ToolUseAgentType): EditedFileSummary[] {
+  const byPath = new Map<string, EditedFileSummary>();
+  for (const content of contents) {
+    const edit = editedFileFromContent(content, agentType);
+    if (!edit) continue;
+    const key = edit.fullPath ?? edit.fileName;
+    const seen = byPath.get(key);
+    if (!seen) {
+      byPath.set(key, edit);
+      continue;
+    }
+    seen.diffStat = addDiffStats(seen.diffStat, edit.diffStat);
+    if (edit.diffContent.trim()) {
+      seen.diffContent = seen.diffContent.trim() ? `${seen.diffContent}\n\n${edit.diffContent}` : edit.diffContent;
+    }
+  }
+  return [...byPath.values()];
+}
+
 export function summarizeToolUse(parsed: ParsedToolUse): ToolUseSummary {
   const firstLine = parsed.isMultilineDescription
     ? parsed.toolDescription.replace(/^`/, '').trimStart().split('\n')[0]
