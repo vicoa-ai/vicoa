@@ -731,6 +731,20 @@ def test_list_worktrees_reports_the_main_checkout_from_any_path(
         assert result["main_display_path"]
 
 
+def test_list_worktrees_reports_the_main_checkouts_branch(
+    home: Path, committed_repo: Path
+):
+    """`main_branch` names what the main checkout has checked out (empty when
+    detached) so a caller addressing checkouts by branch can tell "back to
+    main" from a linked worktree."""
+    from vicoa.rpc.worktree_ops import list_worktrees
+
+    assert list_worktrees(str(committed_repo))["main_branch"] == "main"
+
+    _git(committed_repo, "checkout", "-q", "--detach")
+    assert list_worktrees(str(committed_repo))["main_branch"] == ""
+
+
 def test_create_worktree_from_a_subfolder_forks_the_whole_repo(
     home: Path, committed_repo: Path
 ):

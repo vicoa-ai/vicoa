@@ -229,12 +229,15 @@ def _parse_worktree_porcelain(blob: bytes) -> list[dict[str, Any]]:
 def list_worktrees(cwd: str) -> dict[str, Any]:
     """List a repo's linked worktrees, plus where its main checkout is.
 
-    Returns `{"main_path", "main_display_path", "worktrees": [{path,
-    display_path, branch, head, managed, prunable}]}` or `{"error":
+    Returns `{"main_path", "main_display_path", "main_branch", "worktrees":
+    [{path, display_path, branch, head, managed, prunable}]}` or `{"error":
     "not_a_repo"}`. `cwd` may be any directory of the repo — a subfolder or a
     linked worktree — which is what makes `main_path` useful: it lets a client
     resolve whatever path it holds to the repo's root (the project's folder)
     and tell "this cwd *is* a worktree" from "this cwd is the checkout".
+    `main_branch` is what the main checkout has checked out (`""` when
+    detached), so a caller addressing checkouts by branch name — `vicoa
+    session update --worktree` — can tell "back to main" from a worktree.
     `managed` marks worktrees the daemon created (under `~/vicoa/workspaces/`)
     — only those are removable by the app; the user's own hand-made worktrees
     are flagged unmanaged.
@@ -279,6 +282,7 @@ def list_worktrees(cwd: str) -> dict[str, Any]:
     return {
         "main_path": main_path,
         "main_display_path": get_project_path(main_path),
+        "main_branch": records[0].get("branch", ""),
         "worktrees": worktrees,
     }
 

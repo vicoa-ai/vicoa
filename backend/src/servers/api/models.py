@@ -405,6 +405,32 @@ class UpdateAgentInstanceRequest(BaseModel):
             "task to in_progress."
         ),
     )
+    project: str | None = Field(
+        default=None,
+        description=(
+            "Move the session to another checkout of its repo — the folder it "
+            "is filed under in the sidebar (`vicoa session update --worktree`). "
+            "Home-collapsed path on the session's machine, like the value "
+            "registered at launch. The running agent's real cwd does not "
+            "change; a later resume relaunches here. Absent = leave the folder "
+            "alone; null/empty is rejected."
+        ),
+    )
+    worktree_name: str | None = Field(
+        default=None,
+        description=(
+            "Only alongside `project`: the linked worktree `project` sits in, "
+            "or an explicit null when it is the repo's main checkout. Absent = "
+            "leave the stored name alone."
+        ),
+    )
+    repo_root: str | None = Field(
+        default=None,
+        description=(
+            "Only alongside `project`: the repo's main-checkout root, as "
+            "registered at launch. Absent = leave the stored root alone."
+        ),
+    )
 
 
 class EndSessionRequest(BaseEndSessionRequest):

@@ -28,6 +28,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from vicoa.commands._api import request, resolve_api_key
+from vicoa.utils import get_project_path
 
 # One backend page is enough to resolve a short id and, at 500, to pull most
 # transcripts in a single round-trip. Mirrors the server's ``le=500`` cap.
@@ -430,13 +431,133 @@ def _cmd_get(args, api_key: str) -> int:
     return 0
 
 
+def _checkout_label(record: dict) -> str:
+    """The name a checkout goes by — its branch, or the directory name when
+    detached — matching ``get_worktree_name`` so ``--worktree`` takes exactly
+    the label the sidebar shows for that worktree."""
+    return record.get("branch") or os.path.basename(os.path.normpath(record["path"]))
+
+
+def _worktree_move(detail: dict, branch: str, listing: dict) -> dict[str, Any]:
+    """PATCH fields that file ``detail``'s session under the checkout of its
+    repo with ``branch`` checked out, given ``list_worktrees(...)`` output.
+
+    The main checkout's own branch means "back under the project" (null
+    ``worktree_name``); any other match is a linked worktree. A session
+    started in a subfolder of the repo (``repo/apps/web``) is filed under the
+    same subfolder of the target checkout — the daemon does the same when it
+    forks a worktree for a subfolder session. Pure so it can be tested
+    without git; raises ``ValueError`` with a message for the user.
+    """
+    main_path = listing["main_path"]
+    worktrees = listing.get("worktrees", [])
+
+    matches: list[tuple[str, Optional[str]]] = []
+    if listing.get("main_branch") == branch:
+        matches.append((main_path, None))
+    for rec in worktrees:
+        label = _checkout_label(rec)
+        if label != branch:
+            continue
+        if rec.get("prunable"):
+            raise ValueError(
+                f"Worktree '{branch}' is registered at {rec['display_path']} but "
+                "the directory is gone (git reports it prunable)."
+            )
+        matches.append((rec["path"], label))
+    if not matches:
+        names = sorted(_checkout_label(rec) for rec in worktrees)
+        listed = ", ".join(names) if names else "(none)"
+        main_branch = listing.get("main_branch") or "(detached)"
+        raise ValueError(
+            f"No checkout of {listing.get('main_display_path', main_path)} has "
+            f"'{branch}' checked out. Worktrees: {listed}; main checkout: "
+            f"{main_branch}."
+        )
+    if len(matches) > 1:
+        raise ValueError(
+            f"'{branch}' is checked out in {len(matches)} places — "
+            + ", ".join(get_project_path(path) for path, _ in matches)
+            + ". Give the checkouts distinct branches first."
+        )
+    target_root, worktree_name = matches[0]
+
+    # Carry the session's subfolder across: find which checkout its cwd is
+    # in and re-root the relative part onto the target. A cwd outside every
+    # checkout (its worktree was removed) lands on the target's root.
+    cwd = os.path.realpath(os.path.expanduser(str(detail.get("project") or "")))
+    rel = "."
+    roots = [main_path] + [rec["path"] for rec in worktrees]
+    for root in sorted(roots, key=len, reverse=True):
+        real_root = os.path.realpath(root)
+        if cwd == real_root or cwd.startswith(real_root + os.sep):
+            rel = os.path.relpath(cwd, real_root)
+            break
+    new_cwd = os.path.normpath(
+        os.path.join(target_root, rel) if rel != "." else target_root
+    )
+    if not os.path.isdir(new_cwd):
+        raise ValueError(
+            f"{get_project_path(new_cwd)} does not exist — the session's "
+            f"subfolder '{rel}' is missing from that checkout."
+        )
+    return {
+        "project": get_project_path(new_cwd),
+        "worktree_name": worktree_name,
+        "repo_root": get_project_path(main_path),
+    }
+
+
+def _resolve_worktree_move(
+    args, api_key: str, instance_id: str, branch: str
+) -> dict[str, Any]:
+    """Look the session up, list its repo's checkouts with local git, and
+    turn ``--worktree BRANCH`` into PATCH fields (see ``_worktree_move``).
+
+    Git has to run where the session's folders are, so this refuses a
+    session the backend files under another machine. The repo is found from
+    the ``repo_root`` registration stored on the session (the main checkout,
+    even for a worktree session) or, for older rows, its cwd.
+    """
+    from vicoa.rpc.worktree_ops import list_worktrees
+
+    detail = request(args, api_key, "GET", f"/api/v1/agent-instances/{instance_id}")
+    local_machine = _local_machine_id(args)
+    remote_machine = detail.get("machine_id")
+    if local_machine and remote_machine and local_machine != remote_machine:
+        raise ValueError(
+            "This session lives on another machine; run `vicoa session update "
+            "--worktree` there (git has to resolve the worktree locally)."
+        )
+
+    metadata = detail.get("instance_metadata") or {}
+    project = str(detail.get("project") or "")
+    repo_hint = str(metadata.get("repo_root") or project)
+    if not repo_hint:
+        raise ValueError("This session has no folder recorded; nothing to move.")
+    repo_dir = os.path.expanduser(repo_hint)
+    if not os.path.isdir(repo_dir):
+        raise ValueError(
+            f"{repo_hint} does not exist on this machine — is this the session's "
+            "machine?"
+        )
+    listing = list_worktrees(repo_dir)
+    if "error" in listing:
+        raise ValueError(f"{repo_hint} is not a git checkout; nothing to move.")
+    return _worktree_move(detail, branch, listing)
+
+
 def _cmd_update(args, api_key: str) -> int:
-    """Rename a session and/or (un)link its task via the instance PATCH.
+    """Rename a session, (un)link its task, or move it to a worktree via the
+    instance PATCH.
 
     Mirrors the web: ``--title`` renames (``name``) and ``--task`` /
     ``--unlink-task`` stamp or clear ``task_id`` — which drives the linked
     task's status from the session's status server-side, so linking a
-    running session flips its task to in_progress.
+    running session flips its task to in_progress. ``--worktree BRANCH``
+    re-files the session under the checkout with that branch (resolved with
+    local git — see ``_resolve_worktree_move``); the agent itself keeps
+    running where it is, only the folder the session is filed under changes.
     """
     if getattr(args, "task", None) and getattr(args, "unlink_task", False):
         print("Pass either --task or --unlink-task, not both.", file=sys.stderr)
@@ -449,15 +570,22 @@ def _cmd_update(args, api_key: str) -> int:
         body["task_id"] = args.task
     elif getattr(args, "unlink_task", False):
         body["task_id"] = None
+    worktree = getattr(args, "worktree", None)
 
-    if not body:
+    if not body and not worktree:
         print(
-            "Nothing to update — pass --title, --task, or --unlink-task.",
+            "Nothing to update — pass --title, --task, --unlink-task, or --worktree.",
             file=sys.stderr,
         )
         return 2
 
     instance_id = _resolve_instance_id(args, api_key, args.session_id)
+    if worktree:
+        try:
+            body.update(_resolve_worktree_move(args, api_key, instance_id, worktree))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
     updated = request(
         args,
         api_key,
@@ -465,6 +593,18 @@ def _cmd_update(args, api_key: str) -> int:
         f"/api/v1/agent-instances/{instance_id}",
         json=body,
     )
+    if "project" in body and (
+        not isinstance(updated, dict) or updated.get("project") != body["project"]
+    ):
+        # A server that predates the folder fields ignores them (unknown
+        # request keys are dropped, not rejected) and answers 200 with the
+        # row unchanged — the echoed `project` is the only tell.
+        print(
+            "The server did not apply the move — it predates `--worktree`. "
+            "Nothing changed.",
+            file=sys.stderr,
+        )
+        return 1
     if getattr(args, "json", False):
         print(_json.dumps(updated, indent=2))
         return 0
@@ -477,6 +617,12 @@ def _cmd_update(args, api_key: str) -> int:
             f"linked to task {_short(body['task_id'])}"
             if body["task_id"]
             else "task unlinked"
+        )
+    if "project" in body:
+        changes.append(
+            f"moved to worktree {body['worktree_name']} ({body['project']})"
+            if body.get("worktree_name")
+            else f"moved to the main checkout ({body['project']})"
         )
     print(f"Updated session {_short(instance_id)} — {', '.join(changes)}.")
     return 0

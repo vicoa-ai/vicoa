@@ -262,12 +262,14 @@ By default `session get` prints a clean chat log: tool-use header lines appear, 
 
 ### vicoa session update
 
-Rename a session or link it to a task — the same actions available in the web dashboard.
+Rename a session, link it to a task, or move it to a worktree.
 
 ```bash
 vicoa session update 3f9c1a2b --title "Refactor auth"
 vicoa session update 3f9c1a2b --task 5f2c9d1e-...-full-uuid
 vicoa session update 3f9c1a2b --unlink-task
+vicoa session update 3f9c1a2b --worktree feat/auth
+vicoa session update 3f9c1a2b --worktree main
 ```
 
 | Flag | Meaning |
@@ -275,8 +277,11 @@ vicoa session update 3f9c1a2b --unlink-task
 | `--title <text>` | Rename the session |
 | `--task <TASK_UUID>` | Link to this task |
 | `--unlink-task` | Clear the task link (mutually exclusive with `--task`) |
+| `--worktree <branch>` | File the session under the checkout of its repo that has `<branch>` checked out — a linked worktree, or the main checkout's branch to move it back |
 
 Linking drives the task's status from the session's status: a running linked session flips its task to `in_progress`.
+
+`--worktree` is for a session whose agent moved into a worktree on its own (the sidebar keeps it under the folder it was started in): the session's sidebar group and the folder its next resume launches in follow the new checkout, while the running agent is left where it is. A session started in a subfolder of the repo lands in the same subfolder of the target. The worktree is resolved with `git worktree list` on this machine, so run it where the session lives; the name is the checked-out branch (the label the sidebar shows), or the directory name for a detached checkout.
 
 ### vicoa session message
 

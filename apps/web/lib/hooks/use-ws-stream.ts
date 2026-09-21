@@ -17,6 +17,7 @@ import {
   type AgentInstanceResponse,
   type AgentStatus,
   type MessageResponse,
+  type SessionInstanceMetadata,
 } from '@/lib/backend-api';
 import { getMessageStore } from '@/lib/message-store';
 import {
@@ -48,6 +49,8 @@ function bodyToMessage(body: NewMessageBody): MessageResponse {
 function bodyToInstancePatch(
   body: InstanceBody,
 ): Partial<AgentInstanceResponse> & { id: string } {
+  const metadata = (body.instance_metadata ?? null) as SessionInstanceMetadata | null;
+  const worktreeName = body.instance_metadata?.worktree_name;
   return {
     id: body.id,
     status: body.status as keyof AgentStatus,
@@ -56,6 +59,14 @@ function bodyToInstancePatch(
     home_dir: body.home_dir,
     ...(body.started_at ? { started_at: body.started_at } : {}),
     ended_at: body.ended_at,
+    // The sidebar files a session under main vs a worktree by `worktree_name`
+    // and keys the worktree group on `project`; both move together when a
+    // session is re-filed (`vicoa session update --worktree`). Deriving the
+    // name here the way REST does keeps the two in step on the live frame —
+    // patching `project` alone left the row under its old heading until the
+    // next list load. `instance_metadata` rides along for `repo_root`.
+    instance_metadata: metadata,
+    worktree_name: typeof worktreeName === 'string' && worktreeName ? worktreeName : null,
   };
 }
 

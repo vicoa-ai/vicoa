@@ -1402,7 +1402,9 @@ def update_agent_instance_endpoint(
     user_id: Annotated[str, Depends(get_current_user_id)],
     db: Session = Depends(get_db),
 ) -> RegisterAgentInstanceResponse:
-    """Update agent instance metadata (currently only name/title)."""
+    """Update agent instance metadata: name, session_config / instance_metadata
+    merges, task link, or the folder the session is filed under (project +
+    worktree_name + repo_root, from `vicoa session update --worktree`)."""
 
     try:
         user_uuid = UUID(user_id)
@@ -1486,6 +1488,44 @@ def update_agent_instance_endpoint(
                 instance.rate_limited_until = project_rate_limited_until(
                     merged_meta.get("usage")
                 )
+        if "project" in fields:
+            # Re-file the session under another checkout of its repo
+            # (`vicoa session update --worktree`): the sidebar groups
+            # worktree sessions by this path, so a session whose agent moved
+            # into a worktree on its own stays under the main checkout until
+            # something rewrites it. Registration is the only other writer
+            # and stamps the same three fields, so mirror it: the path plus
+            # the worktree label and repo root the CLI probed from that path.
+            # The agent's real cwd is untouched — this is where the session
+            # is filed and where a resume relaunches it. `project_id` is
+            # deliberately left alone: every checkout of a repo belongs to
+            # the same project, and re-resolving would clobber a re-filing
+            # the user made by hand.
+            new_project = (update_data.project or "").strip()
+            if not new_project:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="project must be a non-empty path",
+                )
+            instance.project = new_project
+            folder_meta = dict(instance.instance_metadata or {})
+            if "worktree_name" in fields:
+                # An explicit null is "main checkout": drop the key rather
+                # than store None, so readers see the same shape registration
+                # leaves for a main-checkout session.
+                if update_data.worktree_name:
+                    folder_meta["worktree_name"] = update_data.worktree_name
+                else:
+                    folder_meta.pop("worktree_name", None)
+            if "repo_root" in fields and update_data.repo_root:
+                folder_meta["repo_root"] = update_data.repo_root
+            instance.instance_metadata = folder_meta or None
+            attributes.flag_modified(instance, "instance_metadata")
+        elif "worktree_name" in fields or "repo_root" in fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="worktree_name and repo_root require project",
+            )
         if "task_id" in fields:
             # Field-present semantics (like the human-facing PATCH): a UUID
             # links (ownership-checked → 400/404), an explicit null unlinks.

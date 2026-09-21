@@ -2151,7 +2151,7 @@ Examples:
     session_update = session_sub.add_parser(
         "update",
         parents=[session_common],
-        help="Set a session's title and/or link it to a task",
+        help="Set a session's title, link it to a task, or move it to a worktree",
     )
     session_update.add_argument(
         "session_id",
@@ -2169,6 +2169,17 @@ Examples:
         "--unlink-task",
         action="store_true",
         help="Clear the session's task link",
+    )
+    session_update.add_argument(
+        "--worktree",
+        metavar="BRANCH",
+        help=(
+            "File the session under the checkout of its repo that has BRANCH "
+            "checked out — a linked worktree, or the main checkout's branch to "
+            "move it back. Resolved with git on this machine, so run it where "
+            "the session lives. The agent keeps running where it is; the "
+            "sidebar group and the next resume follow the new folder."
+        ),
     )
 
     session_message = session_sub.add_parser(
