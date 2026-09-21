@@ -2970,10 +2970,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get searchFailed =>
-      'Search failed — check your connection and try again';
+      'Search failed. Check your connection and try again';
 
   @override
-  String get searchTimeout => 'Search timed out — try a more specific query';
+  String get searchTimeout => 'Search timed out. Try a more specific query';
 
   @override
   String get searchSessionsOnly => 'Showing sessions only';

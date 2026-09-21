@@ -5375,13 +5375,13 @@ abstract class AppLocalizations {
   /// No description provided for @searchFailed.
   ///
   /// In en, this message translates to:
-  /// **'Search failed — check your connection and try again'**
+  /// **'Search failed. Check your connection and try again'**
   String get searchFailed;
 
   /// No description provided for @searchTimeout.
   ///
   /// In en, this message translates to:
-  /// **'Search timed out — try a more specific query'**
+  /// **'Search timed out. Try a more specific query'**
   String get searchTimeout;
 
   /// No description provided for @searchSessionsOnly.

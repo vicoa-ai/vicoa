@@ -68,7 +68,7 @@ def search_workspace(
         if is_statement_timeout(exc):
             raise HTTPException(
                 status_code=503,
-                detail="Search timed out — refine your query and try again.",
+                detail="Search timed out. Refine your query and try again.",
             ) from exc
         raise
     return WorkspaceSearchResponse(

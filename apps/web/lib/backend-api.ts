@@ -756,7 +756,8 @@ export interface SearchTaskResult {
   title: string;
   status: TaskStatus;
   priority: TaskPriority;
-  project_id: string;
+  /** null = "No project" (unfiled), as on TaskResponse. */
+  project_id: string | null;
   updated_at: string;
   match_source: 'title' | 'description';
   snippet: string | null;

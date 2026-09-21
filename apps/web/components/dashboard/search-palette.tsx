@@ -263,10 +263,10 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
             // Backend statement-timeout guardrail; its detail says to
             // refine the query.
             setSearchError(
-              (err as Error).message || 'Search timed out — try a longer query.',
+              (err as Error).message || 'Search timed out. Try a longer query.',
             );
           } else {
-            setSearchError('Search failed — check your connection and retry.');
+            setSearchError('Search failed. Check your connection and retry.');
           }
           setResults(null);
           setIsLoading(false);
@@ -704,7 +704,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
           <span>↵ open</span>
           {serverUnavailable && trimmedQuery ? (
             <span className="ml-auto text-amber-600 dark:text-warning">
-              Server search unavailable — sessions only
+              Server search unavailable (sessions only)
             </span>
           ) : null}
         </div>

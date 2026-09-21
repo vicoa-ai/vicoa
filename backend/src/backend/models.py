@@ -1174,7 +1174,9 @@ class SearchTaskResult(BaseModel):
     title: str
     status: TaskStatusLiteral
     priority: TaskPriorityLiteral
-    project_id: UUID
+    # None = "No project" (unfiled), as on TaskResponse. Required here used to
+    # 500 the whole search once any unfiled task matched.
+    project_id: UUID | None = None
     updated_at: datetime
     match_source: Literal["title", "description"]
     snippet: str | None = None
