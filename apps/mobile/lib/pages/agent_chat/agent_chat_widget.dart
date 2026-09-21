@@ -2706,7 +2706,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
 
   // The machine this session's files live on, or null when the session
   // pre-dates the machine_id column — then there is nowhere to browse or open
-  // a file, and the folder button / edited-file rows stay hidden or plain.
+  // a file, and the folder button / edited-file items stay hidden or plain.
   String? _filesMachineId() {
     final machineId = (_model.instanceData?['machine_id'] ?? widget.instanceData?['machine_id'])?.toString();
     return (machineId == null || machineId.isEmpty) ? null : machineId;
@@ -2715,7 +2715,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
   String _filesCwd() => (_model.instanceData?['project'] ?? widget.instanceData?['project'])?.toString() ?? '';
 
   // "Add to context" from the file viewer (reached via the Files screen or
-  // straight from an edited-file row in the chat) pops with the file's path: drop `@<path> `
+  // straight from an edited-file item in the chat) pops with the file's path: drop `@<path> `
   // into the chat input.
   void _applyFileViewerResult(Object? result) {
     if (result is! Map || result[kFileViewerAddToContextKey] is! String) return;
@@ -2757,11 +2757,11 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     };
   }
 
-  // Opens one file straight in the viewer — the target of an edited-file row
-  // under a tool run's header and of the path on an expanded edit row.
+  // Opens one file straight in the viewer — the target of an edited-file
+  // item on a tool run's header and of the path on an expanded edit row.
   // [path] is relative to the session's working directory, the shape the
   // Files tree hands the viewer. Null when the session has no machine, which
-  // leaves those rows plain.
+  // leaves those items plain.
   custom_widgets.OpenFileCallback? _openFileCallback() {
     final machineId = _filesMachineId();
     if (machineId == null) return null;

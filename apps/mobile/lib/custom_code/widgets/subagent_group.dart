@@ -21,7 +21,7 @@ import '/custom_code/widgets/markdown_text_builder.dart'
         sanitizeToolContent;
 import '/custom_code/widgets/tool_use_group.dart'
     show
-        EditedFilesList,
+        EditedFilesFlow,
         OpenFileCallback,
         ToolUseSummary,
         describeToolRun,
@@ -198,7 +198,7 @@ class SubagentGroup extends StatefulWidget {
   final String? agentTypeName;
   final String Function(String content)? filterProjectRoot;
 
-  /// Opens an edited file in the viewer (a file row under the header or the
+  /// Opens an edited file in the viewer (a file item on the header or the
   /// path of an expanded edit row); null leaves them plain. Mirrors
   /// [ToolUseGroup.onOpenFile].
   final OpenFileCallback? onOpenFile;
@@ -266,11 +266,11 @@ class _SubagentGroupState extends State<SubagentGroup> {
         if (_isToolUseContent(c)) summarizeToolMessage(c),
     ];
     final label = _label(toolSummaries);
-    // The files behind "edit N files", listed under the label.
+    // The files behind "edit N files" follow the label as items.
     final editedFiles = editedFilesInRun(toolSummaries);
-    final filesList = editedFiles.isEmpty
+    final filesFlow = editedFiles.isEmpty
         ? null
-        : EditedFilesList(files: editedFiles, onOpenFile: widget.onOpenFile);
+        : EditedFilesFlow(label: label, files: editedFiles, onOpenFile: widget.onOpenFile);
 
     if (!widget.expanded) {
       return buildToolGroupHeader(
@@ -281,7 +281,7 @@ class _SubagentGroupState extends State<SubagentGroup> {
         onToggle: _toggleRun,
         iconToolName: 'Task',
         agentTypeName: widget.agentTypeName,
-        below: filesList,
+        body: filesFlow,
       );
     }
 
@@ -302,7 +302,7 @@ class _SubagentGroupState extends State<SubagentGroup> {
           onToggle: _toggleRun,
           iconToolName: 'Task',
           agentTypeName: widget.agentTypeName,
-          below: filesList,
+          body: filesFlow,
         ),
         if (!firstIsTool && contents.isNotEmpty) const SizedBox(height: 8.0),
         ..._buildChildren(context, contents),
