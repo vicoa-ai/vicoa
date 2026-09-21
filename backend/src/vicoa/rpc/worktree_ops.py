@@ -12,7 +12,11 @@ list`), so the main checkout and arbitrary paths are never removable.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import threading
+import time
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -298,6 +302,12 @@ def remove_worktree(
     that is neither on disk nor registered is reported as already removed —
     idempotent, so the app can always finish its own bookkeeping.
 
+    A managed worktree is not unlinked here: it is renamed into the project's
+    `.trash/` and unregistered (milliseconds), and its files are reclaimed on a
+    background thread — see `_remove_via_trash`. A hand-made worktree goes
+    through plain `git worktree remove`, which deletes inline; the user's own
+    folders are never moved around.
+
     Returns `{"ok": True}` (with `"already_removed": True` for the no-op case)
     or `{"error": ...}`.
     """
@@ -319,6 +329,11 @@ def remove_worktree(
         _prune_empty_dirs(resolved.parent)
         return {"ok": True, "already_removed": True}
 
+    if _is_managed(str(resolved)):
+        trashed = _remove_via_trash(abs_repo, resolved, force)
+        if trashed is not None:
+            return trashed
+
     argv = ["git", "-C", str(abs_repo), "worktree", "remove"]
     if force:
         argv.append("--force")
@@ -334,3 +349,150 @@ def remove_worktree(
     # middle dir behind — prune it (and an emptied parent) so the tree stays clean.
     _prune_empty_dirs(resolved.parent)
     return {"ok": True}
+
+
+# ── Fast removal: rename away now, reclaim disk in the background ─────────────
+#
+# `git worktree remove` unlinks the whole checkout inline, and a checkout with
+# node_modules / a venv in it is tens of thousands of files — seconds on a warm
+# cache, far more on a cold one — during which the app's delete sits waiting on
+# the RPC. Renaming the folder into a sibling `.trash/` is a single atomic
+# metadata op (same parent → same volume): from then on git and the filesystem
+# both agree the worktree is gone, and the only work left is reclaiming space,
+# which no one needs to wait for. A crash mid-reclaim leaves plain garbage under
+# `.trash/`, which the daemon sweeps on its next start.
+
+TRASH_DIR_NAME = ".trash"
+
+# Reclaim threads in flight (weak, so finished ones vanish); tests wait on them.
+_reclaimers: "weakref.WeakSet[threading.Thread]" = weakref.WeakSet()
+
+
+def _git_stderr(proc: subprocess.CompletedProcess[bytes], fallback: str) -> str:
+    return proc.stderr.decode("utf-8", errors="replace").strip() or fallback
+
+
+def _refuse_unless_forced(worktree: Path) -> str | None:
+    """git's own preconditions for an un-forced `worktree remove`, as an error
+    string (or None when the worktree may go). Mirrors builtin/worktree.c:
+    no submodules in the index, and `status --porcelain` empty — ignored files
+    (node_modules, build output) don't count, exactly as for git."""
+    ls = subprocess.run(
+        ["git", "-C", str(worktree), "ls-files", "--stage"],
+        capture_output=True,
+        check=False,
+    )
+    if ls.returncode == 0 and any(
+        line.startswith(b"160000 ") for line in ls.stdout.splitlines()
+    ):
+        return "working trees containing submodules cannot be moved or removed"
+    status = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(worktree),
+            "status",
+            "--porcelain",
+            "--ignore-submodules=none",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if status.returncode != 0:
+        return _git_stderr(status, "status_failed")
+    if status.stdout.strip():
+        return (
+            f"fatal: '{worktree}' contains modified or untracked files, "
+            "use --force to delete it"
+        )
+    return None
+
+
+def _remove_via_trash(
+    abs_repo: Path, worktree: Path, force: bool
+) -> dict[str, Any] | None:
+    """Rename `worktree` into `<project>-worktrees/.trash/` and unregister it.
+
+    Returns the RPC result, or None when the rename itself is impossible (a
+    cross-volume layout, or Windows refusing to move a folder with open handles)
+    so the caller falls back to the plain synchronous `git worktree remove`.
+    An un-forced call keeps git's refusals (dirty tree, submodules); a locked
+    worktree is refused by git after the rename, and moved straight back.
+    """
+    if not force:
+        refusal = _refuse_unless_forced(worktree)
+        if refusal is not None:
+            return {"error": refusal}
+
+    trash_root = worktrees_parent_dir(abs_repo) / TRASH_DIR_NAME
+    try:
+        trash_root.mkdir(parents=True, exist_ok=True)
+        target = trash_root / f"{worktree.parent.name}-{time.time_ns()}"
+        os.rename(worktree, target)
+    except OSError:
+        return None
+
+    # The registration now points at a missing folder; `remove` on that path
+    # drops it (like it does for a checkout deleted by hand) and keeps the branch.
+    proc = subprocess.run(
+        ["git", "-C", str(abs_repo), "worktree", "remove", "--force", str(worktree)],
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        # Locked, most likely. Nothing was deleted, so undo the rename and
+        # report git's reason — the worktree is exactly as it was.
+        try:
+            os.rename(target, worktree)
+        except OSError:
+            pass
+        return {"error": _git_stderr(proc, "remove_failed")}
+
+    _prune_empty_dirs(worktree.parent)
+    _reclaim_in_background(target)
+    return {"ok": True}
+
+
+def _reclaim(trash_dir: Path) -> None:
+    """Delete one trashed checkout, then tidy an emptied `.trash/` + parent."""
+    shutil.rmtree(trash_dir, ignore_errors=True)
+    _prune_empty_dirs(trash_dir.parent)
+
+
+def _reclaim_in_background(trash_dir: Path) -> threading.Thread:
+    thread = threading.Thread(
+        target=_reclaim,
+        args=(trash_dir,),
+        name="vicoa-worktree-reclaim",
+        daemon=True,
+    )
+    _reclaimers.add(thread)
+    thread.start()
+    return thread
+
+
+def wait_for_reclaims(timeout: float = 30.0) -> None:
+    """Block until every in-flight reclaim has finished (tests / shutdown)."""
+    deadline = time.monotonic() + timeout
+    for thread in list(_reclaimers):
+        thread.join(timeout=max(0.0, deadline - time.monotonic()))
+
+
+def sweep_trash() -> int:
+    """Reclaim whatever an earlier daemon left under any `<project>-worktrees/.trash/`
+    (it exited mid-delete). Returns the number of folders handed to reclaimers.
+    Confined to the workspaces root: nothing outside it is ever touched.
+    """
+    root = workspaces_root()
+    if not root.is_dir():
+        return 0
+    count = 0
+    for parent in root.iterdir():
+        trash_root = parent / TRASH_DIR_NAME
+        if not trash_root.is_dir():
+            continue
+        for leftover in trash_root.iterdir():
+            if leftover.is_dir() and not leftover.is_symlink():
+                _reclaim_in_background(leftover)
+                count += 1
+    return count

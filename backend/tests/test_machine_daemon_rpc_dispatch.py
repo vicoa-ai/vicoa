@@ -752,3 +752,23 @@ def test_provider_add_probes_in_the_background(
         {"method": "provider-add", "params": {"entry": {"id": "x"}}}
     )
     assert started == ["qwen"]
+
+
+def test_startup_sweep_reclaims_a_trashed_worktree_left_by_an_earlier_daemon(
+    daemon: MachineDaemon, home: Path
+):
+    """A removal parks the checkout under `.trash/` and reclaims it on a
+    background thread; a daemon that exits mid-reclaim leaves it behind, and
+    the next daemon finishes the job on start."""
+    from vicoa.rpc.worktree_ops import TRASH_DIR_NAME, wait_for_reclaims
+    from vicoa.rpc.worktree_paths import workspaces_root
+
+    leftover = workspaces_root() / "app-worktrees" / TRASH_DIR_NAME / "feat-1"
+    leftover.mkdir(parents=True)
+    (leftover / "junk.txt").write_text("junk\n")
+
+    daemon._sweep_worktree_trash()
+    wait_for_reclaims()
+
+    assert not leftover.exists()
+    assert not (workspaces_root() / "app-worktrees").exists()

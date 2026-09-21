@@ -60,6 +60,7 @@ import {
   filterWantsActiveOnly,
   groupSessions,
   mergeRenderedOrder,
+  normalizeWorktreePath,
   splitProjectByWorktree,
   worktreeSessionPaths,
   GROUP_BY_STORAGE_KEY,
@@ -309,7 +310,7 @@ export function SidebarSessions({
   // Row hover actions reuse the shared session-operations hook. Passing the
   // selected id lets a delete of the currently-open session navigate to a
   // neighbor. `togglePin` doesn't refetch on its own, so we drive `refreshData`.
-  const { togglePin, markAsComplete, renameSession, deleteSession } = useSessionOperations(
+  const { togglePin, markAsComplete, archiveSessions, renameSession, deleteSession } = useSessionOperations(
     selectedInstanceId ?? undefined,
   );
   const { copied: copiedSessionId, copy: copySessionId } = useCopyToClipboard();
@@ -592,7 +593,9 @@ export function SidebarSessions({
 
   // Right-click "Delete worktree" confirmation. Held null until a deletion needs
   // confirming (a live session or uncommitted changes); a clean, session-free
-  // worktree is removed immediately without this dialog.
+  // worktree is removed immediately without this dialog. Confirming closes it
+  // at once — the removal runs behind the sidebar — and a failure brings it
+  // back with the error, so the user can retry or give up.
   const [worktreeDelete, setWorktreeDelete] = useState<{
     machineId: string;
     repoDir: string;
@@ -603,9 +606,26 @@ export function SidebarSessions({
     isDirty: boolean;
     /** Git already has no checkout at this folder (see WorktreeSessionGroup). */
     missing: boolean;
-    busy: boolean;
     error: string | null;
   } | null>(null);
+
+  // Worktrees whose removal is in flight, by normalized folder path. They are
+  // left out of the rendered layout so the group vanishes on click rather than
+  // after the round-trips. `settled` flips once the daemon has answered; the
+  // entry is only dropped when a fresh git view no longer lists the folder,
+  // which is what keeps the group from flashing back in the gap between the
+  // daemon's reply and the refetch that reflects it.
+  const [removingWorktrees, setRemovingWorktrees] = useState<
+    ReadonlyMap<string, { settled: boolean }>
+  >(new Map());
+  const setWorktreeRemoving = useCallback((path: string, settled: boolean | null) => {
+    setRemovingWorktrees((prev) => {
+      const next = new Map(prev);
+      if (settled === null) next.delete(path);
+      else next.set(path, { settled });
+      return next;
+    });
+  }, []);
 
   // The daemon keeps the branch on remove, so commits survive; only the checkout
   // is deleted. The RPC runs from the repo's main checkout (`repoDir`), never
@@ -613,8 +633,10 @@ export function SidebarSessions({
   // (that was the `not_a_repo` users hit after the session had been archived).
   // When git already has no checkout there (`missing`), a refusal is not a
   // failure: the folder is gone, which is exactly what "Delete" promised, so
-  // the user sees the same outcome either way. Bump the git-view nonce so the
-  // removed worktree drops off the list right away.
+  // the user sees the same outcome either way. The daemon answers as soon as
+  // the folder is renamed away and unregistered (it reclaims the files in the
+  // background), so this is quick; bump the git-view nonce so the removed
+  // worktree drops off the list.
   const performWorktreeRemove = useCallback(
     async (
       machineId: string,
@@ -623,16 +645,42 @@ export function SidebarSessions({
       force: boolean,
       missing: boolean,
     ) => {
+      setWorktreeRemoving(path, false);
       try {
         await rpcGitWorktreeRemove(machineId, repoDir, path, force);
       } catch (e) {
-        if (!missing) throw e;
+        if (!missing) {
+          setWorktreeRemoving(path, null);
+          throw e;
+        }
       }
-      await refreshData();
+      setWorktreeRemoving(path, true);
       setGitViewNonce((n) => n + 1);
     },
-    [refreshData],
+    [setWorktreeRemoving],
   );
+
+  // Retire settled removals once no git view lists the folder any more (either
+  // spelling: git's absolute path or the daemon's `~/…` display path).
+  useEffect(() => {
+    if (removingWorktrees.size === 0) return;
+    const listed = new Set<string>();
+    for (const view of projectGitViews.values()) {
+      for (const w of view.worktrees ?? []) {
+        listed.add(normalizeWorktreePath(w.path));
+        if (w.display_path) listed.add(normalizeWorktreePath(w.display_path));
+      }
+    }
+    const done = Array.from(removingWorktrees).filter(
+      ([path, { settled }]) => settled && !listed.has(path),
+    );
+    if (done.length === 0) return;
+    setRemovingWorktrees((prev) => {
+      const next = new Map(prev);
+      for (const [path] of done) next.delete(path);
+      return next;
+    });
+  }, [projectGitViews, removingWorktrees]);
 
   const requestWorktreeDelete = useCallback(
     async (target: {
@@ -662,13 +710,15 @@ export function SidebarSessions({
           statusKnown = false;
         }
       }
+      let error: string | null = null;
       if (!hasSession && statusKnown && !isDirty) {
         try {
           await performWorktreeRemove(machineId, repoDir, path, false, missing);
           return;
-        } catch {
+        } catch (e) {
           // A race (turned dirty) or a submodule refusal — fall through to the
-          // confirm dialog, which surfaces the error rather than failing silently.
+          // confirm dialog, which shows the reason rather than failing silently.
+          error = e instanceof Error ? e.message : 'Failed to delete worktree';
         }
       }
       setWorktreeDelete({
@@ -680,8 +730,7 @@ export function SidebarSessions({
         hasSession,
         isDirty,
         missing,
-        busy: false,
-        error: null,
+        error,
       });
     },
     [performWorktreeRemove],
@@ -689,19 +738,34 @@ export function SidebarSessions({
 
   const confirmWorktreeDelete = useCallback(async () => {
     if (!worktreeDelete) return;
-    const { machineId, repoDir, path, sessionIds, missing } = worktreeDelete;
-    setWorktreeDelete((prev) => (prev ? { ...prev, busy: true, error: null } : prev));
+    const target = worktreeDelete;
+    const { machineId, repoDir, path, sessionIds, missing } = target;
+    // Nothing here is worth watching a spinner for: close the dialog and hide
+    // the group now; the archive round-trip and the daemon's reply follow.
+    setWorktreeDelete(null);
+    setWorktreeRemoving(path, false);
     try {
-      for (const id of sessionIds) {
-        await markAsComplete(id);
-      }
+      // All of the worktree's sessions in one parallel round-trip (they used to
+      // go one at a time, each with a full list refresh — that was the wait that
+      // grew with every open terminal). Archiving closes each session's
+      // workspace, so tear its terminals + layout down as Archive does.
+      await archiveSessions(sessionIds);
+      for (const id of sessionIds) onAfterCloseSession?.(id);
+      void refreshData();
       await performWorktreeRemove(machineId, repoDir, path, true, missing);
-      setWorktreeDelete(null);
     } catch (e) {
       const error = e instanceof Error ? e.message : 'Failed to delete worktree';
-      setWorktreeDelete((prev) => (prev ? { ...prev, busy: false, error } : prev));
+      setWorktreeRemoving(path, null);
+      setWorktreeDelete({ ...target, error });
     }
-  }, [worktreeDelete, performWorktreeRemove, markAsComplete]);
+  }, [
+    worktreeDelete,
+    performWorktreeRemove,
+    archiveSessions,
+    onAfterCloseSession,
+    refreshData,
+    setWorktreeRemoving,
+  ]);
 
   const handleProjectDragStart = useCallback((key: string) => {
     draggingProjectRef.current = key;
@@ -827,11 +891,17 @@ export function SidebarSessions({
 
         const view = projectGitViews.get(key);
         const gitWorktrees = view?.worktrees ?? null;
-        const { mainInstances, worktrees } = splitProjectByWorktree(
+        const { mainInstances, worktrees: allWorktrees } = splitProjectByWorktree(
           instances,
           gitWorktrees,
           view?.judgeable,
         );
+        // A worktree being deleted is gone from the user's point of view the
+        // moment they confirmed; its (archived) sessions go with it.
+        const worktrees =
+          removingWorktrees.size === 0
+            ? allWorktrees
+            : allWorktrees.filter((w) => !removingWorktrees.has(w.path));
 
         // No worktrees → nothing to sub-group: render the project flat rather
         // than a lone "main" bucket. This also stops a non-git folder (whose
@@ -903,7 +973,7 @@ export function SidebarSessions({
         const splitDirectory = mainDirectory ?? instances[0]?.project ?? null;
         return { group, isDraggableProject, split: true, newSessionDirectory: splitDirectory, subs };
       }),
-    [sidebarGroups, worktreesOn, groupBy, projectGitViews],
+    [sidebarGroups, worktreesOn, groupBy, projectGitViews, removingWorktrees],
   );
 
   // Session-switching shortcuts: ⌘1–⌘9 jump to the nth session in the list
@@ -1545,7 +1615,6 @@ export function SidebarSessions({
           branch={worktreeDelete?.branch ?? ''}
           hasSession={worktreeDelete?.hasSession ?? false}
           isDirty={worktreeDelete?.isDirty ?? false}
-          busy={worktreeDelete?.busy ?? false}
           error={worktreeDelete?.error ?? null}
           onConfirm={() => void confirmWorktreeDelete()}
         />

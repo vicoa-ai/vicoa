@@ -2772,6 +2772,19 @@ class MachineDaemon:
             return {"error": "worktree-run-setup requires a directory"}
         return self._start_worktree_setup(worktree_path, directory)
 
+    def _sweep_worktree_trash(self) -> None:
+        """Finish deleting worktrees a previous daemon trashed but never reclaimed
+        (see `worktree_ops._remove_via_trash`). Background threads; a failure
+        here is logged and must never keep the daemon from starting."""
+        try:
+            from vicoa.rpc.worktree_ops import sweep_trash
+
+            count = sweep_trash()
+            if count:
+                print(f"[daemon] reclaiming {count} trashed worktree folder(s)")
+        except Exception as exc:  # noqa: BLE001 - housekeeping is best-effort
+            print(f"[daemon] worktree trash sweep failed: {exc}")
+
     def _run_worktree_teardown_best_effort(self, params: dict[str, Any]) -> None:
         """Run a worktree's teardown commands before removal; swallow failures.
 
@@ -3092,6 +3105,7 @@ class MachineDaemon:
     # Main loop
     # ------------------------------------------------------------------
     def run(self) -> None:
+        self._sweep_worktree_trash()
         try:
             self.register_machine()
             # Renew the credential in the background now that registration has

@@ -251,7 +251,7 @@ export interface LiveWorktree {
 }
 
 /** Folder-path identity: trailing slashes never make two paths differ. */
-function normalizeWorktreePath(path: string): string {
+export function normalizeWorktreePath(path: string): string {
   const trimmed = path.replace(/\/+$/, '');
   return trimmed || path;
 }

@@ -422,6 +422,8 @@ def test_remove_worktree_allows_unmanaged_worktree(
 
     assert result == {"ok": True}
     assert not hand_made.exists()  # checkout removed
+    # A hand-made worktree is deleted in place, never moved into our trash.
+    assert not (home / "vicoa" / "workspaces").exists()
     # The branch survives, so commits stay recoverable.
     branch_check = subprocess.run(
         [
@@ -531,6 +533,183 @@ def test_remove_worktree_dirty_needs_force(home: Path, committed_repo: Path):
     forced = remove_worktree(str(committed_repo), created["path"], force=True)
     assert forced == {"ok": True}
     assert not path.exists()
+
+
+def test_remove_worktree_trashes_managed_checkout_then_reclaims(
+    home: Path, committed_repo: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A managed worktree is renamed into `.trash/` and unregistered at once;
+    unlinking its files is deferred to a background reclaim, so a checkout
+    full of node_modules never holds the RPC (and the app's dialog) open."""
+    from vicoa.rpc import worktree_ops
+    from vicoa.rpc.worktree_ops import (
+        TRASH_DIR_NAME,
+        create_worktree,
+        list_worktrees,
+        remove_worktree,
+    )
+
+    created = create_worktree(str(committed_repo))
+    path = Path(created["path"])
+    (path / "node_modules").mkdir()
+    (path / "node_modules" / "big.js").write_text("x" * 1024)
+
+    # Capture the deferred reclaim instead of running it, so the intermediate
+    # state (folder trashed, nothing unlinked yet) can be observed.
+    deferred: list[Path] = []
+    monkeypatch.setattr(worktree_ops, "_reclaim_in_background", deferred.append)
+
+    assert remove_worktree(str(committed_repo), created["path"], force=True) == {
+        "ok": True
+    }
+
+    # Gone as far as git and the original path are concerned, branch kept.
+    assert not path.exists()
+    assert not path.parent.exists()  # <branch> middle dir pruned immediately
+    assert list_worktrees(str(committed_repo))["worktrees"] == []
+    assert _branch_exists(committed_repo, created["branch"])
+    # ...but the files themselves are still on disk, parked under .trash.
+    assert len(deferred) == 1
+    trashed = deferred[0]
+    assert trashed.parent == path.parent.parent / TRASH_DIR_NAME
+    assert (trashed / "node_modules" / "big.js").is_file()
+
+    worktree_ops._reclaim(trashed)
+
+    assert not trashed.exists()
+    assert not trashed.parent.exists()  # emptied .trash is tidied away
+    assert not trashed.parent.parent.exists()  # and the <project>-worktrees dir
+
+
+def test_remove_worktree_reclaim_runs_on_a_background_thread(
+    home: Path, committed_repo: Path
+):
+    from vicoa.rpc.worktree_ops import (
+        TRASH_DIR_NAME,
+        create_worktree,
+        remove_worktree,
+        wait_for_reclaims,
+    )
+
+    created = create_worktree(str(committed_repo))
+    path = Path(created["path"])
+    (path / "scratch.txt").write_text("scratch\n")
+    parent = path.parent.parent
+
+    assert remove_worktree(str(committed_repo), created["path"], force=True) == {
+        "ok": True
+    }
+    wait_for_reclaims()
+
+    assert not (parent / TRASH_DIR_NAME).exists()
+    assert not parent.exists()
+
+
+def test_remove_worktree_unforced_ignores_ignored_files(
+    home: Path, committed_repo: Path
+):
+    """git's cleanliness test skips ignored files (node_modules, build output),
+    and so must ours — otherwise every real worktree would count as dirty."""
+    from vicoa.rpc.worktree_ops import create_worktree, remove_worktree
+
+    (committed_repo / ".git" / "info" / "exclude").write_text("node_modules/\n")
+    created = create_worktree(str(committed_repo))
+    path = Path(created["path"])
+    (path / "node_modules").mkdir()
+    (path / "node_modules" / "dep.js").write_text("module.exports = 1\n")
+
+    assert remove_worktree(str(committed_repo), created["path"], force=False) == {
+        "ok": True
+    }
+    assert not path.exists()
+
+
+def test_remove_worktree_unforced_refuses_submodules(
+    home: Path, committed_repo: Path, tmp_path: Path
+):
+    from vicoa.rpc.worktree_ops import create_worktree, remove_worktree
+
+    # A second repo to embed as a submodule of the first.
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(sub)], check=True)
+    _git(sub, "config", "user.email", "test@example.com")
+    _git(sub, "config", "user.name", "Test")
+    _git(sub, "config", "commit.gpgsign", "false")
+    (sub / "s.txt").write_text("s\n")
+    _git(sub, "add", "s.txt")
+    _git(sub, "commit", "-q", "-m", "sub")
+    _git(
+        committed_repo,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(sub),
+        "vendor/sub",
+    )
+    _git(committed_repo, "commit", "-q", "-m", "add submodule")
+
+    created = create_worktree(str(committed_repo))
+    path = Path(created["path"])
+
+    refused = remove_worktree(str(committed_repo), created["path"], force=False)
+    assert "submodules" in refused.get("error", "")
+    assert path.exists()
+
+    assert remove_worktree(str(committed_repo), created["path"], force=True) == {
+        "ok": True
+    }
+    assert not path.exists()
+
+
+def test_remove_worktree_locked_is_refused_and_left_in_place(
+    home: Path, committed_repo: Path
+):
+    from vicoa.rpc.worktree_ops import create_worktree, list_worktrees, remove_worktree
+
+    created = create_worktree(str(committed_repo))
+    path = Path(created["path"])
+    (path / "keep.txt").write_text("keep\n")
+    _git(committed_repo, "worktree", "lock", "--reason", "in use", str(path))
+
+    result = remove_worktree(str(committed_repo), created["path"], force=True)
+
+    assert "locked" in result.get("error", "")
+    # The rename was undone: the checkout is exactly where it was, files intact,
+    # still registered.
+    assert (path / "keep.txt").is_file()
+    assert [w["path"] for w in list_worktrees(str(committed_repo))["worktrees"]] == [
+        str(path)
+    ]
+
+
+def test_sweep_trash_reclaims_what_an_earlier_daemon_left(home: Path):
+    from vicoa.rpc.worktree_ops import TRASH_DIR_NAME, sweep_trash, wait_for_reclaims
+    from vicoa.rpc.worktree_paths import workspaces_root
+
+    parent = workspaces_root() / "my-app-worktrees"
+    leftover = parent / TRASH_DIR_NAME / "feat-1234"
+    leftover.mkdir(parents=True)
+    (leftover / "node_modules").mkdir()
+    (leftover / "node_modules" / "dep.js").write_text("1\n")
+    # A live worktree dir beside it must be left alone.
+    live = parent / "other" / "my-app"
+    live.mkdir(parents=True)
+
+    assert sweep_trash() == 1
+    wait_for_reclaims()
+
+    assert not leftover.exists()
+    assert not (parent / TRASH_DIR_NAME).exists()
+    assert live.is_dir()
+
+
+def test_sweep_trash_without_a_workspaces_root_is_a_noop(home: Path):
+    from vicoa.rpc.worktree_ops import sweep_trash
+
+    assert sweep_trash() == 0
 
 
 def test_list_worktrees_reports_the_main_checkout_from_any_path(

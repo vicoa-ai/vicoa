@@ -84,6 +84,16 @@ export function useSessionOperations(instanceId?: string) {
     }
   }, [api, refreshData]);
 
+  /** Archive several sessions at once — one round-trip for the lot, not one
+   *  per session — and let the caller decide when to refresh. Rejects on the
+   *  first failure (no alert), for flows that surface errors in their own UI. */
+  const archiveSessions = useCallback(async (sessionIds: string[]) => {
+    if (!api) throw new Error('API not initialized');
+    await Promise.all(
+      sessionIds.map((id) => api.updateAgentStatus(id, { status: 'COMPLETED' })),
+    );
+  }, [api]);
+
   const markAsUnread = useCallback(async (sessionId: string) => {
     if (!api) {
       alert('API not initialized');
@@ -112,7 +122,7 @@ export function useSessionOperations(instanceId?: string) {
     }
   }, [api]);
 
-  return { renameSession, deleteSession, markAsComplete, markAsUnread, togglePin };
+  return { renameSession, deleteSession, markAsComplete, archiveSessions, markAsUnread, togglePin };
 }
 
 export function useCopyToClipboard(timeout = 2000) {

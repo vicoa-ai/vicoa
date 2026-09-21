@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { GitBranch, Loader2 } from 'lucide-react';
+import { GitBranch } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -188,7 +188,6 @@ export function WorktreeDeleteDialog({
   branch,
   hasSession,
   isDirty,
-  busy,
   error,
   onConfirm,
 }: {
@@ -197,12 +196,11 @@ export function WorktreeDeleteDialog({
   branch: string;
   hasSession: boolean;
   isDirty: boolean;
-  busy: boolean;
   error: string | null;
   onConfirm: () => void;
 }) {
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="font-mono">
         <DialogHeader>
           <DialogTitle>Delete worktree</DialogTitle>
@@ -226,16 +224,15 @@ export function WorktreeDeleteDialog({
           </div>
         )}
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button
             variant="destructive"
             className="text-destructive-foreground"
             onClick={onConfirm}
-            disabled={busy}
           >
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Delete'}
+            {error ? 'Retry' : 'Delete'}
           </Button>
         </DialogFooter>
       </DialogContent>
