@@ -214,6 +214,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get agentChatRevertQueuedMessageTooltip => '移回输入框编辑';
 
   @override
+  String get agentChatSteerQueuedMessageTooltip => '插入当前轮次：立即发送';
+
+  @override
   String get agentChatCancelledLabel => '已取消';
 
   @override

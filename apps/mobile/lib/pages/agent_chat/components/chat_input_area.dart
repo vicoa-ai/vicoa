@@ -699,6 +699,7 @@ class _AgentConfigPillState extends State<_AgentConfigPill> {
                 reasoningEfforts: a.reasoningEfforts,
                 permissionModes: a.permissionModes,
                 modes: a.modes,
+                supportsSteer: a.supportsSteer,
               )
             : a)
         .toList();

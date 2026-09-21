@@ -67,6 +67,7 @@
   "agentChatAgentMode": "Agent 模式",
   "agentChatCancelQueuedMessageTooltip": "取消消息",
   "agentChatRevertQueuedMessageTooltip": "移回输入框编辑",
+  "agentChatSteerQueuedMessageTooltip": "插入当前轮次：立即发送",
   "agentChatCancelledLabel": "已取消",
   "agentChatCloseFailed": "关闭任务失败，请重试。",
   "agentChatCopiedToClipboard": "{count, plural, other{已复制 {count} 条消息到剪贴板}}",

@@ -217,6 +217,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get agentChatRevertQueuedMessageTooltip => 'Edit in input';
 
   @override
+  String get agentChatSteerQueuedMessageTooltip =>
+      'Steer: send into the current turn now';
+
+  @override
   String get agentChatCancelledLabel => 'Cancelled';
 
   @override

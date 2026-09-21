@@ -110,9 +110,13 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
   // authoritative flip to "cancelled" arrives via the WS message-update patch
   // (see messageMetadataRevision), which clears the queued chip on its own.
   final Set<String> _cancellingMessageIds = {};
+  // Same for an in-flight steer request. Once the backend accepts it the WS
+  // patch flips the row to `steer` (rendered as steering by its own status),
+  // and the daemon settles it to `consumed` or back to `queued`.
+  final Set<String> _steeringMessageIds = {};
 
   // Ticks whenever the staged-message queue changes (membership flips as the
-  // agent consumes/the user cancels, or an in-flight cancel spinner toggles).
+  // agent consumes/the user cancels or steers, or an in-flight spinner toggles).
   // The open queue sheet rebuilds off this so it stays live while the chat
   // page is behind it. The collapsed bar rebuilds with the page itself.
   final ValueNotifier<int> _queueRevision = ValueNotifier<int>(0);
@@ -1090,7 +1094,9 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     // Send-queue status is only meaningful on USER messages (only they can be
     // queued behind a busy agent). `consumed`/absent renders like normal.
     final messageQueueStatus = isUser ? queueStatus(message) : null;
-    final isQueuedMessage = messageQueueStatus == kQueueStatusQueued;
+    // `queued`, or `steer` (being delivered into the running turn) — either
+    // way still living in the queue bar.
+    final isQueuedMessage = isPendingQueueStatus(messageQueueStatus);
     final isCancelledMessage = messageQueueStatus == kQueueStatusCancelled;
     // Local send state (sending / failed) of an optimistic user message —
     // rendered as a mark beside the bubble, never inside it.
@@ -1779,7 +1785,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     final isUser = sender == 'user' || sender == 'human';
     if (isUser) {
       final status = queueStatus(m);
-      if (status == kQueueStatusQueued || status == kQueueStatusCancelled) {
+      if (isPendingQueueStatus(status) || status == kQueueStatusCancelled) {
         return true;
       }
     }
@@ -1968,14 +1974,17 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
   /// the queue bar above the input. Skips anything that sanitizes to empty so
   /// the bar never shows a blank row. The backend flips these to `consumed`
   /// when the agent picks them up, at which point they leave this list and
-  /// render in the transcript instead.
+  /// render in the transcript instead. `steer` rows (the daemon is delivering
+  /// them into the running turn) stay in the list, flagged `steering`, until
+  /// they settle to `consumed` or back to `queued`.
   List<QueuedMessageEntry> _collectQueuedMessages() {
     final result = <QueuedMessageEntry>[];
     for (final message in _model.messages) {
       final senderType = message['sender_type']?.toString().toLowerCase() ?? '';
       final isUser = senderType == 'user' || senderType == 'human';
       if (!isUser) continue;
-      if (queueStatus(message) != kQueueStatusQueued) continue;
+      final status = queueStatus(message);
+      if (!isPendingQueueStatus(status)) continue;
       // Control/artifact commands (permission, model, thinking, AskUserQuestion
       // submit/summary) get stamped `queued` too but are never consumed — keep
       // these phantoms out of the bar (mirrors the web queue-bar filter).
@@ -1990,7 +1999,11 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
           .sanitizeMessageContent(message['content']?.toString() ?? '')
           .trim();
       if (text.isEmpty) continue;
-      result.add(QueuedMessageEntry(id: id, text: text));
+      result.add(QueuedMessageEntry(
+        id: id,
+        text: text,
+        steering: status == kQueueStatusSteer,
+      ));
     }
     return result;
   }
@@ -2003,6 +2016,11 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       isCancelling: (id) => _cancellingMessageIds.contains(id),
       onCancel: _cancelQueuedMessage,
       onRevert: _revertQueuedMessage,
+      // Steer is a per-agent capability (catalog `supports_steer`), fixed
+      // for the session's whole life — read once when the sheet opens.
+      canSteer: _model.canSteerQueuedMessages(),
+      isSteering: (id) => _steeringMessageIds.contains(id),
+      onSteer: _steerQueuedMessage,
     );
   }
 
@@ -2054,7 +2072,11 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
   /// the in-flight spinner, not the end state. Bumps [_queueRevision] so an
   /// open queue sheet reflects the spinner immediately.
   Future<void> _cancelQueuedMessage(String messageId) async {
-    if (messageId.isEmpty || _cancellingMessageIds.contains(messageId)) return;
+    if (messageId.isEmpty ||
+        _cancellingMessageIds.contains(messageId) ||
+        _steeringMessageIds.contains(messageId)) {
+      return;
+    }
     safeSetState(() => _cancellingMessageIds.add(messageId));
     _queueRevision.value++;
     HapticFeedback.lightImpact();
@@ -2064,6 +2086,32 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     }
     if (!mounted) return;
     safeSetState(() => _cancellingMessageIds.remove(messageId));
+    _queueRevision.value++;
+  }
+
+  /// Fires the steer POST for a still-queued message: deliver it into the
+  /// running turn at the agent's next safe boundary instead of after the turn
+  /// ends. Like [_cancelQueuedMessage] this only manages the in-flight
+  /// spinner — the backend answers by flipping the row to `steer` over the WS
+  /// patch (the row keeps its spinner off that status), and the daemon then
+  /// settles it to `consumed` (row gone) or back to `queued` (actions back).
+  /// A `false` answer means the message was no longer plainly queued — already
+  /// picked up or cancelled — and the WS patch for that state re-derives the
+  /// row, so there's nothing to undo here.
+  Future<void> _steerQueuedMessage(String messageId) async {
+    if (messageId.isEmpty ||
+        _steeringMessageIds.contains(messageId) ||
+        _cancellingMessageIds.contains(messageId)) {
+      return;
+    }
+    safeSetState(() => _steeringMessageIds.add(messageId));
+    _queueRevision.value++;
+    final steered = await actions.apiSteerQueuedMessage(widget.instanceId, messageId);
+    if (!steered) {
+      debugPrint('Steer request for queued message $messageId was not accepted');
+    }
+    if (!mounted) return;
+    safeSetState(() => _steeringMessageIds.remove(messageId));
     _queueRevision.value++;
   }
 

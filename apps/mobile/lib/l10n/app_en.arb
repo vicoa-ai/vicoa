@@ -81,6 +81,7 @@
   "agentChatAgentMode": "Agent Mode",
   "agentChatCancelQueuedMessageTooltip": "Cancel message",
   "agentChatRevertQueuedMessageTooltip": "Edit in input",
+  "agentChatSteerQueuedMessageTooltip": "Steer: send into the current turn now",
   "agentChatCancelledLabel": "Cancelled",
   "agentChatCloseFailed": "Failed to archive session. Please try again.",
   "agentChatCopiedToClipboard": "{count, plural, =1{Copied 1 message to clipboard} other{Copied {count} messages to clipboard}}",

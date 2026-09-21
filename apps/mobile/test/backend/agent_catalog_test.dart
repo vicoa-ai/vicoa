@@ -257,4 +257,53 @@ void main() {
     });
   });
 
+  group('supportsSteer', () {
+    // Mirrors `supports_steer` in backend/src/protocol/agent_catalog.py: the
+    // agents with a mid-turn primitive (Codex turn/steer, Claude Code streaming
+    // stdin, pi/omp steer RPC). ACP agents and OpenCode only queue.
+    test('fallback flags exactly the agents with a mid-turn primitive', () {
+      final catalog = agentCatalogFallback();
+      for (final id in ['claude', 'codex', 'omp', 'pi']) {
+        expect(catalog.agentById(id)!.supportsSteer, isTrue, reason: id);
+      }
+      for (final id in ['opencode', 'antigravity', 'cursor', 'gemini', 'copilot', 'kimi', 'hermes']) {
+        expect(catalog.agentById(id)!.supportsSteer, isFalse, reason: id);
+      }
+    });
+
+    test('fromJson reads the flag and treats absent or non-bool as false', () {
+      CatalogAgent parse(Map<String, dynamic> extra) =>
+          CatalogAgent.fromJson({'id': 'x', 'label': 'X', 'models': null, ...extra});
+      expect(parse({'supports_steer': true}).supportsSteer, isTrue);
+      expect(parse({'supports_steer': false}).supportsSteer, isFalse);
+      expect(parse({}).supportsSteer, isFalse);
+      expect(parse({'supports_steer': 'yes'}).supportsSteer, isFalse);
+    });
+
+    test('survives the cached-models merge', () {
+      final merged = catalogWithCachedModels(
+        agentCatalogFallback(),
+        {
+          'claude': [
+            {'id': 'claude-sonnet-5', 'label': 'Sonnet 5'},
+          ],
+          'qwen': [
+            {'id': 'qwen3-coder', 'label': 'Qwen3 Coder'},
+          ],
+        },
+        cachedModes: {
+          'copilot': [
+            {'id': 'agent', 'label': 'Agent'},
+          ],
+        },
+      );
+      // Cached models replaced the list — the capability rides along.
+      expect(merged.agentById('claude')!.supportsSteer, isTrue);
+      // Only cached modes were merged onto this static entry — still false.
+      expect(merged.agentById('copilot')!.supportsSteer, isFalse);
+      // A synthesized entry for an agent the catalog cannot describe never
+      // claims a capability it can't verify.
+      expect(merged.agentById('qwen')!.supportsSteer, isFalse);
+    });
+  });
 }

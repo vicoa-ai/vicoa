@@ -14,10 +14,29 @@ void main() {
       expect(queueStatus(message), kQueueStatusQueued);
     });
 
+    test('reads steer status (Steer pressed, daemon delivering)', () {
+      final message = {
+        'sender_type': 'user',
+        'message_metadata': {
+          'queue': {'status': 'steer', 'steer_requested_at': '2026-07-18T00:00:00Z'},
+        },
+      };
+      expect(queueStatus(message), kQueueStatusSteer);
+    });
+
     test('reads consumed status', () {
       final message = {
         'message_metadata': {
           'queue': {'status': 'consumed', 'consumed_at': '2026-07-18T00:00:00Z'},
+        },
+      };
+      expect(queueStatus(message), kQueueStatusConsumed);
+    });
+
+    test('reads consumed status on a steered message', () {
+      final message = {
+        'message_metadata': {
+          'queue': {'status': 'consumed', 'steered': true},
         },
       };
       expect(queueStatus(message), kQueueStatusConsumed);
@@ -78,6 +97,20 @@ void main() {
       expect(queueStatus('not-a-message'), isNull);
       expect(queueStatus(null), isNull);
       expect(queueStatus(42), isNull);
+    });
+  });
+
+  group('isPendingQueueStatus', () {
+    test('treats queued and steer as still in the bar', () {
+      expect(isPendingQueueStatus(kQueueStatusQueued), isTrue);
+      expect(isPendingQueueStatus(kQueueStatusSteer), isTrue);
+    });
+
+    test('treats terminal states and no status as not pending', () {
+      expect(isPendingQueueStatus(kQueueStatusConsumed), isFalse);
+      expect(isPendingQueueStatus(kQueueStatusCancelled), isFalse);
+      expect(isPendingQueueStatus(null), isFalse);
+      expect(isPendingQueueStatus(''), isFalse);
     });
   });
 }

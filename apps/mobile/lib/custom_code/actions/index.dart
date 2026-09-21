@@ -38,6 +38,7 @@ export 'api_create_agent.dart' show apiCreateAgent;
 export 'api_get_agent_by_id.dart' show apiGetAgentById;
 export 'api_chat_with_agent.dart' show apiChatWithAgent;
 export 'api_cancel_queued_message.dart' show apiCancelQueuedMessage;
+export 'api_steer_queued_message.dart' show apiSteerQueuedMessage;
 export 'api_upload_attachment.dart' show apiUploadAttachment;
 export 'api_sync_user.dart' show apiSyncUser;
 export 'api_get_mobile_subscription_status.dart' show apiGetMobileSubscriptionStatus;

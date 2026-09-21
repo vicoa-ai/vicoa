@@ -2,17 +2,21 @@
 //
 // Shape (only present on `sender_type: user` messages):
 //   message_metadata.queue = {
-//     status: 'queued' | 'consumed' | 'cancelled',
+//     status: 'queued' | 'steer' | 'consumed' | 'cancelled',
+//     steered?: bool,
 //     consumed_at?: string,
 //     cancelled_at?: string,
 //   }
 //
-// `queued` means the message is waiting for the agent to pick it up;
-// `consumed` means the agent has started acting on it (renders like a normal
-// message); `cancelled` means the user pulled it back before the agent
-// consumed it. Any other/missing value renders normally.
+// `queued` means the message is waiting for the agent to pick it up; `steer`
+// means the user pressed Steer and the daemon is delivering it into the
+// running turn (it settles to `consumed`, or back to `queued` if the turn
+// could not be steered); `consumed` means the agent has started acting on it
+// (renders like a normal message); `cancelled` means the user pulled it back
+// before the agent consumed it. Any other/missing value renders normally.
 
 const String kQueueStatusQueued = 'queued';
+const String kQueueStatusSteer = 'steer';
 const String kQueueStatusConsumed = 'consumed';
 const String kQueueStatusCancelled = 'cancelled';
 
@@ -30,6 +34,13 @@ String? queueStatus(dynamic message) {
   if (status is! String || status.isEmpty) return null;
   return status;
 }
+
+/// True while a message still lives in the queue bar: waiting (`queued`) or
+/// being steered into the running turn (`steer`). Terminal statuses and a
+/// missing status are not pending. Mirrors `isPendingQueueStatus` in the
+/// web's queue-status.tsx.
+bool isPendingQueueStatus(String? status) =>
+    status == kQueueStatusQueued || status == kQueueStatusSteer;
 
 final RegExp _controlCommandJsonRegex =
     RegExp(r'\{\s*"type"\s*:\s*"control"[^}]*\}', caseSensitive: false);

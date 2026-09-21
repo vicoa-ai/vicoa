@@ -7,11 +7,19 @@ import '/l10n/app_localizations.dart';
 
 /// One user message staged behind a busy agent, ready to surface in the queue
 /// bar. [text] is already sanitized by the caller (permission-mode tokens etc.
-/// stripped) so the bar can render it verbatim.
+/// stripped) so the bar can render it verbatim. [steering] is
+/// `queue.status == 'steer'`: the daemon is delivering this message into the
+/// running turn, so the row shows a spinner and no actions until it settles
+/// (to `consumed`, dropping out of the list, or back to `queued`).
 class QueuedMessageEntry {
-  const QueuedMessageEntry({required this.id, required this.text});
+  const QueuedMessageEntry({
+    required this.id,
+    required this.text,
+    this.steering = false,
+  });
   final String id;
   final String text;
+  final bool steering;
 }
 
 /// Collapsed queue bar that sits directly above the chat input. Shows the
@@ -33,6 +41,10 @@ class QueuedMessagesBar extends StatelessWidget {
     if (items.isEmpty) return const SizedBox.shrink();
     final theme = FlutterFlowTheme.of(context);
     final preview = items.first.text.trim().replaceAll('\n', ' ');
+    // A row being steered into the running turn shows progress even with the
+    // sheet closed — the bar's leading glyph becomes a spinner until the
+    // daemon settles it.
+    final steering = items.any((e) => e.steering);
     return Container(
       // 12px side inset matches the chat input container (4px outer padding +
       // 8px inner margin); 8px bottom gap floats it just above the input.
@@ -57,8 +69,18 @@ class QueuedMessagesBar extends StatelessWidget {
             padding: const EdgeInsetsDirectional.fromSTEB(14.0, 10.0, 8.0, 10.0),
             child: Row(
               children: [
-                Icon(Icons.pending_outlined,
-                    size: 16.0, color: theme.secondaryText),
+                if (steering)
+                  SizedBox(
+                    width: 16.0,
+                    height: 16.0,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.0,
+                      color: theme.secondaryText,
+                    ),
+                  )
+                else
+                  Icon(Icons.pending_outlined,
+                      size: 16.0, color: theme.secondaryText),
                 const SizedBox(width: 8.0),
                 Text(
                   AppLocalizations.of(context).agentChatQueuedCount(items.length),
@@ -101,12 +123,15 @@ class QueuedMessagesBar extends StatelessWidget {
 }
 
 /// Opens the expanded queue as a bottom sheet: a scrollable stack of the
-/// staged messages, each with a revert-to-input and a cancel action. Stays
-/// live while open by rebuilding off [revision] and re-reading [itemsProvider]
-/// / [isCancelling], so items consumed or cancelled elsewhere update in place.
-/// Auto-dismisses once the queue empties. [onRevert] fires with the message id
-/// and its text; the caller closes the sheet, drops the text into the composer
-/// and cancels the queued copy.
+/// staged messages, each with a revert-to-input and a cancel action — plus,
+/// when [canSteer] (the session's agent can take a message mid-turn, catalog
+/// `supports_steer`), a Steer action that delivers the message into the
+/// running turn now. Stays live while open by rebuilding off [revision] and
+/// re-reading [itemsProvider] / [isCancelling] / [isSteering], so items
+/// consumed, cancelled or steered elsewhere update in place. Auto-dismisses
+/// once the queue empties. [onRevert] fires with the message id and its text;
+/// the caller closes the sheet, drops the text into the composer and cancels
+/// the queued copy.
 Future<void> showQueuedMessagesSheet({
   required BuildContext context,
   required Listenable revision,
@@ -114,6 +139,9 @@ Future<void> showQueuedMessagesSheet({
   required bool Function(String id) isCancelling,
   required Future<void> Function(String id) onCancel,
   required Future<void> Function(String id, String text) onRevert,
+  bool canSteer = false,
+  bool Function(String id)? isSteering,
+  Future<void> Function(String id)? onSteer,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -125,6 +153,9 @@ Future<void> showQueuedMessagesSheet({
       isCancelling: isCancelling,
       onCancel: onCancel,
       onRevert: onRevert,
+      canSteer: canSteer && onSteer != null,
+      isSteering: isSteering ?? (_) => false,
+      onSteer: onSteer ?? (_) async {},
     ),
   );
 }
@@ -136,6 +167,9 @@ class _QueuedMessagesSheet extends StatefulWidget {
     required this.isCancelling,
     required this.onCancel,
     required this.onRevert,
+    required this.canSteer,
+    required this.isSteering,
+    required this.onSteer,
   });
 
   final Listenable revision;
@@ -143,6 +177,9 @@ class _QueuedMessagesSheet extends StatefulWidget {
   final bool Function(String id) isCancelling;
   final Future<void> Function(String id) onCancel;
   final Future<void> Function(String id, String text) onRevert;
+  final bool canSteer;
+  final bool Function(String id) isSteering;
+  final Future<void> Function(String id) onSteer;
 
   @override
   State<_QueuedMessagesSheet> createState() => _QueuedMessagesSheetState();
@@ -234,6 +271,14 @@ class _QueuedMessagesSheetState extends State<_QueuedMessagesSheet> {
                     itemBuilder: (context, i) => _QueuedRow(
                       entry: items[i],
                       cancelling: widget.isCancelling(items[i].id),
+                      // Spinner-only while the steer POST is in flight AND
+                      // while the daemon is delivering it (`steer` status):
+                      // the message is out of the user's hands until it
+                      // settles.
+                      steering: items[i].steering ||
+                          widget.isSteering(items[i].id),
+                      canSteer: widget.canSteer,
+                      onSteer: () => widget.onSteer(items[i].id),
                       onCancel: () => widget.onCancel(items[i].id),
                       // Close the sheet first so the composer (now holding the
                       // reverted text) is visible and focusable underneath.
@@ -254,26 +299,34 @@ class _QueuedMessagesSheetState extends State<_QueuedMessagesSheet> {
   }
 }
 
-/// A single staged message inside the sheet: 2-line preview + a revert-to-input
-/// affordance and a cancel affordance (both collapse to a spinner while a
-/// cancel request is in flight). Flat on the sheet surface, separated by
-/// hairline dividers — mirrors the web queue row.
+/// A single staged message inside the sheet: 2-line preview + an optional
+/// steer affordance, a revert-to-input affordance and a cancel affordance
+/// (all collapse to a spinner while a cancel or steer request is in flight, or
+/// while the daemon is delivering a steered message). Flat on the sheet
+/// surface, separated by hairline dividers — mirrors the web queue row.
 class _QueuedRow extends StatelessWidget {
   const _QueuedRow({
     required this.entry,
     required this.cancelling,
+    required this.steering,
+    required this.canSteer,
+    required this.onSteer,
     required this.onCancel,
     required this.onRevert,
   });
 
   final QueuedMessageEntry entry;
   final bool cancelling;
+  final bool steering;
+  final bool canSteer;
+  final VoidCallback onSteer;
   final VoidCallback onCancel;
   final VoidCallback onRevert;
 
   @override
   Widget build(BuildContext context) {
     final theme = FlutterFlowTheme.of(context);
+    final busy = cancelling || steering;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -295,7 +348,7 @@ class _QueuedRow extends StatelessWidget {
         const SizedBox(width: 8.0),
         Padding(
           padding: const EdgeInsetsDirectional.fromSTEB(0.0, 6.0, 0.0, 0.0),
-          child: cancelling
+          child: busy
               ? Container(
                   width: 32.0,
                   height: 32.0,
@@ -312,6 +365,19 @@ class _QueuedRow extends StatelessWidget {
               : Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // Steer = deliver into the running turn now, at the
+                    // agent's next safe boundary, instead of after the turn
+                    // ends. Only agents with a mid-turn primitive get it.
+                    if (canSteer)
+                      _QueuedRowAction(
+                        icon: Icons.bolt_rounded,
+                        tooltip: AppLocalizations.of(context)
+                            .agentChatSteerQueuedMessageTooltip,
+                        onTap: () {
+                          HapticFeedback.lightImpact();
+                          onSteer();
+                        },
+                      ),
                     _QueuedRowAction(
                       icon: Icons.undo_rounded,
                       tooltip: AppLocalizations.of(context)

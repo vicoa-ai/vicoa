@@ -88,6 +88,7 @@ class CatalogAgent {
     required this.reasoningEfforts,
     required this.permissionModes,
     required this.modes,
+    this.supportsSteer = false,
   });
 
   final String id;
@@ -99,10 +100,17 @@ class CatalogAgent {
   final List<CatalogEnumEntry> permissionModes;
   /// OpenCode-only `build|plan`.
   final List<CatalogEnumEntry> modes;
+  /// The wrapper can deliver a queued message into the *running* turn (the
+  /// queue sheet's Steer action). Codex (`turn/steer`), Claude Code (streaming
+  /// stdin, picked up at the next tool boundary) and pi/omp (`steer` RPC);
+  /// false for ACP agents and OpenCode, which only queue. Mirrors
+  /// `supports_steer` in the web's agent-catalog.ts.
+  final bool supportsSteer;
 
   factory CatalogAgent.fromJson(Map<String, dynamic> json) => CatalogAgent(
         id: json['id'] as String,
         label: (json['label'] as String?) ?? (json['id'] as String),
+        supportsSteer: json['supports_steer'] == true,
         models: (json['models'] as List?)?.map((m) => CatalogModel.fromJson(Map<String, dynamic>.from(m as Map))).toList(),
         thinkingEfforts: ((json['thinking_efforts'] as List?) ?? const []).map((e) => CatalogEnumEntry.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
         reasoningEfforts: ((json['reasoning_efforts'] as List?) ?? const []).map((e) => CatalogEnumEntry.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
@@ -448,6 +456,7 @@ const String _agentCatalogFallbackJson = r'''
     {
       "id": "claude",
       "label": "Claude Code",
+      "supports_steer": true,
       "models": [
         {"id": "claude-fable-5", "label": "Fable 5", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
         {"id": "claude-opus-5", "label": "Opus 5", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
@@ -482,6 +491,7 @@ const String _agentCatalogFallbackJson = r'''
     {
       "id": "codex",
       "label": "Codex",
+      "supports_steer": true,
       "models": [
         {"id": "gpt-5.5", "label": "GPT-5.5", "is_default": true},
         {"id": "gpt-5.4", "label": "GPT-5.4"},
@@ -513,6 +523,7 @@ const String _agentCatalogFallbackJson = r'''
     {
       "id": "omp",
       "label": "Oh My Pi",
+      "supports_steer": true,
       "models": [
         {"id": "default", "label": "Default", "is_default": true}
       ],
@@ -533,6 +544,7 @@ const String _agentCatalogFallbackJson = r'''
     {
       "id": "pi",
       "label": "Pi",
+      "supports_steer": true,
       "models": [
         {"id": "default", "label": "Default", "is_default": true}
       ],
@@ -751,6 +763,7 @@ AgentCatalog catalogWithCachedModels(
         reasoningEfforts: a.reasoningEfforts,
         permissionModes: modesForA,
         modes: a.modes,
+        supportsSteer: a.supportsSteer,
       );
     }
     // A machine reports only `{id, label}` — no capability metadata. Carry the
@@ -801,6 +814,7 @@ AgentCatalog catalogWithCachedModels(
       reasoningEfforts: a.reasoningEfforts,
       permissionModes: modesForA ?? a.permissionModes,
       modes: a.modes,
+      supportsSteer: a.supportsSteer,
     );
   }).toList();
   return AgentCatalog(

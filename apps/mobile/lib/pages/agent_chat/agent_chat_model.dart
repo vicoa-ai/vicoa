@@ -4,7 +4,7 @@ import '/pages/common/session_actions.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/actions/ws_protocol.dart' as ws_protocol;
-import '/backend/agent_catalog.dart' show normalizeModelLabel;
+import '/backend/agent_catalog.dart' show AgentCatalog, agentCatalogFallback, normalizeModelLabel;
 import '/backend/posthog/posthog_analytics.dart';
 import '/custom_code/utils/text_sanitizer.dart';
 import '/custom_code/utils/file_mention_utils.dart';
@@ -539,6 +539,37 @@ String? latestWebPreviewUrl;
     if (supportsControlSettings()) return 'claude';
     if (isCodexAgent()) return 'codex';
     return acpAgentId();
+  }
+
+  /// The catalog id this session runs under, for per-agent capability
+  /// lookups. `session_config.agent` is the id the daemon was spawned with
+  /// and is authoritative; the substring detection on `agent_type_name` is
+  /// only a fallback for rows that predate `session_config`. Null when the
+  /// agent can't be told (a user-defined provider the catalog has never
+  /// heard of).
+  String? catalogAgentId() {
+    final configured = _sessionConfigMap?['agent']?.toString().toLowerCase().trim();
+    if (configured != null && configured.isNotEmpty) return configured;
+    if (supportsControlSettings()) return 'claude';
+    if (isCodexAgent()) return 'codex';
+    if (isOpencodeAgent()) return 'opencode';
+    return acpAgentId();
+  }
+
+  /// Static catalog for per-agent capabilities. Parsed once per model: the
+  /// capability flags are fixed per agent, not per machine, so the baked-in
+  /// fallback is the right source (mirrors the web reading
+  /// `AGENT_CATALOG_FALLBACK` for `canSteer`).
+  late final AgentCatalog _capabilityCatalog = agentCatalogFallback();
+
+  /// Whether the queue sheet offers Steer — delivering a queued message into
+  /// the *running* turn. A per-agent capability (catalog `supports_steer`):
+  /// Codex, Claude Code and pi/omp have a mid-turn primitive; ACP agents and
+  /// OpenCode only queue.
+  bool canSteerQueuedMessages() {
+    final id = catalogAgentId();
+    if (id == null) return false;
+    return _capabilityCatalog.agentById(id)?.supportsSteer == true;
   }
 
   Map<String, dynamic>? get _sessionConfigMap {
