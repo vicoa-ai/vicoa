@@ -214,6 +214,10 @@ export function describeToolRun(
     count: number;
     files: Set<string>;
     hasFile: boolean;
+    /** Distinct command text, for shell tools — an ACP agent cards a command
+     *  twice, once as it starts and once with its output, and that is still
+     *  one command. */
+    commands: Set<string>;
   }
   const order: ToolAggregate[] = [];
   const byName = new Map<string, ToolAggregate>();
@@ -226,11 +230,12 @@ export function describeToolRun(
     if (options?.excludeFileEdits && isFileEditToolName(summary.name)) continue;
     let aggregate = byName.get(summary.name);
     if (!aggregate) {
-      aggregate = { name: summary.name, count: 0, files: new Set(), hasFile: false };
+      aggregate = { name: summary.name, count: 0, files: new Set(), hasFile: false, commands: new Set() };
       byName.set(summary.name, aggregate);
       order.push(aggregate);
     }
     aggregate.count += 1;
+    aggregate.commands.add(summary.description);
     if (summary.fullPath) {
       aggregate.hasFile = true;
       aggregate.files.add(summary.fullPath);
@@ -242,8 +247,9 @@ export function describeToolRun(
   }
   const segments = order.map((aggregate) => {
     // Shell tools read better as an action than a name; count the commands run.
-    if (aggregate.name === 'Bash' || aggregate.name === 'Exec') {
-      return aggregate.count > 1 ? `Run ${aggregate.count} commands` : 'Run a command';
+    if (isShellToolName(aggregate.name)) {
+      const commands = aggregate.commands.size;
+      return commands > 1 ? `Run ${commands} commands` : 'Run a command';
     }
     // File tools count the distinct files they touched.
     if (aggregate.hasFile) {
@@ -282,6 +288,13 @@ export function toolNamesInRun(contents: string[], agentType: ToolUseAgentType):
     }
   }
   return names;
+}
+
+/** True for the shell tools: Claude's Bash, codex's Exec, and the ACP
+ *  wrapper's Execute (the `execute` kind every ACP agent's shell maps to). */
+export function isShellToolName(name: string): boolean {
+  const normalized = name.toLowerCase().replace(/[^a-z]/g, '');
+  return normalized === 'bash' || normalized === 'exec' || normalized === 'execute';
 }
 
 /** True for the tools that create or modify a file (Edit/Write/MultiEdit,

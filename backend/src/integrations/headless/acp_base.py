@@ -325,6 +325,10 @@ class ACPWrapperBase(ABC):
         # completion frame that repeats an unchanged diff is not posted twice.
         # Insertion-ordered (plain dict) for FIFO eviction past the cap.
         self._announced_tool_calls: Dict[str, str] = {}
+        # toolCallId -> what the call's earlier frames established about it
+        # (kind, path, arguments, preview, whether it was carded); see
+        # _tool_call_view. Same FIFO cap as _announced_tool_calls.
+        self._tool_call_facts: Dict[str, Dict[str, str]] = {}
         # Last rendered plan checklist; agents re-send the whole plan on every
         # step change, so an unchanged one is dropped.
         self._last_plan_signature: Optional[str] = None
@@ -2352,15 +2356,25 @@ class ACPWrapperBase(ABC):
         # Shell and tool executions are often surfaced as completed tool updates.
         if update_type == "tool_call_update":
             if update.get("status") not in {"completed", "failed"}:
+                # A start frame that named only the tool deferred its card; the
+                # in_progress frame that follows carries the arguments, so a
+                # long-running command is still announced before it finishes.
+                self._emit_tool_call_start(update, progress=True)
                 return
 
-            tool_call_id = str(update.get("toolCallId") or "").strip()
+            view = self._tool_call_view(update)
+            tool_call_id = view["id"]
 
             if not self._show_tool_updates:
                 rendered_parts: list[str] = []
                 change_preview = self._extract_tool_change_preview(update)
+                if not change_preview and not view.get("announced"):
+                    # The call was never carded (its start frame had nothing to
+                    # show), so what an earlier frame carried — the body of a
+                    # whole-file write, say — is shown here with the result.
+                    change_preview = view.get("preview", "")
                 if change_preview:
-                    file_target = self._extract_tool_target_file(update)
+                    file_target = view.get("path", "")
                     rendered_parts.append(
                         f"Updated `{file_target}`.\n\n{change_preview}"
                         if file_target
@@ -2390,7 +2404,7 @@ class ACPWrapperBase(ABC):
                     return
                 if signature == self._last_tool_change_signature:
                     return
-                self._emit_acp_tool_card(update, rendered)
+                self._emit_acp_tool_card(update, rendered, view=view)
                 self._last_tool_change_signature = signature
                 return
 
@@ -2419,7 +2433,7 @@ class ACPWrapperBase(ABC):
                 tool_call_id, body.strip()
             ):
                 return
-            self._emit_acp_tool_card(update, body)
+            self._emit_acp_tool_card(update, body, view=view)
 
             return
 
@@ -2432,18 +2446,39 @@ class ACPWrapperBase(ABC):
     #: session and the map is FIFO-evicted past this.
     _MAX_ANNOUNCED_TOOL_CALLS = 512
 
-    def _emit_tool_call_start(self, update: Dict[str, Any]) -> None:
+    def _emit_tool_call_start(
+        self, update: Dict[str, Any], *, progress: bool = False
+    ) -> None:
         """Post the "Using tool" card when the agent *starts* a tool.
 
         The diff usually rides the start frame (ACP ``ToolCallContent`` of type
         ``diff``), so an edit is shown in full here and the completion frame
         that repeats it is deduped away by :py:meth:`_tool_card_already_shown`.
+
+        Not every agent's start frame says anything, though. OpenCode's names
+        only the kind — ``title`` is its own tool name (``edit``, ``bash``),
+        with the path or command arriving on the ``in_progress`` frame that
+        follows — and carding it as it stands read "Edit - `edit`". A frame
+        with no detail and no diff is therefore not carded; the next frame
+        with substance is (``progress=True``, from the dispatcher), which for a
+        command still lands before it finishes. A file operation is over by
+        then, so it is carded once, at completion, where the definitive diff
+        or result is — two cards per edit, the second with the file's basename
+        as its NAME, was what hid OpenCode's edits from the clients' file chips.
         """
-        tool_call_id = str(update.get("toolCallId") or "").strip()
-        parts: list[str] = []
+        view = self._tool_call_view(update)
+        tool_call_id = view["id"]
+        if view.get("announced"):
+            return
         change_preview = self._extract_tool_change_preview(update)
+        if not view.get("detail") and not change_preview:
+            return
+        if progress and view.get("kind") in self._ACP_FILE_KINDS:
+            return
+
+        parts: list[str] = []
         if change_preview:
-            file_target = self._extract_tool_target_file(update)
+            file_target = view.get("path", "")
             parts.append(
                 f"Updated `{file_target}`.\n\n{change_preview}"
                 if file_target
@@ -2452,11 +2487,97 @@ class ACPWrapperBase(ABC):
         body = "\n\n".join(part for part in parts if part.strip())
 
         self._flush_assistant_chunk_buffer()
-        header = self._acp_tool_header(update)
+        header = self._acp_tool_header(update, view=view)
         self._forward_agent_text(f"{header}\n{body}" if body else header)
+        if tool_call_id:
+            self._tool_call_facts[tool_call_id]["announced"] = "1"
         if body:
             self._record_tool_card(tool_call_id, body.strip())
             self._last_tool_change_signature = body.strip()
+
+    #: Tool kinds whose subject is a file. Their card's detail is the path when
+    #: one is known (a title like "Edit app.py" is not what the clients' file
+    #: chips need), and they are over by the time an in_progress frame could be
+    #: carded, so their one card is the completion frame's.
+    _ACP_FILE_KINDS = frozenset({"read", "edit", "delete", "move"})
+
+    #: ``rawInput`` keys that name what a non-file tool is doing, in the order
+    #: tried: a shell command, a search pattern, a fetched URL.
+    _ACP_ARGUMENT_KEYS = ("command", "cmd", "pattern", "query", "url")
+
+    def _tool_call_view(self, update: Dict[str, Any]) -> Dict[str, str]:
+        """This frame's fields, filled in from earlier frames of the same call.
+
+        Agents differ in how much each frame repeats. Most put kind, title and
+        content on every frame; OpenCode splits a call across them — ``kind``
+        and its own tool name as ``title`` on the start frame, the path or
+        command on ``in_progress``, and a completion frame with the result but
+        neither ``kind`` nor a path (its ``title`` turns into the relative
+        path). Rendered from one frame alone, the completion's header used the
+        basename as the tool NAME. Merging keeps a call's header the same on
+        every frame.
+
+        A one-word ``title`` (``edit``, ``bash``, ``Read``) is the agent's tool
+        name, kept as ``tool``; anything else (a path, a command, "Edit app.py")
+        is a real ``title``. ``detail`` is what goes after " - " in the header:
+        the path for a file kind, else the title, else an argument from
+        ``rawInput``. Facts are per toolCallId, FIFO-evicted past the cap; a
+        frame with no id is viewed on its own.
+        """
+        tool_call_id = str(update.get("toolCallId") or "").strip()
+        facts = self._tool_call_facts.get(tool_call_id) if tool_call_id else None
+        if facts is None:
+            facts = {}
+            if tool_call_id:
+                self._tool_call_facts[tool_call_id] = facts
+                while len(self._tool_call_facts) > self._MAX_ANNOUNCED_TOOL_CALLS:
+                    self._tool_call_facts.pop(next(iter(self._tool_call_facts)))
+
+        kind = str(update.get("kind") or "").strip().lower()
+        if kind:
+            facts["kind"] = kind
+        title = str(update.get("title") or "").strip()
+        if title:
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", title):
+                facts.setdefault("tool", title)
+            else:
+                facts["title"] = title
+        path = self._extract_tool_target_file(update)
+        if path:
+            facts.setdefault("path", path)
+        argument = self._extract_tool_argument(update)
+        if argument:
+            facts.setdefault("argument", argument)
+        preview = self._extract_tool_change_preview(update)
+        if preview:
+            facts["preview"] = preview
+
+        view = dict(facts)
+        view["id"] = tool_call_id
+        kind = view.get("kind", "")
+        if kind in self._ACP_FILE_KINDS:
+            view["detail"] = view.get("path") or view.get("title", "")
+        elif kind == "execute":
+            # A command's ``locations`` is its cwd, not something it is doing.
+            view["detail"] = view.get("title") or view.get("argument", "")
+        else:
+            view["detail"] = (
+                view.get("title") or view.get("argument") or view.get("path", "")
+            )
+        return view
+
+    def _extract_tool_argument(self, update: Dict[str, Any]) -> str:
+        """The command / pattern / URL a tool call's ``rawInput`` names."""
+        raw_input = update.get("rawInput")
+        if not isinstance(raw_input, dict):
+            return ""
+        for key in self._ACP_ARGUMENT_KEYS:
+            value = raw_input.get(key)
+            if isinstance(value, list) and all(isinstance(v, str) for v in value):
+                value = " ".join(value)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
 
     def _record_tool_card(self, tool_call_id: str, signature: str) -> None:
         """Remember what a tool call already showed, for completion dedupe."""
@@ -2760,7 +2881,9 @@ class ACPWrapperBase(ABC):
         "switch_mode": "Mode",
     }
 
-    def _acp_tool_header(self, update: Dict[str, Any]) -> str:
+    def _acp_tool_header(
+        self, update: Dict[str, Any], *, view: Optional[Dict[str, str]] = None
+    ) -> str:
         """A "🔧 Using tool: <name>[ - `<detail>`]" header for a tool_call_update.
 
         The web/mobile clients collapse any message whose content starts with
@@ -2770,13 +2893,29 @@ class ACPWrapperBase(ABC):
         in ``title`` (e.g. ``apps/web/…/pricing-cards.tsx``), which is why the
         name comes from the clean ``kind`` enum and the title/path goes in the
         arg slot.
+
+        Rendered from the call's merged view (:py:meth:`_tool_call_view`), so
+        a completion frame that dropped ``kind`` keeps the header its start
+        frame had. For a file kind the detail is the path: that is what the
+        clients resolve a chip's click and "+N -M" from, and it is what makes
+        an edit count as one — "Edit - `edit`" then "text.txt" did not.
         """
-        kind = str(update.get("kind") or "").strip().lower()
-        title = str(update.get("title") or "").strip()
+        view = view if view is not None else self._tool_call_view(update)
+        kind = view.get("kind", "")
+        tool = view.get("tool", "")
+        title = view.get("title", "")
         name = self._ACP_KIND_TO_TOOL.get(kind)
         detail = ""
         if name:
-            detail = title or self._extract_tool_target_file(update)
+            if kind == "edit" and tool.lower() == "write":
+                # A whole-file write: the clients label it apart from an edit.
+                name = "Write"
+            detail = view.get("detail", "")
+        elif tool:
+            # Unknown kind, but the agent's own one-word tool name is safe as
+            # the name (never hyphenated).
+            name = tool
+            detail = view.get("detail", "")
         elif title and "-" not in title and "*" not in title:
             # Unknown kind, but a hyphen/asterisk-free title is safe as the name.
             name = title
@@ -2784,12 +2923,18 @@ class ACPWrapperBase(ABC):
             # Unknown kind + a path-like/hyphenated title: keep the name generic
             # so the client never severs a filename; show the title as the arg.
             name = "Tool"
-            detail = title or self._extract_tool_target_file(update)
+            detail = title or view.get("path", "")
         if detail:
             return f"🔧 Using tool: {name} - `{detail}`"
         return f"🔧 Using tool: {name}"
 
-    def _emit_acp_tool_card(self, update: Dict[str, Any], body: str) -> None:
+    def _emit_acp_tool_card(
+        self,
+        update: Dict[str, Any],
+        body: str,
+        *,
+        view: Optional[Dict[str, str]] = None,
+    ) -> None:
         """Send a tool_call_update's output as its own collapsed tool card.
 
         Previously tool output was appended into the shared assistant-narration
@@ -2804,7 +2949,7 @@ class ACPWrapperBase(ABC):
         if not body:
             return
         self._flush_assistant_chunk_buffer()
-        header = self._acp_tool_header(update)
+        header = self._acp_tool_header(update, view=view)
         self._forward_agent_text(f"{header}\n{body}")
 
     def _set_agent_status(self, status: str) -> None:
@@ -3031,10 +3176,10 @@ class ACPWrapperBase(ABC):
         seen_blocks: set[str] = set()
         for node in self._iter_nested_dicts(update):
             old_value = self._first_non_none(
-                node, ("old_string", "oldText", "old", "before")
+                node, ("old_string", "oldString", "oldText", "old", "before")
             )
             new_value = self._first_non_none(
-                node, ("new_string", "newText", "new", "after")
+                node, ("new_string", "newString", "newText", "new", "after")
             )
             if old_value is None and new_value is None:
                 continue
@@ -3049,7 +3194,21 @@ class ACPWrapperBase(ABC):
                 seen_blocks.add(diff_block)
                 edit_blocks.append(diff_block)
 
-        return "\n\n".join(edit_blocks[:2])
+        if edit_blocks:
+            return "\n\n".join(edit_blocks[:2])
+
+        # A whole-file write has no old/new pair; its ``rawInput`` carries the
+        # body. Shown as the file, the way the Claude runner cards a Write.
+        raw_input = update.get("rawInput")
+        if str(update.get("kind") or "").strip().lower() == "edit" and isinstance(
+            raw_input, dict
+        ):
+            written = raw_input.get("content")
+            if isinstance(written, str) and written.strip():
+                return self._build_content_block(
+                    written, self._extract_tool_target_file(update)
+                )
+        return ""
 
     def _extract_tool_target_file(self, update: Dict[str, Any]) -> str:
         """Best-effort extraction of edited file path from tool payload."""
@@ -3088,6 +3247,15 @@ class ACPWrapperBase(ABC):
             if key in source and source.get(key) is not None:
                 return source.get(key)
         return None
+
+    def _build_content_block(self, text: str, path: str = "") -> str:
+        """Fence a written file's body, tagged with its extension for highlighting."""
+        lines = text.splitlines()
+        if not lines:
+            return ""
+        suffix = Path(path).suffix.lstrip(".") if path else ""
+        lang = suffix if re.fullmatch(r"[A-Za-z0-9]{1,12}", suffix) else ""
+        return f"```{lang}\n" + "\n".join(lines[:240]) + "\n```"
 
     def _build_diff_block(self, old_text: str, new_text: str) -> str:
         """Render a compact unified diff block for edit previews."""

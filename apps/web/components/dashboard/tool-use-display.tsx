@@ -235,6 +235,7 @@ const TOOL_RANK: Record<string, number> = {
   glob: 3,
   bash: 4,
   exec: 4,
+  execute: 4,
   list: 5,
   todos: 6,
 };
@@ -246,7 +247,7 @@ function normalizeToolName(name: string): string {
 /** Map a tool name to its glyph; Wrench is the catch-all for unknown tools. */
 function iconForToolName(name: string): LucideIcon {
   const normalized = normalizeToolName(name);
-  if (normalized === 'bash' || normalized === 'exec') return Terminal;
+  if (normalized === 'bash' || normalized === 'exec' || normalized === 'execute') return Terminal;
   if (normalized === 'edit' || normalized === 'edited' || normalized === 'write' || normalized === 'multiedit') {
     return Pencil;
   }

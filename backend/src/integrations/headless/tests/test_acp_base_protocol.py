@@ -131,6 +131,7 @@ def _build_wrapper(
     wrapper._show_tool_updates = False
     wrapper._last_tool_change_signature = None
     wrapper._announced_tool_calls = {}
+    wrapper._tool_call_facts = {}
     wrapper._last_plan_signature = None
     wrapper._last_synced_commands = {}
     wrapper._usage = UsageState()
@@ -1359,6 +1360,7 @@ def test_tool_call_completion_still_posts_new_output() -> None:
                 "toolCallId": "tc-3",
                 "kind": "execute",
                 "title": "ls",
+                "rawInput": {"command": "ls"},
             }
         }
     )
@@ -1383,6 +1385,234 @@ def test_tool_call_completion_still_posts_new_output() -> None:
     contents = _sent_contents(vc)
     assert len(contents) == 2
     assert "README.md" in contents[1]
+
+
+def _opencode_edit_frames(
+    tool_call_id: str, path: str, *, tool: str = "edit"
+) -> list[Dict[str, Any]]:
+    """The frames OpenCode (1.18) sends for one edit: a start frame that names
+    only the kind (title = its own tool name, no path), an in_progress frame
+    with the arguments, and a completion frame with the result and diff but
+    neither ``kind`` nor ``locations`` — its title is the relative path."""
+    return [
+        {
+            "sessionUpdate": "tool_call",
+            "toolCallId": tool_call_id,
+            "kind": "edit",
+            "title": tool,
+            "status": "pending",
+            "locations": [],
+            "rawInput": {},
+        },
+        {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": tool_call_id,
+            "kind": "edit",
+            "title": tool,
+            "status": "in_progress",
+            "locations": [{"path": path}],
+            "rawInput": {
+                "filePath": path,
+                "oldString": "hello",
+                "newString": "hello\nworld",
+            },
+        },
+        {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": tool_call_id,
+            "status": "completed",
+            "title": path.rsplit("/", 1)[-1],
+            "content": [
+                {
+                    "type": "content",
+                    "content": {"type": "text", "text": "Edit applied successfully."},
+                },
+                {
+                    "type": "diff",
+                    "path": path,
+                    "oldText": "hello",
+                    "newText": "hello\nworld",
+                },
+            ],
+            "rawOutput": {
+                "output": "Edit applied successfully.",
+                "metadata": {
+                    "diff": f"Index: {path}\n===\n--- {path}\n+++ {path}\n@@ -1,1 +1,2 @@\n hello\n+world\n",
+                },
+            },
+        },
+    ]
+
+
+def test_opencode_edit_is_one_card_named_by_its_path() -> None:
+    """An OpenCode edit used to post "Edit - `edit`" at start and a completion
+    card whose NAME was the file's basename — neither of which the clients'
+    edited-file chips can read. Now: one card, the kind remembered from the
+    start frame, the path as the detail, the definitive diff as the body."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+
+    for frame in _opencode_edit_frames("call_1", "/repo/src/app.py"):
+        wrapper._handle_session_update({"update": frame})
+
+    contents = _sent_contents(vc)
+    assert len(contents) == 1
+    lines = contents[0].splitlines()
+    assert lines[0] == "🔧 Using tool: Edit - `/repo/src/app.py`"
+    assert "Updated `/repo/src/app.py`." in contents[0]
+    assert "+world" in contents[0]
+    assert "Edit applied successfully." in contents[0]
+
+
+def test_opencode_write_is_labelled_write_and_shows_the_body() -> None:
+    """OpenCode's write is ``kind: edit`` titled ``write``; the card says
+    Write (the clients label writes apart from edits) and, since a write has
+    no old/new pair, shows the body its in_progress frame carried."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+
+    frames = _opencode_edit_frames("call_2", "/repo/notes/new.md", tool="write")
+    frames[1]["rawInput"] = {"filePath": "/repo/notes/new.md", "content": "# hi\n"}
+    frames[2]["content"] = [
+        {
+            "type": "content",
+            "content": {"type": "text", "text": "Wrote file successfully."},
+        }
+    ]
+    frames[2]["rawOutput"] = {
+        "output": "Wrote file successfully.",
+        "metadata": {"filepath": "/repo/notes/new.md", "exists": False},
+    }
+    for frame in frames:
+        wrapper._handle_session_update({"update": frame})
+
+    contents = _sent_contents(vc)
+    assert len(contents) == 1
+    assert contents[0].startswith("🔧 Using tool: Write - `/repo/notes/new.md`\n")
+    assert "```md\n# hi\n```" in contents[0]
+    assert "Wrote file successfully." in contents[0]
+
+
+def test_opencode_command_is_announced_by_its_in_progress_frame() -> None:
+    """OpenCode's start frame for a command carries only the cwd (in both
+    ``locations`` and ``rawInput``) and its tool name as the title. Nothing to
+    card yet; the in_progress frame names the command and posts the start card
+    — before the command finishes — and the completion keeps the same header
+    although it dropped ``kind``."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+
+    wrapper._handle_session_update(
+        {
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "call_3",
+                "kind": "execute",
+                "title": "bash",
+                "status": "pending",
+                "locations": [{"path": "/repo"}],
+                "rawInput": {"cwd": "/repo"},
+            }
+        }
+    )
+    assert _sent_contents(vc) == []
+
+    progress = {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call_3",
+        "kind": "execute",
+        "title": "ls -la",
+        "status": "in_progress",
+        "locations": [{"path": "/repo"}],
+        "rawInput": {"command": "ls -la", "cwd": "/repo"},
+    }
+    wrapper._handle_session_update({"update": progress})
+    wrapper._handle_session_update({"update": progress})  # OpenCode repeats it
+    assert _sent_contents(vc) == ["🔧 Using tool: Execute - `ls -la`"]
+
+    wrapper._handle_session_update(
+        {
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call_3",
+                "status": "completed",
+                "title": "ls -la",
+                "content": [
+                    {
+                        "type": "content",
+                        "content": {"type": "text", "text": "README.md"},
+                    }
+                ],
+            }
+        }
+    )
+    contents = _sent_contents(vc)
+    assert len(contents) == 2
+    assert contents[1] == "🔧 Using tool: Execute - `ls -la`\nREADME.md"
+
+
+def test_one_word_title_is_the_tool_name_not_the_detail() -> None:
+    """A title that is a bare word names the tool; the card's detail comes
+    from the arguments (here a search pattern) — and a completion whose title
+    is the pattern itself keeps that header."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+
+    wrapper._handle_session_update(
+        {
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "call_4",
+                "kind": "search",
+                "title": "grep",
+                "status": "pending",
+            }
+        }
+    )
+    wrapper._handle_session_update(
+        {
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call_4",
+                "kind": "search",
+                "title": "grep",
+                "status": "in_progress",
+                "locations": [{"path": "text.txt"}],
+                "rawInput": {"pattern": "hello", "path": "text.txt"},
+            }
+        }
+    )
+    assert _sent_contents(vc) == ["🔧 Using tool: Search - `hello`"]
+
+
+def test_start_frame_with_a_diff_still_cards_at_once() -> None:
+    """Agents that put the path and diff on the start frame are unchanged: the
+    edit is carded immediately, with the path (not the title) as the detail."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+
+    wrapper._handle_session_update(
+        {
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "call_5",
+                "kind": "edit",
+                "title": "Edit app.py",
+                "content": [
+                    {
+                        "type": "diff",
+                        "path": "/repo/app.py",
+                        "oldText": "a = 1\n",
+                        "newText": "a = 2\n",
+                    }
+                ],
+            }
+        }
+    )
+    contents = _sent_contents(vc)
+    assert len(contents) == 1
+    assert contents[0].startswith("🔧 Using tool: Edit - `/repo/app.py`\n")
+    assert "+a = 2" in contents[0]
 
 
 def test_plan_update_renders_a_checklist_once() -> None:

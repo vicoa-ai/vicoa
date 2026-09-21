@@ -65,6 +65,18 @@ describe('describeToolRun', () => {
     expect(describeToolRun(contents, 'claude')).toBe('Run 2 commands, edit 2 files, read a file');
   });
 
+  it('counts an ACP command once although it is carded twice', () => {
+    // The ACP wrapper posts "Execute - `cmd`" when a command starts and again
+    // with its output; that is one command, phrased like a Bash one.
+    const contents = [
+      '🔧 Using tool: Execute - `ls -la`',
+      '🔧 Using tool: Execute - `ls -la`\ntotal 8\n-rw-r--r-- text.txt',
+      '🔧 Using tool: Execute - `pwd`',
+      '🔧 Using tool: Search - `hello`',
+    ];
+    expect(describeToolRun(contents, 'opencode')).toBe('Run 2 commands, search');
+  });
+
   it('labels a single shell call as "Run a command"', () => {
     expect(describeToolRun(['Using tool: **Bash** - `pwd`'], 'claude')).toBe('Run a command');
   });
