@@ -112,7 +112,7 @@ function DashboardSidebar({
   sidebarWidth: number;
   onSidebarWidthChange: (width: number) => void;
 }) {
-  const { api, recentInstances } = useAgentDashboard();
+  const { api } = useAgentDashboard();
   const { data: user } = useSWR<AuthUser>('/api/supabase-user', fetcher);
   const showSideBar = !isCollapsed;
 
@@ -127,10 +127,8 @@ function DashboardSidebar({
   // the shared session list invokes this after the operation completes.
   const { closeSession: closeTerminalSession } = useTerminalSessions();
 
-  // Dedupe in-flight "mark reviewed on open" inspections and the >7-day stale
-  // auto-completions below.
+  // Dedupe in-flight "mark reviewed on open" inspections.
   const autoReviewingSessionIdsRef = useRef<Set<string>>(new Set());
-  const autoCompletingSessionIdsRef = useRef<Set<string>>(new Set());
 
   const isDraggingRef = useRef(false);
   const dragStartXRef = useRef(0);
@@ -289,45 +287,6 @@ function DashboardSidebar({
       });
     onMobileClose();
   }, [api, onMobileClose]);
-
-  useEffect(() => {
-    if (!api || recentInstances.length === 0) {
-      return;
-    }
-
-    const staleCutoffTime = Date.now() - (7 * 24 * 60 * 60 * 1000);
-    const staleSessions = recentInstances.filter((instance) => {
-      if (!['ACTIVE', 'AWAITING_INPUT'].includes(instance.status)) {
-        return false;
-      }
-
-      if (autoCompletingSessionIdsRef.current.has(instance.id)) {
-        return false;
-      }
-
-      const lastActivityTime = new Date(instance.latest_message_at || instance.started_at).getTime();
-      return Number.isFinite(lastActivityTime) && lastActivityTime <= staleCutoffTime;
-    });
-
-    if (staleSessions.length === 0) {
-      return;
-    }
-
-    staleSessions.forEach((instance) => {
-      autoCompletingSessionIdsRef.current.add(instance.id);
-    });
-
-    void Promise.allSettled(
-      staleSessions.map(async (instance) => {
-        try {
-          await api.updateAgentStatus(instance.id, { status: 'COMPLETED' });
-        } catch (error) {
-          console.error(`Failed to auto-complete stale session ${instance.id}:`, error);
-          autoCompletingSessionIdsRef.current.delete(instance.id);
-        }
-      })
-    );
-  }, [api, recentInstances]);
 
   return (
     <aside
