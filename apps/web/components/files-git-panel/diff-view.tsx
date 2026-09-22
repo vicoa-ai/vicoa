@@ -5,6 +5,7 @@ import hljs from 'highlight.js';
 import type { DiffHunk, GitDiffResult } from './rpc';
 import { hunkToRows, type DiffRow } from './diff-lines';
 import { alignHunk, type SplitPair } from './diff-align';
+import { overlaySegments } from './diff-highlight';
 import { languageForFile } from './file-icon';
 import { SCROLL_STYLE } from './styles';
 import { diffLineBackgroundClass } from '@/components/ui/message-markdown-utils';
@@ -139,13 +140,28 @@ function segmentClass(kind: DiffRow['kind']): string {
   return '';
 }
 
-/** Line body: word-level highlighted spans when the row was paired (`segments`),
- *  otherwise the syntax-highlighted whole line. */
+/** Line body: the syntax-highlighted line, with the word-level boxes layered
+ *  over it when the row carries `segments`. A row whose every character
+ *  changed gets no box — the line tint already says so, and a box over the
+ *  whole line would only shout. */
 function LineContent({ row, language }: { row: DiffRow; language: string | null }) {
-  if (row.segments) {
+  const segments = row.segments;
+  const boxed =
+    segments && segments.length > 0 && !(segments.length === 1 && segments[0].changed)
+      ? segments
+      : null;
+  const html = highlightLine(row.content, language);
+  if (boxed && html) {
+    return (
+      <span
+        dangerouslySetInnerHTML={{ __html: overlaySegments(html, boxed, segmentClass(row.kind)) }}
+      />
+    );
+  }
+  if (boxed) {
     return (
       <>
-        {row.segments.map((seg, i) =>
+        {boxed.map((seg, i) =>
           seg.changed ? (
             <span key={i} className={segmentClass(row.kind)}>
               {seg.text}
@@ -157,7 +173,6 @@ function LineContent({ row, language }: { row: DiffRow; language: string | null 
       </>
     );
   }
-  const html = highlightLine(row.content, language);
   return html ? (
     <span dangerouslySetInnerHTML={{ __html: html || '&nbsp;' }} />
   ) : (

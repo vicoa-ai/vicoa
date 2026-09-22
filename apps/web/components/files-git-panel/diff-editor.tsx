@@ -20,6 +20,14 @@ import {
   goToPreviousChunk,
 } from '@codemirror/merge';
 import { languageExtensionForPath } from './cm-languages';
+import {
+  CHANGED_TEXT_CLASS,
+  DELETED_CHUNK_CLASS,
+  DELETED_TEXT_CLASS,
+  diffChangeMarks,
+  unifiedDeletedChunks,
+} from './cm-diff-marks';
+import { lineRefinedDiffConfig } from './cm-line-diff';
 import { SCROLL_PERSIST_MS, scrollToAnchor, topAnchor } from './cm-scroll';
 import { CM_SCROLLBAR_FIREFOX, CM_SCROLLBAR_WEBKIT, PANEL_BG } from './styles';
 import { resolvedThemeNow, useIsDarkTheme } from '@/lib/hooks/use-resolved-theme';
@@ -91,37 +99,40 @@ const baseTheme = EditorView.theme({
 });
 
 // Overrides @codemirror/merge's built-in diff decorations, whose faint muddy
-// `rgba(...,.08)` line tints and 2px underline gradient on changed words read as
-// noise on either surface. We retint to a GitHub-style palette (green for adds,
-// red for deletes) and swap the word underline for a soft solid box. The 3px
-// change-gutter bar is removed separately (gutter:false in the view config).
-// `!important` beats @codemirror/merge's base theme, whose `&dark.cm-merge-*`
-// selectors would otherwise win on specificity.
+// `rgba(...,.08)` line tints read as noise on either surface. We retint to a
+// GitHub-style palette (green for adds, red for deletes). The 3px change-gutter
+// bar is removed separately (gutter:false in the view config). `!important`
+// beats @codemirror/merge's base theme, whose `&dark.cm-merge-*` selectors
+// would otherwise win on specificity.
 //
-// With `highlightChanges:false` the word-level marks only survive on genuine
-// same-line edits in the unified view (added span → `.cm-changedText`, removed
-// span → the inline `<del class=cm-deletedText>`); pure add/delete lines carry
-// just the line background. So the two word rules below intentionally style only
-// that case — the redundant full-line box on pure inserts/deletes is gone.
+// The package's own word-level marks are off (`highlightChanges:false`) — they
+// box every changed character, so a wholly inserted block and a re-wrapped
+// paragraph light up end to end. `cm-diff-marks` draws the boxes instead (only
+// the words that changed, VS Code style) under its own classes, and in the
+// unified view also draws the deleted-lines widget, so the package's
+// `.cm-deletedChunk` is hidden here.
 function makeMergeTheme(add: string, addWord: string, del: string, delWord: string, dark: boolean) {
   return EditorView.theme(
     {
-      // Whole changed lines: additions (the editable/b side + the unified inline
-      // changed line) green; the original/a side + deleted chunks red.
-      '&.cm-merge-b .cm-changedLine, & .cm-inlineChangedLine': {
+      // Whole changed lines: additions (the editable/b side) green; the
+      // original/a side + the unified view's deleted lines red.
+      '&.cm-merge-b .cm-changedLine': {
         backgroundColor: `${add} !important`,
       },
-      '&.cm-merge-a .cm-changedLine, & .cm-deletedChunk': {
+      [`&.cm-merge-a .cm-changedLine, & .${DELETED_CHUNK_CLASS}`]: {
         backgroundColor: `${del} !important`,
       },
-      // Word-level emphasis on same-line edits only: a soft solid box, not the
-      // default underline. Added span green; inline removed span red.
-      '&.cm-merge-b .cm-changedText': {
-        background: `${addWord} !important`,
+      // Same left padding as `.cm-line`, so deleted text lines up with the
+      // lines around it (the package's widget does the same).
+      [`& .${DELETED_CHUNK_CLASS}`]: { paddingLeft: '6px' },
+      '& .cm-deletedChunk': { display: 'none' },
+      // Word-level emphasis: a soft solid box, not the package's underline.
+      [`& .${CHANGED_TEXT_CLASS}`]: {
+        background: addWord,
         borderRadius: '2px',
       },
-      '&.cm-merge-b .cm-deletedText': {
-        background: `${delWord} !important`,
+      [`& .${DELETED_TEXT_CLASS}`]: {
+        background: delWord,
         borderRadius: '2px',
       },
     },
@@ -266,15 +277,18 @@ export function DiffEditor({
       lang ?? [],
       wrapExt,
       updateListener,
+      diffChangeMarks,
     ];
 
     if (sideBySide) {
       const merge = new MergeView({
         parent,
         orientation: 'a-b',
-        // Off: side-by-side can't cheaply tell a pure inserted/deleted line from
-        // a same-line edit, so word-level boxes there would just double up the
-        // line background. The two columns already show what changed.
+        // Line-anchored diff: the stock character diff gives up on a big file
+        // with scattered edits and shows it as one block (see cm-line-diff).
+        diffConfig: lineRefinedDiffConfig,
+        // The package's word marks are off in favour of `diffChangeMarks` on
+        // each pane (see mergeTheme).
         highlightChanges: false,
         // No change gutter — the 3px colored bar at the line start reads as
         // noise; the line tints already mark the changes.
@@ -289,6 +303,7 @@ export function DiffEditor({
             baseTheme,
             lang ?? [],
             wrapExt,
+            diffChangeMarks,
           ],
         },
         b: {
@@ -307,16 +322,18 @@ export function DiffEditor({
             ...editableExtensions,
             // The modified doc is the editor's document; deletions from
             // `original` render inline. `mergeControls` (accept/reject widget)
-            // and the change `gutter` (3px bar) are off. `highlightChanges:false`
-            // drops the redundant full-line word box on pure add/delete lines
-            // while the unified view keeps the word-level marks on genuine
-            // same-line edits (see mergeTheme).
+            // and the change `gutter` (3px bar) are off. Same line-anchored
+            // diff as the side-by-side view; the package's word marks and
+            // deleted-lines widget are replaced by `cm-diff-marks` (see
+            // mergeTheme).
             unifiedMergeView({
               original,
+              diffConfig: lineRefinedDiffConfig,
               mergeControls: false,
               gutter: false,
               highlightChanges: false,
             }),
+            unifiedDeletedChunks,
           ],
         }),
       });

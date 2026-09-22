@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'vitest';
-import { alignHunk, wordDiff, tokenize } from './diff-align';
+import { alignHunk, regionWordDiff, wordDiff, tokenize } from './diff-align';
+import type { DiffSegment } from './diff-lines';
 import type { DiffRow } from './diff-lines';
 
 const ctx = (content: string, oldNo: number, newNo: number): DiffRow => ({
@@ -65,6 +66,107 @@ describe('wordDiff', () => {
   });
 });
 
+/** Render a side's per-line segments with the boxed runs in brackets. */
+const boxed = (rows: DiffSegment[][]) =>
+  rows.map((r) => r.map((s) => (s.changed ? `[${s.text}]` : s.text)).join(''));
+
+describe('regionWordDiff', () => {
+  test('re-wrapped prose boxes the inserted words, not the moved line breaks', () => {
+    const rd = regionWordDiff(
+      [
+        '  The quick brown fox jumps over the lazy dog and then runs off into the',
+        '  woods again.',
+      ],
+      [
+        '  The quick brown fox jumps over the very lazy dog and then runs off into',
+        '  the woods again.',
+      ],
+    );
+    expect(rd.kind).toBe('segments');
+    if (rd.kind !== 'segments') return;
+    expect(boxed(rd.removes)).toEqual([
+      '  The quick brown fox jumps over the lazy dog and then runs off into the',
+      '  woods again.',
+    ]);
+    expect(boxed(rd.adds)).toEqual([
+      '  The quick brown fox jumps over the [very] lazy dog and then runs off into',
+      '  the woods again.',
+    ]);
+  });
+
+  test('a line split in two boxes only the words that changed', () => {
+    const rd = regionWordDiff(
+      ['      Alpha, Beta, Gamma, Delta, Epsilon, and Zeta, side by side, from one place.'],
+      [
+        '      Alpha, Beta, Gamma, and many more besides, side by side, from',
+        '      one place.',
+      ],
+    );
+    expect(rd.kind).toBe('segments');
+    if (rd.kind !== 'segments') return;
+    expect(boxed(rd.removes)).toEqual([
+      '      Alpha, Beta, Gamma, [Delta, Epsilon, and Zeta], side by side, from one place.',
+    ]);
+    expect(boxed(rd.adds)).toEqual([
+      '      Alpha, Beta, Gamma, [and many more besides], side by side, from',
+      '      one place.',
+    ]);
+  });
+
+  test('a tiny unchanged island between two changes is absorbed into one box', () => {
+    const rd = regionWordDiff(['call(foo, bar)'], ['call(baz, qux)']);
+    expect(rd.kind).toBe('segments');
+    if (rd.kind !== 'segments') return;
+    expect(boxed(rd.removes)).toEqual(['call([foo, bar])']);
+    expect(boxed(rd.adds)).toEqual(['call([baz, qux])']);
+  });
+
+  test('a line break is matched to a line break, not traded for a space', () => {
+    // With plain whitespace equivalence the LCS could pair A's `\n` with B's
+    // later space, stranding `;` as a one-char island that gets absorbed.
+    const rd = regionWordDiff(
+      ['  return foo + bar;', 'removed line one'],
+      ['  return baz + qux;', 'brand new line'],
+    );
+    expect(rd.kind).toBe('segments');
+    if (rd.kind !== 'segments') return;
+    expect(boxed(rd.removes)[0]).toBe('  return [foo + bar];');
+    expect(boxed(rd.adds)[0]).toBe('  return [baz + qux];');
+  });
+
+  test('an added space on the same line is still boxed', () => {
+    const rd = regionWordDiff(['foo bar'], ['foo  bar']);
+    expect(rd.kind).toBe('segments');
+    if (rd.kind !== 'segments') return;
+    expect(boxed(rd.adds)).toEqual(['foo[  ]bar']);
+  });
+
+  test('segments are lossless per line', () => {
+    const a = ['  alpha beta gamma delta', '  epsilon zeta'];
+    const b = ['  alpha beta GAMMA', '  delta epsilon zeta', '  eta'];
+    const rd = regionWordDiff(a, b);
+    expect(rd.kind).toBe('segments');
+    if (rd.kind !== 'segments') return;
+    expect(rd.removes.map((r) => r.map((s) => s.text).join(''))).toEqual(a);
+    expect(rd.adds.map((r) => r.map((s) => s.text).join(''))).toEqual(b);
+  });
+
+  test('a rewrite with little surviving text gets no segments', () => {
+    expect(
+      regionWordDiff(
+        ['completely different removed line one', 'another totally unrelated removed line'],
+        ['fresh added content that shares nothing', 'yet more brand new added text here'],
+      ).kind,
+    ).toBe('rewrite');
+  });
+
+  test('a region past the token budget is reported oversized', () => {
+    const lines = (tag: string) =>
+      Array.from({ length: 300 }, (_, i) => `${tag} l${i} a b c d e f g h i j k`);
+    expect(regionWordDiff(lines('x'), lines('y')).kind).toBe('oversized');
+  });
+});
+
 describe('alignHunk', () => {
   test('pairs a single-line edit and highlights the changed word (unified)', () => {
     const rows = [del('const a = 1', 1), add('const a = 2', 1)];
@@ -116,9 +218,34 @@ describe('alignHunk', () => {
       add('fresh added content that shares nothing', 1),
       add('yet more brand new added text here', 2),
     ];
-    const { split } = alignHunk(rows);
+    const { split, unified } = alignHunk(rows);
     // No cross pairing: all lefts blank-right, all rights blank-left.
     expect(split.every((p) => !(p.left && p.right))).toBe(true);
+    // And no word boxes: a rewrite is tinted whole-line.
+    expect(unified.every((r) => !r.segments)).toBe(true);
+  });
+
+  test('word boxes come from the whole region, so a reflow pairs across lines', () => {
+    const rows = [
+      del('  The quick brown fox jumps over the lazy dog and then runs off into the', 1),
+      del('  woods again.', 2),
+      add('  The quick brown fox jumps over the very lazy dog and then runs off into', 1),
+      add('  the woods again.', 2),
+    ];
+    const { unified } = alignHunk(rows);
+    expect(unified.map(changedText)).toEqual(['', '', 'very', '']);
+  });
+
+  test('an oversized region falls back to per-pair word diffs', () => {
+    const rows: DiffRow[] = [];
+    for (let i = 0; i < 300; i++) rows.push(del(`x l${i} a b c d e f g h i j k`, i + 1));
+    for (let i = 0; i < 300; i++) rows.push(add(`y l${i} a b c d e f g h i j k`, i + 1));
+    const { split } = alignHunk(rows);
+    // Positional pairs (past MAX_ALIGN_CELLS), each word-diffed on its own.
+    expect(split[0].left?.content).toBe('x l0 a b c d e f g h i j k');
+    expect(split[0].right?.content).toBe('y l0 a b c d e f g h i j k');
+    expect(changedText(split[0].left!)).toBe('x');
+    expect(changedText(split[0].right!)).toBe('y');
   });
 
   test('context lines fill both sides and split is order-preserving', () => {

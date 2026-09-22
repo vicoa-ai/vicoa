@@ -83,6 +83,9 @@ importers:
       '@dnd-kit/utilities':
         specifier: ^3.2.2
         version: 3.2.2(react@19.1.0)
+      '@lezer/highlight':
+        specifier: ^1.2.3
+        version: 1.2.3
       '@supabase/ssr':
         specifier: ^0.7.0
         version: 0.7.0(@supabase/supabase-js@2.56.0)

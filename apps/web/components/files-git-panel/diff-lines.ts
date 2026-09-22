@@ -1,9 +1,10 @@
 import type { DiffHunk } from './rpc';
 
 /** One run of characters within a changed line. `changed` segments are the
- *  words/chars that actually differ from the paired line; they get the brighter
- *  intra-line highlight, while `changed: false` runs sit on the plain line tint.
- *  Only set on add/remove rows that `alignHunk` paired to a counterpart. */
+ *  words/chars that actually differ from the other side of the change region;
+ *  they get the brighter intra-line highlight, while `changed: false` runs sit
+ *  on the plain line tint. Only set on add/remove rows of a region `alignHunk`
+ *  could word-diff (an edit, not a pure insert/delete or a rewrite). */
 export interface DiffSegment {
   text: string;
   changed: boolean;
