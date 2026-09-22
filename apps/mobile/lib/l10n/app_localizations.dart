@@ -548,6 +548,12 @@ abstract class AppLocalizations {
   /// **'Error Loading Messages'**
   String get agentChatErrorLoadingMessages;
 
+  /// No description provided for @agentChatForkFromHere.
+  ///
+  /// In en, this message translates to:
+  /// **'Fork from here'**
+  String get agentChatForkFromHere;
+
   /// No description provided for @agentChatInitFailed.
   ///
   /// In en, this message translates to:
@@ -2581,6 +2587,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Current branch'**
   String get newSessionCurrentBranch;
+
+  /// No description provided for @newSessionForkChipTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat history'**
+  String get newSessionForkChipTitle;
+
+  /// No description provided for @newSessionForkFrom.
+  ///
+  /// In en, this message translates to:
+  /// **'From {title}'**
+  String newSessionForkFrom(String title);
+
+  /// No description provided for @newSessionForkMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 message} other{{count} messages}}'**
+  String newSessionForkMessages(int count);
+
+  /// No description provided for @newSessionForkOmitted.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 earlier message omitted} other{{count} earlier messages omitted}}'**
+  String newSessionForkOmitted(int count);
+
+  /// No description provided for @newSessionForkPreviewHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Added above your first message. The agent is told to re-read any file it needs.'**
+  String get newSessionForkPreviewHint;
+
+  /// No description provided for @newSessionForkRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove chat history'**
+  String get newSessionForkRemove;
 
   /// No description provided for @newSessionLoadingMachines.
   ///

@@ -96,6 +96,7 @@
   "agentChatCopyResponse": "Copy response",
   "agentChatDeleteFailed": "Failed to delete session. Please try again.",
   "agentChatErrorLoadingMessages": "Error Loading Messages",
+  "agentChatForkFromHere": "Fork from here",
   "agentChatInitFailed": "Failed to initialize chat",
   "agentChatMentionFiles": "Mention files",
   "agentChatNewMessagesCount": "{count, plural, =1{{count} message} other{{count} messages}}",
@@ -618,6 +619,33 @@
     }
   },
   "newSessionCurrentBranch": "Current branch",
+  "newSessionForkChipTitle": "Chat history",
+  "newSessionForkFrom": "From {title}",
+  "@newSessionForkFrom": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "newSessionForkMessages": "{count, plural, =1{1 message} other{{count} messages}}",
+  "@newSessionForkMessages": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "newSessionForkOmitted": "{count, plural, =1{1 earlier message omitted} other{{count} earlier messages omitted}}",
+  "@newSessionForkOmitted": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "newSessionForkPreviewHint": "Added above your first message. The agent is told to re-read any file it needs.",
+  "newSessionForkRemove": "Remove chat history",
   "newSessionLoadingMachines": "Loading machines...",
   "newSessionMachine": "Machine",
   "newSessionNewSession": "New Session",

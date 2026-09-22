@@ -6,6 +6,7 @@ import 'package:page_transition/page_transition.dart';
 import 'package:provider/provider.dart';
 
 import '/backend/schema/structs/index.dart';
+import '/custom_code/utils/fork_transcript.dart';
 
 import '/auth/base_auth_user_provider.dart';
 
@@ -307,7 +308,11 @@ GoRouter createRouter(AppStateNotifier appStateNotifier) => GoRouter(
             // launched from a task: seeds the first prompt and links the
             // spawned session back to the task.
             final taskContext = params.getParam('taskContext', ParamType.JSON);
+            // Set by the chat's per-turn fork button: the conversation to open
+            // with, plus the machine / folder / agent it came from.
+            final forkContext = params.getParam('forkContext', ParamType.JSON);
             return NewSessionWidget(
+              forkContext: ForkSessionContext.fromJson(forkContext),
               taskId: taskContext is Map
                   ? taskContext['taskId']?.toString()
                   : null,

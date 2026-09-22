@@ -73,6 +73,18 @@ String _toolNameKey(String name) =>
 bool isAskUserQuestionToolContent(String content) =>
     _toolNameKey(parseToolMessage(content).toolName) == 'askuserquestion';
 
+/// Whether a (sanitized) message is a tool-use row rather than agent prose —
+/// the shape check the chat's grouping and the fork transcript both key on.
+/// Matches what the wrappers emit: the Claude-family "Using tool:" line (with
+/// or without the wrench), Codex's `**Exec:**`, and its patch card.
+bool isToolUseContent(String content) {
+  final t = content.trim();
+  return t.startsWith('Using tool:') ||
+      t.startsWith('🔧 Using tool:') ||
+      t.startsWith('**Exec:**') ||
+      (t.contains('✏️ Applying patch to') && t.contains('file (+'));
+}
+
 /// Parses a single (already sanitized) tool-use message into a [ToolUseSummary].
 ToolUseSummary summarizeToolMessage(String content) {
   final f = parseToolMessage(content);

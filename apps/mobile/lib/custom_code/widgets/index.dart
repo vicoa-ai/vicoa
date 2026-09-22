@@ -10,7 +10,8 @@ export 'tool_use_group.dart'
         OpenFileCallback,
         ToolUseGroup,
         isCollapsibleToolUseMessage,
-        isAskUserQuestionToolContent;
+        isAskUserQuestionToolContent,
+        isToolUseContent;
 export 'subagent_group.dart'
     show
         SubagentGroup,

@@ -6,10 +6,12 @@ import '/l10n/app_localizations.dart';
 import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/utils/rpc_error_messages.dart';
 import '/backend/posthog/posthog_analytics.dart';
+import '/custom_code/utils/fork_transcript.dart';
 import '/custom_code/widgets/file_mention_suggestions.dart';
 import '/pages/agent_chat/components/slash_commands.dart';
 import '/pages/agent_chat/components/add_to_chat_actions.dart';
 import '/pages/agent_chat/components/pending_attachment.dart';
+import 'fork_context_chip.dart';
 import '/components/agent_type_icon/agent_type_icon_widget.dart';
 import '/components/connect_computer/connect_computer_widget.dart';
 import '/backend/agent_catalog.dart';
@@ -34,7 +36,7 @@ export 'new_session_model.dart';
 
 class NewSessionWidget extends StatefulWidget {
   const NewSessionWidget(
-      {super.key, this.taskId, this.initialPrompt, this.subtaskIds});
+      {super.key, this.taskId, this.initialPrompt, this.subtaskIds, this.forkContext});
 
   /// When launched from a task, the spawned session is linked back to this task
   /// (its `task_id` is set) and the task is advanced to in_progress on success.
@@ -42,6 +44,11 @@ class NewSessionWidget extends StatefulWidget {
 
   /// Optional text (composed from the task) used to seed the first prompt.
   final String? initialPrompt;
+
+  /// The conversation carried over by a fork (the chat's per-turn fork button):
+  /// prepended to the first message, and the source of the machine / folder /
+  /// agent this screen opens on.
+  final ForkSessionContext? forkContext;
 
   /// Backlog/todo sub-tasks bundled into this session — advanced to in_progress
   /// on success alongside the parent task.
@@ -66,7 +73,7 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _model = createModel(context, () => NewSessionModel());
+    _model = createModel(context, () => NewSessionModel(forkContext: widget.forkContext));
     _model.onStateChanged = () {
       if (mounted) setState(() {});
     };
@@ -614,6 +621,11 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (_model.forkContext != null)
+            ForkContextChip(
+              fork: _model.forkContext!,
+              onRemove: _model.removeForkContext,
+            ),
           if (_model.pendingAttachments.isNotEmpty) ...[
             PendingAttachmentStrip(
               attachments: _model.pendingAttachments,
@@ -775,12 +787,12 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
     setState(() => _isProcessing = true);
     // Capture before startSession()/clearDraftPrompt() touches the controller —
     // tells the chat whether to show its animated "first message loading" state.
-    final hasInitialPrompt = _model.promptController.text.trim().isNotEmpty;
+    final hasInitialPrompt = _model.composeFirstMessage().isNotEmpty;
     // Attachments can't ride the spawn command (they upload against an instance
     // that doesn't exist yet), so when present we spawn idle and send the prompt
     // together with the files as the first message once the instance registers.
     final hasAttachments = _model.pendingAttachments.isNotEmpty;
-    final promptText = _model.promptController.text.trim();
+    final promptText = _model.composeFirstMessage();
     try {
       final result =
           await _model.startSession(includePromptInSpawn: !hasAttachments);

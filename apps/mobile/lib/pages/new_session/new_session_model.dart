@@ -4,6 +4,7 @@ import '/flutter_flow/custom_functions.dart' as functions;
 import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/actions/rpc_git.dart';
 import '/custom_code/utils/file_mention_utils.dart';
+import '/custom_code/utils/fork_transcript.dart';
 import '/custom_code/utils/machine_utils.dart';
 import '/custom_code/utils/project_paths.dart';
 import '/custom_code/utils/slash_command_utils.dart';
@@ -22,6 +23,20 @@ import 'dart:convert';
 
 class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
     with FileMentionMixin, SlashCommandMixin {
+  NewSessionModel({this.forkContext});
+
+  /// The conversation a fork carried in from an earlier session: prepended to
+  /// the first message at submit, shown as a removable chip until then, and
+  /// the source of the machine / folder / agent this screen opens on. Null for
+  /// an ordinary new session. Deliberately NOT persisted — unlike the draft
+  /// prompt, a history that outlived the screen would quietly attach itself to
+  /// an unrelated session later.
+  ForkSessionContext? forkContext;
+
+  /// Whether the fork's agent won over the remembered one, so the async
+  /// preference restore below does not undo it.
+  bool _forkAgentApplied = false;
+
   List<dynamic> machines = [];
   bool isLoadingMachines = true;
   String? selectedMachineId;
@@ -116,6 +131,23 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
     }
   }
 
+  /// The first message the new session receives: the forked conversation (when
+  /// one is attached) above whatever the user typed. Both spawn paths go
+  /// through here — the prompt bundled into the spawn command, and the
+  /// deferred send used when attachments are waiting on an instance id.
+  String composeFirstMessage() {
+    final typed = promptController.text.trim();
+    final history = forkContext?.text.trim() ?? '';
+    if (history.isEmpty) return typed;
+    return typed.isEmpty ? history : '$history\n\n$typed';
+  }
+
+  /// Drop the forked conversation: the session starts from a clean slate.
+  void removeForkContext() {
+    forkContext = null;
+    onStateChanged?.call();
+  }
+
   void clearDraftPrompt() {
     promptController.clear();
     FFAppState().clearChatDraft(_draftPromptKey);
@@ -208,8 +240,14 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
 
     // Restore last-used agent type, falling back to first selectable
     final appState = FFAppState();
+    // A fork continues a specific run, so the source session's agent wins over
+    // whatever this screen was last left on.
+    final forkAgent = forkContext?.agentType;
     final savedAgent = appState.userPreferences.newSessionAgentType;
-    if (savedAgent != null && isAgentTypeSelectable(savedAgent)) {
+    if (forkAgent != null && isAgentTypeSelectable(forkAgent)) {
+      selectedAgentType = forkAgent;
+      _forkAgentApplied = true;
+    } else if (savedAgent != null && isAgentTypeSelectable(savedAgent)) {
       selectedAgentType = savedAgent;
     } else {
       final available = agentTypes;
@@ -220,8 +258,10 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
       selectedAgentType = defaultAgent['id'] as String?;
     }
 
-    // Restore last-used machine (validated after machines load)
-    selectedMachineId = appState.userPreferences.newSessionMachineId;
+    // Restore last-used machine (validated after machines load). A fork lands
+    // on the machine the source session ran on — its folder only exists there.
+    selectedMachineId =
+        forkContext?.machineId ?? appState.userPreferences.newSessionMachineId;
     voiceTranscriptionProvider = DeepgramVoiceTranscriptionProvider();
 
     _loadMachines();
@@ -290,7 +330,7 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
       if (rawV2 == null) return;
       final decoded = json.decode(rawV2) as Map<String, dynamic>;
       final lastAgent = decoded['lastAgent'] as String?;
-      if (lastAgent != null && isAgentTypeSelectable(lastAgent)) {
+      if (lastAgent != null && !_forkAgentApplied && isAgentTypeSelectable(lastAgent)) {
         selectedAgentType = lastAgent;
       }
       final perAgent = decoded['perAgent'] as Map<String, dynamic>?;
@@ -848,6 +888,15 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
   /// directory; a missing directory falls back to the machine default with no
   /// worktree restored.
   void _restoreDirectoryAndWorktreeForMachine(dynamic machine) {
+    // A fork opens on the source session's folder. Any worktree is left to the
+    // git probe that follows: it normalises a worktree path back to its repo
+    // and re-selects the worktree, which is also what a typed path does.
+    final forkDir = forkContext?.directory?.trim();
+    if (forkDir != null && forkDir.isNotEmpty) {
+      directoryController.text = forkDir;
+      resetWorktreeSelection();
+      return;
+    }
     final savedDir = FFAppState().userPreferences.newSessionDirectory;
     if (savedDir == null || savedDir.isEmpty) {
       _updateDirectoryForMachine(machine);
@@ -1007,8 +1056,7 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
 
     try {
       final directory = directoryController.text.trim();
-      final prompt =
-          includePromptInSpawn ? promptController.text.trim() : '';
+      final prompt = includePromptInSpawn ? composeFirstMessage() : '';
 
       // Still fed for the automation editor's folder list; the new-session
       // picker itself lists projects now.
