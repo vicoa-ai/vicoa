@@ -42,6 +42,8 @@ from .commands.instance import run_session_command
 from .commands.ls import cmd_ls as _cmd_ls
 from .commands.stop import cmd_stop
 from .commands.agent import run_agent_command
+from .commands.label import run_label_command
+from .commands.project import run_project_command
 from .commands.task import TASK_PRIORITIES, TASK_STATUSES, run_task_command
 
 
@@ -1783,7 +1785,9 @@ Examples:
         "--machine", metavar="MACHINE_ID", help="Default machine for new sessions"
     )
     agent_add.add_argument(
-        "--project", metavar="PROJECT_ID", help="Default project for new sessions"
+        "--project",
+        metavar="PROJECT",
+        help="Default project for new sessions: key (VIC), name, or id",
     )
 
     agent_rm = agent_sub.add_parser(
@@ -1815,15 +1819,30 @@ Examples:
         help="Output raw JSON instead of a table",
     )
 
+    # A project is addressed the way a person sees it: its key ("VIC", the
+    # prefix on every task identifier), its name, or its id. `none` selects
+    # No project. Resolved client-side in commands/project.py.
+    _PROJECT_HELP = (
+        "key (VIC), name, or id from `vicoa project ls`; `none` = No project"
+    )
+
     task_ls = task_sub.add_parser("ls", parents=[task_common], help="List tasks")
     task_ls.add_argument(
-        "--project", metavar="PROJECT_ID", help="Only tasks in this project"
+        "--project",
+        metavar="PROJECT",
+        help=f"Only tasks in this project — {_PROJECT_HELP} (the unfiled ones)",
     )
     task_ls.add_argument(
         "--status", choices=TASK_STATUSES, help="Only tasks with this status"
     )
     task_ls.add_argument(
         "--priority", choices=TASK_PRIORITIES, help="Only tasks with this priority"
+    )
+    task_ls.add_argument(
+        "--label",
+        action="append",
+        metavar="NAME",
+        help="Only tasks carrying this label (repeatable: every one must match)",
     )
 
     task_get = task_sub.add_parser(
@@ -1838,8 +1857,8 @@ Examples:
     task_create.add_argument("--description", help="Longer description")
     task_create.add_argument(
         "--project",
-        metavar="PROJECT_ID",
-        help="Project id to file under (omit for No project)",
+        metavar="PROJECT",
+        help=f"Project to file under — {_PROJECT_HELP} (the default)",
     )
     task_create.add_argument(
         "--status", choices=TASK_STATUSES, help="Initial status (default: backlog)"
@@ -1853,6 +1872,12 @@ Examples:
         help="Parent task, VIC-42 or UUID (creates a subtask)",
     )
     task_create.add_argument(
+        "--label",
+        action="append",
+        metavar="NAME",
+        help="Label to apply, by name (repeatable; `vicoa label ls`)",
+    )
+    task_create.add_argument(
         "--start", metavar="ISO8601", help="Start date, e.g. 2026-08-01"
     )
     task_create.add_argument(
@@ -1862,13 +1887,43 @@ Examples:
     task_update = task_sub.add_parser(
         "update",
         parents=[task_common],
-        help="Update a task (only the flags you pass change)",
+        help="Update one or more tasks (only the flags you pass change)",
     )
-    task_update.add_argument("task_id", help="Task identifier (VIC-42) or full UUID")
+    task_update.add_argument(
+        "task_ids",
+        nargs="+",
+        metavar="TASK",
+        help="Task identifier (VIC-42) or full UUID; several apply the same change to each",
+    )
     task_update.add_argument("--title", help="New title")
     task_update.add_argument("--description", help="New description")
     task_update.add_argument(
-        "--project", metavar="PROJECT_ID", help="Move to this project"
+        "--project",
+        metavar="PROJECT",
+        help=(
+            f"Move to this project — {_PROJECT_HELP}. A move reassigns the "
+            "identifier (printed as VIC-20 → VIC2-2)"
+        ),
+    )
+    task_update.add_argument(
+        "--label",
+        action="append",
+        metavar="NAME",
+        help="Set the labels to exactly these (repeatable)",
+    )
+    task_update.add_argument(
+        "--add-label",
+        dest="add_label",
+        action="append",
+        metavar="NAME",
+        help="Add a label, keeping the rest (repeatable)",
+    )
+    task_update.add_argument(
+        "--remove-label",
+        dest="remove_label",
+        action="append",
+        metavar="NAME",
+        help="Remove a label, keeping the rest (repeatable)",
     )
     task_update.add_argument("--status", choices=TASK_STATUSES, help="New status")
     task_update.add_argument("--priority", choices=TASK_PRIORITIES, help="New priority")
@@ -1915,6 +1970,74 @@ Examples:
     task_delete.add_argument("task_id", help="Task identifier (VIC-42) or full UUID")
     task_delete.add_argument(
         "-y", "--yes", action="store_true", help="Skip the confirmation prompt"
+    )
+
+    # 'project' subcommand — read-only list/get of the user's projects, so the
+    # ids/keys the --project flags take are discoverable (commands/project.py).
+    project_parser = subparsers.add_parser(
+        "project",
+        help="List and inspect your projects (the keys/ids `--project` takes)",
+    )
+    project_sub = project_parser.add_subparsers(dest="project_command")
+    project_common = argparse.ArgumentParser(add_help=False)
+    project_common.add_argument(
+        "--api-key",
+        help="API key (defaults to VICOA_API_KEY or the stored credential)",
+    )
+    project_common.add_argument(
+        "--base-url",
+        default=DEFAULT_API_URL,
+        help="Base URL of the Vicoa API server",
+    )
+    project_common.add_argument(
+        "--json",
+        action="store_true",
+        help="Output raw JSON instead of a table",
+    )
+    project_ls = project_sub.add_parser(
+        "ls", parents=[project_common], help="List your projects"
+    )
+    project_ls.add_argument(
+        "--include-archived",
+        dest="include_archived",
+        action="store_true",
+        help="Also show archived projects",
+    )
+    project_get = project_sub.add_parser(
+        "get", parents=[project_common], help="Show one project's details"
+    )
+    project_get.add_argument("project", help="Project key (VIC), name, or id")
+
+    # 'label' subcommand — the user's task-label vocabulary (commands/label.py).
+    label_parser = subparsers.add_parser(
+        "label",
+        help="List and create task labels (the names `--label` takes)",
+    )
+    label_sub = label_parser.add_subparsers(dest="label_command")
+    label_common = argparse.ArgumentParser(add_help=False)
+    label_common.add_argument(
+        "--api-key",
+        help="API key (defaults to VICOA_API_KEY or the stored credential)",
+    )
+    label_common.add_argument(
+        "--base-url",
+        default=DEFAULT_API_URL,
+        help="Base URL of the Vicoa API server",
+    )
+    label_common.add_argument(
+        "--json",
+        action="store_true",
+        help="Output raw JSON instead of a table",
+    )
+    label_sub.add_parser("ls", parents=[label_common], help="List your labels")
+    label_create = label_sub.add_parser(
+        "create", parents=[label_common], help="Create a label"
+    )
+    label_create.add_argument("name", help="Label name (unique, case-insensitive)")
+    label_create.add_argument(
+        "--color",
+        metavar="#RRGGBB",
+        help="Chip colour (default: the colour the web would pick for this name)",
     )
 
     # 'automation' subcommand — registered from its command module so cli.py
@@ -2103,6 +2226,14 @@ Examples:
         metavar="N",
         help="Max sessions to list (1-100, default 50)",
     )
+    session_ls.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Skip the newest N sessions (page through with --limit; "
+        "`--json` reports total/has_more)",
+    )
 
     session_get = session_sub.add_parser(
         "get",
@@ -2221,6 +2352,86 @@ Examples:
     session_continue.add_argument(
         "session_id",
         help="Session id or 8-char prefix (from `vicoa session ls`)",
+    )
+
+    session_share = session_sub.add_parser(
+        "share",
+        parents=[session_common],
+        help="Create a public link to a session and print its URL "
+        "(e.g. to attach the session to a PR)",
+    )
+    session_share.add_argument(
+        "session_id",
+        nargs="?",
+        help="Session id or 8-char prefix; defaults to the session this runs in "
+        "(VICOA_AGENT_INSTANCE_ID)",
+    )
+    session_share.add_argument(
+        "--audience",
+        choices=["public", "authenticated"],
+        default="public",
+        help="Who can open the link: anyone (default) or signed-in Vicoa users",
+    )
+    session_share.add_argument(
+        "--expires",
+        type=int,
+        metavar="DAYS",
+        help="Expire the link after DAYS (1-365; default: never)",
+    )
+    session_share.add_argument(
+        "--show-owner",
+        dest="show_owner",
+        action="store_true",
+        help="Show your name and avatar on the shared page (hidden by default)",
+    )
+    session_share.add_argument(
+        "--show-branch",
+        dest="show_branch",
+        action="store_true",
+        help="Show the git branch/worktree on the shared page (hidden by default)",
+    )
+    session_share.add_argument(
+        "--new",
+        action="store_true",
+        help="Always mint a new link, even if an equivalent live one exists",
+    )
+    session_share.add_argument(
+        "--list",
+        action="store_true",
+        help="List the session's live links instead of creating one",
+    )
+    session_share.add_argument(
+        "--web-url",
+        dest="web_url",
+        metavar="URL",
+        help="Web app origin for the printed URL (default: VICOA_AUTH_URL / vicoa.ai)",
+    )
+
+    session_unshare = session_sub.add_parser(
+        "unshare",
+        parents=[session_common],
+        help="Revoke a session's share link(s)",
+    )
+    session_unshare.add_argument(
+        "session_id",
+        nargs="?",
+        help="Session id or 8-char prefix; defaults to the session this runs in",
+    )
+    session_unshare.add_argument(
+        "--link",
+        metavar="LINK_ID",
+        help="Revoke this link (id or prefix from `session share --list`)",
+    )
+    session_unshare.add_argument(
+        "--all",
+        action="store_true",
+        help="Revoke every live link on the session",
+    )
+    session_unshare.add_argument(
+        "--web-url",
+        dest="web_url",
+        metavar="URL",
+        help="Web app origin for listed URLs (default: VICOA_AUTH_URL / vicoa.ai)",
     )
 
     # 'claude' subcommand
@@ -2344,6 +2555,10 @@ Examples:
         sys.exit(run_agent_command(args))
     elif args.command == "task":
         sys.exit(run_task_command(args))
+    elif args.command == "project":
+        sys.exit(run_project_command(args))
+    elif args.command == "label":
+        sys.exit(run_label_command(args))
     elif args.command == "automation":
         sys.exit(run_automation_command(args))
     elif args.command == "session":

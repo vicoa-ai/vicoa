@@ -15,6 +15,7 @@ owner-only lens by design.
 
 import logging
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import (
@@ -516,11 +517,20 @@ def _raise_task_ref_errors(exc: Exception) -> None:
 @router.get("/tasks", response_model=list[TaskResponse])
 def list_tasks_endpoint(
     project_id: UUID | None = None,
+    unfiled: bool = False,
     task_status: TaskStatusLiteral | None = Query(default=None, alias="status"),
     task_priority: TaskPriorityLiteral | None = Query(default=None, alias="priority"),
+    label_id: Annotated[list[UUID] | None, Query()] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[TaskResponse]:
+    """Same filters as the agent-facing twin: ``unfiled`` selects No-project
+    tasks (exclusive with ``project_id``), ``label_id`` may repeat (AND)."""
+    if unfiled and project_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pass either project_id or unfiled, not both",
+        )
     tasks = task_queries.list_tasks(
         db,
         current_user.id,
@@ -528,6 +538,8 @@ def list_tasks_endpoint(
         status=task_status,
         priority=task_priority,
         sharing=True,
+        unfiled=unfiled,
+        label_ids=label_id,
     )
     return serialize_tasks(db, tasks)
 

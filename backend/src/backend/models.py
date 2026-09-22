@@ -722,6 +722,10 @@ class ProjectResponse(BaseModel):
     # Tasks page and the new-session directory resolver need them alongside the
     # project itself.
     directories: list[ProjectDirectoryResponse] = Field(default_factory=list)
+    # Open tasks (not done/cancelled) filed here. Only the agent-facing list
+    # (`vicoa project ls`) computes it; every other response leaves it None,
+    # same convention as `last_activity_at`.
+    task_count: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -805,6 +809,9 @@ class TaskResponse(BaseModel):
     id: UUID
     # None = "No project" (unfiled). Same convention as a session's project_id.
     project_id: UUID | None = None
+    # Denormalized like `parent_title`: a terminal listing has no sidebar to
+    # translate a project_id into something a person recognises.
+    project_name: str | None = None
     # Per-project sequential number and the rendered "VIC-42". Both are None for
     # an unfiled task (identifiers are project-scoped), for a task whose project
     # has no key yet (or that predates the backfill); clients must render such a

@@ -367,6 +367,53 @@ def get_accessible_project(
     )
 
 
+def resolve_project(db: Session, user_id: UUID, ref: str) -> Project | None:
+    """The caller's own project by UUID *or* task key ("VIC"), or None.
+
+    The agent-facing twin of `resolve_task`: a person at a terminal knows the
+    key from every task identifier they read, not the UUID. Owner-only on
+    purpose — keys are unique per owner, not globally, so under the sharing
+    lens "VIC" could name two visible projects; the surfaces that widen to
+    shared projects address them by UUID. The match is case-insensitive, as
+    the uniqueness index is.
+    """
+    try:
+        return _get_project(db, user_id, UUID(ref))
+    except ValueError:
+        pass
+    key = ref.strip().upper()
+    if not key:
+        return None
+    return (
+        db.query(Project)
+        .filter(_owner_only_project_filter(user_id), func.upper(Project.key) == key)
+        .first()
+    )
+
+
+def task_counts_by_project(
+    db: Session, user_id: UUID, project_ids: Sequence[UUID]
+) -> dict[UUID, int]:
+    """Open tasks per project (everything but done/cancelled), one GROUP BY.
+
+    Owner-scoped like the rest of the agent-facing surface; projects without
+    an open task are simply absent, so read with `.get(id, 0)`.
+    """
+    if not project_ids:
+        return {}
+    rows = (
+        db.query(Task.project_id, func.count(Task.id))
+        .filter(
+            Task.user_id == user_id,
+            Task.project_id.in_(project_ids),
+            Task.status.notin_(("done", "cancelled")),
+        )
+        .group_by(Task.project_id)
+        .all()
+    )
+    return {project_id: count for project_id, count in rows}
+
+
 def set_project_icon(
     db: Session,
     user_id: UUID,
@@ -821,19 +868,31 @@ def list_tasks(
     priority: str | None = None,
     *,
     sharing: bool = False,
+    unfiled: bool = False,
+    label_ids: Sequence[UUID] | None = None,
 ) -> list[Task]:
-    """Visible tasks ordered by position (board/list order), then age."""
+    """Visible tasks ordered by position (board/list order), then age.
+
+    `unfiled` keeps only No-project tasks — the one set no `project_id` value
+    can select, since NULL is the filter's "any project" too. `label_ids` is a
+    conjunction: a task must carry every one of them ("tagged growth AND bug"),
+    which is what a selector means; a union is two calls.
+    """
     query = (
         db.query(Task)
         .options(selectinload(Task.labels))
         .filter(_visible_task_filter(user_id, sharing=sharing))
     )
-    if project_id is not None:
+    if unfiled:
+        query = query.filter(Task.project_id.is_(None))
+    elif project_id is not None:
         query = query.filter(Task.project_id == project_id)
     if status is not None:
         query = query.filter(Task.status == status)
     if priority is not None:
         query = query.filter(Task.priority == priority)
+    for label_id in label_ids or ():
+        query = query.filter(Task.labels.any(TaskLabel.id == label_id))
     return query.order_by(Task.position.asc(), Task.created_at.asc()).all()
 
 

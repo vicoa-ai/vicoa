@@ -1,9 +1,9 @@
 """Shared HTTP scaffolding for authenticated ``vicoa`` CLI subcommands.
 
 Talks to the agent-facing server (``agents.vicoa.ai``) with the same Bearer API
-key every ``vicoa`` command uses. Extracted so read-only inspection commands
-(``vicoa session ...``) share one auth + request path instead of each
-re-implementing it. ``vicoa task`` predates this helper and keeps its own copy.
+key every ``vicoa`` command uses. Extracted so the management commands
+(``vicoa session|task|project|label|agent ...``) share one auth + request path
+instead of each re-implementing it.
 """
 
 from __future__ import annotations
@@ -13,6 +13,20 @@ import sys
 from typing import Any, Optional
 
 from vicoa.constants import DEFAULT_API_URL
+
+
+class RequestError(Exception):
+    """A non-2xx reply, for callers that asked ``request`` not to exit.
+
+    A bulk verb (``vicoa task update A B C``) must report one failed ref and
+    carry on with the rest; the default exit-on-error is right for every
+    single-shot command and wrong for that one.
+    """
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(f"{detail} (HTTP {status_code})")
+        self.status_code = status_code
+        self.detail = detail
 
 
 def resolve_api_key(args) -> str:
@@ -60,13 +74,16 @@ def request(
     *,
     params: Optional[dict] = None,
     json: Optional[dict] = None,
+    raise_on_error: bool = False,
 ) -> Any:
     """Make one authenticated request, turning failures into clean CLI exits.
 
     Goes through the SDK client's configured session (retries, auth header,
     timeout). Returns ``None`` for empty/204 responses, the decoded JSON
     otherwise. Any transport error, 401, or non-2xx exits the process with an
-    actionable message on stderr.
+    actionable message on stderr — except that with ``raise_on_error`` a
+    non-2xx (other than 401) raises :class:`RequestError` instead, for loops
+    that want to keep going.
     """
     from urllib.parse import urljoin
 
@@ -100,6 +117,8 @@ def request(
             detail = resp.json().get("detail", resp.text)
         except ValueError:
             detail = resp.text
+        if raise_on_error:
+            raise RequestError(resp.status_code, str(detail))
         print(f"Error: {detail} (HTTP {resp.status_code})", file=sys.stderr)
         sys.exit(1)
     if resp.status_code == 204 or not resp.content:

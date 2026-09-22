@@ -37,8 +37,10 @@ from servers.mcp.server import mcp
 from servers.api.auth_keys import auth_keys_router
 from servers.api.automations import automation_router
 from servers.api.instances import instance_router
+from servers.api.projects import project_router
 from servers.api.routers import agent_router
 from servers.api.agent_profiles import agent_profile_router
+from servers.api.shares import share_router
 from servers.api.tasks import task_router
 from servers.api.ws_handler import ws_router
 from servers.presence import LeaseFlusher, presence
@@ -269,6 +271,11 @@ app.include_router(agent_router, prefix="/api/v1")
 app.include_router(auth_keys_router, prefix="/api/v1")
 # Task tracker CRUD for CLI agents (agent-facing mirror of backend/api/tasks.py).
 app.include_router(task_router, prefix="/api/v1")
+# Read-only project list/get for CLI agents (`vicoa project ls`), owner-only.
+app.include_router(project_router, prefix="/api/v1")
+# Share links for CLI agents (`vicoa session share`), owner-only mirror of
+# backend/api/shares.py's management half; the public viewer stays on backend.
+app.include_router(share_router, prefix="/api/v1")
 app.include_router(agent_profile_router, prefix="/api/v1")
 # Scheduled-automation CRUD for CLI agents (agent-facing mirror of
 # backend/api/automations.py). Dispatch stays in this process's scheduler sweep.

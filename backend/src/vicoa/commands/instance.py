@@ -422,6 +422,9 @@ def _parse_time_bound(
 
 def _cmd_ls(args, api_key: str) -> int:
     params: dict[str, Any] = {"limit": getattr(args, "limit", 50)}
+    offset = getattr(args, "offset", 0) or 0
+    if offset:
+        params["offset"] = offset
     # Resolve the window before any request so a typo fails fast and offline.
     since_raw = getattr(args, "since", None)
     until_raw = getattr(args, "until", None)
@@ -792,6 +795,182 @@ def _cmd_continue(args, api_key: str) -> int:
         print(_json.dumps(result, indent=2))
         return 0
     print(f"Continued session {_short(instance_id)}.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# session share / unshare — public links (collaboration P4, from the CLI)
+# ---------------------------------------------------------------------------
+
+
+def _share_url(args, token: str) -> str:
+    """The viewer URL for a link token: ``<web>/share/<token>``.
+
+    The server hands back the token only; the page lives on the web app, whose
+    origin the CLI already knows as the auth handoff URL (``VICOA_AUTH_URL``
+    for a self-hosted install), overridable per call with ``--web-url``.
+    """
+    from vicoa.constants import DEFAULT_AUTH_URL
+
+    base = getattr(args, "web_url", None) or DEFAULT_AUTH_URL
+    return f"{str(base).rstrip('/')}/share/{token}"
+
+
+def _session_ref_or_self(args) -> str:
+    """The positional session, else the session this command runs inside.
+
+    ``vicoa session share`` with no id from within a Vicoa session shares
+    *that* session — the whole point when an agent is attaching its own
+    transcript to the PR it just opened.
+    """
+    ref = getattr(args, "session_id", None)
+    if ref:
+        return str(ref)
+    self_id = os.environ.get("VICOA_AGENT_INSTANCE_ID")
+    if self_id:
+        return self_id
+    print(
+        "Error: no session given and VICOA_AGENT_INSTANCE_ID is not set — pass a "
+        "session id (`vicoa session ls`).",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
+def _print_share_table(args, links: list[dict]) -> None:
+    if not links:
+        print("No live share links.")
+        return
+    header = f"{'LINK':<8}  {'AUDIENCE':<14} {'VIEWS':>5}  {'EXPIRES':<19}  URL"
+    print(header)
+    print("-" * len(header))
+    for link in links:
+        expires = (
+            _local_time(link.get("expires_at")) if link.get("expires_at") else "never"
+        )
+        print(
+            f"{_short(link.get('id')):<8}  "
+            f"{str(link.get('audience') or ''):<14} "
+            f"{link.get('view_count', 0):>5}  "
+            f"{expires:<19}  "
+            f"{_share_url(args, str(link.get('token') or ''))}"
+        )
+    print(f"\n{len(links)} link(s).")
+
+
+def _live_links(args, api_key: str, instance_id: str) -> list[dict]:
+    """The session's unrevoked links, newest first (the server's order)."""
+    return (
+        request(
+            args,
+            api_key,
+            "GET",
+            "/api/v1/shares",
+            params={"agent_instance_id": instance_id},
+        )
+        or []
+    )
+
+
+def _equivalent_share(link: dict, body: dict) -> bool:
+    """Whether an existing live link would show a viewer exactly what a new
+    one built from ``body`` would — so a second ``share`` reuses it instead of
+    minting a twin. A link with an expiry is never reused: the caller asked
+    for a window measured from now."""
+    return (
+        link.get("expires_at") is None
+        and body.get("expires_in_days") is None
+        and link.get("audience") == body.get("audience")
+        and bool(link.get("show_owner")) == bool(body.get("show_owner"))
+        and bool(link.get("show_branch")) == bool(body.get("show_branch"))
+    )
+
+
+def _cmd_share(args, api_key: str) -> int:
+    """Mint (or reuse) a public link to a session and print its URL.
+
+    Prints only the URL on success so it composes: ``gh pr comment 12 --body
+    "Session: $(vicoa session share)"``. ``--list`` shows the live links
+    instead; ``--json`` prints the link record with ``url`` added.
+    """
+    instance_id = _resolve_instance_id(args, api_key, _session_ref_or_self(args))
+    links = _live_links(args, api_key, instance_id)
+    if getattr(args, "list", False):
+        if getattr(args, "json", False):
+            for link in links:
+                link["url"] = _share_url(args, str(link.get("token") or ""))
+            print(_json.dumps(links, indent=2))
+        else:
+            _print_share_table(args, links)
+        return 0
+
+    body: dict[str, Any] = {
+        "kind": "session",
+        "agent_instance_id": instance_id,
+        "audience": getattr(args, "audience", None) or "public",
+        "show_owner": bool(getattr(args, "show_owner", False)),
+        "show_branch": bool(getattr(args, "show_branch", False)),
+    }
+    expires = getattr(args, "expires", None)
+    if expires:
+        body["expires_in_days"] = int(expires)
+
+    existing: Optional[dict] = None
+    if not getattr(args, "new", False):
+        # Newest first from the server; the first equivalent one is the one a
+        # previous `share` handed out, so hand it out again.
+        existing = next((lk for lk in links if _equivalent_share(lk, body)), None)
+    reused = existing is not None
+    link: dict = existing or request(args, api_key, "POST", "/api/v1/shares", json=body)
+    url = _share_url(args, str(link.get("token") or ""))
+    if getattr(args, "json", False):
+        link["url"] = url
+        link["reused"] = reused
+        print(_json.dumps(link, indent=2))
+        return 0
+    print(url)
+    return 0
+
+
+def _cmd_unshare(args, api_key: str) -> int:
+    """Revoke one link (``--link``) or every live link (``--all``) on a session.
+
+    A revoked URL is dead wherever it was pasted, so this never guesses: with
+    neither flag it lists what it would revoke and exits 2.
+    """
+    instance_id = _resolve_instance_id(args, api_key, _session_ref_or_self(args))
+    links = _live_links(args, api_key, instance_id)
+    link_ref = getattr(args, "link", None)
+    if link_ref:
+        matches = [lk for lk in links if str(lk.get("id", "")).startswith(link_ref)]
+        if len(matches) != 1:
+            what = "no live link" if not matches else f"{len(matches)} links"
+            print(
+                f"Error: {what} on this session match '{link_ref}' "
+                "(`vicoa session share <id> --list`).",
+                file=sys.stderr,
+            )
+            return 1
+        targets = matches
+    elif getattr(args, "all", False):
+        targets = links
+    else:
+        print(
+            "Pass --link <LINK_ID> to revoke one link, or --all for every live "
+            "link on this session:",
+            file=sys.stderr,
+        )
+        _print_share_table(args, links)
+        return 2
+    for link in targets:
+        request(args, api_key, "DELETE", f"/api/v1/shares/{link['id']}")
+    if getattr(args, "json", False):
+        print(_json.dumps({"revoked": [str(lk["id"]) for lk in targets]}, indent=2))
+        return 0
+    if not targets:
+        print("No live share links to revoke.")
+    else:
+        print(f"Revoked {len(targets)} link(s) on session {_short(instance_id)}.")
     return 0
 
 
@@ -1322,6 +1501,8 @@ _HANDLERS = {
     "update": _cmd_update,
     "message": _cmd_message,
     "continue": _cmd_continue,
+    "share": _cmd_share,
+    "unshare": _cmd_unshare,
 }
 
 
@@ -1331,7 +1512,7 @@ def run_session_command(args) -> int:
     handler = _HANDLERS.get(sub) if sub else None
     if handler is None:
         print(
-            "usage: vicoa session {start,ls,get,update,message,continue} ...\n"
+            "usage: vicoa session {start,ls,get,update,message,continue,share,unshare} ...\n"
             "Run `vicoa session --help` for details.",
             file=sys.stderr,
         )

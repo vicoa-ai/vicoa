@@ -18,6 +18,7 @@ import json as _json
 import sys
 from typing import Any, Optional
 
+from vicoa.commands.project import resolve_project_ref
 from vicoa.commands.task import _fit, _request, _resolve_api_key
 
 _NAME_W = 24
@@ -124,11 +125,16 @@ def _cmd_add(args, api_key: str) -> int:
         ("emoji", "emoji"),
         ("color", "color"),
         ("default_machine_id", "machine"),
-        ("default_project_id", "project"),
     ):
         value = getattr(args, attr, None)
         if value:
             body[key] = value
+    # Key, name, or id — the same forms `task --project` takes.
+    project_ref = getattr(args, "project", None)
+    if project_ref:
+        project_id = resolve_project_ref(args, api_key, project_ref)
+        if project_id is not None:
+            body["default_project_id"] = project_id
 
     created = _request(args, api_key, "POST", "/api/v1/agents", json=body)
     if getattr(args, "json", False):

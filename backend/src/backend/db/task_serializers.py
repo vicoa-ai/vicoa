@@ -1,10 +1,10 @@
-"""TaskResponse assembly — the three fields a task can't answer alone.
+"""TaskResponse assembly — the fields a task can't answer alone.
 
-`identifier` needs the project's key, `parent_title` needs the parent row, and
-`assignee` needs a users/agent_profiles lookup. Doing those per task would be
-three extra queries per row, so everything here is batched: one pass over a
-whole list costs three queries total, and the single-task path is the same
-function with a list of one.
+`identifier` and `project_name` need the project row, `parent_title` needs the
+parent row, and `assignee` needs a users/agent_profiles lookup. Doing those per
+task would be three extra queries per row, so everything here is batched: one
+pass over a whole list costs three queries total, and the single-task path is
+the same function with a list of one.
 """
 
 from uuid import UUID
@@ -23,10 +23,10 @@ def serialize_tasks(db: Session, tasks: list[Task]) -> list[TaskResponse]:
         return []
 
     project_ids = {t.project_id for t in tasks if t.project_id is not None}
-    keys: dict[UUID, str | None] = (
+    projects: dict[UUID, tuple[str | None, str]] = (
         {
-            row[0]: row[1]
-            for row in db.query(Project.id, Project.key)
+            row[0]: (row[1], row[2])
+            for row in db.query(Project.id, Project.key, Project.name)
             .filter(Project.id.in_(project_ids))
             .all()
         }
@@ -55,11 +55,14 @@ def serialize_tasks(db: Session, tasks: list[Task]) -> list[TaskResponse]:
     for task in tasks:
         response = TaskResponse.model_validate(task)
         # An unfiled task has no key to scope a number under: no identifier.
-        response.identifier = (
-            format_task_identifier(keys.get(task.project_id), task.number)
-            if task.project_id is not None
-            else None
-        )
+        if task.project_id is not None:
+            project = projects.get(task.project_id)
+            response.identifier = format_task_identifier(
+                project[0] if project else None, task.number
+            )
+            response.project_name = project[1] if project else None
+        else:
+            response.identifier = None
         if task.parent_task_id is not None:
             response.parent_title = parent_titles.get(task.parent_task_id)
         if task.assignee_type is not None and task.assignee_id is not None:

@@ -308,3 +308,109 @@ class TestComments:
             stranger_client.get(f"/api/v1/tasks/{task['id']}/timeline").status_code
             == 404
         )
+
+
+class TestListFilters:
+    """`vicoa task ls --project none` and `--label`: the two selectors a
+    project_id/status/priority triple cannot express."""
+
+    @pytest.fixture
+    def project(self, test_db, test_user):
+        project = Project(user_id=test_user.id, name="Vicoa", key="VIC")
+        test_db.add(project)
+        test_db.commit()
+        return project
+
+    def test_unfiled_selects_no_project_tasks_only(self, client, project):
+        client.post("/api/v1/tasks", json={"title": "Unfiled"})
+        client.post(
+            "/api/v1/tasks", json={"title": "Filed", "project_id": str(project.id)}
+        )
+        unfiled = client.get("/api/v1/tasks", params={"unfiled": "true"}).json()
+        assert [t["title"] for t in unfiled] == ["Unfiled"]
+        # Without the flag NULL is not a filter — both come back.
+        assert len(client.get("/api/v1/tasks").json()) == 2
+
+    def test_unfiled_and_project_id_together_is_400(self, client, project):
+        resp = client.get(
+            "/api/v1/tasks", params={"unfiled": "true", "project_id": str(project.id)}
+        )
+        assert resp.status_code == 400
+
+    def test_label_filter_is_a_conjunction(self, client):
+        growth = client.post(
+            "/api/v1/task-labels", json={"name": "growth", "color": "#ff0000"}
+        ).json()
+        bug = client.post(
+            "/api/v1/task-labels", json={"name": "bug", "color": "#00ff00"}
+        ).json()
+        client.post("/api/v1/tasks", json={"title": "G", "label_ids": [growth["id"]]})
+        client.post(
+            "/api/v1/tasks",
+            json={"title": "GB", "label_ids": [growth["id"], bug["id"]]},
+        )
+        client.post("/api/v1/tasks", json={"title": "plain"})
+
+        only_growth = client.get(
+            "/api/v1/tasks", params={"label_id": growth["id"]}
+        ).json()
+        assert {t["title"] for t in only_growth} == {"G", "GB"}
+        both = client.get(
+            "/api/v1/tasks", params={"label_id": [growth["id"], bug["id"]]}
+        ).json()
+        assert [t["title"] for t in both] == ["GB"]
+
+    def test_tasks_carry_their_project_name(self, client, project):
+        filed = client.post(
+            "/api/v1/tasks", json={"title": "Filed", "project_id": str(project.id)}
+        ).json()
+        assert filed["project_name"] == "Vicoa"
+        assert filed["identifier"] == "VIC-1"
+        unfiled = client.post("/api/v1/tasks", json={"title": "Loose"}).json()
+        assert unfiled["project_name"] is None
+
+    def test_move_reassigns_identifier(self, client, test_db, test_user, project):
+        """What `vicoa task update --project` prints as `VIC-1 → VIC2-1`."""
+        other = Project(user_id=test_user.id, name="Second", key="VIC2")
+        test_db.add(other)
+        test_db.commit()
+        task = client.post(
+            "/api/v1/tasks", json={"title": "Mover", "project_id": str(project.id)}
+        ).json()
+        assert task["identifier"] == "VIC-1"
+        moved = client.patch(
+            f"/api/v1/tasks/{task['identifier']}", json={"project_id": str(other.id)}
+        ).json()
+        assert moved["identifier"] == "VIC2-1"
+        assert moved["project_name"] == "Second"
+        # Out to No project: the identifier goes away with the project.
+        loose = client.patch(f"/api/v1/tasks/{task['id']}", json={"project_id": None})
+        assert loose.json()["identifier"] is None
+        assert loose.json()["project_id"] is None
+
+
+class TestLabels:
+    """`vicoa label ls` / `label create`: the caller's own vocabulary."""
+
+    def test_create_and_list(self, client):
+        resp = client.post(
+            "/api/v1/task-labels", json={"name": "growth", "color": "3B82F6"}
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["color"] == "#3b82f6"  # normalised like the dashboard
+        assert resp.json()["team_id"] is None
+        assert [lbl["name"] for lbl in client.get("/api/v1/task-labels").json()] == [
+            "growth"
+        ]
+
+    def test_team_labels_are_refused_here(self, client):
+        resp = client.post(
+            "/api/v1/task-labels",
+            json={"name": "x", "color": "#000000", "team_id": str(uuid4())},
+        )
+        assert resp.status_code == 400
+
+    def test_other_users_labels_are_invisible(self, test_db, test_user, client):
+        client.post("/api/v1/task-labels", json={"name": "mine", "color": "#000000"})
+        stranger = _make_client(test_db, uuid4())
+        assert stranger.get("/api/v1/task-labels").json() == []

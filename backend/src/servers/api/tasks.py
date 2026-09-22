@@ -41,7 +41,9 @@ from backend.db.task_queries import (
 )
 from backend.models import (
     CreateAgentTaskCommentRequest,
+    CreateTaskLabelRequest,
     CreateTaskRequest,
+    TaskLabelResponse,
     TaskPriorityLiteral,
     TaskResponse,
     TaskStatusLiteral,
@@ -89,16 +91,28 @@ def _raise_task_ref_errors(exc: Exception) -> None:
 def list_tasks_endpoint(
     user_id: Annotated[str, Depends(get_current_user_id)],
     project_id: UUID | None = None,
+    unfiled: bool = False,
     task_status: TaskStatusLiteral | None = Query(default=None, alias="status"),
     task_priority: TaskPriorityLiteral | None = Query(default=None, alias="priority"),
+    label_id: Annotated[list[UUID] | None, Query()] = None,
     db: Session = Depends(get_db),
 ) -> list[TaskResponse]:
+    """``unfiled`` selects No-project tasks (``vicoa task ls --project none``);
+    it cannot be combined with ``project_id``. ``label_id`` may repeat — a task
+    must carry every one given."""
+    if unfiled and project_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pass either project_id or unfiled, not both",
+        )
     tasks = task_queries.list_tasks(
         db,
         _user_uuid(user_id),
         project_id=project_id,
         status=task_status,
         priority=task_priority,
+        unfiled=unfiled,
+        label_ids=label_id,
     )
     return serialize_tasks(db, tasks)
 
@@ -177,6 +191,45 @@ def delete_task_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
         )
+
+
+# ---------------------------------------------------------------------------
+# Labels — the caller's own vocabulary (`vicoa label ls` / `--label`)
+#
+# List and create only: the owner-only lens sees personal labels, never a
+# team's, and renaming/recolouring/deleting a label stays a Settings-page act.
+# ---------------------------------------------------------------------------
+
+
+@task_router.get("/task-labels", response_model=list[TaskLabelResponse])
+def list_labels_endpoint(
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    db: Session = Depends(get_db),
+) -> list[TaskLabelResponse]:
+    labels = task_queries.list_labels(db, _user_uuid(user_id))
+    return [TaskLabelResponse.model_validate(label) for label in labels]
+
+
+@task_router.post(
+    "/task-labels",
+    response_model=TaskLabelResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_label_endpoint(
+    request: CreateTaskLabelRequest,
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    db: Session = Depends(get_db),
+) -> TaskLabelResponse:
+    if request.team_id is not None:
+        # A team vocabulary is a sharing-lens concept; this surface is owner-only.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Team labels are managed from the dashboard",
+        )
+    label = task_queries.create_label(
+        db, _user_uuid(user_id), name=request.name, color=request.color
+    )
+    return TaskLabelResponse.model_validate(label)
 
 
 # ---------------------------------------------------------------------------

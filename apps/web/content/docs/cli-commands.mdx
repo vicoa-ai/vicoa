@@ -9,7 +9,8 @@ The `vicoa` command is the terminal front door to your Vicoa account. From any m
 
 - **Start, resume, and stop** agent sessions (Claude Code, Codex, OpenCode, and more).
 - **List and inspect** every session you own — across machines, including finished ones — and read their message transcripts.
-- **Manage your task backlog** — create, update, and close tasks without leaving the terminal.
+- **Manage your task backlog** — create, update, move, label, and close tasks without leaving the terminal; list your projects and labels.
+- **Share a session** — mint a public link to a transcript (for a pull request, a teammate) and revoke it again.
 - **Schedule automations** — saved prompts that fire an agent session on a recurring schedule.
 
 A machine can have two kinds of session running at once:
@@ -223,6 +224,7 @@ vicoa session ls --rate-limited       # only sessions currently blocked by a rat
 vicoa session ls --since 24h          # started in the last day
 vicoa session ls --since 2026-09-15 --until 2026-09-20   # the 15th through the 20th
 vicoa session ls --since yesterday --until yesterday     # all of yesterday
+vicoa session ls --limit 100 --offset 100               # the second page of 100
 vicoa session ls --json
 ```
 
@@ -233,7 +235,8 @@ vicoa session ls --json
 | `--since WHEN` | | Only sessions started at or after `WHEN` |
 | `--until WHEN` | | Only sessions started before `WHEN` |
 | `--limit N` | 50 | Max sessions to return (1–100) |
-| `--json` | | Raw JSON `{items, total, ...}` |
+| `--offset N` | 0 | Skip the newest `N` — page through with `--limit`; `--json` reports `total` and `has_more` |
+| `--json` | | Raw JSON `{items, total, limit, offset, has_more}` |
 
 `WHEN` accepts a date (`2026-09-20`), a datetime (`2026-09-20T14:30`, optionally with `Z` or an offset like `+08:00`), `today` / `yesterday`, or an age counted back from now (`30m`, `24h`, `7d`, `2w`). Times without an offset are your local time, the same zone the `STARTED` column prints in. A bare date on `--until` includes that whole day, so `--since 2026-09-20 --until 2026-09-20` is exactly the 20th. The window filters on when each session **started**, and `total` in `--json` counts the window.
 
@@ -307,6 +310,46 @@ Shorthand that sends the literal text `continue` into a session — handy after 
 ```bash
 vicoa session continue 3f9c1a2b
 ```
+
+### vicoa session share
+
+Create a public link to a session's transcript and print its URL — the same link the dashboard's Share dialog makes. Built for attaching the session that produced a change to its pull request:
+
+```bash
+vicoa session share 3f9c1a2b                  # → https://vicoa.ai/share/<token>
+vicoa session share                           # inside a Vicoa session: shares *this* session
+vicoa session share --show-branch --expires 7 # show the git branch; dead after 7 days
+vicoa session share 3f9c1a2b --list           # the session's live links
+vicoa session share 3f9c1a2b --json           # the link record, with `url` added
+
+# Attach the session to the PR you just opened
+gh pr comment 123 --body "Session transcript: $(vicoa session share)"
+```
+
+On success it prints **only the URL**, so it drops straight into a `$(…)`. Running it again for the same session returns the **same link** when an equivalent live one exists (same audience and display options, no expiry) — pass `--new` to mint another. With no session id it shares the session the command runs inside (`VICOA_AGENT_INSTANCE_ID`).
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--audience public\|authenticated` | `public` | Anyone with the link, or only signed-in Vicoa users |
+| `--expires DAYS` | never | Expire the link after `DAYS` (1–365); an expiring link is always newly minted |
+| `--show-owner` | off | Show your name and avatar on the shared page |
+| `--show-branch` | off | Show the git branch / worktree on the shared page |
+| `--new` | off | Mint a new link even if an equivalent live one exists |
+| `--list` | | List the session's live links instead of creating one |
+| `--web-url URL` | `VICOA_AUTH_URL` / `https://vicoa.ai` | Web app origin used to build the printed URL (self-hosted installs) |
+
+A shared page shows the transcript only: never the machine, the working directory, or session secrets. The viewer is the same page the dashboard's share links open, so what a link shows is documented there.
+
+### vicoa session unshare
+
+Revoke a link. A revoked URL stops working everywhere it was pasted, so this never guesses which one:
+
+```bash
+vicoa session unshare 3f9c1a2b --link 7c2e9a10   # one link, by id or prefix from --list
+vicoa session unshare 3f9c1a2b --all             # every live link on the session
+```
+
+With neither flag it prints the live links and exits without revoking anything.
 
 ## vicoa stop
 
@@ -413,7 +456,7 @@ vicoa disconnect
 
 ## vicoa task
 
-Manage your task backlog from the terminal. The read verbs (`ls`, `get`) are safe; `create`, `update`, and `delete` change your backlog.
+Manage your task backlog from the terminal. The read verbs (`ls`, `get`, `comments`) are safe; `create`, `update`, `comment`, and `delete` change your backlog.
 
 **Statuses:** `backlog` `todo` `in_progress` `in_review` `done` `blocked` `cancelled`
 **Priorities:** `urgent` `high` `medium` `low` `none`
@@ -421,37 +464,83 @@ Manage your task backlog from the terminal. The read verbs (`ls`, `get`) are saf
 ```bash
 # List and inspect
 vicoa task ls                                   # all tasks
-vicoa task ls --status todo --priority high --json
-vicoa task get 5f2c9d1e-...-full-uuid           # full detail
+vicoa task ls --project VIC                     # one project, by key, name, or id
+vicoa task ls --project none                    # the unfiled ones (No project)
+vicoa task ls --label growth --status todo      # tagged growth AND todo
+vicoa task ls --json
+vicoa task get VIC-42                           # full detail
 
 # Create
 vicoa task create "Fix the flaky login test"
-vicoa task create "Ship pricing page" --priority high --status todo \
-  --description "Localize copy first" --due 2026-08-25
+vicoa task create "Ship pricing page" --project VIC --priority high --status todo \
+  --label growth --description "Localize copy first" --due 2026-08-25
 
-# Update (only the flags you pass change)
-vicoa task update 5f2c9d1e-...-full-uuid --status in_progress
-vicoa task update 5f2c9d1e-...-full-uuid --priority urgent --title "New title"
+# Update (only the flags you pass change; several refs apply the same change to each)
+vicoa task update VIC-42 --status in_progress
+vicoa task update VIC-42 --priority urgent --title "New title"
+vicoa task update VIC-20 VIC-21 VIC-22 --project VIC2       # move three tasks
+vicoa task update VIC-42 --add-label bug --remove-label growth
+vicoa task update VIC-42 --label a --label b               # set the labels to exactly these
+
+# Comment
+vicoa task comment VIC-42 "Fixed — the flake was a missing await."
+vicoa task comment VIC-42 - < report.md                    # body from stdin
+vicoa task comments VIC-42 --activity                      # the thread + change log
 
 # Delete (-y skips the confirm prompt)
-vicoa task delete 5f2c9d1e-...-full-uuid -y
+vicoa task delete VIC-42 -y
 ```
 
-`create` defaults to `status=backlog`, `priority=none`, and is filed under **No project** unless you pass `--project <PROJECT_ID>`.
+**Refer to a task by its identifier.** `VIC-42` — the `KEY` column of `task ls`, the header of the task page, and what you'd say out loud — works everywhere a task reference is taken: the positional argument on `get`/`update`/`delete`/`comment`/`comments`, and `--parent`. A full UUID works too. (A task filed under No project has no identifier; use its UUID. `vicoa --task` and `session update --task` still take the UUID.)
+
+**Refer to a project by its key.** `--project` takes the project's task key (`VIC`, the prefix on every identifier), its name, or its id — `vicoa project ls` shows all three — and `none` for **No project**. Moving a task between projects **reassigns its identifier** (numbers are per project), and `update` prints the change as `VIC-20 → VIC2-2`. Moving a task to `none` drops its identifier.
+
+**Labels go by name.** `--label`, `--add-label`, and `--remove-label` take label names (`vicoa label ls`); every flag repeats. On `ls`, several `--label`s mean the task must carry *all* of them. On `update`, `--label` replaces the whole set, while `--add-label` / `--remove-label` keep the rest.
+
+`create` defaults to `status=backlog`, `priority=none`, and files under **No project** unless you pass `--project`.
 
 | Flag (create / update) | Meaning |
 |---|---|
 | `--description <text>` | Longer body |
-| `--project <PROJECT_ID>` | Project to file under (defaults to No project) |
+| `--project <KEY\|NAME\|ID\|none>` | Project to file under / move to (`none` = No project) |
 | `--status <status>` | Task status (enum above) |
 | `--priority <priority>` | Task priority (enum above) |
-| `--parent <TASK_UUID>` | Make it a subtask of another task |
+| `--label <name>` | Label to apply (repeatable); on `update`, sets the labels to exactly these |
+| `--add-label <name>` / `--remove-label <name>` | Add / remove one label, keeping the rest (`update` only; repeatable) |
+| `--parent <TASK>` | Make it a subtask of another task (`VIC-42` or UUID) |
 | `--start <ISO8601>` | Start date, e.g. `2026-08-01` |
 | `--due <ISO8601>` | Due date, e.g. `2026-08-01T17:00:00Z` |
 | `--title <text>` | New title (`update` only; `create` takes the title as its argument) |
-| `--json` | Raw JSON |
+| `--json` | Raw JSON — a bare array from `ls`; `update` prints one object for one ref, a list for several |
 
-> **Task ids must be full UUIDs.** Unlike `session`, the `task get`/`update`/`delete` commands do **not** accept an 8-character prefix — copy the full id from `vicoa task ls`. `update` is a PATCH: pass at least one field, or it errors.
+Columns of `task ls`: `ID` (8-char prefix), `KEY` (identifier), `STATUS`, `PRIO`, `PROJECT` (name), `TITLE`. `--json` rows carry `project_id` and `project_name`.
+
+> **`update` is a PATCH** — pass at least one field, or it errors. With several refs, a ref that fails (typo, 404) is reported on stderr and the rest still run; the exit code is `1` if any failed.
+
+## vicoa project
+
+Read-only list of your projects — where the keys and ids `--project` takes come from.
+
+```bash
+vicoa project ls                     # ID, KEY, NAME, PATH (this machine's checkout), TASKS (open)
+vicoa project ls --include-archived
+vicoa project get VIC                # by key, name, or id: details + every machine's checkout path
+vicoa project ls --json
+```
+
+Projects are created and edited in the apps (a project appears automatically the first time a session runs in a folder). `TASKS` counts open tasks — everything but `done` and `cancelled`.
+
+## vicoa label
+
+Your task-label vocabulary — one set of labels across every project, the same list as Settings → Tasks.
+
+```bash
+vicoa label ls
+vicoa label create growth                    # colour picked from the name, as the web does
+vicoa label create ops --color "#3b82f6"
+```
+
+Rename, recolour, and delete stay in the apps. `create` refuses a name that already exists, so `--label <name>` can never be ambiguous.
 
 ## vicoa automation
 
@@ -552,11 +641,16 @@ Each command is echoed, then run in the worktree under a login shell with `$VICO
 
 ## Machine-readable output
 
-Every `session`, `task`, and `automation` subcommand — plus `vicoa ls` — accepts `--json`, which emits raw JSON instead of the human-readable table. Prefer it whenever you're parsing a field in a script rather than scraping the table.
+Every `session`, `task`, `project`, `label`, `agent`, and `automation` subcommand — plus `vicoa ls` — accepts `--json`, which emits raw JSON instead of the human-readable table. Prefer it whenever you're parsing a field in a script rather than scraping the table.
+
+Paginated lists (`session ls`) come wrapped — `{items, total, limit, offset, has_more}` — so the page can say how much is left. Everything else (`task ls`, `project ls`, `label ls`) is the bare array the API returns.
 
 ```bash
 vicoa session ls --active --json | jq '.items[].id'
+vicoa task ls --project VIC --json | jq '.[].identifier'
 ```
+
+The "new version available" banner goes to **stderr**, so it never lands in a `--json` pipe — don't merge streams with `2>&1` before parsing.
 
 ## Errors & recovery
 
@@ -568,7 +662,10 @@ vicoa session ls --active --json | jq '.items[].id'
 | `Daemon on <machine> looks offline` (session start) | Start `vicoa daemon` on that machine, or pass `--allow-offline` to queue the request until it reconnects. |
 | `--dir is required to start a session` | `vicoa session start` needs `--dir <PATH>`; run it with `--list-machines` / `--list-models` first to see your options. |
 | `'<ref>' is ambiguous` / `No session found matching` | The 8-char prefix (or `--machine` name) collided or aged out — use more characters or the full UUID/id. |
-| `404` on `task get/update/delete` | Tasks and automations need the **full UUID**; only `session` commands and `vicoa stop` accept an 8-char prefix. |
+| `404` on `task get/update/delete` | Use the `VIC-42` identifier or the **full UUID** — the 8-char `ID` column is display-only. Automations still need their full UUID; only `session` commands and `vicoa stop` accept an 8-char prefix. |
+| `no project with key or name '…'` / `N projects are named '…'` | `--project` matches a key, name, or id exactly — run `vicoa project ls`; when two projects share a name, pass the key or id. |
+| `no label named '…'` | `--label` takes an existing name — `vicoa label ls`, or `vicoa label create <name>`. |
+| `no session given and VICOA_AGENT_INSTANCE_ID is not set` | `session share`/`unshare` without an id only work inside a Vicoa session; pass the session id. |
 | `Nothing to update — pass at least one field` | `update` is a PATCH; pass at least one flag, e.g. `--status done`. |
 | `Aborted (pass --yes to delete non-interactively)` | Re-run `delete` with `-y`. |
 | `pass only one schedule (… are mutually exclusive)` | `automation create` takes exactly one of `--at`/`--daily`/`--hourly`/`--weekdays`/`--weekly`/`--frequency-json`. |
