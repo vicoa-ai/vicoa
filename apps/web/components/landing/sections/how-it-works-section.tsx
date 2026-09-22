@@ -101,7 +101,7 @@ export const defaultSteps: Step[] = [
     number: '02',
     title: 'Run coding agents in parallel',
     description:
-      'Start Claude Code, Codex, or other AI agents, each on its own git worktree, all on one workspace.',
+      'Start Claude Code, Codex, or any of 40+ coding agents, each on its own git worktree, all on one workspace.',
     visual: (
       <div className="w-full space-y-2.5 rounded-xl border bg-card p-4 font-mono text-sm shadow-sm">
         <StatusRow agent="claude" branch="feat/payments" status="working" color="bg-green-500" />

@@ -7,7 +7,7 @@ import { VsSection } from '@/components/vs/vs-sections';
 const PATH = '/use-cases';
 const TITLE = 'Use cases: Vicoa for your workflow';
 const DESCRIPTION =
-  'See how Vicoa fits your work — run AI coding agents like Claude Code, Codex, and OpenCode on remote machines and steer them from any device. Tailored guides by role and workflow.';
+  'See how Vicoa fits your work — run AI coding agents like Claude Code, Codex, Gemini, and 40+ more on remote machines and steer them from any device. Tailored guides by role and workflow.';
 
 export const metadata: Metadata = pageMetadata(PATH, {
   title: `${TITLE} | Vicoa`,
@@ -45,7 +45,7 @@ export default function UseCasesIndexPage() {
           Vicoa for your workflow
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-muted-foreground">
-          Run Claude Code, Codex, and OpenCode wherever your work lives — and drive
+          Run Claude Code, Codex, and 40+ coding agents wherever your work lives — and drive
           them from any device. Pick the guide that matches how you build.
         </p>
       </section>

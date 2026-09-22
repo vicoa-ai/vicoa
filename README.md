@@ -34,7 +34,7 @@ Vicoa is an open-source **AI orchestrator** for running a team of coding agents 
 
 *Claude Code, Codex, Cursor, Pi, Kimi, and more*
 
-- **[Supported Agents](#supported-agents):** Claude Code, Codex, OpenCode, Gemini, Cursor, GitHub Copilot, Kimi, Hermes, Pi, Oh My Pi, Antigravity. Run them side by side in one workspace
+- **[Supported Agents](#supported-agents):** 40+ coding agents. Claude Code, Codex, OpenCode, Gemini, Cursor, GitHub Copilot, Kimi, Hermes, Pi, Oh My Pi, and Antigravity are built in; 30+ more (Cline, goose, Kiro, Qwen Code, TRAE, …) are supported via ACP. Run them side by side in one workspace
 - **Parallel worktrees:** each agent on its own git worktree and branch, so several can work the same repo at once without stepping on each other.
 - **One command center:** every session's status in a single list, so you steer the whole fleet from one place instead of hunting terminal tabs.
 - **[Any machine](https://vicoa.ai/docs/start-remote-session):** your Mac, a Windows laptop, a Linux machine, a VPS, a remote server: connect them all and pick where each session runs.
@@ -122,6 +122,12 @@ authenticated, on your machine, with your credentials.
 Claude Code, Codex, Pi, Oh My Pi, and Antigravity have native integrations; the rest connect
 over the Agent Client Protocol (ACP).
 
+**30+ more via ACP.** Amp, Auggie, Cline, Devin, Factory Droid, goose, Grok, Junie, Kilo,
+Kiro, Mistral Vibe, Qwen Code, TRAE, and other ACP agents are in the built-in catalog: add
+one from **Settings → Providers → More agents** or `vicoa provider add <id>`. Any other
+agent that speaks ACP works with your own launch command. See
+[custom agents](https://vicoa.ai/docs/agents/custom-agents).
+
 ## Documentation
 
 - **[CLI commands](https://vicoa.ai/docs/cli-commands)** — drive vicoa sessions, tasks, and automations from the terminal.
@@ -173,6 +179,7 @@ The full walkthrough is in **[SELF_HOSTING.md](./SELF_HOSTING.md)**.
                      │ Claude Code · Codex · OpenCode · Gemini │
                      │ Cursor · Copilot · Kimi · Hermes        │
                      │ Pi · Oh My Pi · Antigravity             │
+                     │ + 30 more ACP agents                    │
                      └─────────────────────────────────────────┘
 ```
 

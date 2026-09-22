@@ -20,18 +20,18 @@ import { pageMetadata } from '@/lib/seo';
 export const metadata: Metadata = pageMetadata('/features', {
   title: 'Features | Vicoa: Run A Team of Coding Agents',
   description:
-    'Run Claude Code, Codex, and OpenCode in parallel, each on its own git worktree, and steer them from any device. Explore Vicoa features: parallel agents, the desktop app, Tasks, Automations, file mentions, slash commands, voice dictation, and cross-device workflows.',
+    'Run Claude Code, Codex, and 40+ coding agents in parallel, each on its own git worktree, and steer them from any device. Explore Vicoa features: parallel agents, the desktop app, Tasks, Automations, file mentions, slash commands, voice dictation, and cross-device workflows.',
   openGraph: {
     title: 'Features | Vicoa: Run A Team of Coding Agents',
     description:
-      'Run Claude Code, Codex, and OpenCode in parallel, each on its own git worktree, and steer them from any device. Parallel agents, the desktop app, Tasks, Automations, and more.',
+      'Run Claude Code, Codex, and 40+ coding agents in parallel, each on its own git worktree, and steer them from any device. Parallel agents, the desktop app, Tasks, Automations, and more.',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Features | Vicoa: Run A Team of Coding Agents',
     description:
-      'Run Claude Code, Codex, and OpenCode in parallel, each on its own git worktree, and steer them from any device. Parallel agents, the desktop app, Tasks, Automations, and more.',
+      'Run Claude Code, Codex, and 40+ coding agents in parallel, each on its own git worktree, and steer them from any device. Parallel agents, the desktop app, Tasks, Automations, and more.',
   },
 });
 
@@ -53,7 +53,7 @@ interface CardFeature {
 const features: Feature[] = [
   {
     title: 'Run a Team of Coding Agents in Parallel',
-    description: 'Run Claude Code, Codex, and OpenCode side by side, each on its own git worktree, and watch every agent on one board.',
+    description: 'Run Claude Code, Codex, Gemini, and 40+ coding agents side by side, each on its own git worktree, and watch every agent on one board.',
     details: [
       'Start several agents at once, each in its own git worktree so they never step on each other',
       'See every agent’s live status on a single board instead of juggling terminal tabs',
@@ -66,7 +66,7 @@ const features: Feature[] = [
     title: 'Start at Your Desk, Steer from Any Device',
     description: 'Launch sessions from web, mobile, or desktop, and jump in the moment an agent needs you.',
     details: [
-      'Start new Claude Code or Codex sessions from your phone, browser, or the desktop app',
+      'Start new Claude Code, Codex, or any other agent sessions from your phone, browser, or the desktop app',
       'Get a push notification the moment an agent needs input or finishes a task',
       'Approve changes and answer AskUserQuestion prompts with one tap, wherever you are'
     ],
@@ -75,9 +75,10 @@ const features: Feature[] = [
   },
   {
     title: 'Every Coding Agent, One Workspace',
-    description: 'Claude Code, Codex, OpenCode, and more, plus 300+ models from 60+ providers via OpenRouter.',
+    description: '40+ coding agents: Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, and more, plus 300+ models from 60+ providers via OpenRouter.',
     details: [
-      'Run Claude Code, Codex, OpenCode, Pi, and Oh My Pi natively, plus Gemini, Cursor, Copilot, Kimi, and Hermes via ACP',
+      'Claude Code, Codex, Pi, Oh My Pi, and Antigravity run natively; OpenCode, Gemini, Cursor, Copilot, Kimi, and Hermes are built in via the Agent Client Protocol (ACP)',
+      '30+ more agents supported via ACP (Amp, Cline, Devin, goose, Kiro, Qwen Code, TRAE, and others), and any other ACP agent with your own command',
       'Use 300+ models from 60+ providers through OpenRouter, and bring your own key',
       'Everything runs on your real machine and codebase: no lock-in, no usage markup'
     ],
@@ -303,7 +304,7 @@ export default function FeaturesPage() {
         <div className="container mx-auto px-4 py-16 max-w-7xl text-center">
           <h1 className="text-4xl md:text-5xl mb-4">Features</h1>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Vicoa features for running coding agents like Claude Code, Codex, OpenCode, and more running in parallel.
+            Vicoa features for running coding agents like Claude Code, Codex, Gemini, and 40+ more in parallel.
           </p>
         </div>
       </div>

@@ -15,7 +15,7 @@ export function FAQSection() {
     {
       question: "Can I run several agents at once?",
       answer:
-        "Yes. That's the point. Run Claude Code, Codex, OpenCode, and more agents in parallel, and watch every agent's live status on one board. A push notification pulls you to whichever one is blocked or done, so you never juggle terminal tabs again."
+        "Yes. That's the point. Run Claude Code, Codex, Gemini, and any of 40+ coding agents in parallel, and watch every agent's live status on one board. A push notification pulls you to whichever one is blocked or done, so you never juggle terminal tabs again."
     },
     {
       question: "Does my code leave my machine?",
@@ -25,7 +25,7 @@ export function FAQSection() {
     {
       question: "Which agents and models does Vicoa support?",
       answer:
-        "Claude Code, Codex, OpenCode, Gemini, Cursor, GitHub Copilot, Kimi, Hermes, Pi, and Oh My Pi — 10+ agents, plus 300+ models from 60+ providers through OpenRouter. Bring your own key. There's no lock-in and no usage markup."
+        "40+ coding agents. Claude Code, Codex, OpenCode, Gemini, Cursor, GitHub Copilot, Kimi, Hermes, Pi, Oh My Pi, and Antigravity are built in, and 30+ more (Amp, Cline, Devin, Factory Droid, goose, Kiro, Qwen Code, TRAE, and others) are supported via the Agent Client Protocol (ACP). Any other ACP agent works with your own launch command. Plus 300+ models from 60+ providers through OpenRouter. Bring your own key. There's no lock-in and no usage markup."
     },
     {
       question: "Do I need git or worktrees?",

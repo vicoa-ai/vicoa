@@ -30,7 +30,7 @@ const defaultFeatures: Feature[] = [
     Demo: DemoFleet,
     capability: 'Run a whole fleet, see it at a glance',
     feature:
-      'Start Claude Code, Codex, OpenCode and more agents side by side, each on its own git worktree, and watch every session’s live status in one list.',
+      'Start Claude Code, Codex, Gemini, and 40+ other coding agents side by side, each on its own git worktree, and watch every session’s live status in one list.',
     points: [
       'Kick off many agents at once, each isolated on its own branch',
       'Spot the one that’s blocked, running, or finished without hunting',
@@ -100,7 +100,7 @@ const defaultFeatures: Feature[] = [
       'Organize work on a Linear-style task board, then right-click any task and start a session, an agent picks it up and get it done.',
     points: [
       'Board and list views with priorities, labels, and sub-tasks',
-      'Right-click → Start a session to kick off Claude, Codex, or OpenCode',
+      'Right-click → Start a session to kick off Claude Code, Codex, or any other agent',
     ],
     contrast: 'Instead of hand-wiring a prompt for every task, and wait for rate limit reset',
   },

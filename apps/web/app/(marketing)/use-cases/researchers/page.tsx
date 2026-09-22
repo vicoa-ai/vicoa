@@ -37,7 +37,7 @@ import {
 const PATH = '/use-cases/researchers';
 const TITLE = 'Vicoa for Researchers: Run Coding Agents on Your GPU Server';
 const DESCRIPTION =
-  "Run Claude Code, Codex, or OpenCode on your remote GPU server or lab cluster and steer them from your laptop or phone. Built for ML researchers, PhD and master's students, and data scientists who run experiments on remote servers. No more SSH round-trips.";
+  "Run Claude Code, Codex, or any of 40+ coding agents on your remote GPU server or lab cluster and steer them from your laptop or phone. Built for ML researchers, PhD and master's students, and data scientists who run experiments on remote servers. No more SSH round-trips.";
 const OG_IMAGE = '/images/hero.png';
 
 export const metadata: Metadata = pageMetadata(PATH, {
@@ -154,7 +154,7 @@ const RESEARCHER_STEPS: Step[] = defaultSteps.map((step) => {
       ...step,
       title: 'Install on your server',
       description:
-        'Install the Vicoa CLI on your lab server or cloud VM and sign in, and it auto-detects Claude Code, Codex, or OpenCode.',
+        'Install the Vicoa CLI on your lab server or cloud VM and sign in, and it auto-detects the coding agents already installed there.',
     };
   }
   if (step.number === '02') {
@@ -253,7 +253,7 @@ const FAQS = [
   {
     question: 'Which coding agents and models does Vicoa support?',
     answer:
-      'Claude Code, Codex, and OpenCode, plus Gemini, Cursor, and 300+ models via OpenRouter. Bring your own subscription or API key. Vicoa does not resell model access, so you keep using the models you already pay for.',
+      '40+ coding agents: Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, Kimi, and more built in, plus 30+ more supported via ACP, and 300+ models via OpenRouter. Bring your own subscription or API key. Vicoa does not resell model access, so you keep using the models you already pay for.',
   },
   {
     question: 'Do I have to keep my laptop open?',
@@ -328,7 +328,7 @@ export default function ResearchersUseCasePage() {
           }
           subtitle={
             <>
-              Claude Code, Codex, and OpenCode, running where your GPUs are.
+              Claude Code, Codex, and 40+ coding agents, running where your GPUs are.
               <br />
               Start them at your desk, steer them from your phone.
             </>

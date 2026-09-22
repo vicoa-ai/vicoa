@@ -14,7 +14,7 @@ import { DesktopWindowControls } from '@/components/desktop/window-chrome';
 export const metadata: Metadata = {
   metadataBase: new URL('https://vicoa.ai'),
   title: 'Vicoa - Run & Manage a Team of AI Agents Anywhere',
-  description: 'Vicoa is an agent-native IDE that lets you orchestrate parallel AI agents like Claude Code, Codex, and OpenCode on your phone and desktop. Put your coding agents in your pocket and start building from anywhere.',
+  description: 'Vicoa is an agent-native IDE that lets you orchestrate parallel AI agents like Claude Code, Codex, Gemini, Cursor, and 40+ more on your phone and desktop. Put your coding agents in your pocket and start building from anywhere.',
   icons: [
     { rel: 'icon', url: '/favicon.ico', sizes: 'any' },
     { rel: 'shortcut icon', url: '/favicon.ico' },
@@ -27,12 +27,19 @@ export const metadata: Metadata = {
     'Vicoa',
     'Vicoa app',
     'Vicoa mobile',
-    'Remove control',
+    'agentic IDE',
+    'ADE',
+    'agentic development environment',
+    'agentic development',
+    'Remote control',
     'Claude Code remote control',
     'Codex remote control',
     'Opencode remote control',
     'Gemini remote control',
     'Cursor remote control',
+    'Copilot remote control',
+    'ACP agents',
+    'Agent Client Protocol',
     'Code with AI',
     'coding agents',
     'mobile coding',
@@ -77,7 +84,7 @@ export const metadata: Metadata = {
     url: 'https://vicoa.ai',
     siteName: 'Vicoa - Run & Manage a Team of AI Agents Anywhere',
     title: 'Vicoa - Run & Manage a Team of AI Agents Anywhere',
-    description: 'Vicoa is an agent-native IDE that lets you orchestrate parallel AI agents like Claude Code, Codex, and OpenCode on your phone and desktop. Put your coding agents in your pocket and start building from anywhere.',
+    description: 'Vicoa is an agent-native IDE that lets you orchestrate parallel AI agents like Claude Code, Codex, Gemini, Cursor, and 40+ more on your phone and desktop. Put your coding agents in your pocket and start building from anywhere.',
     images: [
       {
         url: '/images/vicoa-banner-v2.png',
@@ -92,7 +99,7 @@ export const metadata: Metadata = {
     site: '@Vicoa',
     creator: '@Vicoa',
     title: 'Vicoa - Run & Manage a Team of AI Agents Anywhere',
-    description: 'Vicoa is an agent-native IDE that lets you orchestrate parallel AI agents like Claude Code, Codex, and OpenCode on your phone and desktop. Put your coding agents in your pocket and start building from anywhere.',
+    description: 'Vicoa is an agent-native IDE that lets you orchestrate parallel AI agents like Claude Code, Codex, Gemini, Cursor, and 40+ more on your phone and desktop. Put your coding agents in your pocket and start building from anywhere.',
     images: ['/images/vicoa-banner-v2.png'],
   },
   alternates: {
@@ -192,7 +199,7 @@ export default function RootLayout({
               "alternateName": "Vibe Code Anywhere",
               "url": "https://vicoa.ai",
               "description":
-                "Vicoa lets you orchestrate dozens of coding agents in parallel, anywhere. Run Claude Code and other AI coding agents on any device — start on your laptop, switch seamlessly to mobile or web, get alerts when an agent needs input, and approve changes with one tap.",
+                "Vicoa lets you orchestrate dozens of coding agents in parallel, anywhere. Run Claude Code, Codex, and 40+ AI coding agents on any device — start on your laptop, switch seamlessly to mobile or web, get alerts when an agent needs input, and approve changes with one tap.",
               "applicationCategory": "DeveloperApplication",
               "operatingSystem": "Web, iOS, Android",
               "image": "https://vicoa.ai/images/vicoa-banner-v2.png",

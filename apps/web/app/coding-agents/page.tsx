@@ -1,32 +1,40 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { Check, Clock } from 'lucide-react';
+import { Check, Clock, Plug, Terminal } from 'lucide-react';
 
+import { AgentTypeIcon } from '@/components/dashboard/agent-type-icon';
 import { Footer } from '@/components/footer';
 import { FAQSection, type FAQItem } from '@/components/faq-section';
 import { NavigationHeader } from '@/components/navigation-header';
+import { ACP_CATALOG_AGENTS } from '@/lib/acp-catalog-agents';
 import { cn } from '@/lib/utils';
 import { pageMetadata } from '@/lib/seo';
 
+const PAGE_TITLE = 'Supported AI Coding Agents (40+) - Vicoa';
+const PAGE_DESCRIPTION =
+  'Vicoa runs 40+ AI coding agents from any device: Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi, and Antigravity built in, plus 30+ more like Cline, goose, Kiro, Qwen Code, and Devin via the Agent Client Protocol.';
+
 export const metadata = pageMetadata('/coding-agents', {
-  title: 'Supported AI Coding Agents - Vicoa',
-  description:
-    'Explore the supported AI coding agents in Vicoa, including Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi, and more.',
+  title: PAGE_TITLE,
+  description: PAGE_DESCRIPTION,
   openGraph: {
-    title: 'Supported AI Coding Agents - Vicoa',
-    description:
-      'Explore the supported AI coding agents in Vicoa, including Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi, and more.',
+    title: PAGE_TITLE,
+    description: PAGE_DESCRIPTION,
     type: 'website'
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Supported AI Coding Agents - Vicoa',
-    description:
-      'Explore the supported AI coding agents in Vicoa, including Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi, and more.'
+    title: PAGE_TITLE,
+    description: PAGE_DESCRIPTION
   }
 });
 
-type IntegrationStatus = 'default' | 'supported' | 'via' | 'viaOpencode' | 'newSession' | 'soon';
+// `native` = Vicoa drives the agent through its own SDK / RPC (the deepest
+// integration: model + mode pickers, steering mid-turn). `acp` = built in, but
+// wired over the Agent Client Protocol the agent's CLI speaks. Both ship with
+// Vicoa and start from a new session; the difference is only how deep the
+// plumbing goes. Keep in sync with backend/src/protocol/agent_catalog.py.
+type IntegrationStatus = 'native' | 'acp' | 'via' | 'soon';
 
 type IntegrationLink = {
   label: string;
@@ -47,28 +55,18 @@ type Integration = {
 };
 
 const statusMeta: Record<IntegrationStatus, { label: string; className: string; icon: typeof Check }> = {
-  default: {
-    label: 'Supported by default',
+  native: {
+    label: 'Native integration',
     className: 'border-foreground/50 bg-transparent',
     icon: Check
   },
-  supported: {
-    label: 'Supported',
+  acp: {
+    label: 'Built in via ACP',
     className: 'border-foreground/50 bg-transparent',
     icon: Check
   },
   via: {
     label: 'Supported via Claude Code',
-    className: 'border-foreground/50 bg-transparent',
-    icon: Check
-  },
-  viaOpencode: {
-    label: 'Supported via OpenCode',
-    className: 'border-foreground/50 bg-transparent',
-    icon: Check
-  },
-  newSession: {
-    label: 'Start from a new session',
     className: 'border-foreground/50 bg-transparent',
     icon: Check
   },
@@ -79,12 +77,17 @@ const statusMeta: Record<IntegrationStatus, { label: string; className: string; 
   }
 };
 
+const moreAgentsLink: IntegrationLink = {
+  label: 'How to use more agents',
+  href: '/docs/agents/more-coding-agents'
+};
+
 const integrations: Integration[] = [
   {
     company: 'Anthropic',
     product: 'Claude Code',
-    description: 'The default coding agent supported by Vicoa.',
-    status: 'supported',
+    description: 'The default coding agent in Vicoa, with model, thinking, and permission-mode pickers.',
+    status: 'native',
     logoSrc: '/images/integrations/claude-color.svg',
     logoAlt: 'Claude logo',
     logoClassName: 'h-8 w-8',
@@ -98,8 +101,8 @@ const integrations: Integration[] = [
   {
     company: 'OpenAI',
     product: 'Codex',
-    description: 'Start Codex with `vicoa codex` command or set default to Codex easily.',
-    status: 'supported',
+    description: 'Start Codex with the `vicoa codex` command, or make it the default agent.',
+    status: 'native',
     logoSrc: '/images/integrations/openai.svg',
     logoAlt: 'OpenAI logo',
     logoClassName: 'h-8 w-8 dark:invert',
@@ -113,8 +116,8 @@ const integrations: Integration[] = [
   {
     company: 'OpenCode',
     product: 'OpenCode',
-    description: 'Use OpenCode as a supported coding agent in Vicoa.',
-    status: 'supported',
+    description: 'Start OpenCode with `vicoa opencode`, with its own models and build/plan modes.',
+    status: 'acp',
     logoSrc: '/images/integrations/opencode.svg',
     logoAlt: 'OpenCode logo',
     logoClassName: 'h-8 w-8',
@@ -128,61 +131,53 @@ const integrations: Integration[] = [
   {
     company: 'Google',
     product: 'Gemini',
-    description: 'Start Gemini directly from a new session in the web dashboard or app.',
-    status: 'newSession',
+    description: 'Start the Gemini CLI directly from a new session in the web dashboard or app.',
+    status: 'acp',
     logoSrc: '/images/integrations/gemini-color.svg',
     logoAlt: 'Gemini logo',
     logoClassName: 'h-8 w-8',
-    links: [
-      {
-        label: 'How to use more agents',
-        href: '/docs/agents/more-coding-agents'
-      }
-    ]
+    links: [moreAgentsLink]
+  },
+  {
+    company: 'Google',
+    product: 'Antigravity',
+    description: 'Start the Antigravity CLI (`agy`) from a new session, with Gemini and Claude models to pick from.',
+    status: 'native',
+    logoSrc: '/images/integrations/antigravity.svg',
+    logoAlt: 'Antigravity logo',
+    logoClassName: 'h-8 w-8 dark:invert',
+    links: [moreAgentsLink]
   },
   {
     company: 'Cursor',
     product: 'Cursor',
     description: 'Start the Cursor CLI directly from a new session.',
-    status: 'newSession',
+    status: 'acp',
     logoSrc: '/images/integrations/cursor.svg',
     logoAlt: 'Cursor logo',
     logoClassName: 'h-8 w-8 dark:invert',
-    links: [
-      {
-        label: 'How to use more agents',
-        href: '/docs/agents/more-coding-agents'
-      }
-    ]
+    links: [moreAgentsLink]
   },
   {
     company: 'GitHub',
     product: 'Copilot',
     description: 'Start the GitHub Copilot CLI directly from a new session.',
-    status: 'newSession',
+    status: 'acp',
     logoSrc: '/images/integrations/githubcopilot.svg',
     logoAlt: 'GitHub Copilot logo',
     logoClassName: 'h-8 w-8 dark:invert',
-    links: [
-      {
-        label: 'How to use more agents',
-        href: '/docs/agents/more-coding-agents'
-      }
-    ]
+    links: [moreAgentsLink]
   },
   {
     company: 'Moonshot',
     product: 'Kimi',
     description: 'Start the Kimi CLI from a new session, or use Kimi K2 via Claude Code.',
-    status: 'newSession',
+    status: 'acp',
     logoSrc: '/images/integrations/kimi-color.svg',
     logoAlt: 'Kimi logo',
     logoClassName: 'h-8 w-8',
     links: [
-      {
-        label: 'How to use more agents',
-        href: '/docs/agents/more-coding-agents'
-      },
+      moreAgentsLink,
       {
         label: 'Kimi K2 setup guide',
         href: '/blog/use-claude-code-with-kimi-k2'
@@ -193,47 +188,32 @@ const integrations: Integration[] = [
     company: 'Nous Research',
     product: 'Hermes',
     description: 'Start Hermes directly from a new session.',
-    status: 'newSession',
+    status: 'acp',
     logoSrc: '/images/integrations/hermes.svg',
     logoAlt: 'Hermes logo',
     logoClassName: 'h-8 w-8',
     logoWrapperClassName: 'bg-white',
-    links: [
-      {
-        label: 'How to use more agents',
-        href: '/docs/agents/more-coding-agents'
-      }
-    ]
+    links: [moreAgentsLink]
   },
   {
     company: 'Earendil',
     product: 'Pi',
-    description: 'Start Pi directly from a new session — a native integration, like Claude Code and Codex.',
-    status: 'newSession',
+    description: 'Start Pi directly from a new session, a native integration like Claude Code and Codex.',
+    status: 'native',
     logoSrc: '/images/integrations/pi.svg',
     logoAlt: 'Pi logo',
     logoClassName: 'h-8 w-8 dark:invert',
-    links: [
-      {
-        label: 'How to use more agents',
-        href: '/docs/agents/more-coding-agents'
-      }
-    ]
+    links: [moreAgentsLink]
   },
   {
     company: 'Oh My Pi',
     product: 'Oh My Pi',
-    description: 'Start Oh My Pi (`omp`), the Pi fork, from a new session — natively integrated, with Vicoa host tools.',
-    status: 'newSession',
+    description: 'Start Oh My Pi (`omp`), the Pi fork, from a new session, natively integrated with Vicoa host tools.',
+    status: 'native',
     logoSrc: '/images/integrations/omp.svg',
     logoAlt: 'Oh My Pi logo',
     logoClassName: 'h-8 w-8 dark:invert',
-    links: [
-      {
-        label: 'How to use more agents',
-        href: '/docs/agents/more-coding-agents'
-      }
-    ]
+    links: [moreAgentsLink]
   },
   {
     company: 'OpenRouter',
@@ -256,7 +236,31 @@ const codingAgentsFaqs: FAQItem[] = [
   {
     question: 'Which coding agents are supported in Vicoa?',
     answer:
-      'Vicoa supports 10+ coding agents. Claude Code, Codex, OpenCode, Pi, and Oh My Pi are built-in, and you can also start Gemini, Cursor, Copilot, Kimi, and Hermes directly from a new session in the web dashboard or mobile app.'
+      'Vicoa supports 40+ coding agents. Eleven are built in and start from a new session in the web dashboard, desktop, or mobile app: Claude Code, Codex, OpenCode, Gemini, Antigravity, Cursor, GitHub Copilot, Kimi, Hermes, Pi, and Oh My Pi. 30+ more (Amp, Cline, Devin, Factory Droid, goose, Grok, Junie, Kiro, Mistral Vibe, Qwen Code, TRAE, and others) are supported via the Agent Client Protocol (ACP), and any other ACP agent works with your own launch command.'
+  },
+  {
+    question: 'What does "native" vs "via ACP" mean?',
+    answer:
+      'Native integrations (Claude Code, Codex, Pi, Oh My Pi, Antigravity) are driven through the agent’s own SDK or RPC, so Vicoa can offer model, thinking, and permission-mode pickers and steer a running turn. ACP agents connect over the Agent Client Protocol, an open standard many agent CLIs already speak; the agent reports its own models and modes once a session starts. Either way the agent runs on your machine and every session syncs across desktop, web, and mobile.'
+  },
+  {
+    question: 'How do I add one of the 30+ ACP agents?',
+    answer: (
+      <span>
+        In the app, open Settings → Providers → More agents and click Add, or run{' '}
+        <code className="rounded bg-muted px-1 py-0.5 text-sm">vicoa provider add cline</code> on the machine that
+        runs your agents. Vicoa writes the launch command; agents distributed through npx or uvx download on the first
+        session, others need their CLI installed first. Run{' '}
+        <code className="rounded bg-muted px-1 py-0.5 text-sm">vicoa provider check &lt;id&gt;</code> to confirm it
+        works. See the{' '}
+        <Link href="/docs/agents/custom-agents" className="text-blue-600 hover:text-blue-700 underline">
+          Custom agents
+        </Link>{' '}
+        guide.
+      </span>
+    ),
+    answerText:
+      'In the app, open Settings → Providers → More agents and click Add, or run `vicoa provider add <id>` on the machine that runs your agents. Vicoa writes the launch command; npx/uvx agents download on the first session, others need their CLI installed first. Run `vicoa provider check <id>` to confirm it works. See the Custom agents guide at /docs/agents/custom-agents.'
   },
   {
     question: 'How do I start a session with Codex or OpenCode?',
@@ -277,7 +281,7 @@ const codingAgentsFaqs: FAQItem[] = [
       'Yes. Vicoa connects to your own provider credentials so you stay in control of usage and billing for each agent.'
   },
   {
-    question: 'How do I use Gemini, Cursor, Copilot, Kimi, Hermes, Pi, or Oh My Pi?',
+    question: 'How do I use Gemini, Antigravity, Cursor, Copilot, Kimi, Hermes, Pi, or Oh My Pi?',
     answer: (
       <span>
         Update Vicoa to the latest version, install the agent&apos;s
@@ -303,19 +307,23 @@ const codingAgentsFaqs: FAQItem[] = [
         <Link href="/docs/agents/codex" className="text-blue-600 hover:text-blue-700 underline">
           Codex
         </Link>
-        , and{' '}
+        ,{' '}
         <Link href="/docs/agents/opencode" className="text-blue-600 hover:text-blue-700 underline">
           OpenCode
         </Link>
-        , and{' '}
+        ,{' '}
         <Link href="/docs/agents/more-coding-agents" className="text-blue-600 hover:text-blue-700 underline">
           More Coding Agents
+        </Link>
+        , and{' '}
+        <Link href="/docs/agents/custom-agents" className="text-blue-600 hover:text-blue-700 underline">
+          Custom agents
         </Link>{' '}
         docs.
       </span>
     ),
     answerText:
-      'See the Claude Code, Codex, OpenCode, and More Coding Agents docs under /docs/agents for setup guides.'
+      'See the Claude Code, Codex, OpenCode, More Coding Agents, and Custom agents docs under /docs/agents for setup guides.'
   }
 ];
 
@@ -327,10 +335,11 @@ export default function CodingAgentsPage() {
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-10">
           <div className="mx-auto max-w-4xl space-y-4 text-center">
             <h1 className="text-4xl tracking-tight sm:text-5xl">
-              Supported AI Coding Agents
+              40+ AI Coding Agents, One Workspace
             </h1>
             <p className="text-lg text-muted-foreground">
-              Vicoa connects the best AI coding agents, allowing you to use them on your phone easily on the go.
+              Run the coding agents you already use on your own machine, and steer them from your desktop,
+              browser, or phone. Eleven are built in, and 30+ more connect through the Agent Client Protocol.
             </p>
           </div>
 
@@ -390,7 +399,7 @@ export default function CodingAgentsPage() {
                         <Link
                           key={link.href}
                           href={link.href}
-                          className="inline-flex items-center gap-2 rounded-full border border-border bg-foreground/10 px-4 py-2 text-xs font-semibold text-foreground transition hover:bg-muted hover:border-foreground"
+                          className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-border bg-foreground/10 px-4 py-2 text-xs font-semibold text-foreground transition hover:bg-muted hover:border-foreground"
                         >
                           {link.label}
                         </Link>
@@ -400,6 +409,74 @@ export default function CodingAgentsPage() {
                 </div>
               );
             })}
+          </div>
+
+          {/* ACP catalog */}
+          <div className="rounded-2xl border border-border bg-card/80 p-6 shadow-sm sm:p-8">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="max-w-2xl space-y-2">
+                <div className="flex items-center gap-2">
+                  <Plug className="h-5 w-5 text-muted-foreground" />
+                  <h2 className="text-2xl">30+ more agents via ACP</h2>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Any agent that speaks the Agent Client Protocol (ACP) plugs straight into Vicoa. Pick one in
+                  Settings → Providers → More agents, or run{' '}
+                  <code className="rounded bg-muted px-1 py-0.5 text-xs">vicoa provider add &lt;id&gt;</code>, sign
+                  in with the agent&apos;s own account, and it behaves like every built-in agent: run it in parallel
+                  on its own worktree, steer it from your phone, review its diffs, and get pinged when it needs you.
+                </p>
+              </div>
+              <Link
+                href="/docs/agents/custom-agents"
+                className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-foreground/10 px-4 py-2 text-xs font-semibold text-foreground transition hover:bg-muted hover:border-foreground"
+              >
+                Custom agents guide
+              </Link>
+            </div>
+
+            <ul className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+              {ACP_CATALOG_AGENTS.map((agent) => (
+                <li
+                  key={agent.id}
+                  className="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5"
+                >
+                  {/* The same monochrome mark the app shows in Settings → Providers
+                      (public/images/acp/<id>.svg, painted over currentColor). */}
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-foreground/10 text-foreground">
+                    <AgentTypeIcon agentTypeName={agent.id} size={18} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm text-foreground">{agent.name}</span>
+                    {agent.by ? (
+                      <span className="block truncate text-xs text-muted-foreground">{agent.by}</span>
+                    ) : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Bring your own ACP agent */}
+          <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card/80 p-6 shadow-sm sm:flex-row sm:items-start sm:gap-6 sm:p-8">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-muted/40">
+              <Terminal className="h-7 w-7 text-foreground" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-xl">Bring any other ACP agent</h2>
+              <p className="text-sm text-muted-foreground">
+                Using an agent that isn&apos;t listed? If it speaks ACP, it works too. Give Vicoa its launch command
+                in <code className="rounded bg-muted px-1 py-0.5 text-xs">~/.vicoa/config.json</code> and it appears
+                as a new agent the next time you start a session, no Vicoa update needed. The same trick runs a
+                second profile of any agent with separate credentials, or points one at a proxy.
+              </p>
+              <Link
+                href="/docs/agents/custom-agents#add-an-acp-agent-by-hand"
+                className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-border bg-foreground/10 px-4 py-2 text-xs font-semibold text-foreground transition hover:bg-muted hover:border-foreground"
+              >
+                Add an ACP agent by hand
+              </Link>
+            </div>
           </div>
 
           <FAQSection
@@ -414,8 +491,8 @@ export default function CodingAgentsPage() {
           />
 
           <div className="rounded-2xl border border-border bg-muted/40 px-6 py-5 text-sm text-muted-foreground">
-            Want another integration sooner? Email{' '}
-            <Link href="mailto:hi@vicoa.ai" className="font-semibold text-foreground">
+            Using an agent that doesn&apos;t speak ACP yet? Email{' '}
+            <Link href="mailto:hi@vicoa.ai" className="cursor-pointer font-semibold text-foreground">
               hi@vicoa.ai
             </Link>{' '}
             with the coding agents you hope to use with Vicoa.

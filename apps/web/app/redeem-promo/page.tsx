@@ -28,7 +28,7 @@ const steps = [
   },
   {
     title: 'Step 5: Sit back, Relax, and Start Coding Anywhere',
-    description: 'Confirm the redemption and the Vicoa app will begin downloading automatically. Open the app and start vibing code anywhere with Claude Code and Codex!',
+    description: 'Confirm the redemption and the Vicoa app will begin downloading automatically. Open the app and start vibing code anywhere with Claude Code, Codex, and 40+ coding agents!',
     image: '/images/redeem-promo/step5.png'
   }
 ];

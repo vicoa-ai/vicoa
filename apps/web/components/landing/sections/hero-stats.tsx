@@ -6,11 +6,12 @@ import { Users, Download, Bot } from 'lucide-react';
 // (bump periodically):
 //   developers    — prod DB `users` count               (17,004)
 //   CLI downloads — npm @vicoa/cli 27,721 + PyPI vicoa 16,645 all-time (44,366)
-//   coding agents — supported agents (see StatsBandSection / "Works with" row)
+//   coding agents — 11 built-in + 30+ ACP catalog agents (protocol/acp_catalog.py);
+//                   full list on /coding-agents
 const heroStats = [
   { value: '17,000+', label: 'developers', Icon: Users },
   { value: '44,000+', label: 'CLI downloads', Icon: Download },
-  { value: '8+', label: 'coding agents', Icon: Bot },
+  { value: '40+', label: 'coding agents', Icon: Bot },
 ];
 
 export function HeroStats() {

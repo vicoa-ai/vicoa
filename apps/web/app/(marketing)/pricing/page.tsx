@@ -125,7 +125,7 @@ export default async function PricingPage() {
 
                 <ComparisonSection title="Agents & models" />
                 <ComparisonRow feature="Claude Code, Codex, OpenCode, Gemini, Antigravity, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi" free={true} pro={true} enterprise={true} />
-                <ComparisonRow feature="30+ more ACP agents in one click: Amp, Cline, Devin, goose, Kiro, Qwen Code & others" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="30+ more agents via ACP: Amp, Cline, Devin, goose, Kiro, Qwen Code & others" free={true} pro={true} enterprise={true} />
                 <ComparisonRow feature="Any other ACP-compatible agent, with your own command" free={true} pro={true} enterprise={true} />
                 <ComparisonRow feature="Bring your own subscriptions & API keys (no usage markup)" free={true} pro={true} enterprise={true} />
                 <ComparisonRow feature="Parallel sessions, each on its own git worktree" free={true} pro={true} enterprise={true} />

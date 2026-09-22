@@ -1,9 +1,9 @@
 // Loom-style "by the numbers" proof, but with defensible capability facts (not
 // vanity metrics): what the product actually spans. Numbers map to /vs/happy +
-// /features (10+ agents, 300+ models, cross-device, scheduled automations).
+// /features (40+ agents, 300+ models, cross-device, scheduled automations).
 const stats = [
   {
-    stat: '10+',
+    stat: '40+',
     label: 'coding agents',
     detail: 'Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot & more',
     accent: 'from-blue-500 to-cyan-400',

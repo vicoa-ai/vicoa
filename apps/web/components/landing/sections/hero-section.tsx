@@ -115,7 +115,7 @@ export function HeroSection({
           <p className="max-w-3xl mx-auto text-base sm:text-lg lg:text-xl text-muted-foreground mb-8 leading-relaxed">
             {subtitle ?? (
               <>
-                Claude Code, Codex, OpenCode, and more agents running in parallel.
+                Claude Code, Codex, and any other coding agents running in parallel.
                 <br />
                 Start them at your desk, steer from your phone, get notified when one
                 needs you.

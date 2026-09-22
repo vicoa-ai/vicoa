@@ -100,6 +100,15 @@ const agents: { name: string; icon: ReactNode; chip?: boolean }[] = [
     ),
   },
   {
+    name: 'Antigravity',
+    icon: (
+      <svg height="1em" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg" aria-label="Antigravity" fill="currentColor" fillRule="evenodd">
+        <title>Antigravity</title>
+        <path d="M21.751 22.607c1.34 1.005 3.35.335 1.508-1.508C17.73 15.74 18.904 1 12.037 1 5.17 1 6.342 15.74.815 21.1c-2.01 2.009.167 2.511 1.507 1.506 5.192-3.517 4.857-9.714 9.715-9.714 4.857 0 4.522 6.197 9.714 9.715z" />
+      </svg>
+    ),
+  },
+  {
     name: 'OpenRouter',
     icon: (
       <svg height="1em" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg" aria-label="OpenRouter">
@@ -138,7 +147,14 @@ export function SupportedAgents() {
             </TooltipContent>
           </Tooltip>
         ))}
-        {/* <span className="text-xs text-muted-foreground/40">and more</span> */}
+        {/* The row shows the built-in agents; the rest of the 40+ (30+ more
+            supported via ACP) live on /coding-agents. */}
+        <Link
+          href="/coding-agents"
+          className="shrink-0 text-sm text-foreground/50 underline-offset-4 transition-colors hover:text-foreground hover:underline"
+        >
+          + 30 more
+        </Link>
       </div>
     </TooltipProvider>
   );
