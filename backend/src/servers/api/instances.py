@@ -21,6 +21,7 @@ GET already lives in ``routers.py``). Kept in its own file to avoid bloating
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
@@ -37,6 +38,15 @@ from backend.models import MessageResponse, PaginatedAgentInstanceResponse
 from .auth import get_current_user_id
 
 instance_router = APIRouter(tags=["instances"])
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """An aware UTC datetime (naive input is taken as UTC), or ``None``."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _user_uuid(user_id: str) -> UUID:
@@ -58,6 +68,8 @@ def list_agent_instances_endpoint(
     active_only: bool = Query(default=False),
     rate_limited_only: bool = Query(default=False),
     caller_instance_id: str | None = Query(default=None),
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> PaginatedAgentInstanceResponse:
     """List the caller's agent sessions, newest first.
@@ -71,7 +83,21 @@ def list_agent_instances_endpoint(
     lets the rate-limit sweep exclude the *calling automation's own* sessions so
     it can't flag-and-continue its own runs; taken as a free-form string so a
     non-UUID session id can never 422 the list.
+
+    ``since`` / ``until`` (ISO-8601; an offset or ``Z`` is honoured, naive means
+    UTC) keep sessions whose ``started_at`` falls in ``[since, until)`` — the
+    window ``vicoa session ls --since/--until`` sends. ``total`` counts the
+    window, so a page can be smaller than ``limit`` without ``has_more``.
     """
+    # Normalise before comparing: pydantic hands back aware *or* naive values
+    # depending on what the client sent, and Python refuses to order the two.
+    since = _as_utc(since)
+    until = _as_utc(until)
+    if since is not None and until is not None and since > until:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="`since` must not be later than `until`",
+        )
     instances, total = get_all_agent_instances(
         db,
         _user_uuid(user_id),
@@ -81,6 +107,8 @@ def list_agent_instances_endpoint(
         active_only=active_only,
         rate_limited_only=rate_limited_only,
         caller_instance_id=caller_instance_id,
+        started_after=since,
+        started_before=until,
     )
     return PaginatedAgentInstanceResponse(
         items=instances,

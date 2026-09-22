@@ -106,6 +106,106 @@ class TestListSessions:
         assert body["has_more"] is True
 
 
+class TestListSessionsWindow:
+    """``since`` / ``until`` bound ``started_at`` as ``[since, until)``."""
+
+    BASE = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
+
+    def _seed(self, test_db):
+        for n in range(3):
+            _make_instance(
+                test_db, name=f"h{n}", started_at=self.BASE + timedelta(hours=n)
+            )
+
+    def _names(self, client, **params):
+        body = client.get("/api/v1/agent-instances", params=params).json()
+        return [i["name"] for i in body["items"]], body["total"]
+
+    def test_since_is_inclusive(self, client, test_db):
+        self._seed(test_db)
+        names, total = self._names(
+            client, since=(self.BASE + timedelta(hours=1)).isoformat()
+        )
+        assert names == ["h2", "h1"]
+        assert total == 2  # total counts the window, not the whole history
+
+    def test_until_is_exclusive(self, client, test_db):
+        self._seed(test_db)
+        names, _ = self._names(
+            client, until=(self.BASE + timedelta(hours=2)).isoformat()
+        )
+        assert names == ["h1", "h0"]
+
+    def test_both_bounds_slice_the_middle(self, client, test_db):
+        self._seed(test_db)
+        names, total = self._names(
+            client,
+            since=(self.BASE + timedelta(hours=1)).isoformat(),
+            until=(self.BASE + timedelta(hours=2)).isoformat(),
+        )
+        assert names == ["h1"]
+        assert total == 1
+
+    def test_zulu_and_naive_are_read_as_utc(self, client, test_db):
+        self._seed(test_db)
+        since = self.BASE + timedelta(hours=1)
+        zulu = since.strftime("%Y-%m-%dT%H:%M:%SZ")
+        naive = since.replace(tzinfo=None).isoformat()
+        assert self._names(client, since=zulu)[0] == ["h2", "h1"]
+        assert self._names(client, since=naive)[0] == ["h2", "h1"]
+
+    def test_offset_is_converted_not_dropped(self, client, test_db):
+        # 21:00+08:00 is 13:00Z. The column is naive UTC: if the offset were
+        # dropped the filter would read 21:00Z and return nothing.
+        self._seed(test_db)
+        plus8 = (self.BASE + timedelta(hours=1)).astimezone(
+            timezone(timedelta(hours=8))
+        )
+        assert plus8.isoformat().endswith("+08:00")
+        assert self._names(client, since=plus8.isoformat())[0] == ["h2", "h1"]
+
+    def test_window_composes_with_active_only(self, client, test_db):
+        _make_instance(
+            test_db, name="old-live", started_at=self.BASE - timedelta(days=2)
+        )
+        _make_instance(test_db, name="new-live", started_at=self.BASE)
+        _make_instance(
+            test_db,
+            name="new-done",
+            status=AgentStatus.COMPLETED,
+            started_at=self.BASE,
+        )
+        names, _ = self._names(client, since=self.BASE.isoformat(), active_only="true")
+        assert names == ["new-live"]
+
+    def test_reversed_window_is_400(self, client, test_db):
+        resp = client.get(
+            "/api/v1/agent-instances",
+            params={
+                "since": self.BASE.isoformat(),
+                "until": (self.BASE - timedelta(hours=1)).isoformat(),
+            },
+        )
+        assert resp.status_code == 400
+
+    def test_reversed_check_survives_mixed_awareness(self, client, test_db):
+        # Aware since + naive until must not blow up on the comparison.
+        resp = client.get(
+            "/api/v1/agent-instances",
+            params={
+                "since": self.BASE.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "until": (self.BASE - timedelta(hours=1))
+                .replace(tzinfo=None)
+                .isoformat(),
+            },
+        )
+        assert resp.status_code == 400
+
+    def test_unparseable_bound_is_422(self, client, test_db):
+        resp = client.get("/api/v1/agent-instances", params={"since": "7d"})
+        assert resp.status_code == 422
+
+
 class TestTranscript:
     def test_returns_messages_oldest_first(self, client, test_db):
         inst = _make_instance(test_db)

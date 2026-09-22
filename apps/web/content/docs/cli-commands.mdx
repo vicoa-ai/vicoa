@@ -220,6 +220,9 @@ List your sessions, newest first.
 vicoa session ls                      # newest 50
 vicoa session ls --active --limit 20  # only still-running, cap at 20
 vicoa session ls --rate-limited       # only sessions currently blocked by a rate limit
+vicoa session ls --since 24h          # started in the last day
+vicoa session ls --since 2026-09-15 --until 2026-09-20   # the 15th through the 20th
+vicoa session ls --since yesterday --until yesterday     # all of yesterday
 vicoa session ls --json
 ```
 
@@ -227,8 +230,12 @@ vicoa session ls --json
 |---|---|---|
 | `--active` | off | Only sessions still running |
 | `--rate-limited` | off | Only sessions a rate-limit window is currently blocking (adds a `RESET` column showing when each unblocks) |
+| `--since WHEN` | | Only sessions started at or after `WHEN` |
+| `--until WHEN` | | Only sessions started before `WHEN` |
 | `--limit N` | 50 | Max sessions to return (1–100) |
 | `--json` | | Raw JSON `{items, total, ...}` |
+
+`WHEN` accepts a date (`2026-09-20`), a datetime (`2026-09-20T14:30`, optionally with `Z` or an offset like `+08:00`), `today` / `yesterday`, or an age counted back from now (`30m`, `24h`, `7d`, `2w`). Times without an offset are your local time, the same zone the `STARTED` column prints in. A bare date on `--until` includes that whole day, so `--since 2026-09-20 --until 2026-09-20` is exactly the 20th. The window filters on when each session **started**, and `total` in `--json` counts the window.
 
 Columns: `ID` (8-char prefix), `AGENT`, `MODEL`, `STATUS`, `NAME`, `PROJECT`, `MSGS`, `STARTED`.
 

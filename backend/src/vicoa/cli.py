@@ -2080,6 +2080,23 @@ Examples:
         help="Only sessions currently blocked by a rate limit (adds a RESET column)",
     )
     session_ls.add_argument(
+        "--since",
+        metavar="WHEN",
+        help=(
+            "Only sessions started at or after WHEN: a date (2026-09-20 = local "
+            "midnight), a datetime (2026-09-20T14:30, local unless it carries an "
+            "offset or Z), today, yesterday, or an age like 30m / 24h / 7d / 2w"
+        ),
+    )
+    session_ls.add_argument(
+        "--until",
+        metavar="WHEN",
+        help=(
+            "Only sessions started before WHEN (same forms as --since); a bare "
+            "date or today/yesterday includes that whole day"
+        ),
+    )
+    session_ls.add_argument(
         "--limit",
         type=int,
         default=50,

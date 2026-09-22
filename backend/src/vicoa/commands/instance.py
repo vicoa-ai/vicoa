@@ -24,6 +24,7 @@ import json as _json
 import os
 import re
 import sys
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID
 
@@ -362,8 +363,83 @@ def _fetch_transcript(
 # ---------------------------------------------------------------------------
 
 
+# ``--since`` / ``--until`` value forms. Relative ages count back from now;
+# a bare date is local midnight (the STARTED column is local time too).
+_RELATIVE_AGE_RE = re.compile(r"(\d+)\s*([mhdw])")
+_RELATIVE_AGE_UNITS = {"m": "minutes", "h": "hours", "d": "days", "w": "weeks"}
+_TIME_BOUND_FORMS = (
+    "YYYY-MM-DD, YYYY-MM-DDTHH:MM[:SS][+HH:MM|Z], today, yesterday, "
+    "or an age like 30m / 24h / 7d / 2w"
+)
+
+
+def _parse_time_bound(
+    raw: str, *, exclusive_end: bool = False, now: Optional[datetime] = None
+) -> datetime:
+    """Turn a ``--since`` / ``--until`` value into an aware UTC datetime.
+
+    Accepts an ISO date or datetime, ``today`` / ``yesterday``, or a relative
+    age (``30m``, ``24h``, ``7d``, ``2w``) counted back from now. A bare date
+    (and today/yesterday) means local midnight; with ``exclusive_end`` it means
+    the *following* midnight, so ``--until 2026-09-20`` keeps everything
+    started on the 20th — the server treats ``until`` as exclusive. A naive
+    datetime is local time, matching the STARTED column; an offset or ``Z`` is
+    honoured. Raises ``ValueError`` with the accepted forms on anything else.
+    """
+    text = (raw or "").strip()
+    local_now = (now or datetime.now()).astimezone()
+
+    m = _RELATIVE_AGE_RE.fullmatch(text)
+    if m:
+        delta = timedelta(**{_RELATIVE_AGE_UNITS[m.group(2)]: int(m.group(1))})
+        return (local_now - delta).astimezone(timezone.utc)
+
+    day: Optional[date] = None
+    if text.lower() == "today":
+        day = local_now.date()
+    elif text.lower() == "yesterday":
+        day = local_now.date() - timedelta(days=1)
+    else:
+        try:
+            day = date.fromisoformat(text)
+        except ValueError:
+            day = None
+    if day is not None:
+        if exclusive_end:
+            day += timedelta(days=1)
+        return datetime.combine(day, time.min).astimezone().astimezone(timezone.utc)
+
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError(
+            f"unrecognised time {raw!r}; expected {_TIME_BOUND_FORMS}"
+        ) from None
+    if dt.tzinfo is None:
+        dt = dt.astimezone()  # naive → local, like the table's timestamps
+    return dt.astimezone(timezone.utc)
+
+
 def _cmd_ls(args, api_key: str) -> int:
     params: dict[str, Any] = {"limit": getattr(args, "limit", 50)}
+    # Resolve the window before any request so a typo fails fast and offline.
+    since_raw = getattr(args, "since", None)
+    until_raw = getattr(args, "until", None)
+    try:
+        since = _parse_time_bound(since_raw) if since_raw else None
+        until = _parse_time_bound(until_raw, exclusive_end=True) if until_raw else None
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    # ``>=`` on purpose: a window that resolves empty (e.g. --since 09-21
+    # --until 09-20, whose end widens to 09-21 midnight) is never intended.
+    if since is not None and until is not None and since >= until:
+        print("Error: --since must be earlier than --until.", file=sys.stderr)
+        return 2
+    if since is not None:
+        params["since"] = since.isoformat()
+    if until is not None:
+        params["until"] = until.isoformat()
     if getattr(args, "active", False):
         params["active_only"] = "true"
     if getattr(args, "rate_limited", False):
@@ -376,6 +452,8 @@ def _cmd_ls(args, api_key: str) -> int:
             params["caller_instance_id"] = self_id
     data = request(args, api_key, "GET", "/api/v1/agent-instances", params=params)
     items = data.get("items", []) if isinstance(data, dict) else []
+    if (since is not None or until is not None) and isinstance(data, dict):
+        items = _apply_window_locally(data, since, until)
     if getattr(args, "json", False):
         print(_json.dumps(data, indent=2))
     else:
@@ -383,6 +461,48 @@ def _cmd_ls(args, api_key: str) -> int:
             items, total=data.get("total") if isinstance(data, dict) else None
         )
     return 0
+
+
+def _apply_window_locally(
+    data: dict, since: Optional[datetime], until: Optional[datetime]
+) -> list[dict]:
+    """Re-apply ``[since, until)`` to the fetched page, in case the server didn't.
+
+    A backend older than the ``since``/``until`` params ignores them and
+    returns the unfiltered newest page. Filtering that page here keeps the
+    output honest (rows are correct, though only within the fetched page); when
+    anything is dropped, say so on stderr so the truncated ``total`` isn't
+    trusted. On a current server this is a no-op. Mutates ``data`` so ``--json``
+    sees the same rows.
+    """
+    items = data.get("items") or []
+
+    def _inside(it: dict) -> bool:
+        raw = it.get("started_at")
+        if not raw:
+            return True  # never hide a row over a missing timestamp
+        try:
+            ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)  # the API's timestamps are UTC
+        if since is not None and ts < since:
+            return False
+        if until is not None and ts >= until:
+            return False
+        return True
+
+    kept = [it for it in items if _inside(it)]
+    if len(kept) != len(items):
+        print(
+            f"Note: the server ignored --since/--until (older backend); "
+            f"filtered {len(kept)} of the {len(items)} fetched locally, "
+            f"so 'total' is unfiltered.",
+            file=sys.stderr,
+        )
+        data["items"] = kept
+    return kept
 
 
 def _cmd_get(args, api_key: str) -> int:

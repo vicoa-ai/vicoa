@@ -482,6 +482,13 @@ CLOSED_STATUSES = frozenset(
 _RATE_LIMIT_MAX_AGE = timedelta(hours=24)
 
 
+def _naive_utc(value: datetime) -> datetime:
+    """``agent_instances.started_at`` is a naive-UTC column; compare like for like."""
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
 def get_all_agent_instances(
     db: Session,
     user_id: UUID,
@@ -491,8 +498,17 @@ def get_all_agent_instances(
     active_only: bool = False,
     rate_limited_only: bool = False,
     caller_instance_id: UUID | str | None = None,
+    started_after: datetime | None = None,
+    started_before: datetime | None = None,
 ) -> tuple[list[AgentInstanceResponse], int]:
     """Get agent instances for a user based on requested visibility scope.
+
+    ``started_after`` / ``started_before`` bound ``started_at`` as a half-open
+    window ``[after, before)`` — the same field the list is ordered by, so a
+    window is a contiguous slice of it. Either side may be omitted. Aware values
+    are converted to UTC; naive ones are taken as UTC already (the column is
+    naive UTC, so an aware ``+08:00`` must not reach Postgres, which would drop
+    the offset and compare the wall-clock as UTC).
 
     ``rate_limited_only`` narrows to sessions currently blocked by a time-window
     rate limit (``rate_limited_until IS NOT NULL``), bounded to the recent past
@@ -526,6 +542,11 @@ def get_all_agent_instances(
 
     if active_only:
         query = query.filter(AgentInstance.status.notin_(CLOSED_STATUSES))
+
+    if started_after is not None:
+        query = query.filter(AgentInstance.started_at >= _naive_utc(started_after))
+    if started_before is not None:
+        query = query.filter(AgentInstance.started_at < _naive_utc(started_before))
 
     if rate_limited_only:
         cutoff = datetime.now(timezone.utc) - _RATE_LIMIT_MAX_AGE

@@ -608,3 +608,177 @@ class TestRateLimitedLsParams:
         I._cmd_ls(self._args(rate_limited=False), "key")
         assert "rate_limited_only" not in captured
         assert "caller_instance_id" not in captured
+
+
+class TestTimeBoundParsing:
+    """``--since`` / ``--until`` value forms → aware UTC instants."""
+
+    NOW = datetime(2026, 9, 22, 10, 0, tzinfo=timezone.utc)
+
+    def _local_midnight_utc(self, y, m, d):
+        # Whatever this machine's zone is, a bare date means *its* midnight.
+        return datetime(y, m, d).astimezone().astimezone(timezone.utc)
+
+    def test_relative_ages_count_back_from_now(self):
+        assert I._parse_time_bound("24h", now=self.NOW) == self.NOW - timedelta(
+            hours=24
+        )
+        assert I._parse_time_bound("7d", now=self.NOW) == self.NOW - timedelta(days=7)
+        assert I._parse_time_bound("2w", now=self.NOW) == self.NOW - timedelta(weeks=2)
+        assert I._parse_time_bound("30m", now=self.NOW) == self.NOW - timedelta(
+            minutes=30
+        )
+
+    def test_relative_age_is_the_same_instant_for_since_and_until(self):
+        # Only bare dates get the end-of-day widening; an age is one instant.
+        assert I._parse_time_bound("7d", now=self.NOW) == I._parse_time_bound(
+            "7d", exclusive_end=True, now=self.NOW
+        )
+
+    def test_bare_date_is_local_midnight(self):
+        got = I._parse_time_bound("2026-09-20", now=self.NOW)
+        assert got == self._local_midnight_utc(2026, 9, 20)
+        assert got.tzinfo == timezone.utc
+
+    def test_bare_date_as_until_covers_the_whole_day(self):
+        got = I._parse_time_bound("2026-09-20", exclusive_end=True, now=self.NOW)
+        assert got == self._local_midnight_utc(2026, 9, 21)
+
+    def test_today_and_yesterday_follow_the_local_calendar(self):
+        today = datetime.now().astimezone().date()
+        assert I._parse_time_bound("today") == datetime.combine(
+            today, datetime.min.time()
+        ).astimezone().astimezone(timezone.utc)
+        assert I._parse_time_bound("yesterday") == datetime.combine(
+            today - timedelta(days=1), datetime.min.time()
+        ).astimezone().astimezone(timezone.utc)
+        # As an end bound, "today" reaches to tomorrow's midnight.
+        assert I._parse_time_bound("today", exclusive_end=True) == datetime.combine(
+            today + timedelta(days=1), datetime.min.time()
+        ).astimezone().astimezone(timezone.utc)
+
+    def test_naive_datetime_is_local_time(self):
+        got = I._parse_time_bound("2026-09-20T14:30", now=self.NOW)
+        assert got == datetime(2026, 9, 20, 14, 30).astimezone().astimezone(
+            timezone.utc
+        )
+
+    def test_zulu_and_offset_are_honoured(self):
+        assert I._parse_time_bound("2026-09-20T14:30Z") == datetime(
+            2026, 9, 20, 14, 30, tzinfo=timezone.utc
+        )
+        assert I._parse_time_bound("2026-09-20 14:30+08:00") == datetime(
+            2026, 9, 20, 6, 30, tzinfo=timezone.utc
+        )
+
+    def test_garbage_raises_with_the_accepted_forms(self):
+        import pytest
+
+        for bad in ("nope", "2026-13-01", "7x", "", "  "):
+            with pytest.raises(ValueError, match="expected YYYY-MM-DD"):
+                I._parse_time_bound(bad)
+
+
+class TestLsTimeRangeParams:
+    def _args(self, **over):
+        base = {
+            "rate_limited": False,
+            "active": False,
+            "limit": 50,
+            "json": True,
+            "since": None,
+            "until": None,
+        }
+        base.update(over)
+        return types.SimpleNamespace(**base)
+
+    def _capture(self, monkeypatch):
+        calls: list[dict] = []
+
+        def fake_request(args, api_key, method, endpoint, *, params=None, json=None):
+            calls.append(dict(params or {}))
+            return {"items": [], "total": 0}
+
+        monkeypatch.setattr(I, "request", fake_request)
+        return calls
+
+    def test_no_window_sends_no_bounds(self, monkeypatch):
+        calls = self._capture(monkeypatch)
+        assert I._cmd_ls(self._args(), "key") == 0
+        assert "since" not in calls[0] and "until" not in calls[0]
+
+    def test_window_is_sent_as_iso_utc(self, monkeypatch):
+        calls = self._capture(monkeypatch)
+        rc = I._cmd_ls(
+            self._args(since="2026-09-20T00:00Z", until="2026-09-21T00:00Z"), "key"
+        )
+        assert rc == 0
+        assert calls[0]["since"] == "2026-09-20T00:00:00+00:00"
+        assert calls[0]["until"] == "2026-09-21T00:00:00+00:00"
+
+    def test_bare_until_date_is_widened_to_next_midnight(self, monkeypatch):
+        calls = self._capture(monkeypatch)
+        I._cmd_ls(self._args(until="2026-09-20"), "key")
+        expected = datetime(2026, 9, 21).astimezone().astimezone(timezone.utc)
+        assert calls[0]["until"] == expected.isoformat()
+
+    def test_bad_value_fails_before_any_request(self, monkeypatch, capsys):
+        calls = self._capture(monkeypatch)
+        assert I._cmd_ls(self._args(since="lastweek"), "key") == 2
+        assert calls == []
+        assert "unrecognised time 'lastweek'" in capsys.readouterr().err
+
+    def test_reversed_window_fails_before_any_request(self, monkeypatch, capsys):
+        calls = self._capture(monkeypatch)
+        rc = I._cmd_ls(self._args(since="2026-09-21", until="2026-09-20"), "key")
+        assert rc == 2
+        assert calls == []
+        assert "--since must be earlier than --until" in capsys.readouterr().err
+
+    def test_same_day_window_is_the_whole_day(self, monkeypatch):
+        # since = that midnight, until = the next one: a 24h window, not empty.
+        calls = self._capture(monkeypatch)
+        rc = I._cmd_ls(self._args(since="2026-09-20", until="2026-09-20"), "key")
+        assert rc == 0
+        assert calls[0]["since"] < calls[0]["until"]
+
+    def test_old_server_page_is_filtered_locally(self, monkeypatch, capsys):
+        # An older backend ignores since/until and returns the unfiltered page:
+        # the rows outside the window are dropped here and stderr says so.
+        inside = "2026-09-20T05:00:00Z"
+        outside = "2026-09-10T05:00:00Z"
+
+        def fake_request(args, api_key, method, endpoint, *, params=None, json=None):
+            return {
+                "items": [
+                    {"id": "a" * 32, "started_at": inside},
+                    {"id": "b" * 32, "started_at": outside},
+                ],
+                "total": 2,
+            }
+
+        monkeypatch.setattr(I, "request", fake_request)
+        rc = I._cmd_ls(self._args(since="2026-09-15T00:00Z"), "key")
+        assert rc == 0
+        out, err = capsys.readouterr()
+        assert [it["started_at"] for it in json.loads(out)["items"]] == [inside]
+        assert "older backend" in err
+
+    def test_current_server_page_passes_through_silently(self, monkeypatch, capsys):
+        def fake_request(args, api_key, method, endpoint, *, params=None, json=None):
+            return {
+                "items": [{"id": "a" * 32, "started_at": "2026-09-20T05:00:00Z"}],
+                "total": 1,
+            }
+
+        monkeypatch.setattr(I, "request", fake_request)
+        I._cmd_ls(self._args(since="2026-09-15T00:00Z", until="2026-09-21"), "key")
+        out, err = capsys.readouterr()
+        assert len(json.loads(out)["items"]) == 1
+        assert err == ""
+
+    def test_window_composes_with_active(self, monkeypatch):
+        calls = self._capture(monkeypatch)
+        I._cmd_ls(self._args(active=True, since="7d"), "key")
+        assert calls[0]["active_only"] == "true"
+        assert "since" in calls[0]
