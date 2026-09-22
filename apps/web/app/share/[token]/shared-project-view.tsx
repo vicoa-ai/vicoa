@@ -276,7 +276,7 @@ export function ProjectShare({
   const openBoardHref = isOwner ? '/dashboard/tasks' : null;
 
   return (
-    <ShareShell share={share} sidebar={sidebar} tasksNav={tasksNav}>
+    <ShareShell token={token} share={share} sidebar={sidebar} tasksNav={tasksNav}>
       {viewingTasks ? (
         <SharedBoardView token={token} share={share} openHref={openBoardHref} />
       ) : selected ? (

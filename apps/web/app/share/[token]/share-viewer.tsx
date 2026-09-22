@@ -24,6 +24,7 @@ function SessionShare({ token, share, initial }: { token: string; share: PublicS
   const onSessionChange = useCallback((next: PublicSessionSummary) => setSession(next), []);
   return (
     <ShareShell
+      token={token}
       share={share}
       sidebar={
         <ShareSidebarSection label="Workspace">

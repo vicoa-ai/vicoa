@@ -40,7 +40,10 @@ from shared.database import (
     Project,
     ShareLink,
     Task,
+    TaskActivity,
+    TaskComment,
     TaskLabel,
+    TaskReaction,
     User,
 )
 from shared.database.agent_profile_models import AgentProfile
@@ -726,6 +729,62 @@ def public_attachment(
     if covered_instance(db, grant, attachment.agent_instance_id) is None:
         return None
     return attachment
+
+
+def public_avatar_user(
+    db: Session, grant: access.ShareGrant, user_id: UUID, viewer: User | None
+) -> User | None:
+    """The user whose avatar a page under this grant may draw, or None.
+
+    An avatar is the one thing on a public page that does not travel in the
+    page's own payload — the client fetches it by id — so the token needs its
+    own answer to "may this link show this person". It is the set of user
+    principals the page renders and nothing wider: the owner iff the link
+    opted in (`show_owner`, the rule `_public_principal` applies to every
+    slot), the signed-in visitor themselves (the account card), and anyone a
+    covered task puts on screen — an assignee, a comment author, an activity
+    actor, a reactor. An id that is on no page under the link stays 404, like
+    an unknown token.
+    """
+    link = grant.link
+    if user_id == link.created_by_user_id:
+        shown = link.show_owner
+    elif viewer is not None and user_id == viewer.id:
+        shown = True
+    else:
+        visible = _visible_tasks_query(db, grant).with_entities(Task.id)
+        comments = db.query(TaskComment.id).filter(
+            TaskComment.task_id.in_(visible.scalar_subquery())
+        )
+        slots = (
+            _visible_tasks_query(db, grant).filter(
+                Task.assignee_type == "user", Task.assignee_id == user_id
+            ),
+            comments.filter(
+                TaskComment.author_type == "user", TaskComment.author_id == user_id
+            ),
+            db.query(TaskActivity.id).filter(
+                TaskActivity.task_id.in_(visible.scalar_subquery()),
+                TaskActivity.actor_type == "user",
+                TaskActivity.actor_id == user_id,
+            ),
+            db.query(TaskReaction.id).filter(
+                TaskReaction.user_id == user_id,
+                or_(
+                    (TaskReaction.target_type == "task")
+                    & TaskReaction.target_id.in_(visible.scalar_subquery()),
+                    (TaskReaction.target_type == "comment")
+                    & TaskReaction.target_id.in_(comments.scalar_subquery()),
+                ),
+            ),
+        )
+        shown = any(q.first() is not None for q in slots)
+    if not shown:
+        return None
+    user = db.get(User, user_id)
+    if user is None or not user.avatar_image_uri:
+        return None
+    return user
 
 
 def public_board(db: Session, grant: access.ShareGrant) -> PublicBoardResponse:

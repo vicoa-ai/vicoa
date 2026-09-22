@@ -23,10 +23,12 @@
  * provider's CDN leaks a viewer's IP to it, and hashed-email services like
  * avatar.vercel.sh / gravatar put an email on the wire. On a shared or public
  * surface a principal may show a display name and a picture, never an email —
- * see the `name` prop on `Principal`.
+ * see the `name` prop on `Principal`. Where the picture is fetched from is the
+ * surface's call (`PrincipalAvatarSrcProvider`): the dashboard's cookie proxy
+ * by default, the token-scoped public route on a share page.
  */
 
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Bot, User as UserIcon, Users } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -82,6 +84,30 @@ const GLYPHS: Record<PrincipalType, typeof UserIcon> = {
   agent: Bot,
 };
 
+type PrincipalAvatarSrcResolver = (principal: Principal) => string | null;
+
+const PrincipalAvatarSrcContext = createContext<PrincipalAvatarSrcResolver>(principalAvatarSrc);
+
+/**
+ * Where a principal's image comes from on this surface. The dashboard needs
+ * no provider — `principalAvatarSrc` names the cookie-authed proxy. A public
+ * share page has no cookie to send, so it points every avatar under it at the
+ * share-scoped backend route instead, where the link token authorizes the
+ * fetch (the same arrangement as `AttachmentUrlProvider`). One provider at
+ * the root reaches every slot — the owner card, an assignee chip, a comment
+ * author — without each caller knowing which surface it is on.
+ */
+export function PrincipalAvatarSrcProvider({
+  resolve,
+  children,
+}: {
+  resolve: PrincipalAvatarSrcResolver;
+  children: ReactNode;
+}) {
+  const value = useMemo(() => resolve, [resolve]);
+  return <PrincipalAvatarSrcContext.Provider value={value}>{children}</PrincipalAvatarSrcContext.Provider>;
+}
+
 export function PrincipalAvatar({
   principal,
   size = 'md',
@@ -115,12 +141,11 @@ export function PrincipalAvatar({
   const disc = cn('shrink-0 overflow-hidden rounded-full', plain ? flat.image : dims.box, className);
   const label = title ?? principal.name ?? undefined;
 
-  const src = principalAvatarSrc(principal);
-  // The image rides the cookie-authed proxy, which a public share page's
-  // anonymous visitor cannot use (401) — and any image can 404 after a
-  // replacement. Either way the next rung of the chain is the right answer,
-  // not a broken-image glyph. Reset when the src changes so a fixed image
-  // gets another chance.
+  const src = useContext(PrincipalAvatarSrcContext)(principal);
+  // Any image can 404 — after a replacement, or on a share page for a
+  // principal the link does not cover — and the next rung of the chain is the
+  // right answer then, not a broken-image glyph. Reset when the src changes
+  // so a fixed image gets another chance.
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   useEffect(() => {
     setFailedSrc(null);

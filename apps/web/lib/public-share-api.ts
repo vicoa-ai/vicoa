@@ -22,6 +22,7 @@ import type {
   TaskTimelineResponse,
 } from '@/lib/backend-api';
 import { getBrowserAccessToken } from '@/lib/auth/browser-token';
+import type { Principal } from '@/lib/principals';
 import { getCloudApiBase, getDesktopConfig } from '@/lib/runtime-config';
 
 export class ShareNotFoundError extends Error {
@@ -71,6 +72,22 @@ export function shareUrl(token: string): string {
 /** The share-scoped attachment URL — no cookie proxy; the token authorizes it. */
 export function publicAttachmentUrl(token: string, attachmentId: string): string {
   return `${basePath(token)}/attachments/${attachmentId}`;
+}
+
+/**
+ * The share-scoped avatar URL, for `PrincipalAvatarSrcProvider` on a share
+ * page: the dashboard's `/api/users/{id}/avatar` proxy needs the visitor's
+ * cookie, which an anonymous visitor has none of, so every avatar there fell
+ * back to initials. The backend serves only the people the link's page
+ * shows (the owner iff `show_owner`, task assignees/authors, the signed-in
+ * visitor); anyone else 404s and the avatar falls through to its initials.
+ * Same cache-bust as `principalAvatarSrc`. Agent profiles have no public
+ * route yet — a shared session names its agent but does not draw it.
+ */
+export function publicAvatarSrc(token: string, principal: Principal): string | null {
+  if (principal.type !== 'user' || !principal.id || !principal.avatarImageUri) return null;
+  const version = principal.updatedAt ? `?v=${encodeURIComponent(principal.updatedAt)}` : '';
+  return `${basePath(token)}/users/${principal.id}/avatar${version}`;
 }
 
 interface RequestOptions {

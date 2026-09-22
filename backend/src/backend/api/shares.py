@@ -289,6 +289,40 @@ def get_public_attachment(
     return Response(content=data, media_type=attachment.mime_type, headers=headers)
 
 
+@public_router.get("/{token}/users/{user_id}/avatar")
+def get_public_user_avatar(
+    user_id: UUID,
+    grant: access.ShareGrant = Depends(resolve_grant),
+    viewer: User | None = Depends(get_optional_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """A user's avatar bytes, iff the page under this link shows that user.
+
+    The dashboard's `/users/{id}/avatar` needs a signed-in caller, which a
+    public page's anonymous visitor is not — so without this the owner card
+    and every assignee/author slot fell back to initials. Same shape as the
+    attachment route: the token, not a cookie, authorizes it, and the answer
+    for anyone the link does not show is the uniform 404.
+    """
+    user = share_queries.public_avatar_user(db, grant, user_id, viewer)
+    if user is None:
+        raise _share_not_found()
+    try:
+        data, content_type = storage.download_object(
+            storage.user_avatar_key(str(user_id))
+        )
+    except Exception as exc:
+        logger.exception("public avatar download from S3 failed")
+        raise HTTPException(status_code=502, detail="Failed to fetch image") from exc
+    if content_type not in _INLINE_IMAGE_TYPES:
+        content_type = "application/octet-stream"
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={**_PUBLIC_HEADERS, "X-Content-Type-Options": "nosniff"},
+    )
+
+
 @public_router.get("/{token}/board", response_model=PublicBoardResponse)
 def get_public_board(
     request: Request,

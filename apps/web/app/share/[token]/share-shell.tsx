@@ -22,8 +22,9 @@ import { ArrowUpRight, Bot, CalendarClock, ListTodo, Menu, Plus, X } from 'lucid
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { PrincipalAvatar } from '@/components/ui/principal-avatar';
-import { principalFromResponse } from '@/lib/principals';
+import { PrincipalAvatar, PrincipalAvatarSrcProvider } from '@/components/ui/principal-avatar';
+import { type Principal, principalFromResponse } from '@/lib/principals';
+import { publicAvatarSrc } from '@/lib/public-share-api';
 import type { PublicShareResponse } from '@/lib/backend-api';
 import { cn } from '@/lib/utils';
 
@@ -235,11 +236,14 @@ function NavRows({
 }
 
 export function ShareShell({
+  token,
   share,
   sidebar,
   tasksNav,
   children,
 }: {
+  /** The link token: it authorizes every image fetch under this shell. */
+  token: string;
   share: PublicShareResponse;
   /** The subject-specific middle of the sidebar (the shared session rows). */
   sidebar: React.ReactNode;
@@ -259,9 +263,13 @@ export function ShareShell({
 
   const owner = principalFromResponse(share.owner);
   const viewer = principalFromResponse(share.viewer);
+  // Every avatar on this page — the owner card, the viewer, an assignee, a
+  // comment author — resolves through the token, not the cookie proxy.
+  const resolveAvatar = useCallback((principal: Principal) => publicAvatarSrc(token, principal), [token]);
 
   return (
     <ShareChromeContext.Provider value={chrome}>
+      <PrincipalAvatarSrcProvider resolve={resolveAvatar}>
       <div className="flex h-dvh max-w-full overflow-hidden bg-background text-foreground">
         {/* Mobile scrim: the sidebar is a drawer below lg. */}
         {mobileOpen && (
@@ -341,6 +349,7 @@ export function ShareShell({
 
         <main className="flex min-w-0 flex-1 flex-col">{children}</main>
       </div>
+      </PrincipalAvatarSrcProvider>
     </ShareChromeContext.Provider>
   );
 }

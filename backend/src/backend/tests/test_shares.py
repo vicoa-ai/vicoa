@@ -40,6 +40,7 @@ from shared.database import (
     ShareLink,
     Task,
     TaskLabel,
+    TaskReaction,
     User,
 )
 from shared.database.enums import AgentStatus
@@ -978,6 +979,158 @@ class TestPublicBoard:
             ).json()
             == NOT_FOUND
         )
+
+
+# ---------------------------------------------------------------------------
+# Public side: avatars by token
+# ---------------------------------------------------------------------------
+
+
+class TestPublicAvatars:
+    """`/public/shares/{token}/users/{id}/avatar` serves exactly the people a
+    page under the link draws — the dashboard's cookie-gated avatar route is
+    out of an anonymous visitor's reach, so without this every principal slot
+    on a public page fell back to initials."""
+
+    @pytest.fixture(autouse=True)
+    def _avatars(self, monkeypatch, world):
+        store: dict[str, tuple[bytes, str]] = {}
+
+        def download_object(key):
+            return store[key]
+
+        monkeypatch.setattr(storage, "download_object", download_object)
+
+        def give(user: User, body: bytes) -> None:
+            user.avatar_image_uri = f"/api/v1/users/{user.id}/avatar"
+            store[storage.user_avatar_key(str(user.id))] = (body, "image/png")
+
+        give(world.owner, b"owner-png")
+        world.db.commit()
+        self.give = give
+
+    def _session_link(self, client, world, **extra) -> str:
+        _as(client, world.owner)
+        link = _mint(
+            client,
+            {"kind": "session", "agent_instance_id": str(world.instance.id), **extra},
+        )
+        _as(client, None)
+        return link["token"]
+
+    def _board_link(self, client, world, **extra) -> str:
+        _as(client, world.owner)
+        link = _mint(
+            client,
+            {
+                "kind": "project",
+                "scopes": ["tasks"],
+                "project_id": str(world.project.id),
+                **extra,
+            },
+        )
+        _as(client, None)
+        return link["token"]
+
+    @staticmethod
+    def _avatar(client, token, user_id):
+        return client.get(f"/api/v1/public/shares/{token}/users/{user_id}/avatar")
+
+    def test_owner_served_only_when_the_link_shows_them(self, client, world):
+        shown = self._session_link(client, world, show_owner=True)
+        ok = self._avatar(client, shown, world.owner.id)
+        assert ok.status_code == 200
+        assert ok.content == b"owner-png"
+        assert ok.headers["content-type"] == "image/png"
+        # Token in the URL: never a shared cache, never indexed (same as the page).
+        assert ok.headers["cache-control"] == "private, no-store"
+        assert ok.headers["x-robots-tag"] == "noindex, nofollow"
+
+        hidden = self._session_link(client, world)  # show_owner defaults off
+        assert self._avatar(client, hidden, world.owner.id).status_code == 404
+
+    def test_meta_points_at_an_avatar_the_route_serves(self, client, world):
+        """The `owner` principal the page renders carries an `avatar_image_uri`;
+        that is the client's cue to fetch through this route."""
+        token = self._session_link(client, world, show_owner=True)
+        owner = client.get(f"/api/v1/public/shares/{token}").json()["owner"]
+        assert owner["id"] == str(world.owner.id)
+        assert owner["avatar_image_uri"]
+
+    def test_people_on_covered_tasks_are_served(self, client, world):
+        """A visitor who commented/reacted/was assigned on a covered task is
+        drawn on the board, so their avatar resolves through the token too."""
+        assignee = _user(world.db, "a@example.com", "Assignee")
+        commenter = _user(world.db, "c@example.com", "Commenter")
+        reactor = _user(world.db, "r@example.com", "Reactor")
+        bystander = _user(world.db, "b@example.com", "Bystander")
+        world.db.commit()
+        for u in (assignee, commenter, reactor, bystander):
+            self.give(u, u.email.encode())
+        world.db.commit()
+
+        world.task.assignee_type = "user"
+        world.task.assignee_id = assignee.id
+        world.db.commit()
+        token = self._board_link(client, world, allow_comments=True)
+        _as(client, commenter)
+        assert (
+            client.post(
+                f"/api/v1/public/shares/{token}/tasks/{world.task.id}/comments",
+                json={"body": "hi"},
+            ).status_code
+            == 201
+        )
+        _as(client, None)
+        world.db.add(
+            TaskReaction(
+                target_type="task",
+                target_id=world.task.id,
+                user_id=reactor.id,
+                emoji="👍",
+            )
+        )
+        world.db.commit()
+
+        for u in (assignee, commenter, reactor):
+            r = self._avatar(client, token, u.id)
+            assert r.status_code == 200, u.email
+            assert r.content == u.email.encode()
+        # On no page under this link → the same 404 as an unknown token.
+        assert self._avatar(client, token, bystander.id).status_code == 404
+        # The link hides its owner: no avatar, even though they own the tasks.
+        assert self._avatar(client, token, world.owner.id).status_code == 404
+
+    def test_filtered_out_task_does_not_expose_its_people(self, client, world):
+        assignee = _user(world.db, "a@example.com", "Assignee")
+        world.db.commit()
+        self.give(assignee, b"a")
+        world.task.assignee_type = "user"
+        world.task.assignee_id = assignee.id  # task is "todo"; link shows "done"
+        world.db.commit()
+        token = self._board_link(
+            client, world, filters={"tasks": {"statuses": ["done"]}}
+        )
+        assert self._avatar(client, token, assignee.id).status_code == 404
+
+    def test_signed_in_visitor_sees_their_own(self, client, world):
+        visitor = _user(world.db, "v@example.com", "Visitor")
+        world.db.commit()
+        self.give(visitor, b"visitor-png")
+        world.db.commit()
+        token = self._session_link(client, world)
+        assert self._avatar(client, token, visitor.id).status_code == 404
+        _as(client, visitor)
+        r = self._avatar(client, token, visitor.id)
+        assert r.status_code == 200
+        assert r.content == b"visitor-png"
+
+    def test_no_avatar_and_bad_token_are_404(self, client, world):
+        world.owner.avatar_image_uri = None
+        world.db.commit()
+        token = self._session_link(client, world, show_owner=True)
+        assert self._avatar(client, token, world.owner.id).status_code == 404
+        assert self._avatar(client, "nope", world.owner.id).status_code == 404
 
 
 # ---------------------------------------------------------------------------
