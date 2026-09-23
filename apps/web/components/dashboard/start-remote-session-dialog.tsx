@@ -238,7 +238,7 @@ export function StartRemoteSessionDialog({
       // Only open the session if the user hasn't navigated away while it spawned;
       // otherwise leave them on their current page (it's already in the sidebar
       // via onSessionRequested).
-      openCreatedSession(router, startPath, `/dashboard/agents/${newInstanceId}`);
+      openCreatedSession(router, startPath, `/dashboard/sessions/${newInstanceId}`);
     } catch (error) {
       console.error('Failed to spawn remote session', error);
       setStatusVariant('error');

@@ -60,7 +60,7 @@ export function RunHistorySection({ api, agentId }: { api: Api; agentId: string 
           return (
             <Link
               key={session.id}
-              href={`/dashboard/agents/${session.id}`}
+              href={`/dashboard/sessions/${session.id}`}
               className="flex items-center gap-2.5 px-3.5 py-2 transition-colors hover:bg-foreground/[0.04]"
             >
               <span

@@ -1178,7 +1178,7 @@ function NewSessionContent() {
     const params = new URLSearchParams(Array.from(searchParams.entries()));
     params.delete('prompt');
     const qs = params.toString();
-    router.replace(`/dashboard/agents/new-session${qs ? `?${qs}` : ''}`, { scroll: false });
+    router.replace(`/dashboard/sessions/new${qs ? `?${qs}` : ''}`, { scroll: false });
     // autoResizeTextarea is a stable post-mount callback; listing it would force
     // this before its declaration below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1724,7 +1724,7 @@ function NewSessionContent() {
       // Only open the session if the user is still on the page they launched
       // from; if they moved on during the spawn, leave them where they are (the
       // session is already in the sidebar via refreshData).
-      openCreatedSession(router, startPath, `/dashboard/agents/${newInstanceId}`);
+      openCreatedSession(router, startPath, `/dashboard/sessions/${newInstanceId}`);
     } catch (error) {
       let message = 'Failed to start session. Please verify the daemon is running.';
       let reason: SessionCreateFailure = 'unknown';

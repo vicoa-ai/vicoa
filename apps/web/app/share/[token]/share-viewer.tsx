@@ -35,7 +35,7 @@ function SessionShare({ token, share, initial }: { token: string; share: PublicS
       <SharedSessionView
         token={token}
         initialSession={initial}
-        openHref={isOwnerViewing(share) ? `/dashboard/agents/${initial.id}` : null}
+        openHref={isOwnerViewing(share) ? `/dashboard/sessions/${initial.id}` : null}
         onSessionChange={onSessionChange}
       />
     </ShareShell>

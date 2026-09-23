@@ -216,7 +216,7 @@ function DesktopDashboardHome() {
           Pick a session from the sidebar, or start a new one.
         </p>
         <Link
-          href="/dashboard/agents/new-session"
+          href="/dashboard/sessions/new"
           className="mt-6 inline-flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-4 py-2 text-sm text-foreground hover:bg-muted/60 transition-colors"
         >
           <Plus className="h-4 w-4" />

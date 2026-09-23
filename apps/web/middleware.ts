@@ -36,7 +36,7 @@ export async function middleware(request: NextRequest) {
     // open New Session by default instead of the "pick a session" empty state.
     const { pathname } = request.nextUrl;
     if (pathname === '/dashboard' || pathname === '/dashboard/') {
-      return NextResponse.redirect(new URL('/dashboard/agents/new-session', request.url));
+      return NextResponse.redirect(new URL('/dashboard/sessions/new', request.url));
     }
     return NextResponse.next();
   }

@@ -734,7 +734,7 @@ function DashboardContent({
     pathname === '/dashboard/tasks' ||
     pathname === '/dashboard/skills' ||
     pathname === '/dashboard/agents' ||
-    !!pathname?.match(/^\/dashboard\/agents\/[^\/]+$/);
+    !!pathname?.match(/^\/dashboard\/sessions\/[^\/]+$/);
   if (isFullHeightPage) {
     return (
       <main className="flex-1 flex flex-col h-full overflow-hidden">
@@ -792,7 +792,7 @@ function DashboardShell({
     }),
     [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed],
   );
-  const isInstancePage = !!shellPathname?.match(/^\/dashboard\/agents\/[^\/]+$/);
+  const isInstancePage = !!shellPathname?.match(/^\/dashboard\/sessions\/[^\/]+$/);
   const isSettingsPage = !!shellPathname?.startsWith('/dashboard/settings');
   // App-shell pages whose own top header IS the window titlebar: it renders
   // <DesktopCollapsedLead /> when the sidebar is hidden and is itself the drag
@@ -982,7 +982,7 @@ export default function DashboardLayout({
 
   // Function to open a session directly
   const openSession = useCallback((instanceId: string) => {
-    router.push(`/dashboard/agents/${instanceId}`);
+    router.push(`/dashboard/sessions/${instanceId}`);
   }, [router]);
 
   // ⌘, opens settings (desktop only; rebindable). Lives here so it works on
@@ -1003,7 +1003,7 @@ export default function DashboardLayout({
   useDesktopNotificationNavigation((path) => router.push(path));
 
   const handleStartRemoteSession = useCallback(() => {
-    router.push('/dashboard/agents/new-session');
+    router.push('/dashboard/sessions/new');
   }, [router]);
 
   const openSidebar = useCallback(() => {
@@ -1036,10 +1036,10 @@ export default function DashboardLayout({
     } else if (pathname === '/dashboard/agents') {
       setActiveTab('agents');
       setSelectedInstanceId(null);
-    } else if (pathname === '/dashboard/agents/new-session') {
+    } else if (pathname === '/dashboard/sessions/new') {
       setActiveTab('session');
       setSelectedInstanceId(null);
-    } else if (pathname.startsWith('/dashboard/agents/')) {
+    } else if (pathname.startsWith('/dashboard/sessions/')) {
       setActiveTab('session');
       const instanceId = pathname.split('/').pop();
       if (instanceId) {

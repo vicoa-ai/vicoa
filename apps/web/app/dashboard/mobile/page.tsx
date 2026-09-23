@@ -99,7 +99,7 @@ export default function MobilePage() {
           aria-label="Close"
           title="Close"
           style={NO_DRAG}
-          onClick={() => router.push('/dashboard/agents/new-session')}
+          onClick={() => router.push('/dashboard/sessions/new')}
           className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
           <X className="h-4 w-4" />

@@ -447,7 +447,7 @@ function showSessionNotification(payload: SessionNotificationPayload): void {
     // An empty instanceId (the settings page's test notification) just
     // focuses the window without routing anywhere.
     if (payload.instanceId !== '') {
-      requestNavigation(`/dashboard/agents/${payload.instanceId}`);
+      requestNavigation(`/dashboard/sessions/${payload.instanceId}`);
     }
   });
   notification.on('close', () => {

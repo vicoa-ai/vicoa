@@ -53,7 +53,7 @@ const FILTER_LABELS: Record<AutomationFilter, string> = {
 };
 
 // useSearchParams needs a Suspense boundary for prerender (same pattern as
-// new-session/page.tsx).
+// sessions/new/page.tsx).
 export default function AutomationPage() {
   return (
     <Suspense fallback={null}>

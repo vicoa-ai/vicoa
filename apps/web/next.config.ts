@@ -22,6 +22,24 @@ const nextConfig: NextConfig = {
   // "blank main page" hang). Do not re-add PPR without re-checking Netlify usage.
   async redirects() {
     return [
+      // Sessions moved out from under the agent-presets prefix:
+      // /dashboard/agents/<instanceId> -> /dashboard/sessions/<instanceId>.
+      // `/dashboard/agents` (bare) is a different page — saved agent presets —
+      // and is deliberately NOT redirected. Old session links are in the wild
+      // (desktop notification payloads, share pages, bookmarks, PR bodies), so
+      // these stay. ORDER MATTERS: `new-session` has to be matched before the
+      // `:instanceId` wildcard, which would otherwise swallow it and send it to
+      // the non-existent /dashboard/sessions/new-session.
+      {
+        source: '/dashboard/agents/new-session',
+        destination: '/dashboard/sessions/new',
+        permanent: true,
+      },
+      {
+        source: '/dashboard/agents/:instanceId',
+        destination: '/dashboard/sessions/:instanceId',
+        permanent: true,
+      },
       // `/cancel-subscription` is a short link to the help page, which is part
       // of the open marketing site (always present), so it's unconditional.
       {

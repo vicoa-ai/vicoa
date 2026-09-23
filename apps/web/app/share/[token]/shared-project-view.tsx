@@ -284,7 +284,7 @@ export function ProjectShare({
           key={selected.id}
           token={token}
           initialSession={selected}
-          openHref={isOwner ? `/dashboard/agents/${selected.id}` : null}
+          openHref={isOwner ? `/dashboard/sessions/${selected.id}` : null}
           onSessionChange={patch}
         />
       ) : (

@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
  *
  * (A pure client-segment HANG — an empty Suspense fallback that never resolves —
  * is not a throw and won't reach here; that path is addressed by the visible
- * loader in new-session/page.tsx and the renderer.log capture in the shell.)
+ * loader in sessions/new/page.tsx and the renderer.log capture in the shell.)
  */
 export default function DashboardError({
   error,

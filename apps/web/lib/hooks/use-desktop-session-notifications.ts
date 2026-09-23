@@ -65,7 +65,7 @@ export function useDesktopNotificationNavigation(navigate: (path: string) => voi
     const bridge = getDesktopNotificationsBridge();
     if (bridge === null) return;
     return bridge.onNavigate((path) => {
-      // Main only ever sends /dashboard/agents/<id>; anything else is dropped.
+      // Main only ever sends /dashboard/sessions/<id>; anything else is dropped.
       if (typeof path === 'string' && path.startsWith('/dashboard/')) {
         navigateRef.current(path);
       }

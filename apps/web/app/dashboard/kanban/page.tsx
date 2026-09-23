@@ -574,7 +574,7 @@ export default function AgentManagerPage() {
       }
     }
 
-    router.push(`/dashboard/agents/${instance.id}`);
+    router.push(`/dashboard/sessions/${instance.id}`);
   }, [api, router, updateInstanceStatus]);
 
   const handleAskUserQuestionSubmit = useCallback(async (instanceId: string, payload: AskUserQuestionSubmitPayload) => {

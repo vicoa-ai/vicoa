@@ -13,10 +13,13 @@
  * detail panel with a Run history card at the bottom): the two are the same kind
  * of object, a saved configuration with a record of what it has done.
  *
- * NOTE the neighbouring routes: `/dashboard/agents/[instanceId]` is a *session*
- * and `/dashboard/agents/new-session` starts one. Those predate this page and
- * keep their URLs; this one owns only the bare path, and selects a row through
- * `?agent=<id>` rather than a sub-route, exactly like `?automation=<id>`.
+ * A *session* is a different object and lives under a different prefix:
+ * `/dashboard/sessions/[instanceId]`, started from `/dashboard/sessions/new` —
+ * mirroring the backend, where a preset is `/api/v1/agents/<id>` and a session
+ * is `/api/v1/agent-instances/<id>`. Those session routes used to sit under
+ * `/dashboard/agents/` (they predate this page); the old URLs are kept alive by
+ * redirects in `next.config.ts`. This page owns the bare path only, and selects
+ * a row through `?agent=<id>` rather than a sub-route, like `?automation=<id>`.
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';

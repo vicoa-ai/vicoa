@@ -24,7 +24,7 @@ if (posthogToken) {
   //
   // `register` sets a SUPER property, and event properties override it. That is
   // why the hardcoded `source: 'web'` event props had to be deleted from
-  // `new-session/page.tsx` outright: left in place they would shadow this and
+  // `sessions/new/page.tsx` outright: left in place they would shadow this and
   // keep counting desktop activations as web ones.
   posthog.register({ source: SURFACE })
 }

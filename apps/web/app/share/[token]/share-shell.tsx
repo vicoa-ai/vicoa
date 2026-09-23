@@ -117,7 +117,7 @@ const NAV: { key?: ShareNav; label: string; icon: LucideIcon; href: string; pitc
   {
     label: 'New Session',
     icon: Plus,
-    href: '/dashboard/agents/new-session',
+    href: '/dashboard/sessions/new',
     pitch: 'Start Claude Code, Codex or another agent on any of your machines, from here or from your phone.',
   },
   {

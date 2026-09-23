@@ -264,7 +264,7 @@ export function SetupChecklist() {
       hint: 'Start a new session and send message',
       icon: MessageCirclePlus,
       done: checks.message,
-      onClick: () => go('message', () => router.push('/dashboard/agents/new-session')),
+      onClick: () => go('message', () => router.push('/dashboard/sessions/new')),
     },
     {
       id: 'task',

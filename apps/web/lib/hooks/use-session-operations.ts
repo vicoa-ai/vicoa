@@ -58,7 +58,7 @@ export function useSessionOperations(instanceId?: string) {
       // Navigate if this is the current session being deleted
       if (instanceId === sessionId) {
         if (nextSessionId) {
-          router.push(`/dashboard/agents/${nextSessionId}`);
+          router.push(`/dashboard/sessions/${nextSessionId}`);
         } else {
           router.push('/dashboard');
         }

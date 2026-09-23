@@ -7,7 +7,7 @@ import type { SlashCommand } from '@/lib/constants/slash-commands';
 /**
  * Slash-command suggestion list shown above the message box. Shared by the
  * chat input (`components/chat-input.tsx`), the new-session prompt
- * (`app/dashboard/agents/new-session/page.tsx`), and the reusable
+ * (`app/dashboard/sessions/new/page.tsx`), and the reusable
  * `MentionPromptField` so every surface renders an identical panel.
  *
  * Default: `absolute bottom-full` — the parent must be `relative`. Pass

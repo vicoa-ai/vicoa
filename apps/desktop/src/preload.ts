@@ -149,7 +149,7 @@ contextBridge.exposeInMainWorld('vicoaDesktopNotifications', {
     ipcRenderer.invoke('vicoa:notification-status'),
   /**
    * Subscribe to in-app navigation requests from notification clicks. The
-   * callback receives a renderer route path (e.g. /dashboard/agents/<id>).
+   * callback receives a renderer route path (e.g. /dashboard/sessions/<id>).
    * Requests that arrived before a renderer was listening are replayed on
    * subscribe. Returns an unsubscribe function.
    */

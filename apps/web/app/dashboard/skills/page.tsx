@@ -269,7 +269,7 @@ export default function SkillsPage() {
   }, []);
 
   const createWithAgent = useCallback(() => {
-    router.push(`/dashboard/agents/new-session?prompt=${encodeURIComponent(CREATE_SKILL_PROMPT)}`);
+    router.push(`/dashboard/sessions/new?prompt=${encodeURIComponent(CREATE_SKILL_PROMPT)}`);
   }, [router]);
 
   // "Try now": open a new session with the skill's `/`-command seeded into the
@@ -277,7 +277,7 @@ export default function SkillsPage() {
   const trySkill = useCallback(
     (skill: SkillSummary) => {
       setDetailTarget(null);
-      router.push(`/dashboard/agents/new-session?prompt=${encodeURIComponent(`/${skill.name} `)}`);
+      router.push(`/dashboard/sessions/new?prompt=${encodeURIComponent(`/${skill.name} `)}`);
     },
     [router],
   );

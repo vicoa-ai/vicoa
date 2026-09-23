@@ -834,7 +834,7 @@ export function SidebarSessions({
     }
     setNavigatingId(instance.id);
     startTransition(() => {
-      router.push(`/dashboard/agents/${instance.id}`);
+      router.push(`/dashboard/sessions/${instance.id}`);
     });
     // Platform side effect (mark reviewed / auto-review) runs after navigation
     // is scheduled; order doesn't matter for the optimistic status flip.
@@ -991,12 +991,12 @@ export function SidebarSessions({
   useEffect(() => {
     if (!enableKeyboardShortcuts) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      const currentId = pathname?.match(/^\/dashboard\/agents\/([^/]+)$/)?.[1] ?? null;
+      const currentId = pathname?.match(/^\/dashboard\/sessions\/([^/]+)$/)?.[1] ?? null;
 
       // ⌘N — open the new-session page.
       if (matchesShortcut(event, 'session-new')) {
         event.preventDefault();
-        router.push('/dashboard/agents/new-session');
+        router.push('/dashboard/sessions/new');
         return;
       }
 

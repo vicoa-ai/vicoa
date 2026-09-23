@@ -27,7 +27,7 @@ export function NewSessionButton({
   const params = new URLSearchParams({ directory });
   if (worktreePath) params.set('worktreePath', worktreePath);
   if (worktreeBranch) params.set('worktreeBranch', worktreeBranch);
-  const href = `/dashboard/agents/new-session?${params.toString()}`;
+  const href = `/dashboard/sessions/new?${params.toString()}`;
   return (
     <button
       type="button"

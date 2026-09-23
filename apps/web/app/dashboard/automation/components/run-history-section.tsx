@@ -89,7 +89,7 @@ export function RunHistorySection({
               {/* ↗ opens the session this run spawned. */}
               {run.agent_instance_id && (
                 <Link
-                  href={`/dashboard/agents/${run.agent_instance_id}`}
+                  href={`/dashboard/sessions/${run.agent_instance_id}`}
                   className="flex-shrink-0 text-muted-foreground hover:text-foreground"
                   title="Open session"
                 >

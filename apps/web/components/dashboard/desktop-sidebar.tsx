@@ -85,7 +85,7 @@ export function DesktopSidebar({
   // The shared list highlights the selected row and clears its nav spinner off
   // this id; on desktop the open session is the one in the URL.
   const selectedInstanceId = useMemo(
-    () => pathname?.match(/^\/dashboard\/agents\/([^/]+)$/)?.[1] ?? null,
+    () => pathname?.match(/^\/dashboard\/sessions\/([^/]+)$/)?.[1] ?? null,
     [pathname],
   );
 
@@ -202,7 +202,7 @@ export function DesktopSidebar({
         <Button
           variant="subtle"
           className="w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal"
-          onClick={() => router.push('/dashboard/agents/new-session')}
+          onClick={() => router.push('/dashboard/sessions/new')}
           title="Start new session"
         >
           <Plus className="h-4 w-4 mr-1.5" />

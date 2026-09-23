@@ -95,7 +95,7 @@ const COMMANDS: PaletteCommand[] = [
     label: 'New session',
     keywords: ['create', 'start', 'agent', 'spawn', '新建', '会话', '任务'],
     icon: Plus,
-    href: '/dashboard/agents/new-session',
+    href: '/dashboard/sessions/new',
     primary: true,
   },
   {
@@ -400,7 +400,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
       if (item.kind === 'command') {
         router.push(item.command.href);
       } else if (item.kind === 'session') {
-        router.push(`/dashboard/agents/${item.session.id}`);
+        router.push(`/dashboard/sessions/${item.session.id}`);
       } else if (item.kind === 'task') {
         router.push(`/dashboard/tasks/${item.task.id}`);
       } else if (item.kind === 'automation') {

@@ -73,7 +73,7 @@ function fromDateInputValue(value: string): string | null {
 }
 
 // useSearchParams needs a Suspense boundary for prerender (same pattern as
-// new-session/page.tsx).
+// sessions/new/page.tsx).
 export default function TasksPage() {
   return (
     <Suspense fallback={null}>
@@ -400,7 +400,7 @@ function TasksPageInner() {
     (task: TaskResponse) => {
       const children = tasks.filter((t) => t.parent_task_id === task.id);
       if (children.length === 0) {
-        router.push(`/dashboard/agents/new-session?taskId=${task.id}`);
+        router.push(`/dashboard/sessions/new?taskId=${task.id}`);
         return;
       }
       setSessionDialog({ task, subtasks: children });
@@ -426,7 +426,7 @@ function TasksPageInner() {
       const params = new URLSearchParams({ taskId: sessionDialog.task.id });
       if (selectedIds.length > 0) params.set('subtasks', selectedIds.join(','));
       setSessionDialog(null);
-      router.push(`/dashboard/agents/new-session?${params.toString()}`);
+      router.push(`/dashboard/sessions/new?${params.toString()}`);
     },
     [router, sessionDialog],
   );
@@ -461,7 +461,7 @@ function TasksPageInner() {
   const openSession = useCallback(
     (instanceId: string) => {
       closeDialog();
-      router.push(`/dashboard/agents/${instanceId}`);
+      router.push(`/dashboard/sessions/${instanceId}`);
     },
     [closeDialog, router],
   );

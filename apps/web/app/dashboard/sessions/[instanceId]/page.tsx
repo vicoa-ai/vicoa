@@ -1388,7 +1388,7 @@ function AgentInstanceContent() {
       const forkAgent =
         configuredAgent || (detail.agent_type_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       if (forkAgent) query.set('agent', forkAgent);
-      router.push(`/dashboard/agents/new-session?${query.toString()}`);
+      router.push(`/dashboard/sessions/new?${query.toString()}`);
     },
     [forkingMessageId, instance, instanceId, router],
   );

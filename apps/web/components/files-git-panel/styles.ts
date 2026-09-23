@@ -1,4 +1,4 @@
-// Same look as the chat scroller (see app/dashboard/agents/[instanceId]/page.tsx).
+// Same look as the chat scroller (see app/dashboard/sessions/[instanceId]/page.tsx).
 // Defined here so vertical + horizontal scrollers across the panel stay consistent.
 export const SCROLL_STYLE =
   '[&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 ' +
