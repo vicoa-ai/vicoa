@@ -343,6 +343,9 @@ def find_npm_cli(
       4. Well-known per-user / system install dirs (POSIX and, on Windows,
          ``%LOCALAPPDATA%\\Microsoft\\WinGet\\Links``, ``%APPDATA%\\npm``,
          ``%USERPROFILE%\\.local\\bin`` and the machine-scope WinGet links).
+      4b. The tool's own dot-dir, by convention on ``name``:
+         ``~/.<name>/bin/<name>``, ``~/.<name>/local/<name>``, ``~/.<name>/<name>``
+         — where a curl-style install script puts the binary.
       5. ``<nvm-default-version>/bin/<name>`` — the node version nvm's
          ``default`` alias selects (NOT every installed version). Covers the
          dominant Ubuntu/Debian case where users install Node via nvm and the
@@ -383,8 +386,31 @@ def find_npm_cli(
             home / "node_modules" / ".bin" / name,
             home / ".yarn" / "bin" / name,
             Path("/home/linuxbrew/.linuxbrew/bin") / name,
+            home / "bin" / name,
         ]
     )
+
+    # A CLI shipped by its own install script, rather than npm, conventionally
+    # lands in a dot-directory named after the tool — ~/.opencode/bin/opencode,
+    # ~/.amp/bin/amp, ~/.bun/bin/bun, ~/.cargo/bin/cargo, and Claude Code's
+    # ~/.claude/local/claude. Those scripts do nothing else but append their dir
+    # to the user's shell rc, which only affects shells started afterwards, so a
+    # daemon never sees it and the CLI reads as "not installed" on a machine
+    # where the user's `which <name>` plainly works.
+    #
+    # Probing the convention by name is what makes this general: the per-agent
+    # `extra_dirs` in the ACP / pi-family specs only ever cover the installers
+    # somebody remembered to hand-add, so every new curl-installed agent
+    # arrives broken. Those overrides stay for the cases the convention misses
+    # (kimi-code puts `kimi` under ~/.kimi-code/bin — different name).
+    if name and "/" not in name and "\\" not in name:
+        candidates.extend(
+            [
+                home / f".{name}" / "bin" / name,
+                home / f".{name}" / "local" / name,
+                home / f".{name}" / name,
+            ]
+        )
 
     if _is_windows():
         # Windows install dirs that are frequently absent from a daemon's

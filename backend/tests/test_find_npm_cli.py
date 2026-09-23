@@ -308,3 +308,58 @@ def test_resolve_codex_acp_binary_uses_shared_resolver(
     resolved = resolve_codex_acp_binary()
     assert resolved is not None
     assert str(resolved) == str(target)
+
+
+class TestToolOwnDotDir:
+    """A CLI installed by its own script, not npm.
+
+    Install scripts conventionally drop the binary in a dot-directory named
+    after the tool and then only append that dir to the user's shell rc — which
+    a daemon, started before or outside that shell, never sees. The resolver
+    probes the convention by NAME so a newly shipped agent is covered without
+    anyone hand-adding its directory.
+    """
+
+    @pytest.mark.parametrize(
+        "relative",
+        [
+            (".opencode", "bin"),  # curl -fsSL https://opencode.ai/install | bash
+            (".claude", "local"),  # Claude Code's native installer
+            (".widget",),  # some installers drop it straight in the dot-dir
+        ],
+    )
+    def test_finds_the_binary_in_the_tools_own_dot_dir(
+        self, fake_home: Path, monkeypatch: pytest.MonkeyPatch, relative: tuple
+    ) -> None:
+        name = relative[0].lstrip(".")
+        monkeypatch.setenv("PATH", str(fake_home / "nothing"))
+        directory = fake_home.joinpath(*relative)
+        directory.mkdir(parents=True)
+        binary = directory / name
+        binary.write_text("#!/bin/sh\n")
+        binary.chmod(0o755)
+
+        assert find_npm_cli(name) == str(binary)
+
+    def test_finds_a_binary_in_plain_home_bin(
+        self, fake_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PATH", str(fake_home / "nothing"))
+        (fake_home / "bin").mkdir()
+        binary = fake_home / "bin" / "widget"
+        binary.write_text("#!/bin/sh\n")
+        binary.chmod(0o755)
+
+        assert find_npm_cli("widget") == str(binary)
+
+    def test_another_tools_dot_dir_is_not_consulted(
+        self, fake_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The probe is keyed on the name being looked up, so a binary sitting in
+        # some unrelated tool's dot-dir must not read as installed.
+        monkeypatch.setenv("PATH", str(fake_home / "nothing"))
+        directory = fake_home / ".something-else" / "bin"
+        directory.mkdir(parents=True)
+        (directory / "widget").write_text("#!/bin/sh\n")
+
+        assert find_npm_cli("widget") is None

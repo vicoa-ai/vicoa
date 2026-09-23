@@ -3,8 +3,9 @@
 `curl -fsSL https://opencode.ai/install | bash` writes ~/.opencode/bin/opencode
 and appends that dir to the user's shell rc — neither of which reaches a daemon
 that is already running, or one whose PATH came from a shell started before the
-install. Without the extra location, OpenCode reads as "not installed" on a
-machine where `which opencode` works.
+install. Nothing here is opencode-specific: `find_npm_cli` probes the
+`~/.<name>/bin/<name>` convention by name. This exercises it end to end through
+the agent that first hit the bug, from detection to the spawned command.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from vicoa.machine_daemon import MachineDaemon, _find_opencode_cli
+from vicoa.machine_daemon import MachineDaemon, _find_cli_in_common_locations
 
 
 @pytest.fixture
@@ -39,11 +40,11 @@ def _install_script_layout(home: Path) -> Path:
 
 def test_finds_the_installer_placed_binary_off_path(fake_home: Path) -> None:
     binary = _install_script_layout(fake_home)
-    assert _find_opencode_cli() == str(binary)
+    assert _find_cli_in_common_locations("opencode") == str(binary)
 
 
 def test_none_when_nothing_is_installed(fake_home: Path) -> None:
-    assert _find_opencode_cli() is None
+    assert _find_cli_in_common_locations("opencode") is None
 
 
 def test_detection_reports_opencode_installed(fake_home: Path) -> None:

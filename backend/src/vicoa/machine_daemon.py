@@ -100,25 +100,6 @@ def _find_cli_in_common_locations(name: str) -> str | None:
     return find_npm_cli(name)
 
 
-def _find_opencode_cli() -> str | None:
-    """Locate the OpenCode CLI, including the dir its own installer uses.
-
-    ``curl -fsSL https://opencode.ai/install | bash`` drops the binary in
-    ``~/.opencode/bin`` and does nothing but append that dir to the user's shell
-    rc. Neither reaches this daemon: the rc line only applies to shells started
-    afterwards, and ``find_npm_cli``'s well-known locations are all npm/node
-    ones. So OpenCode read as "not installed" on a machine where the user's
-    ``which opencode`` plainly works. Same shape as the ACP specs' ``extra_dirs``
-    (kimi-code's ``~/.kimi-code/bin``), which exists for exactly this.
-    """
-    from vicoa.utils import find_npm_cli
-
-    return find_npm_cli(
-        "opencode",
-        extra_locations=(Path.home() / ".opencode" / "bin" / "opencode",),
-    )
-
-
 def _pid_exists(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -1371,7 +1352,7 @@ class MachineDaemon:
             # Pass the resolved path, not the bare name: the child inherits
             # this daemon's PATH, which is exactly the one that could not find
             # an installer-placed binary in the first place.
-            if opencode_cli := _find_opencode_cli():
+            if opencode_cli := _find_cli_in_common_locations("opencode"):
                 cmd.extend(["--opencode-command", opencode_cli])
             if session_id:
                 cmd.extend(["--session-id", session_id])
@@ -1573,7 +1554,7 @@ class MachineDaemon:
                 return "Claude Code CLI ('claude') is not installed or not on PATH."
 
         if agent == "opencode":
-            if _find_opencode_cli():
+            if _find_cli_in_common_locations("opencode"):
                 return None
             return "OpenCode CLI ('opencode') is not installed or not on PATH."
 
