@@ -1955,7 +1955,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
                 style: FlutterFlowTheme.of(context).bodySmall.override(
                       font: GoogleFonts.sourceSans3(),
                       color: FlutterFlowTheme.of(context).secondaryText.withValues(alpha: 0.7),
-                      fontSize: 11.0,
+                      fontSize: 12.5,
                       letterSpacing: 0.0,
                     ),
               ),
