@@ -8,6 +8,7 @@ interface Deco {
   from: number;
   to: number;
   cls?: string;
+  title?: string;
   /** A zero-spec replace — a hidden syntax mark. */
   hide: boolean;
   widget: boolean;
@@ -29,11 +30,17 @@ function decorate(doc: string, caret = doc.length): Deco[] {
   const it = set.iter();
   while (it.value) {
     // `spec` is public on Decoration but untyped; read it defensively.
-    const spec = (it.value as unknown as { spec?: { class?: string; widget?: unknown } }).spec ?? {};
+    const spec =
+      (
+        it.value as unknown as {
+          spec?: { class?: string; widget?: unknown; attributes?: Record<string, string> };
+        }
+      ).spec ?? {};
     out.push({
       from: it.from,
       to: it.to,
       cls: spec.class,
+      title: spec.attributes?.title,
       hide: !spec.class && !spec.widget,
       widget: !!spec.widget,
     });
@@ -92,6 +99,19 @@ describe('computeMarkdownDecorations', () => {
     expect(hasClass(d, 'cm-md-link', 5, 10)).toBe(true); // "Vicoa"
     expect(hasHide(d, 4, 5)).toBe(true); // `[`
     expect(hasHide(d, 10, 29)).toBe(true); // `](https://vicoa.ai)`
+  });
+
+  test('link: hover shows the destination the preview hides', () => {
+    const d = decorate('see [Vicoa](https://vicoa.ai) here', 0);
+    expect(d.find((x) => x.cls === 'cm-md-link')?.title).toBe('https://vicoa.ai');
+  });
+
+  test('link: empty text (`[](url)`) still decorates the rest of the doc', () => {
+    // An empty mark decoration throws in CodeMirror, which would take the whole
+    // live-preview layer down for the file.
+    const d = decorate('see [](https://vicoa.ai) and **bold**', 0);
+    expect(d.some((x) => x.cls === 'cm-md-link')).toBe(false);
+    expect(d.some((x) => x.cls === 'cm-md-strong')).toBe(true);
   });
 
   test('strikethrough (GFM) is styled and its `~~` marks hidden', () => {

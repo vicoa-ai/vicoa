@@ -9,6 +9,7 @@ import {
   type ViewUpdate,
   WidgetType,
 } from '@codemirror/view';
+import { inlineDestination } from './cm-markdown-links';
 
 /**
  * Live-preview markdown for CodeMirror — Obsidian/Typora style, editing on the
@@ -130,7 +131,18 @@ export function computeMarkdownDecorations(
           if (marks.length >= 2) {
             const open = marks[0]; // `[`
             const close = marks[1]; // `]`
-            deco.push(Decoration.mark({ class: 'cm-md-link' }).range(open.to, close.from));
+            // `[](url)` has no text to style, and an empty mark decoration is a
+            // hard error in CodeMirror — which would take the whole preview
+            // layer down with it.
+            if (close.from > open.to) {
+              // The destination is hidden in the rendered document, so hover
+              // reveals it: the status bar a browser would give a link.
+              const dest = inlineDestination(state, node.node);
+              const spec = dest
+                ? { class: 'cm-md-link', attributes: { title: dest } }
+                : { class: 'cm-md-link' };
+              deco.push(Decoration.mark(spec).range(open.to, close.from));
+            }
             if (!selectionTouches(state, node.from, node.to)) {
               if (open.to > node.from) deco.push(HIDE.range(node.from, open.to));
               if (node.to > close.from) deco.push(HIDE.range(close.from, node.to));
