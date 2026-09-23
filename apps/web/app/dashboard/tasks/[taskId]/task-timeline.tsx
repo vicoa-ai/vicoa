@@ -584,8 +584,11 @@ function SessionCard({
             <span>{formatSidebarTime(session)}</span>
           </div>
         </div>
+        {/* The session route itself — `/dashboard?instance=` was never read by
+            anything, so it just landed on the dashboard home ("start a new
+            session"), which is the opposite of opening this session. */}
         <Link
-          href={`/dashboard?instance=${session.id}`}
+          href={`/dashboard/agents/${session.id}`}
           className="flex shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           Open <ExternalLink className="size-3" />
