@@ -33,9 +33,10 @@ class ForkContextChip extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 6.0),
       decoration: BoxDecoration(
-        color: theme.secondaryText.withValues(alpha: 0.05),
+        // A deeper tint of the composer's own fill, no border: the box around
+        // it is already drawn, and a second rule inside reads as a nested field.
+        color: theme.secondaryText.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(16.0),
-        border: Border.all(color: theme.secondaryText.withValues(alpha: 0.2), width: 1.0),
       ),
       child: Material(
         color: Colors.transparent,
@@ -100,6 +101,10 @@ class ForkContextChip extends StatelessWidget {
 }
 
 /// The block itself, read-only: what the new session is about to be told.
+///
+/// One fixed height, like every other sheet in the app — a draggable one let
+/// the transcript be pulled up under the status bar. No explanatory line: the
+/// block's own header says what it is, in the voice it is written for.
 Future<void> showForkContextPreview(BuildContext context, ForkSessionContext fork) {
   final theme = FlutterFlowTheme.of(context);
   final l10n = AppLocalizations.of(context);
@@ -107,83 +112,62 @@ Future<void> showForkContextPreview(BuildContext context, ForkSessionContext for
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (sheetContext) => DraggableScrollableSheet(
-      initialChildSize: 0.75,
-      minChildSize: 0.4,
-      maxChildSize: 0.95,
-      expand: false,
-      builder: (sheetContext, scrollController) => Container(
-        decoration: BoxDecoration(
-          color: theme.primaryBackground,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20.0)),
-        ),
-        child: Column(
-          children: [
-            Container(
-              margin: const EdgeInsets.only(top: 10.0, bottom: 6.0),
-              width: 36.0,
-              height: 4.0,
-              decoration: BoxDecoration(
-                color: theme.secondaryText.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(2.0),
-              ),
+    builder: (sheetContext) => Container(
+      height: MediaQuery.of(sheetContext).size.height * 0.8,
+      decoration: BoxDecoration(
+        color: theme.primaryBackground,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20.0)),
+      ),
+      child: Column(
+        children: [
+          Container(
+            margin: const EdgeInsets.only(top: 10.0, bottom: 6.0),
+            width: 36.0,
+            height: 4.0,
+            decoration: BoxDecoration(
+              color: theme.secondaryText.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(2.0),
             ),
-            Padding(
-              padding: const EdgeInsetsDirectional.fromSTEB(20.0, 4.0, 8.0, 0.0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '${l10n.newSessionForkChipTitle} · ${l10n.newSessionForkMessages(fork.messageCount)}',
-                      style: theme.bodyMedium.override(
-                        font: GoogleFonts.sourceSans3(fontWeight: FontWeight.w500),
-                        color: theme.primaryText,
-                        fontSize: 17.0,
-                        letterSpacing: 0.0,
-                        fontWeight: FontWeight.w500,
-                      ),
+          ),
+          Padding(
+            padding: const EdgeInsetsDirectional.fromSTEB(20.0, 4.0, 8.0, 4.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${l10n.newSessionForkChipTitle} · ${l10n.newSessionForkMessages(fork.messageCount)}',
+                    style: theme.bodyMedium.override(
+                      font: GoogleFonts.sourceSans3(fontWeight: FontWeight.w500),
+                      color: theme.primaryText,
+                      fontSize: 17.0,
+                      letterSpacing: 0.0,
+                      fontWeight: FontWeight.w500,
                     ),
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.close_rounded, size: 20.0, color: theme.secondaryText),
-                    onPressed: () => Navigator.pop(sheetContext),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsetsDirectional.fromSTEB(20.0, 0.0, 20.0, 12.0),
-              child: Align(
-                alignment: AlignmentDirectional.centerStart,
-                child: Text(
-                  l10n.newSessionForkPreviewHint,
-                  style: theme.bodySmall.override(
-                    font: GoogleFonts.sourceSans3(),
-                    color: theme.secondaryText,
-                    fontSize: 12.0,
-                    letterSpacing: 0.0,
                   ),
                 ),
-              ),
+                IconButton(
+                  icon: Icon(Icons.close_rounded, size: 20.0, color: theme.secondaryText),
+                  onPressed: () => Navigator.pop(sheetContext),
+                ),
+              ],
             ),
-            Expanded(
-              child: ListView(
-                controller: scrollController,
-                padding: const EdgeInsets.fromLTRB(20.0, 0.0, 20.0, 32.0),
-                children: [
-                  SelectableText(
-                    fork.text,
-                    style: GoogleFonts.jetBrainsMono().copyWith(
-                      color: theme.primaryText,
-                      fontSize: 12.0,
-                      height: 1.5,
-                    ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20.0, 4.0, 20.0, 32.0),
+              children: [
+                SelectableText(
+                  fork.text,
+                  style: GoogleFonts.jetBrainsMono().copyWith(
+                    color: theme.primaryText,
+                    fontSize: 12.0,
+                    height: 1.5,
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     ),
   );

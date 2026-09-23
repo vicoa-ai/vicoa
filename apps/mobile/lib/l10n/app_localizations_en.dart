@@ -1412,10 +1412,6 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get newSessionForkPreviewHint =>
-      'Added above your first message. The agent is told to re-read any file it needs.';
-
-  @override
   String get newSessionForkRemove => 'Remove chat history';
 
   @override

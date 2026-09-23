@@ -419,7 +419,6 @@
   "newSessionForkFrom": "来自 {title}",
   "newSessionForkMessages": "{count, plural, other{{count} 条消息}}",
   "newSessionForkOmitted": "{count, plural, other{已省略较早的 {count} 条}}",
-  "newSessionForkPreviewHint": "这段对话会附在你的第一条消息前面，其中提示新会话需要时自行重新读取文件。",
   "newSessionForkRemove": "移除对话记录",
   "newSessionLoadingMachines": "正在加载机器…",
   "newSessionMachine": "机器",

@@ -1356,10 +1356,6 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get newSessionForkPreviewHint =>
-      '这段对话会附在你的第一条消息前面，其中提示新会话需要时自行重新读取文件。';
-
-  @override
   String get newSessionForkRemove => '移除对话记录';
 
   @override

@@ -2612,12 +2612,6 @@ abstract class AppLocalizations {
   /// **'{count, plural, =1{1 earlier message omitted} other{{count} earlier messages omitted}}'**
   String newSessionForkOmitted(int count);
 
-  /// No description provided for @newSessionForkPreviewHint.
-  ///
-  /// In en, this message translates to:
-  /// **'Added above your first message. The agent is told to re-read any file it needs.'**
-  String get newSessionForkPreviewHint;
-
   /// No description provided for @newSessionForkRemove.
   ///
   /// In en, this message translates to:

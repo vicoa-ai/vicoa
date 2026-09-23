@@ -644,7 +644,6 @@
       }
     }
   },
-  "newSessionForkPreviewHint": "Added above your first message. The agent is told to re-read any file it needs.",
   "newSessionForkRemove": "Remove chat history",
   "newSessionLoadingMachines": "Loading machines...",
   "newSessionMachine": "Machine",
