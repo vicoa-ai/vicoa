@@ -2234,9 +2234,31 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       agentType: _forkAgentId(),
     );
     if (!mounted) return;
-    await context.pushNamed(
+    final result = await context.pushNamed(
       NewSessionWidget.routeName,
       extra: <String, dynamic>{'forkContext': forkContext.toJson()},
+    );
+    // The new-session screen pops its result onto whoever opened it — here,
+    // the session that was forked. Landing back on the old conversation is
+    // never what the fork was for, so open the new one, the same way the home
+    // and task flows do. It stacks above this chat, so back returns to the
+    // point the fork was taken from (useful for a second fork).
+    if (!mounted) return;
+    final newInstanceId = (result is Map ? result['instanceId'] : null)?.toString();
+    if (result is! Map || result['status'] != 'success' || newInstanceId == null || newInstanceId.isEmpty) {
+      return;
+    }
+    await context.pushNamed(
+      AgentChatWidget.routeName,
+      pathParameters: {'instanceId': newInstanceId},
+      extra: <String, dynamic>{
+        'instanceData': result['instanceData'],
+        'hasInitialPrompt': result['hasInitialPrompt'] == true,
+        kTransitionInfoKey: const TransitionInfo(
+          hasTransition: true,
+          transitionType: PageTransitionType.rightToLeft,
+        ),
+      },
     );
   }
 
