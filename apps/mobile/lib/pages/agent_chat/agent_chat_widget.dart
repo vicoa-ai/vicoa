@@ -1917,7 +1917,6 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
   }
 
   Widget _buildMessageActionsRow(dynamic message) {
-    final sentAt = parseMessageTimestamp(message is Map ? message['created_at'] : null);
     return Container(
       margin: const EdgeInsetsDirectional.fromSTEB(0.0, 6.0, 0.0, 0.0),
       child: Row(
@@ -1941,24 +1940,6 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
               icon: Icons.alt_route_rounded,
               onTap: () async => await _forkFromMessage(message),
               tooltip: AppLocalizations.of(context).agentChatForkFromHere,
-            ),
-          ],
-          if (sentAt != null) ...[
-            const SizedBox(width: 6.0),
-            // Flexible: an old message's label widens to a full date, and at a
-            // large text scale that would otherwise run past the screen.
-            Flexible(
-              child: Text(
-                formatMessageTime(sentAt, yesterdayLabel: AppLocalizations.of(context).dateYesterday),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: FlutterFlowTheme.of(context).bodySmall.override(
-                      font: GoogleFonts.sourceSans3(),
-                      color: FlutterFlowTheme.of(context).secondaryText.withValues(alpha: 0.7),
-                      fontSize: 12.5,
-                      letterSpacing: 0.0,
-                    ),
-              ),
             ),
           ],
         ],
