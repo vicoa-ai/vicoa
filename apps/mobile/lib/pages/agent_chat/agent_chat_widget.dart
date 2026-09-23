@@ -7,6 +7,7 @@ import '/flutter_flow/custom_functions.dart' as functions;
 import '/custom_code/widgets/index.dart' as custom_widgets;
 import '/custom_code/utils/vibing_messages.dart';
 import '/custom_code/utils/fork_transcript.dart';
+import '/custom_code/utils/message_time.dart';
 import '/pages/common/session_actions.dart';
 import '/pages/message_selection_sheet/message_selection_sheet_widget.dart';
 import '/pages/share_options_sheet/share_options_sheet_widget.dart';
@@ -627,7 +628,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       return null;
     }
 
-    final messageDate = DateTime.tryParse(timestamp);
+    final messageDate = parseMessageTimestamp(timestamp);
     if (messageDate == null) {
       return null;
     }
@@ -643,7 +644,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       return formattedDate;
     }
 
-    final previousDate = DateTime.tryParse(previousTimestamp);
+    final previousDate = parseMessageTimestamp(previousTimestamp);
     if (previousDate == null) {
       return formattedDate;
     }
@@ -1916,6 +1917,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
   }
 
   Widget _buildMessageActionsRow(dynamic message) {
+    final sentAt = parseMessageTimestamp(message is Map ? message['created_at'] : null);
     return Container(
       margin: const EdgeInsetsDirectional.fromSTEB(0.0, 6.0, 0.0, 0.0),
       child: Row(
@@ -1939,6 +1941,24 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
               icon: Icons.alt_route_rounded,
               onTap: () async => await _forkFromMessage(message),
               tooltip: AppLocalizations.of(context).agentChatForkFromHere,
+            ),
+          ],
+          if (sentAt != null) ...[
+            const SizedBox(width: 6.0),
+            // Flexible: an old message's label widens to a full date, and at a
+            // large text scale that would otherwise run past the screen.
+            Flexible(
+              child: Text(
+                formatMessageTime(sentAt, yesterdayLabel: AppLocalizations.of(context).dateYesterday),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: FlutterFlowTheme.of(context).bodySmall.override(
+                      font: GoogleFonts.sourceSans3(),
+                      color: FlutterFlowTheme.of(context).secondaryText.withValues(alpha: 0.7),
+                      fontSize: 11.0,
+                      letterSpacing: 0.0,
+                    ),
+              ),
             ),
           ],
         ],
