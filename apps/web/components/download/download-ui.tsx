@@ -116,8 +116,8 @@ export function DownloadRow({
 
 /**
  * An action pill. Omit `href` to render a placeholder: it still looks and
- * tracks like a real download, but does nothing. When desktop builds ship,
- * pass the release URL and the placeholder behaviour disappears on its own.
+ * tracks like a real download, but does nothing. Every platform now resolves
+ * to a real build, so this only fires when the release feed is unreachable.
  *
  * Pass `qr` to reveal a scannable code on hover — for store links, where the
  * visitor is on a desktop but the app lives on their phone.
@@ -142,8 +142,8 @@ export function DownloadPill({
       href={href ?? '#'}
       target={external ? '_blank' : undefined}
       rel={external ? 'noopener noreferrer' : undefined}
-      title={isPlaceholder ? 'Coming soon' : undefined}
-      aria-label={isPlaceholder ? `${label} (coming soon)` : label}
+      title={isPlaceholder ? 'Temporarily unavailable' : undefined}
+      aria-label={isPlaceholder ? `${label} (temporarily unavailable)` : label}
       onClick={(e) => {
         if (isPlaceholder) e.preventDefault();
         posthog.capture('download_clicked', { target: track, placeholder: isPlaceholder });
@@ -192,15 +192,6 @@ export function DownloadPill({
         </div>
       </div>
     </div>
-  );
-}
-
-/** A muted badge for platforms whose builds aren't published yet. */
-export function ComingSoon({ label = 'Coming soon' }: { label?: string }) {
-  return (
-    <span className="inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-4 py-1.5 text-sm font-medium text-muted-foreground">
-      {label}
-    </span>
   );
 }
 

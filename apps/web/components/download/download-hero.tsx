@@ -5,6 +5,7 @@ import posthog from 'posthog-js';
 import { Download } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
+  RELEASES_URL,
   detectMacArch,
   detectPlatform,
   heroFor,
@@ -21,8 +22,8 @@ function HeroButton({ action, primary }: { action: HeroAction; primary: boolean 
       href={action.href ?? '#'}
       target={action.external ? '_blank' : undefined}
       rel={action.external ? 'noopener noreferrer' : undefined}
-      title={isPlaceholder ? 'Coming soon' : undefined}
-      aria-label={isPlaceholder ? `${action.label} (coming soon)` : action.label}
+      title={isPlaceholder ? 'Temporarily unavailable' : undefined}
+      aria-label={isPlaceholder ? `${action.label} (temporarily unavailable)` : action.label}
       onClick={(e) => {
         if (isPlaceholder) e.preventDefault();
         posthog.capture('download_clicked', { target: action.track, placeholder: isPlaceholder });
@@ -79,7 +80,13 @@ export function DownloadHero({ urls }: { urls?: DesktopUrls }) {
       </div>
 
       {hasPlaceholder && (
-        <p className="mt-4 text-xs text-muted-foreground">Linux builds are coming soon.</p>
+        <p className="mt-4 text-xs text-muted-foreground">
+          That download isn&apos;t resolving right now. Grab it from{' '}
+          <a href={RELEASES_URL} target="_blank" rel="noopener noreferrer" className="underline">
+            the latest release
+          </a>
+          .
+        </p>
       )}
     </header>
   );

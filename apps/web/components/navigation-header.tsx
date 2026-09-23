@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { Suspense } from 'react';
 import Image from 'next/image';
-import { Bell, BookOpen, Download, Menu, Newspaper } from 'lucide-react';
+import { Bell, BookOpen, Menu, Newspaper, Sparkles } from 'lucide-react';
 
 import { UnifiedUserMenu } from '@/components/unified-user-menu';
 import {
@@ -37,13 +37,13 @@ export function NavigationHeader() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-68">
               <DropdownMenuItem asChild>
-                <Link href="/download" className="cursor-pointer w-full flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-900 rounded-sm transition-colors">
+                <Link href="/features" className="cursor-pointer w-full flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-900 rounded-sm transition-colors">
                   <div className="flex items-center justify-center h-10 w-10 bg-gray-100 dark:bg-gray-800 rounded-md flex-shrink-0">
-                    <Download className="h-5 w-5" />
+                    <Sparkles className="h-5 w-5" />
                   </div>
                   <div className="flex flex-col gap-0.5">
-                    <span className="font-large">Download</span>
-                    <span className="text-xs text-muted-foreground">Get Vicoa on every platform</span>
+                    <span className="font-large">Features</span>
+                    <span className="text-xs text-muted-foreground">Everything Vicoa can do</span>
                   </div>
                 </Link>
               </DropdownMenuItem>
@@ -84,17 +84,17 @@ export function NavigationHeader() {
           </DropdownMenu>
 
           <Link
+            href="/download"
+            className="text-sm font-medium text-foreground/80 hover:text-foreground hover:bg-muted px-4 py-2 rounded-md transition-all"
+          >
+            Download
+          </Link>
+
+          <Link
             href="/pricing"
             className="text-sm font-medium text-foreground/80 hover:text-foreground hover:bg-muted px-4 py-2 rounded-md transition-all"
           >
             Pricing
-          </Link>
-
-          <Link
-            href="/features"
-            className="text-sm font-medium text-foreground/80 hover:text-foreground hover:bg-muted px-4 py-2 rounded-md transition-all"
-          >
-            Features
           </Link>
         </nav>
 
@@ -105,21 +105,6 @@ export function NavigationHeader() {
                 <Menu className="h-5 w-5" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuItem asChild>
-                  <Link href="/docs" className="cursor-pointer w-full">
-                    Docs
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/blog" className="cursor-pointer w-full">
-                    Blog
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/updates" className="cursor-pointer w-full">
-                    Updates
-                  </Link>
-                </DropdownMenuItem>
                 <DropdownMenuItem asChild>
                   <Link href="/download" className="cursor-pointer w-full">
                     Download
@@ -133,6 +118,21 @@ export function NavigationHeader() {
                 <DropdownMenuItem asChild>
                   <Link href="/features" className="cursor-pointer w-full">
                     Features
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/docs" className="cursor-pointer w-full">
+                    Docs
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/blog" className="cursor-pointer w-full">
+                    Blog
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/updates" className="cursor-pointer w-full">
+                    Updates
                   </Link>
                 </DropdownMenuItem>
               </DropdownMenuContent>

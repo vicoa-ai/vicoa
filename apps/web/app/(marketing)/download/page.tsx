@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import { DownloadHero } from '@/components/download/download-hero';
 import {
-  ComingSoon,
   CommandBlock,
   DownloadPill,
   DownloadRow,
@@ -32,6 +31,7 @@ export default async function DownloadPage() {
     macArm64: release?.macArm64Url ?? null,
     macX64: release?.macX64Url ?? null,
     winX64: release?.winX64Url ?? null,
+    linuxX64: release?.linuxX64Url ?? null,
   };
 
   return (
@@ -42,9 +42,9 @@ export default async function DownloadPage() {
         <div id="all-platforms" className="mt-12 scroll-mt-8 space-y-6">
           <DownloadSection
             title="Desktop"
-            description="Recommended — bundles everything you need"
+            description="Recommended. Bundles everything you need"
             icon="monitor"
-            footnote="macOS ships as separate Apple Silicon and Intel builds; pick the one that matches your chip. Windows is a 64-bit installer for Windows 10 and 11. Linux builds are coming soon."
+            footnote="macOS ships as separate Apple Silicon and Intel builds; pick the one that matches your chip. Windows is a 64-bit installer for Windows 10 and 11. Linux is a 64-bit AppImage: mark it executable (chmod +x) and run it, no install step."
           >
             <DownloadRow icon="apple" label="macOS">
               <DownloadPill
@@ -62,7 +62,11 @@ export default async function DownloadPage() {
               />
             </DownloadRow>
             <DownloadRow icon="linux" label="Linux">
-              <ComingSoon />
+              <DownloadPill
+                href={desktopUrls.linuxX64 ?? undefined}
+                label="AppImage"
+                track="linux-x64"
+              />
             </DownloadRow>
           </DownloadSection>
 
@@ -94,7 +98,7 @@ export default async function DownloadPage() {
 
           <DownloadSection
             title="Web"
-            description="Nothing to install — run Vicoa from any browser"
+            description="Nothing to install. Run Vicoa from any browser"
             icon="globe"
           >
             <DownloadRow icon="globe" label="Web App">

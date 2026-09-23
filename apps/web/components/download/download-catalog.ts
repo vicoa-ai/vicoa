@@ -1,15 +1,17 @@
 /**
  * Single source of truth for everything the download page offers.
  *
- * A target with no `href` renders as a placeholder (Linux desktop, for now).
- * Adding a release URL to a target is all it takes to make both the hero button
- * and the matching pill live.
+ * A target with no `href` renders as a placeholder — which now only happens
+ * when the GitHub release feed can't be reached. Adding a release URL to a
+ * target is all it takes to make both the hero button and the matching pill
+ * live.
  */
 
 export const IOS_APP_URL = 'http://apps.apple.com/sg/app/id6751626168';
 export const ANDROID_APP_URL = 'https://play.google.com/store/apps/details?id=app.vicoa';
 export const WEB_APP_URL = '/dashboard';
 export const CHANGELOG_URL = '/docs/changelog';
+export const RELEASES_URL = 'https://github.com/vicoa-ai/vicoa/releases/latest';
 export const CLI_INSTALL_COMMAND = 'npm i -g @vicoa/cli && vicoa';
 
 export const TAGLINE = 'Orchestrate AI agents in parallel and get 10x more done';
@@ -22,11 +24,12 @@ export type DesktopUrls = {
   macArm64: string | null;
   macX64: string | null;
   winX64: string | null;
+  linuxX64: string | null;
 };
 
 export type HeroAction = {
   label: string;
-  /** Omit for a placeholder — the desktop builds aren't out yet. */
+  /** Omit for a placeholder — the release feed didn't resolve a URL. */
   href?: string;
   external?: boolean;
   track: string;
@@ -76,7 +79,13 @@ export function heroFor(
     case 'linux':
       return {
         osLabel: 'Linux',
-        actions: [{ label: 'Download AppImage', track: 'hero-linux-appimage' }],
+        actions: [
+          {
+            label: 'Download AppImage',
+            href: urls?.linuxX64 ?? undefined,
+            track: 'hero-linux-appimage',
+          },
+        ],
       };
     case 'ios':
       return {
