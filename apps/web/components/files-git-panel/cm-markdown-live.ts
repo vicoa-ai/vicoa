@@ -1,6 +1,6 @@
 import { syntaxTree } from '@codemirror/language';
 import { StateField } from '@codemirror/state';
-import type { EditorState, Extension, Range } from '@codemirror/state';
+import type { EditorState, Extension, Range, Text } from '@codemirror/state';
 import {
   Decoration,
   type DecorationSet,
@@ -40,6 +40,38 @@ function selectionTouches(state: EditorState, from: number, to: number): boolean
     if (r.from <= to && r.to >= from) return true;
   }
   return false;
+}
+
+/** A front-matter block longer than this is not front matter — and the probe
+ *  runs on every decoration build, so it needs a bound. */
+const FRONT_MATTER_MAX_LINES = 200;
+
+/** `---` alone on a line opens a front-matter block; either fence closes it. */
+const FENCE_OPEN = /^---[ \t]*$/;
+const FENCE_CLOSE = /^(?:---|\.\.\.)[ \t]*$/;
+
+/**
+ * The `---` … `---` block at the very top of a file, or null.
+ *
+ * Read from the text rather than the syntax tree, because the markdown parser
+ * has no concept of front matter: it sees a thematic break, and then whatever
+ * the YAML happens to look like — `title: x\n---` parses as a *setext heading*
+ * whose `---` is a header mark, so the live layer used to render the opening
+ * fence as a divider and hide the closing one, leaving the user staring at an
+ * unterminated block. A blank line inside the YAML changes that shape again.
+ *
+ * Mounting `yamlFrontmatter` from @codemirror/lang-yaml would parse it properly
+ * but swallows the entire file as YAML while the block is still unterminated —
+ * i.e. every moment between typing the opening `---` and the closing one.
+ */
+export function frontMatterRange(doc: Text): { from: number; to: number } | null {
+  if (!FENCE_OPEN.test(doc.line(1).text)) return null;
+  const last = Math.min(doc.lines, FRONT_MATTER_MAX_LINES);
+  for (let i = 2; i <= last; i++) {
+    const line = doc.line(i);
+    if (FENCE_CLOSE.test(line.text)) return { from: 0, to: line.to };
+  }
+  return null;
 }
 
 /** The rendered divider a `---`/`***` line collapses to when not being edited. */
@@ -87,12 +119,36 @@ export function computeMarkdownDecorations(
 ): DecorationSet {
   const deco: Range<Decoration>[] = [];
   const tree = syntaxTree(state);
+  // Metadata, not content: the block is left as source (nothing hidden inside
+  // it) and styled apart, and the two branches below step around it.
+  const frontMatter = frontMatterRange(state.doc);
+  /** Wholly inside the front-matter block (a construct crossing out of it is
+   *  left to the normal branches). */
+  const inFrontMatter = (from: number, to: number): boolean =>
+    frontMatter !== null && from >= frontMatter.from && to <= frontMatter.to;
+
+  if (frontMatter) {
+    for (const { from, to } of ranges) {
+      if (from > frontMatter.to) continue;
+      let pos = Math.max(from, frontMatter.from);
+      while (pos <= Math.min(to, frontMatter.to)) {
+        const line = state.doc.lineAt(pos);
+        deco.push(Decoration.line({ class: 'cm-md-frontmatter' }).range(line.from));
+        pos = line.to + 1;
+      }
+    }
+  }
 
   for (const { from, to } of ranges) {
     tree.iterate({
       from,
       to,
       enter: (node) => {
+        // Front matter is metadata, kept exactly as written — whatever the
+        // markdown parser made of it. To it, the fences are thematic breaks or
+        // a setext heading's marks, and a YAML list `[a, b]` is a link whose
+        // brackets it would hide.
+        if (inFrontMatter(node.from, node.to)) return false;
         const name = node.name;
 
         // Headings: size the whole line via a line decoration; the `#` run is
@@ -232,6 +288,24 @@ export function parseTable(src: string): ParsedTable | null {
   return { header, align, rows };
 }
 
+/** How many parsed tables to remember. A plain bound, cleared wholesale rather
+ *  than evicted one by one — the set in play is the tables of one file. */
+const PARSED_TABLE_CACHE_MAX = 64;
+const parsedTables = new Map<string, ParsedTable | null>();
+
+/** {@link parseTable}, memoised on the source text. The field below rebuilds on
+ *  every keystroke and every cursor move, and re-splitting each table in the
+ *  file every time is the other half of that cost — as is the widget parsing
+ *  the same source again in `toDOM`. */
+function parseTableCached(src: string): ParsedTable | null {
+  const cached = parsedTables.get(src);
+  if (cached !== undefined) return cached;
+  const parsed = parseTable(src);
+  if (parsedTables.size >= PARSED_TABLE_CACHE_MAX) parsedTables.clear();
+  parsedTables.set(src, parsed);
+  return parsed;
+}
+
 /** The rendered grid a GFM table collapses to when the cursor isn't inside it. */
 class TableWidget extends WidgetType {
   constructor(readonly src: string) {
@@ -243,7 +317,7 @@ class TableWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement('div');
     wrap.className = 'cm-md-table-wrap';
-    const parsed = parseTable(this.src);
+    const parsed = parseTableCached(this.src);
     if (!parsed) {
       wrap.textContent = this.src;
       return wrap;
@@ -294,21 +368,34 @@ class TableWidget extends WidgetType {
   }
 }
 
-function buildTableDecorations(state: EditorState): DecorationSet {
+/** The only block nodes a GFM table can sit inside — everything else is skipped
+ *  without descending. The walk used to enter *every* node in the document,
+ *  down to each inline mark, and it reruns on every keystroke and cursor move. */
+const TABLE_CONTAINERS = new Set([
+  'Document',
+  'Blockquote',
+  'BulletList',
+  'OrderedList',
+  'ListItem',
+]);
+
+/** The block-level table decorations for `state`. Exported for tests; the field
+ *  below is what the editor actually uses. */
+export function buildTableDecorations(state: EditorState): DecorationSet {
   const deco: Range<Decoration>[] = [];
-  const tree = syntaxTree(state);
-  tree.iterate({
+  syntaxTree(state).iterate({
     enter: (node) => {
-      if (node.name !== 'Table') return;
+      if (node.name !== 'Table') return TABLE_CONTAINERS.has(node.name);
       const first = state.doc.lineAt(node.from);
       const last = state.doc.lineAt(node.to);
       // Cursor/selection inside → leave the raw markdown visible for editing.
-      if (selectionTouches(state, first.from, last.to)) return;
+      if (selectionTouches(state, first.from, last.to)) return false;
       const src = state.doc.sliceString(first.from, last.to);
-      if (!parseTable(src)) return;
+      if (!parseTableCached(src)) return false;
       deco.push(
         Decoration.replace({ widget: new TableWidget(src), block: true }).range(first.from, last.to),
       );
+      return false; // a rendered table has nothing inside it to decorate
     },
   });
   return Decoration.set(deco, true);
@@ -355,6 +442,23 @@ const markdownLiveTheme = EditorView.theme({
     fontSize: '0.9em',
   },
   '.cm-md-link': { color: 'hsl(var(--info))', textDecoration: 'underline', textUnderlineOffset: '2px' },
+  // Front matter reads as a quiet metadata header: real monospace, dimmed, on a
+  // faint block. `span` overrides the syntax theme, which colours the YAML as
+  // whatever markdown construct it mistook it for.
+  '.cm-md-frontmatter': {
+    fontFamily: 'var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: '0.85em',
+    backgroundColor: 'hsl(var(--foreground) / 0.04)',
+    color: 'hsl(var(--foreground) / 0.6)',
+  },
+  // The light-theme highlight style underlines headings, and the parser reads
+  // this block as one — hence `textDecoration` in the reset.
+  '.cm-md-frontmatter span': {
+    color: 'inherit',
+    fontWeight: 'inherit',
+    fontStyle: 'inherit',
+    textDecoration: 'none',
+  },
   '.cm-md-quote': {
     borderLeft: '3px solid hsl(var(--foreground) / 0.2)',
     paddingLeft: '0.75em',
