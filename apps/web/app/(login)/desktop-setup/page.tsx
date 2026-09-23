@@ -50,7 +50,7 @@ export default function DesktopSetupPage() {
     <div className="flex h-screen flex-col bg-background">
       {/* Frameless-window drag strip (traffic lights float over it). */}
       <div style={DRAG_REGION} className="h-11 shrink-0" />
-      <div className="flex flex-1 flex-col overflow-y-auto">
+      <div className="custom-scrollbar flex flex-1 flex-col overflow-y-auto">
         {step === 'scan' ? (
           <AgentScanStep onContinue={onScanContinue} />
         ) : (

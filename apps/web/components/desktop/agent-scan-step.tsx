@@ -65,7 +65,7 @@ export function headingFor(
   if (phase === 'scanning') {
     return {
       title: 'Searching for AI Agents',
-      body: 'Vicoa runs with AI agents you already have — like Claude Code, Codex, OpenCode, and more. Looking for yours now.',
+      body: 'Vicoa runs with AI agents you already have, like Claude Code, Codex, OpenCode, and more. Looking for yours now.',
     };
   }
 
@@ -325,7 +325,7 @@ export function AgentScanStep({
           keeps a part-scrolled row reading as "more below" rather than as a
           clipped, broken card. */}
       <div className="relative flex min-h-0 flex-col">
-        <div className="max-h-[45vh] flex-1 overflow-y-auto rounded-xl border border-border/60 bg-foreground/[0.03]">
+        <div className="custom-scrollbar max-h-[45vh] flex-1 overflow-y-auto rounded-xl border border-border/60 bg-foreground/[0.03]">
           {phase === 'scanning' &&
             Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} isFirst={i === 0} />)}
 
@@ -345,8 +345,8 @@ export function AgentScanStep({
       {phase === 'found' && installedCount === 0 && recommended && (
         <div className="rounded-xl border border-primary/20 bg-primary/[0.04] p-4">
           <p className="text-[13px] text-foreground">
-            Not sure which to pick? OpenCode is the quickest — paste this in your terminal and
-            there&apos;s nothing else to set up.
+            Not sure which to pick? OpenCode is free and the quickest to set up. Paste this in
+            your terminal and there&apos;s nothing else to do.
           </p>
           <div className="mt-2.5">
             <CopyCommand command={recommended.command} />

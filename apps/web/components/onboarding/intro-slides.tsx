@@ -1,6 +1,6 @@
 'use client';
 
-import { Monitor } from 'lucide-react';
+import { MoreHorizontal, Monitor } from 'lucide-react';
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
 
@@ -47,15 +47,27 @@ export interface Slide {
 /** Agent marks for the logo strip on the "runs every agent" slide. Icon-only
     SVGs (not wordmarks) so they line up as even chips, each on a light chip so
     the dark marks (OpenAI, Cursor, Copilot, OpenCode) stay visible against the
-    dark intro background. */
-const AGENT_LOGOS: { src: string; alt: string }[] = [
+    dark intro background. The `currentColor` glyphs (Antigravity, Hermes, Pi,
+    Oh My Pi, OpenRouter) resolve to black behind an `<img>`, which is what the
+    light chip wants anyway.
+
+    These are the agents Vicoa drives itself; the catalog it launches over ACP
+    is far too long for a strip, so the trailing ellipsis chip stands in for the
+    rest. Keep this ONE row — `intro-slides.test.ts` holds the chip budget that
+    fits the 680px web-modal card, and a second row costs the hero screenshot
+    enough height to overlap the slide title. */
+export const AGENT_LOGOS: { src: string; alt: string }[] = [
   { src: '/images/integrations/claude-color.svg', alt: 'Claude Code' },
   { src: '/images/integrations/openai.svg', alt: 'Codex' },
   { src: '/images/integrations/gemini-color.svg', alt: 'Gemini' },
+  { src: '/images/integrations/antigravity.svg', alt: 'Antigravity' },
   { src: '/images/integrations/opencode-dark.svg', alt: 'OpenCode' },
   { src: '/images/integrations/cursor.svg', alt: 'Cursor' },
   { src: '/images/integrations/githubcopilot.svg', alt: 'GitHub Copilot' },
   { src: '/images/integrations/kimi-dark.svg', alt: 'Kimi' },
+  { src: '/images/integrations/hermes.svg', alt: 'Hermes' },
+  { src: '/images/integrations/pi.svg', alt: 'Pi' },
+  { src: '/images/integrations/omp.svg', alt: 'Oh My Pi' },
   { src: '/images/integrations/openrouter.svg', alt: 'OpenRouter' },
 ];
 
@@ -73,7 +85,7 @@ export const INTRO_SLIDES: Slide[] = [
     title: 'Start on desktop, pick up on mobile',
     subtitle: 'Agent team on any device',
     description:
-      'Orchestrate Claude Code, Codex, and many more AI agents side by side on your own machine, then start a task on your desktop and pick it up on your phone. Every message and file change synced in real time.',
+      'Orchestrate Claude Code, Codex, and 40+ more coding agents side by side on your own machine, then start a task on your desktop and pick it up on your phone. Every message and file change synced in real time.',
     hasImage: true,
     imageSrc: '/images/hero.webp',
     imageWidth: 4116,
@@ -349,6 +361,14 @@ export function SlideView({
               <img src={a.src} alt={a.alt} className="h-5 w-5 object-contain" />
             </div>
           ))}
+          {/* Not a "+N": the catalog moves, and a stale count on the first
+              screen of onboarding is worse than no count. */}
+          <div
+            title="And many more coding agents"
+            className="flex h-9 w-9 items-center justify-center rounded-lg bg-white shadow-sm ring-1 ring-black/5"
+          >
+            <MoreHorizontal className="h-5 w-5 text-neutral-500" />
+          </div>
         </div>
       )}
 
