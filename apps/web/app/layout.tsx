@@ -230,9 +230,11 @@ export default function RootLayout({
                 also fires on the auth screens under login-required gating. */}
             {IS_DESKTOP ? <DesktopAuthHandoff /> : null}
             <DesktopAuthGate>{children}</DesktopAuthGate>
-            {/* Windows custom title bar controls (min/max/close). Mounted last in
-                DOM order so Electron's drag hit-test leaves them clickable over the
-                surrounding drag strips; renders nothing on macOS/web. */}
+            {/* Custom title bar controls (min/max/close) for frameless windows —
+                Windows, and Linux unless the user kept their desktop environment's
+                title bar. Mounted last in DOM order so Electron's drag hit-test
+                leaves them clickable over the surrounding drag strips; renders
+                nothing on macOS/web. */}
             {IS_DESKTOP ? <DesktopWindowControls /> : null}
           </SWRConfig>
         </ThemeProvider>

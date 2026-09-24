@@ -59,3 +59,13 @@ export function registerSettingsIpc(): void {
     persist();
   });
 }
+
+/**
+ * Main-process read of a persisted preference. The renderer has the injected
+ * snapshot (`__VICOA_SETTINGS__`); this is for the handful of settings the
+ * shell itself must honour at window-creation time (e.g. the Linux title bar).
+ */
+export function getSetting<T = unknown>(key: string): T | undefined {
+  const value = loadSettings()[key];
+  return value === undefined ? undefined : (value as T);
+}

@@ -4,7 +4,7 @@
  * The Tray instance is held at module scope — Electron GC-collects it (and
  * the icon vanishes) if no live reference is kept. (Orca pattern.)
  */
-import { Menu, nativeImage, Tray } from 'electron';
+import { Menu, nativeImage, Tray, type NativeImage } from 'electron';
 import * as path from 'node:path';
 import type { DaemonState } from './daemon-manager';
 
@@ -72,16 +72,30 @@ function rebuildMenu(): void {
   tray.setToolTip(`Vicoa — ${daemonStatusLabel(lastState)}`);
 }
 
-/** Create the tray (idempotent). The `trayTemplate.png` filename suffix makes macOS treat it as a template image. */
+/**
+ * Tray icon. macOS/Windows use the 16px monochrome glyph — the `Template`
+ * filename suffix is what makes macOS tint it for a light or dark menu bar.
+ * Linux panels have no template-image concept, so that same black-on-transparent
+ * glyph is all but invisible on the dark panel most desktops ship; use the app
+ * icon instead, scaled to the 22px an AppIndicator/StatusNotifier panel expects.
+ */
+function trayIcon(): NativeImage {
+  const file = process.platform === 'linux' ? 'icon-linux.png' : 'trayTemplate.png';
+  const icon = nativeImage.createFromPath(path.join(__dirname, '..', 'resources', file));
+  if (icon.isEmpty()) {
+    return nativeImage.createEmpty();
+  }
+  return process.platform === 'linux' ? icon.resize({ width: 22, height: 22 }) : icon;
+}
+
+/** Create the tray (idempotent). */
 export function createTray(cbs: TrayCallbacks): Tray {
   callbacks = cbs;
   if (tray !== null && !tray.isDestroyed()) {
     rebuildMenu();
     return tray;
   }
-  const iconPath = path.join(__dirname, '..', 'resources', 'trayTemplate.png');
-  const icon = nativeImage.createFromPath(iconPath);
-  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
+  tray = new Tray(trayIcon());
   rebuildMenu();
   return tray;
 }

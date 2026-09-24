@@ -23,7 +23,8 @@ export const NO_DRAG: CSSProperties = { WebkitAppRegion: 'no-drag' };
 
 /**
  * Left inset (px) reserved for the macOS traffic-light controls, which the OS
- * paints over the top-left of the window at roughly {x:16, y:16}. The desktop
- * build is macOS-first today; on other platforms this is harmless padding.
+ * paints over the top-left of the window at roughly {x:16, y:16}. Used only by
+ * the 'mac' title bar — Windows/Linux put their own logo + menu button in that
+ * slot instead (see components/desktop/window-chrome.tsx).
  */
 export const TRAFFIC_LIGHTS_INSET = 70;

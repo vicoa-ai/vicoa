@@ -164,10 +164,26 @@ then reloads the window — the injected config now reports `mode: 'cloud'`.
 
 ## Behavior notes
 
-- **macOS titlebar:** the window uses `titleBarStyle: 'hiddenInset'` with the
-  traffic lights repositioned to `{ x: 16, y: 16 }` (macOS only; Windows/Linux
-  keep the default OS frame). The frame is NOT removed — the renderer draws its
-  own header and must reserve top-left space for the lights.
+- **Title bar:** one of three shapes, resolved once per run by `windowChrome()`
+  (`src/window.ts`) and handed to the renderer through the preload
+  (`__VICOA_WINDOW_CHROME__`), which draws the matching chrome:
+  - `mac` — `titleBarStyle: 'hiddenInset'`, traffic lights repositioned to
+    `{ x: 16, y: 16 }`. The frame is NOT removed; the renderer draws its own
+    header and reserves top-left space for the lights.
+  - `custom` — frameless (Windows `titleBarStyle: 'hidden'`, elsewhere
+    `frame: false`) with `autoHideMenuBar`, so the renderer draws the whole
+    title bar: a logo + `···` application-menu button on the left of each
+    titlebar strip and a min/max/close cluster fixed at the top-right. Windows
+    always; the **Linux default** (as VS Code and Slack ship there, and as Orca
+    does — `frame: false`, controls on the right). Right-hand controls match
+    GNOME/KDE/Xfce/Cinnamon/MATE; left-hand desktops (elementary OS, a
+    hand-edited `button-layout`) are served by `system` rather than by
+    mirroring the whole title bar.
+  - `system` — the desktop environment's own decorations. Linux only, via
+    Settings → Appearance → Window → Title bar (`desktop-title-bar` in
+    `settings.json`) or `VICOA_TITLE_BAR=system`; the menu bar stays auto-hidden
+    (Alt reveals it) and the renderer draws no window controls. The frame is
+    fixed at window creation, so the choice applies on the next launch.
 - **Daemon PATH (the "not responding" fix):** launched from Finder, Electron
   inherits launchd's minimal PATH, so the daemon couldn't find the
   user-installed `claude` / `codex` binary and headless sessions never

@@ -39,7 +39,7 @@ import {
 } from 'lucide-react';
 import { getDesktopConfig } from '@/lib/runtime-config';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
-import { useDesktopWindows } from '@/components/desktop/window-chrome';
+import { useDesktopWindowControls, useDesktopWindows } from '@/components/desktop/window-chrome';
 import { comboInline, matchesShortcut } from '@/lib/desktop-shortcuts';
 import {
   EMPTY_SESSION_TERMINALS,
@@ -187,6 +187,10 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
   // Windows — no desktop platform signal — so remote terminals to a Mac/Linux
   // machine are unaffected).
   const isWindows = useDesktopWindows();
+  // Separate question from the ConPTY gate above: does THIS window carry our own
+  // min/max/close cluster (frameless — Windows, and Linux by default)? It lands
+  // over this panel while the panel is the right rail.
+  const hasWindowControls = useDesktopWindowControls();
   // Terminals are offered on desktop (local 127.0.0.1 socket for this machine,
   // relay for another) AND in the plain web dashboard (always via the relay),
   // whenever the session has a machine to reach. An old daemon without the
@@ -1944,15 +1948,16 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
           />
         </div>
       )}
-      {/* Windows draws its min/max/close cluster fixed at the window's
+      {/* A frameless window's min/max/close cluster is fixed at the window's
           top-right, which lands over this panel while it's the right rail. Give
           the controls their own drag strip ABOVE the tabs (instead of reserving
           width beside them) so the tab row gets the panel's full width below
-          the buttons and has room to grow as tabs are added. macOS/web have no
-          top-right controls, so they skip the strip and keep the tabs flush at
-          the top edge. Skipped in the center overlay — there the session header
-          owns the top edge and reserves the controls itself. */}
-      {isWindows && !centerOverlay && (
+          the buttons and has room to grow as tabs are added. macOS/web (and a
+          system-decorated Linux window) have no such controls, so they skip the
+          strip and keep the tabs flush at the top edge. Skipped in the center
+          overlay — there the session header owns the top edge and reserves the
+          controls itself. */}
+      {hasWindowControls && !centerOverlay && (
         <div style={DRAG_REGION} className="h-11 shrink-0" aria-hidden />
       )}
       {/* The panel spans the full window height, so its header sits at the top

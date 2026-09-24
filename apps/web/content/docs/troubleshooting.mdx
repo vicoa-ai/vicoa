@@ -498,6 +498,18 @@ After upgrading, restart Vicoa:
 vicoa
 ```
 
+### Desktop app: the window can't be moved or resized on Linux
+
+**Problem**: On Linux the desktop app draws its own title bar — the Vicoa header *is* the title bar, with the window buttons at its top-right. A few window managers (and some remote-desktop sessions) don't cooperate with that, leaving the window hard to move, resize, or snap.
+
+**Solution**: Switch to your desktop environment's own title bar in **Settings → Appearance → Window → Title bar → System**, then restart Vicoa. If you can't reach Settings, start the app once with the title bar forced:
+
+```bash
+VICOA_TITLE_BAR=system ./Vicoa-*.AppImage
+```
+
+The application menu (Edit / View / Window / Help) is hidden in both modes — press **Alt** to reveal it, or use the **···** button next to the Vicoa logo.
+
 ## Share Link Issues
 
 ### A share link says "This link isn't available"

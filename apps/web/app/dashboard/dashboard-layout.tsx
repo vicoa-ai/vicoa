@@ -60,7 +60,7 @@ import { PluginSidebarItems } from '@/components/plugins/plugin-sidebar-items';
 import { PluginCatalogSync } from '@/components/plugins/plugin-catalog-sync';
 import { PluginTrustGate } from '@/components/plugins/plugin-trust-gate';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
-import { DesktopTitlebarLead, useDesktopWindows } from '@/components/desktop/window-chrome';
+import { DesktopTitlebarLead, useDesktopWindowControls } from '@/components/desktop/window-chrome';
 import type { AgentInstanceResponse } from '@/lib/backend-api';
 
 const fetcher = (url: string) => fetch(url).then((res) => {
@@ -805,11 +805,12 @@ function DashboardShell({
     shellPathname === '/dashboard/tasks' ||
     shellPathname === '/dashboard/skills' ||
     shellPathname === '/dashboard/agents';
-  // Windows draws its own min/max/close cluster fixed at the window's top-right
-  // (DesktopWindowControls). Instance pages clear it via the chat/files headers;
-  // every other page needs a reserved titlebar-height strip so its content isn't
-  // overlapped. false on macOS/web and until mount (see useDesktopWindows).
-  const isWindows = useDesktopWindows();
+  // Frameless windows (Windows, and Linux unless the user kept their desktop
+  // environment's title bar) draw their own min/max/close cluster fixed at the
+  // top-right (DesktopWindowControls). Instance pages clear it via the chat/files
+  // headers; every other page needs a reserved titlebar-height strip so its
+  // content isn't overlapped. false on macOS/web and until mount.
+  const hasWindowControls = useDesktopWindowControls();
 
   // Remember the last non-settings dashboard path so the settings sidebar's
   // "Back to app" returns exactly where the user left off.
@@ -897,29 +898,30 @@ function DashboardShell({
 
         <div className={cn('flex-1 flex flex-col min-w-0 xl:ml-0 overflow-hidden', IS_DESKTOP && 'relative bg-surface-canvas')}>
           {!isInstancePage && !IS_DESKTOP && <div className="xl:hidden h-16"></div>}
-          {/* Windows: every non-instance page reserves a real titlebar-height
+          {/* Frameless: every non-instance page reserves a real titlebar-height
               strip (in flow, so content sits below it) so nothing is overlapped
               by the fixed min/max/close controls at the top-right. It's also a
               drag region, so it doubles as the draggable top edge. */}
-          {IS_DESKTOP && isWindows && !isInstancePage && (
+          {IS_DESKTOP && hasWindowControls && !isInstancePage && (
             <div style={DRAG_REGION} className="h-11 shrink-0" aria-hidden />
           )}
           {/* On the chat page the header hosts the collapsed control inline (so
               the title flows after Vicoa + the panel icon); elsewhere there's no
-              header, so float the overlay control instead. On Windows it overlays
-              the reserved strip above. */}
+              header, so float the overlay control instead. With our own window
+              controls it overlays the reserved strip above. */}
           {IS_DESKTOP && isDesktopSidebarCollapsed && !hasOwnHeaderChrome && !isSettingsPage && (
             <DesktopCollapsedTitlebar onExpand={() => setIsDesktopSidebarCollapsed(false)} />
           )}
           {IS_DESKTOP && <DesktopConnectionBanner />}
-          {/* macOS/web: no top-right controls to clear (traffic lights sit over
-              the sidebar), so pages without their own titlebar (dashboard home,
+          {/* No top-right controls to clear (macOS traffic lights sit over the
+              sidebar; a system-decorated Linux window has its buttons outside
+              the page), so pages without their own titlebar (dashboard home,
               kanban) just need a draggable top edge. Overlay (no layout shift) —
               nothing interactive lives in the top strip of these pages. Excluded
               for hasOwnHeaderChrome pages: their header is the drag region, and
-              an overlay on top would swallow its controls' clicks. Windows uses
-              the reserved in-flow strip above instead. */}
-          {IS_DESKTOP && !isWindows && !hasOwnHeaderChrome && !isSettingsPage && !isDesktopSidebarCollapsed && (
+              an overlay on top would swallow its controls' clicks. Frameless
+              windows use the reserved in-flow strip above instead. */}
+          {IS_DESKTOP && !hasWindowControls && !hasOwnHeaderChrome && !isSettingsPage && !isDesktopSidebarCollapsed && (
             <div style={DRAG_REGION} className="absolute inset-x-0 top-0 z-10 h-11" aria-hidden />
           )}
           {IS_DESKTOP && <DesktopNotificationNudge />}

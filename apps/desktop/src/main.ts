@@ -46,7 +46,7 @@ import {
 import { DaemonManager, daemonCommandAvailable, type DaemonState } from './daemon-manager';
 import { resolveDaemonPath } from './resolve-path';
 import { startRendererServer, type RendererServer } from './renderer-server';
-import { createMainWindow } from './window';
+import { createMainWindow, windowChrome } from './window';
 import { createTray, destroyTray, updateTrayDaemonState } from './tray';
 import { registerSettingsIpc } from './settings';
 import { setupAutoUpdater } from './updater';
@@ -854,6 +854,14 @@ function registerIpcHandlers(): void {
   ipcMain.on('vicoa:menu-popup', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     Menu.getApplicationMenu()?.popup(win !== null ? { window: win } : undefined);
+  });
+
+  // Which title bar the renderer must draw. The frame is decided at window
+  // creation (window.ts windowChrome()), so the renderer has to be told rather
+  // than infer it from the platform — on Linux the user can pick either one.
+  // Synchronous: the preload reads it once, at document load.
+  ipcMain.on('vicoa:get-window-chrome', (event) => {
+    event.returnValue = windowChrome();
   });
 
   ipcMain.handle('vicoa:set-api-key', async (_event, key: unknown) => {

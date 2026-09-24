@@ -39,6 +39,22 @@ contextBridge.exposeInMainWorld('__VICOA_DESKTOP__', config);
 // is available even in a sandboxed preload.
 contextBridge.exposeInMainWorld('__VICOA_PLATFORM__', process.platform);
 
+// Which title bar this window was created with: 'mac' (native frame + traffic
+// lights), 'custom' (frameless — the renderer draws min/max/close) or 'system'
+// (the desktop environment's decorations). The renderer draws its chrome from
+// THIS, not from the platform: on Linux the user chooses between a Vicoa-drawn
+// title bar and their DE's. See window.ts windowChrome().
+contextBridge.exposeInMainWorld(
+  '__VICOA_WINDOW_CHROME__',
+  (() => {
+    try {
+      return ipcRenderer.sendSync('vicoa:get-window-chrome') as string;
+    } catch {
+      return process.platform === 'darwin' ? 'mac' : 'custom';
+    }
+  })(),
+);
+
 // User preferences snapshot (userData/settings.json). Read synchronously at
 // preload init — same pattern as the config above — so renderer code can
 // read prefs without an async round trip. Writes go through the bridge.

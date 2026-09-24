@@ -23,7 +23,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { getDesktopConfig, type DesktopRuntimeConfig } from '@/lib/runtime-config';
+import {
+  getDesktopConfig,
+  getDesktopPlatform,
+  getDesktopWindowChrome,
+  type DesktopRuntimeConfig,
+} from '@/lib/runtime-config';
+import { getPref, setPref } from '@/lib/desktop-prefs';
 import { ThemeSelect } from '@/components/plugins/theme-select';
 import {
   checkForUpdates,
@@ -396,8 +402,9 @@ const NOTIFICATION_MODE_LABELS: Record<NotificationMode, string> = {
   always: 'Always',
 };
 
-/** Appearance tab: theme selection (base modes + plugin themes). Its own tab so
- *  it has room to grow (e.g. accent tint, density) beyond the single Theme row. */
+/** Appearance tab: theme selection (base modes + plugin themes) and, on Linux,
+ *  the title-bar choice. Its own tab so it has room to grow (e.g. accent tint,
+ *  density) beyond the Theme row. */
 function AppearanceSection() {
   return (
     <section>
@@ -413,7 +420,81 @@ function AppearanceSection() {
           </SettingsRow>
         </SettingsCard>
       </div>
+      <TitleBarSettings />
     </section>
+  );
+}
+
+/**
+ * Preference key, mirrored in the shell (electron/src/window.ts
+ * TITLE_BAR_SETTING) — it reads the same settings.json at window creation.
+ */
+const TITLE_BAR_PREF = 'desktop-title-bar';
+
+/**
+ * Linux-only: who draws the window's title bar. Vicoa's own (the default:
+ * frameless, everything in one header — how VS Code and Slack ship on Linux) or
+ * the desktop environment's, for window managers where a client-side title bar
+ * misbehaves. macOS and Windows have one answer each, so the whole block is
+ * hidden there rather than shown disabled.
+ *
+ * The frame is fixed when the window is created, so a change lands on the next
+ * launch; the hint says so, and only while the choice differs from the running
+ * window.
+ */
+function TitleBarSettings() {
+  const [isLinux, setIsLinux] = useState(false);
+  const [choice, setChoice] = useState<'custom' | 'system'>('custom');
+  const [live, setLive] = useState<'mac' | 'custom' | 'system'>('custom');
+
+  // Platform + preferences are preload-injected: read post-mount so the SSR
+  // pass stays consistent (same pattern as GeneralSection).
+  useEffect(() => {
+    setIsLinux(getDesktopPlatform() === 'linux');
+    setLive(getDesktopWindowChrome());
+    setChoice(getPref<string>(TITLE_BAR_PREF) === 'system' ? 'system' : 'custom');
+  }, []);
+
+  if (!isLinux) return null;
+
+  return (
+    <div className="mt-8">
+      <h2 className="mb-3 text-sm text-foreground/90">Window</h2>
+      <SettingsCard>
+        <SettingsRow
+          title="Title bar"
+          description={
+            choice === live
+              ? 'Vicoa draws its own title bar, or your desktop environment does'
+              : 'Restart Vicoa to apply'
+          }
+        >
+          <Select
+            value={choice}
+            onValueChange={(value) => {
+              const next = value === 'system' ? 'system' : 'custom';
+              setChoice(next);
+              setPref(TITLE_BAR_PREF, next);
+            }}
+          >
+            <SelectTrigger
+              aria-label="Title bar"
+              className="h-7 w-auto cursor-pointer gap-1.5 border-border/70 bg-foreground/[0.06] px-2.5 py-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end" className="bg-menu font-mono">
+              <SelectItem value="custom" className="text-xs">
+                Vicoa
+              </SelectItem>
+              <SelectItem value="system" className="text-xs">
+                System
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+      </SettingsCard>
+    </div>
   );
 }
 

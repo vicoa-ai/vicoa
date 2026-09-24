@@ -65,6 +65,8 @@ declare global {
     __VICOA_DESKTOP__?: DesktopRuntimeConfig;
     /** Electron `process.platform` ('darwin' | 'win32' | 'linux' | …); absent on web. */
     __VICOA_PLATFORM__?: string;
+    /** Title bar the shell created this window with; absent on plain web. */
+    __VICOA_WINDOW_CHROME__?: string;
     /** Window-control bridge (Windows custom title bar); absent on macOS/web. */
     vicoaDesktopWindow?: VicoaDesktopWindow;
     /** File-path bridge (webUtils.getPathForFile); absent on plain web. */
@@ -127,6 +129,29 @@ export function getCloudWsUrl(): string {
 export function getDesktopPlatform(): string | null {
   if (typeof window === 'undefined') return null;
   return window.__VICOA_PLATFORM__ ?? null;
+}
+
+/**
+ * Which title bar the shell gave this window:
+ *
+ *  - 'mac'    — native frame, OS traffic lights floating over our header.
+ *  - 'custom' — frameless: we draw the whole title bar, min/max/close included.
+ *  - 'system' — the desktop environment's own decorations (Linux opt-out); we
+ *               draw no window controls, only the menu button.
+ *
+ * Injected by the preload from the value the window was actually created with
+ * (electron/src/window.ts), because on Linux it is a user choice — inferring it
+ * from the platform would draw controls onto a natively decorated window. Falls
+ * back to the platform default when the preload is older than this renderer, and
+ * to 'mac' on plain web / SSR (nothing here renders in a browser anyway).
+ */
+export function getDesktopWindowChrome(): 'mac' | 'custom' | 'system' {
+  if (typeof window === 'undefined') return 'mac';
+  const injected = window.__VICOA_WINDOW_CHROME__;
+  if (injected === 'mac' || injected === 'custom' || injected === 'system') return injected;
+  const platform = getDesktopPlatform();
+  if (platform === null || platform === 'darwin') return 'mac';
+  return 'custom';
 }
 
 /** The Windows window-control bridge, or `null` when unavailable (macOS/web/SSR). */

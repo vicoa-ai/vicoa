@@ -3,10 +3,97 @@
  * display validation, debounced bounds writes, external-link handling.
  * Patterns adapted from Orca's createMainWindow.ts (MIT, Lovecast Inc.).
  */
-import { app, BrowserWindow, screen, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  nativeImage,
+  screen,
+  shell,
+  type BrowserWindowConstructorOptions,
+  type NativeImage,
+} from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { readShellState, updateShellState, type PersistedWindowState } from './shell-state';
+import { getSetting } from './settings';
+
+/** Preference key, shared with the renderer's settings snapshot. */
+export const TITLE_BAR_SETTING = 'desktop-title-bar';
+
+/**
+ * How this process draws the window frame:
+ *
+ *  - 'mac'    — native frame with a hidden-inset title bar; the OS traffic
+ *               lights float over the renderer's header.
+ *  - 'custom' — frameless: the renderer draws the whole title bar, min/max/close
+ *               included. Always Windows, and the Linux default (the norm for
+ *               Electron apps there — VS Code, Slack, Discord all ship it).
+ *  - 'system' — the desktop environment's own decorations. The Linux opt-out for
+ *               window managers where a client-side title bar behaves badly
+ *               (remote X sessions, tiling WMs) or for users who simply want
+ *               their DE's buttons.
+ *
+ * Resolved ONCE per run: the frame is fixed when the window is created, so a
+ * mid-run settings change only lands on the next launch — and the renderer must
+ * agree with the frame the window actually has, which is why it reads this
+ * value (via the preload) instead of guessing from the platform.
+ */
+export type WindowChrome = 'mac' | 'custom' | 'system';
+
+let resolvedChrome: WindowChrome | null = null;
+
+export function windowChrome(): WindowChrome {
+  if (resolvedChrome !== null) {
+    return resolvedChrome;
+  }
+  // Escape hatch, honoured on every platform: a way to try the other title bar
+  // without touching settings.json (and how the Linux chrome gets eyeballed
+  // from a Mac).
+  const override = process.env.VICOA_TITLE_BAR;
+  if (override === 'custom' || override === 'system') {
+    resolvedChrome = override;
+  } else if (process.platform === 'darwin') {
+    resolvedChrome = 'mac';
+  } else if (process.platform === 'win32') {
+    resolvedChrome = 'custom';
+  } else {
+    resolvedChrome = getSetting<string>(TITLE_BAR_SETTING) === 'system' ? 'system' : 'custom';
+  }
+  return resolvedChrome;
+}
+
+/** BrowserWindow options implied by the resolved chrome. */
+function chromeWindowOptions(): BrowserWindowConstructorOptions {
+  switch (windowChrome()) {
+    case 'mac':
+      return { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 16 } };
+    case 'custom':
+      // `autoHideMenuBar` is what keeps Chromium's in-window Edit/View/Window/
+      // Help bar (Windows + Linux only; macOS has the system menu bar) out of
+      // the frameless title bar. Alt still reveals it, and the renderer's ···
+      // button pops the same menu.
+      return process.platform === 'win32'
+        ? { titleBarStyle: 'hidden', autoHideMenuBar: true }
+        : { frame: false, autoHideMenuBar: true };
+    case 'system':
+      // Native decorations, but still no permanently visible menu bar.
+      return { autoHideMenuBar: true };
+  }
+}
+
+/**
+ * Window icon for Linux. X11/Wayland take the taskbar and alt-tab icon from the
+ * window itself, and an AppImage that was never integrated into the desktop has
+ * no .desktop entry to fall back on — without this it shows Electron's default
+ * icon. macOS/Windows get theirs from the app bundle / executable.
+ */
+function linuxWindowIcon(): { icon?: NativeImage } {
+  if (process.platform !== 'linux') {
+    return {};
+  }
+  const icon = nativeImage.createFromPath(path.join(__dirname, '..', 'resources', 'icon-linux.png'));
+  return icon.isEmpty() ? {} : { icon };
+}
 
 const MIN_WIDTH = 800;
 const MIN_HEIGHT = 560;
@@ -119,17 +206,12 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
     minHeight: MIN_HEIGHT,
     title: 'Vicoa',
     show: false,
-    // Custom title bar per platform. macOS: hide the OS titlebar but keep the
-    // frame — the traffic lights float over the renderer's own header, which
-    // reserves top-left space for them at { x: 16, y: 16 }. Windows: hide the
-    // title bar AND auto-hide the menu bar; the renderer draws its own
-    // min/max/close controls plus a ··· button that pops the application menu
-    // (Orca pattern). Linux keeps the default OS frame for now.
-    ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 16 } }
-      : process.platform === 'win32'
-        ? { titleBarStyle: 'hidden' as const, autoHideMenuBar: true }
-        : {}),
+    // Title bar per platform — see windowChrome(). macOS keeps the native frame
+    // with floating traffic lights; Windows and (by default) Linux are frameless
+    // with the renderer drawing its own controls plus a ··· menu button (Orca
+    // pattern); Linux can opt back into its DE's decorations.
+    ...chromeWindowOptions(),
+    ...linuxWindowIcon(),
     webPreferences: {
       preload: options.preloadPath,
       contextIsolation: true,
