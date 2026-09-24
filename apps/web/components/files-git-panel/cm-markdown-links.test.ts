@@ -2,7 +2,7 @@ import { describe, test, expect } from 'vitest';
 import { EditorState } from '@codemirror/state';
 import { ensureSyntaxTree } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { destinationAt, followableUrlAt } from './cm-markdown-links';
+import { destinationAt, followableUrlAt, linkAt } from './cm-markdown-links';
 
 /** A fully parsed state over `doc`, on the same GFM base as the live editor. */
 function stateFor(doc: string): EditorState {
@@ -99,5 +99,23 @@ describe('followableUrlAt', () => {
 
   test('a javascript: destination is never followed', () => {
     expect(at('[x](javascript:alert(1))', 'x]')).toBe(null);
+  });
+});
+
+describe('linkAt', () => {
+  test('reports the range the \u2318-hover affordance underlines', () => {
+    const doc = 'see [the docs](https://example.com) and https://example.com/bare here';
+    const state = stateFor(doc);
+    const inline = linkAt(state, doc.indexOf('the docs'));
+    // The whole construct: the hidden `[` and `](url)` carry no visible text,
+    // so the underline lands on the link text alone.
+    expect(doc.slice(inline?.from ?? 0, inline?.to ?? 0)).toBe('[the docs](https://example.com)');
+    const bare = linkAt(state, doc.indexOf('https://example.com/bare'));
+    expect(doc.slice(bare?.from ?? 0, bare?.to ?? 0)).toBe('https://example.com/bare');
+  });
+
+  test('null where there is no link', () => {
+    const doc = 'just some words';
+    expect(linkAt(stateFor(doc), 5)).toBe(null);
   });
 });

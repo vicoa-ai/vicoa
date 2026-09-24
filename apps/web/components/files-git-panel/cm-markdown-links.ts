@@ -1,6 +1,8 @@
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
+import { StateEffect, StateField } from '@codemirror/state';
 import type { EditorState, Extension } from '@codemirror/state';
-import { EditorView, ViewPlugin } from '@codemirror/view';
+import { Decoration, EditorView, ViewPlugin } from '@codemirror/view';
+import type { DecorationSet } from '@codemirror/view';
 import { isLinkModifierHeld } from '@/components/terminal-pane/terminal-links';
 import { openExternalUrl } from '@/lib/open-external';
 
@@ -36,8 +38,7 @@ const ESCAPED_PUNCT = /\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g;
  *  region the lazy parser has reached. */
 const REFERENCE_PARSE_BUDGET_MS = 50;
 
-/** The class that turns the pointer into a hand while the modifier is held over
- *  a followable link — set on the editor's outer DOM, styled by the theme. */
+/** The class on the link under the modifier, styled by the theme below. */
 const FOLLOW_CLASS = 'cm-md-follow';
 
 /** A `<…>`-wrapped or escaped destination as the plain URL it stands for. */
@@ -99,18 +100,27 @@ function resolveReference(state: EditorState, label: string): string | null {
   return found;
 }
 
+/** A link in the document: where it points, and the text that stands for it. */
+export interface MarkdownLink {
+  url: string;
+  from: number;
+  to: number;
+}
+
 /** Walk out from `node` to the link construct containing it, and report where
  *  that link points. Null when the position isn't inside a link at all. */
-function destinationFromNode(state: EditorState, node: SyntaxNode): string | null {
+function linkFromNode(state: EditorState, node: SyntaxNode): MarkdownLink | null {
   for (let n: SyntaxNode | null = node; n; n = n.parent) {
     // The raw destination itself — visible whenever the cursor has revealed a
     // link's source, and the whole node for a bare GFM autolink.
-    if (n.name === 'URL') return cleanDestination(state.doc.sliceString(n.from, n.to));
+    if (n.name === 'URL') {
+      return { url: cleanDestination(state.doc.sliceString(n.from, n.to)), from: n.from, to: n.to };
+    }
     if (n.name === 'Link' || n.name === 'Autolink') {
       const inline = inlineDestination(state, n);
-      if (inline) return inline;
-      const label = n.name === 'Link' ? referenceLabel(state, n) : null;
-      return label ? resolveReference(state, label) : null;
+      const label = inline || n.name !== 'Link' ? null : referenceLabel(state, n);
+      const url = inline ?? (label ? resolveReference(state, label) : null);
+      return url ? { url, from: n.from, to: n.to } : null;
     }
     // An image's alt text is not a link (its URL text still is, above).
     if (n.name === 'Image') return null;
@@ -118,36 +128,80 @@ function destinationFromNode(state: EditorState, node: SyntaxNode): string | nul
   return null;
 }
 
-/**
- * Where the markdown link at document position `pos` points, or null.
- * Exported for tests; the extension below uses {@link followableUrlAt}.
- */
-export function destinationAt(state: EditorState, pos: number): string | null {
+/** The markdown link at document position `pos`, or null. */
+export function linkAt(state: EditorState, pos: number): MarkdownLink | null {
   const tree = syntaxTree(state);
   // Both sides of the position, so a click landing on either edge of a link
   // (its first or last character) still resolves to it.
   for (const side of [1, -1] as const) {
-    const dest = destinationFromNode(state, tree.resolveInner(pos, side));
-    if (dest) return dest;
+    const link = linkFromNode(state, tree.resolveInner(pos, side));
+    if (link) return link;
   }
   return null;
 }
 
-/** {@link destinationAt}, narrowed to the URLs we may hand to the browser. */
+/** Where the markdown link at `pos` points, or null. Exported for tests. */
+export function destinationAt(state: EditorState, pos: number): string | null {
+  return linkAt(state, pos)?.url ?? null;
+}
+
+/** {@link linkAt}, narrowed to the links we may hand to the browser. */
+export function followableLinkAt(state: EditorState, pos: number): MarkdownLink | null {
+  const link = linkAt(state, pos);
+  return link && OPENABLE.test(link.url) ? link : null;
+}
+
+/** {@link followableLinkAt}'s destination alone. Exported for tests. */
 export function followableUrlAt(state: EditorState, pos: number): string | null {
-  const dest = destinationAt(state, pos);
-  return dest && OPENABLE.test(dest) ? dest : null;
+  return followableLinkAt(state, pos)?.url ?? null;
 }
 
-/** The URL under the mouse, or null when the pointer isn't over a link (or is
+/** The link under the mouse, or null when the pointer isn't over one (or is
  *  past the end of a line, where `posAtCoords` reports no position). */
-function urlAtEvent(view: EditorView, event: MouseEvent): string | null {
+function linkAtEvent(view: EditorView, event: MouseEvent): MarkdownLink | null {
   const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-  return pos == null ? null : followableUrlAt(view.state, pos);
+  return pos == null ? null : followableLinkAt(view.state, pos);
 }
 
-function setFollowCursor(view: EditorView, on: boolean): void {
-  view.dom.classList.toggle(FOLLOW_CLASS, on);
+// ── The link under the modifier ──────────────────────────────────────────────
+
+/** Marks the followable link the pointer is on while the modifier is held:
+ *  underlined and under a hand, the way every editor says "this is now a
+ *  link, not text". A decoration rather than a class on the editor, so the
+ *  affordance covers exactly the link — including a bare URL, which carries no
+ *  link styling of its own. */
+const FOLLOW_MARK = Decoration.mark({ class: FOLLOW_CLASS });
+
+const setFollowed = StateEffect.define<MarkdownLink | null>();
+
+const followedLink = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setFollowed)) {
+        return effect.value
+          ? Decoration.set([FOLLOW_MARK.range(effect.value.from, effect.value.to)])
+          : Decoration.none;
+      }
+    }
+    // An edit can move or dissolve the link out from under the pointer; the
+    // next mouse move puts it back if it is still there.
+    return tr.docChanged ? Decoration.none : deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/** The range currently marked, so a mouse move over the same link is not a
+ *  transaction. */
+function followedRange(state: EditorState): { from: number; to: number } | null {
+  const iter = state.field(followedLink, false)?.iter();
+  return iter?.value ? { from: iter.from, to: iter.to } : null;
+}
+
+function setFollowCursor(view: EditorView, link: MarkdownLink | null): void {
+  const current = followedRange(view.state);
+  if (current?.from === link?.from && current?.to === link?.to) return;
+  view.dispatch({ effects: setFollowed.of(link) });
 }
 
 /**
@@ -166,9 +220,9 @@ const followCursorReset = ViewPlugin.fromClass(
 
     constructor(view: EditorView) {
       this.onKeyUp = (event) => {
-        if (!isLinkModifierHeld(event)) setFollowCursor(view, false);
+        if (!isLinkModifierHeld(event)) setFollowCursor(view, null);
       };
-      this.onBlur = () => setFollowCursor(view, false);
+      this.onBlur = () => setFollowCursor(view, null);
       window.addEventListener('keyup', this.onKeyUp);
       window.addEventListener('blur', this.onBlur);
     }
@@ -181,7 +235,14 @@ const followCursorReset = ViewPlugin.fromClass(
 );
 
 const followTheme = EditorView.theme({
-  [`&.${FOLLOW_CLASS} .cm-content`]: { cursor: 'pointer' },
+  [`.${FOLLOW_CLASS}`]: {
+    cursor: 'pointer',
+    textDecoration: 'underline',
+    // Thicker than the standing link underline, so the cue also reads on a
+    // link that is underlined already.
+    textDecorationThickness: '2px',
+    textUnderlineOffset: '2px',
+  },
 });
 
 /**
@@ -196,23 +257,24 @@ export function markdownLinkOpener(): Extension {
         // Left button only: middle-click pastes on Linux and right-click opens
         // the context menu.
         if (event.button !== 0 || !isLinkModifierHeld(event)) return false;
-        const url = urlAtEvent(view, event);
-        if (!url) return false;
+        const link = linkAtEvent(view, event);
+        if (!link) return false;
         // Claim the click: unhandled, CodeMirror would add a second cursor.
         event.preventDefault();
-        setFollowCursor(view, false);
-        openExternalUrl(url);
+        setFollowCursor(view, null);
+        openExternalUrl(link.url);
         return true;
       },
       mousemove(event, view) {
-        setFollowCursor(view, isLinkModifierHeld(event) && urlAtEvent(view, event) !== null);
+        setFollowCursor(view, isLinkModifierHeld(event) ? linkAtEvent(view, event) : null);
         return false;
       },
       mouseleave(_event, view) {
-        setFollowCursor(view, false);
+        setFollowCursor(view, null);
         return false;
       },
     }),
+    followedLink,
     followCursorReset,
     followTheme,
   ];
