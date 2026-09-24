@@ -17,7 +17,6 @@ from fastapi import (
 )
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
-from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
 from sqlalchemy.exc import OperationalError as SAOperationalError
@@ -43,6 +42,7 @@ from shared.database import (
     FileMentions,
 )
 from shared.database.agent_instances import create_agent_instance
+from shared.database.spawn_requests import queue_spawn_request
 from shared.database.project_matching import (
     resolve_or_create_project_id_for_session,
 )
@@ -568,19 +568,6 @@ def create_spawn_request_endpoint(
     machine = _get_machine_for_user(db, machine_id, user_id)
     user_uuid = UUID(user_id)
 
-    agent_instance_id = uuid4()
-    instance = create_agent_instance(
-        db,
-        user_uuid,
-        agent_name=(request.agent or "claude"),
-        instance_id=agent_instance_id,
-        name=request.metadata.get("name")
-        if isinstance(request.metadata, dict)
-        else None,
-        instance_metadata={"spawn_starting": True},
-        status=AgentStatus.STARTING,
-    )
-
     request_metadata = (
         dict(request.metadata) if isinstance(request.metadata, dict) else {}
     )
@@ -592,49 +579,20 @@ def create_spawn_request_endpoint(
     else:
         request_metadata.pop("prompt", None)
 
-    spawn_request = MachineSpawnRequest(
-        id=uuid4(),
-        machine_id=machine.id,
-        requested_by_user_id=user_uuid,
-        directory=request.directory,
+    # Shared with the human-facing twin in `backend.api.machines` so the two
+    # cannot drift again — that drift is what left CLI/agent-started sessions
+    # without a `machine_id` (shared/database/spawn_requests.py).
+    instance, spawn_request = queue_spawn_request(
+        db,
+        user_id=user_uuid,
+        machine=machine,
         agent=(request.agent or "claude"),
-        agent_instance_id=instance.id,
+        directory=request.directory,
         request_metadata=request_metadata,
+        name=request.metadata.get("name")
+        if isinstance(request.metadata, dict)
+        else None,
     )
-
-    machine_metadata = (
-        machine.machine_metadata if isinstance(machine.machine_metadata, dict) else {}
-    )
-    if machine_metadata is None:
-        machine_metadata = {}
-    recent_dirs = []
-    if isinstance(machine_metadata.get("recent_directories"), list):
-        recent_dirs = [str(item) for item in machine_metadata["recent_directories"]]
-
-    recent_dirs = [request.directory] + [
-        path for path in recent_dirs if path != request.directory
-    ]
-    machine_metadata["recent_directories"] = recent_dirs[:10]
-    machine.machine_metadata = machine_metadata
-    attributes.flag_modified(machine, "machine_metadata")
-
-    db.add(spawn_request)
-    db.flush()
-
-    # Legacy NOTIFY: safety net for the still-alive spawn-requests SSE
-    # stream and old daemons (websocket-migration §4 Phase 2).
-    notify_payload = json.dumps(
-        {
-            "request_id": str(spawn_request.id),
-            "directory": spawn_request.directory,
-            "agent": spawn_request.agent,
-            "agent_instance_id": str(spawn_request.agent_instance_id),
-            "metadata": spawn_request.request_metadata,
-            "requested_at": spawn_request.created_at.isoformat() + "Z",
-        }
-    )
-    channel = f"machine_spawn_{machine_id}"
-    db.execute(text(f'NOTIFY "{channel}", :payload'), {"payload": notify_payload})
 
     # WebSocket spawn-request update to the machine room (§2.5). The
     # envelope is snapshotted to primitives before commit; the after_commit
@@ -650,7 +608,7 @@ def create_spawn_request_endpoint(
 
     response = SpawnSessionResponse(
         request_id=str(spawn_request.id),
-        agent_instance_id=str(agent_instance_id),
+        agent_instance_id=str(instance.id),
     )
     db.commit()
 
@@ -1076,6 +1034,18 @@ def register_agent_instance_endpoint(
                 return _format_agent_instance(existing)
             # Pre-allocated by a spawn request — activate it.
             existing.status = AgentStatus.ACTIVE
+            # Self-heal a row staged without a machine link (an old client, or
+            # the agent-facing spawn route before it stamped `machine_id`).
+            # Registration is the last moment anything can fill this in — the
+            # PATCH endpoint has no machine_id field and a resume skips
+            # registration — and a machine-less session loses its terminal,
+            # files/git panel and git badges for life. Only ever fills a NULL:
+            # the staged value is the machine the requester picked, and it wins.
+            # Runs before the project match below, whose first tier is machine.
+            if existing.machine_id is None:
+                existing.machine_id = _resolve_owned_machine_id(
+                    db, request.machine_id, user_id
+                )
             metadata = dict(existing.instance_metadata)
             metadata.pop("spawn_starting", None)
             if request.transport:

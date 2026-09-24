@@ -2,25 +2,22 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Annotated
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import text
-from sqlalchemy.orm import Session, attributes
+from sqlalchemy.orm import Session
 
 from shared.database import (
     Machine,
     MachineAgentModels,
     MachineSpawnRequest,
-    AgentStatus,
 )
 from shared.database.models import User
 from shared.database.session import get_db
-from shared.database.agent_instances import create_agent_instance
+from shared.database.spawn_requests import queue_spawn_request
 from shared.websocket import after_commit, build_machine_update
 
 from ..auth.dependencies import get_current_user
@@ -217,7 +214,6 @@ def create_spawn_request_endpoint(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Session = Depends(get_db),
 ) -> SpawnSessionResponse:
-    agent_instance_id = uuid4()
     machine = _get_machine_for_user(db, machine_id, current_user.id)
 
     # Resolve the agent profile server-side rather than trusting a client-sent
@@ -240,20 +236,6 @@ def create_spawn_request_endpoint(
         if profile.agent != (request.agent or "claude"):
             profile = None
 
-    instance = create_agent_instance(
-        db,
-        current_user.id,
-        agent_name=(request.agent or "claude"),
-        instance_id=agent_instance_id,
-        name=request.metadata.get("name")
-        if isinstance(request.metadata, dict)
-        else None,
-        instance_metadata={"spawn_starting": True},
-        machine_id=machine.id,
-        status=AgentStatus.STARTING,
-        agent_profile_id=profile.id if profile else None,
-    )
-
     request_metadata = (
         dict(request.metadata) if isinstance(request.metadata, dict) else {}
     )
@@ -271,56 +253,29 @@ def create_spawn_request_endpoint(
     if profile is not None and (profile.system_prompt or "").strip():
         request_metadata["system_prompt"] = profile.system_prompt
 
-    spawn_request = MachineSpawnRequest(
-        id=uuid4(),
-        machine_id=machine.id,
-        requested_by_user_id=current_user.id,
-        directory=request.directory,
+    # Shared with the agent-facing twin in `servers.api.routers` so the two
+    # cannot drift again — that drift is what left CLI/agent-started sessions
+    # without a `machine_id` (shared/database/spawn_requests.py).
+    instance, spawn_request = queue_spawn_request(
+        db,
+        user_id=current_user.id,
+        machine=machine,
         agent=(request.agent or "claude"),
-        agent_instance_id=instance.id,
+        directory=request.directory,
         request_metadata=request_metadata,
+        name=request.metadata.get("name")
+        if isinstance(request.metadata, dict)
+        else None,
+        agent_profile_id=profile.id if profile else None,
     )
-
-    machine_metadata = (
-        machine.machine_metadata if isinstance(machine.machine_metadata, dict) else {}
-    )
-    if machine_metadata is None:
-        machine_metadata = {}
-
-    recent_dirs = []
-    if isinstance(machine_metadata.get("recent_directories"), list):
-        recent_dirs = [str(item) for item in machine_metadata["recent_directories"]]
-
-    recent_dirs = [request.directory] + [
-        path for path in recent_dirs if path != request.directory
-    ]
-
-    machine_metadata["recent_directories"] = recent_dirs[:10]
-    machine.machine_metadata = machine_metadata
-    attributes.flag_modified(machine, "machine_metadata")
 
     machine.last_heartbeat_at = machine.last_heartbeat_at or datetime.now(timezone.utc)
     machine.updated_at = datetime.now(timezone.utc)
 
-    db.add(spawn_request)
-    db.flush()
-
-    notify_payload = json.dumps(
-        {
-            "request_id": str(spawn_request.id),
-            "directory": spawn_request.directory,
-            "agent": spawn_request.agent,
-            "agent_instance_id": str(spawn_request.agent_instance_id),
-            "metadata": spawn_request.request_metadata,
-            "requested_at": spawn_request.created_at.isoformat() + "Z",
-        }
-    )
-    channel = f"machine_spawn_{machine_id}"
-    db.execute(text(f'NOTIFY "{channel}", :payload'), {"payload": notify_payload})
-
-    # Snapshot the id before commit — ORM attribute access is unsafe after
+    # Snapshot the ids before commit — ORM attribute access is unsafe after
     # commit when expire_on_commit is on (§2.7).
     spawn_request_id_str = str(spawn_request.id)
+    agent_instance_id_str = str(instance.id)
     db.commit()
 
     logger.info(
@@ -328,7 +283,7 @@ def create_spawn_request_endpoint(
     )
     return SpawnSessionResponse(
         request_id=spawn_request_id_str,
-        agent_instance_id=str(agent_instance_id),
+        agent_instance_id=agent_instance_id_str,
     )
 
 
