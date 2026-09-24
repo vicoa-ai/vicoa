@@ -30,6 +30,7 @@ vicoa/
 │   ├── web/              # Next.js dashboard (also the desktop renderer) + docs
 │   ├── desktop/          # Electron shell — bundles apps/web + the backend daemon
 │   └── mobile/           # Flutter app (iOS/Android)
+├── skills/               # agent skills that teach a coding agent to drive Vicoa
 └── .github/workflows/    # CI + release workflows, path-filtered per component
 ```
 
