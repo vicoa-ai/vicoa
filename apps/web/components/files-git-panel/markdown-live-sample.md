@@ -128,7 +128,9 @@ row tinted — and it stays a grid while you edit it:
 
 - Click a cell and type. The markdown underneath changes as you type; the grid
   never turns back into pipes, and the column grows with the text.
-- Tab / Shift+Tab move between cells, Enter and ↑/↓ move down and up a row.
+- Tab / Shift+Tab move between cells, Enter and ↑/↓ move down and up a row,
+  and ←/→ walk off the end of a cell's text into the next one (mid-text they
+  are the cell's own).
 - A typed `|` is escaped into the source, so it cannot split the row.
 - Typing in the empty cell the grid pads a short row with adds that cell to the
   row (try the `k`/`v` table below).

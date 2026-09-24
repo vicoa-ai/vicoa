@@ -552,13 +552,26 @@ class TableWidget extends WidgetType {
     if (!(input instanceof HTMLInputElement)) return;
     if (event.key === 'Tab') {
       event.preventDefault();
-      focusSibling(wrap, input, event.shiftKey ? -1 : 1);
+      focusSibling(wrap, input, event.shiftKey ? -1 : 1, 'all');
       return;
     }
     if (event.key === 'Enter' || event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       const columns = wrap.querySelectorAll('thead th').length;
       const step = event.key === 'ArrowUp' ? -columns : columns;
-      if (focusSibling(wrap, input, step)) event.preventDefault();
+      if (focusSibling(wrap, input, step, 'all')) event.preventDefault();
+      return;
+    }
+    if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      // Walking off the end of a cell's text continues into the next cell,
+      // as it would if the row were one line of prose. Anywhere else in the
+      // text (or with a selection to collapse) the arrow is the input's.
+      const forward = event.key === 'ArrowRight';
+      const caret = input.selectionStart ?? 0;
+      const leaving =
+        input.selectionEnd === caret && (forward ? caret === input.value.length : caret === 0);
+      if (leaving && focusSibling(wrap, input, forward ? 1 : -1, forward ? 'start' : 'end')) {
+        event.preventDefault();
+      }
       return;
     }
     if (event.key === 'Escape') {
@@ -638,13 +651,24 @@ function buildCell(
   return cell;
 }
 
-/** Move the caret `step` cells along, if there is one. */
-function focusSibling(wrap: HTMLElement, input: HTMLInputElement, step: number): boolean {
+/** Move the caret `step` cells along, if there is one: `all` selects the cell's
+ *  text (tabbing into a cell means replacing it), `start`/`end` put the caret
+ *  at the edge the caret arrived from. */
+function focusSibling(
+  wrap: HTMLElement,
+  input: HTMLInputElement,
+  step: number,
+  caret: 'all' | 'start' | 'end',
+): boolean {
   const inputs = Array.from(wrap.querySelectorAll('input'));
   const next = inputs[inputs.indexOf(input) + step];
   if (!next) return false;
   next.focus();
-  next.select();
+  if (caret === 'all') next.select();
+  else {
+    const at = caret === 'end' ? next.value.length : 0;
+    next.setSelectionRange(at, at);
+  }
   return true;
 }
 
