@@ -237,12 +237,15 @@ const followCursorReset = ViewPlugin.fromClass(
 const followTheme = EditorView.theme({
   [`.${FOLLOW_CLASS}`]: {
     cursor: 'pointer',
+    // The standing link look. A `[text](url)` link already wears it, so the
+    // hand is its cue; a bare URL, which is only syntax-highlighted, turns
+    // link-blue and underlined under the modifier.
+    color: 'hsl(var(--info))',
     textDecoration: 'underline',
-    // Thicker than the standing link underline, so the cue also reads on a
-    // link that is underlined already.
-    textDecorationThickness: '2px',
     textUnderlineOffset: '2px',
   },
+  // …over the syntax theme's own colour, which sits on a span inside this one.
+  [`.${FOLLOW_CLASS} span`]: { color: 'inherit' },
 });
 
 /**
