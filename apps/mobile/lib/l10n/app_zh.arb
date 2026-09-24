@@ -613,7 +613,6 @@
   "shareLinkLoadFailed": "无法加载分享链接",
   "shareLinkNeverExpires": "永不过期",
   "shareLinkOtherLinks": "{count, plural, =1{另外 1 个链接} other{另外 {count} 个链接}}",
-  "shareLinkPreview": "以访客身份预览",
   "shareLinkRevoke": "撤销链接",
   "shareLinkRevokeContent": "已经拿到链接的人将无法再访问。",
   "shareLinkRevokeFailed": "无法撤销链接",

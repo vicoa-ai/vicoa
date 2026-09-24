@@ -10,7 +10,6 @@ import '/flutter_flow/flutter_flow_widgets.dart';
 import '/l10n/app_localizations.dart';
 import '/pages/confirm_dialog/confirm_dialog_widget.dart';
 import '/pages/snack_bar/snack_bar_widget.dart';
-import '/pages/web_preview/web_preview_widget.dart';
 import 'share_option_picker.dart';
 import 'share_session_sheet_model.dart';
 
@@ -228,22 +227,6 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
     await actions.share(context, url, widget.sessionTitle);
   }
 
-  /// Opens the page a visitor sees, in the in-app browser. Pushed over the
-  /// sheet rather than replacing it, so closing the preview lands back here.
-  Future<void> _preview(Map<String, dynamic> link) async {
-    HapticFeedback.lightImpact();
-    await context.pushNamed(
-      WebPreviewWidget.routeName,
-      extra: <String, dynamic>{
-        'initialUrl': _urlOf(link),
-        kTransitionInfoKey: const TransitionInfo(
-          hasTransition: true,
-          transitionType: PageTransitionType.bottomToTop,
-        ),
-      },
-    );
-  }
-
   String _urlOf(Map<String, dynamic> link) => actions.shareLinkUrl(link['token']?.toString() ?? '');
 
   // --- formatting ---------------------------------------------------------
@@ -330,13 +313,13 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
       padding: MediaQuery.viewInsetsOf(context),
       child: Container(
         width: double.infinity,
-        height: MediaQuery.of(context).size.height * 0.8,
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.85),
         decoration: BoxDecoration(
           color: theme.secondaryBackground,
           borderRadius: const BorderRadius.only(topLeft: Radius.circular(24.0), topRight: Radius.circular(24.0)),
         ),
         child: Column(
-          mainAxisSize: MainAxisSize.max,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Padding(
               padding: const EdgeInsetsDirectional.fromSTEB(0.0, 12.0, 0.0, 0.0),
@@ -369,9 +352,12 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
                 ],
               ),
             ),
-            Expanded(
+            Flexible(
               child: SingleChildScrollView(
-                padding: const EdgeInsetsDirectional.fromSTEB(16.0, 20.0, 16.0, 48.0),
+                // The last row needs its own clearance: a content-sized sheet
+                // ends where the content does, which may be under the home
+                // indicator.
+                padding: EdgeInsetsDirectional.fromSTEB(16.0, 20.0, 16.0, 24.0 + MediaQuery.paddingOf(context).bottom),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -467,18 +453,7 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
     }
 
     return [
-      _group(theme, [
-        _urlRow(theme, l10n, link),
-        Padding(
-          padding: const EdgeInsetsDirectional.fromSTEB(16.0, 0.0, 16.0, 14.0),
-          child: Text(
-            _facts(link),
-            style: theme.bodySmall.override(font: GoogleFonts.sourceSans3(), fontSize: 12.0, color: theme.secondaryText, letterSpacing: 0.0),
-          ),
-        ),
-      ]),
-      const SizedBox(height: 14.0),
-      _primaryButton(theme, label: l10n.commonShare, icon: Icons.ios_share_rounded, onPressed: () => _shareNative(_urlOf(link))),
+      _group(theme, [_urlRow(theme, l10n, link)]),
       const SizedBox(height: 16.0),
       _group(theme, [
         _disclosureRow(
@@ -509,10 +484,13 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
           ),
         ],
         _divider(theme),
-        _actionRow(theme, icon: Icons.visibility_outlined, label: l10n.shareLinkPreview, onTap: () => _preview(link)),
-        _divider(theme),
         _actionRow(theme, icon: Icons.link_off_rounded, label: l10n.shareLinkRevoke, onTap: () => _revoke(link)),
       ]),
+      const SizedBox(height: 16.0),
+      // The section's one filled button, and the last thing under it: tapping
+      // the URL copies, so the OS share sheet is the other way out, not a
+      // second version of the same action next to it.
+      _primaryButton(theme, label: l10n.commonShare, icon: Icons.ios_share_rounded, onPressed: () => _shareNative(_urlOf(link))),
       if (_model.others.isNotEmpty) ...[
         const SizedBox(height: 16.0),
         _group(theme, [
@@ -560,15 +538,17 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
       child: InkWell(
         onTap: () => _copy(link),
         child: Padding(
-          padding: const EdgeInsetsDirectional.fromSTEB(16.0, 16.0, 16.0, 10.0),
+          padding: const EdgeInsetsDirectional.fromSTEB(16.0, 16.0, 16.0, 16.0),
           child: Row(
             children: [
               Expanded(
+                // The whole URL, scheme included: this is the string being
+                // sent to someone, and a half-written one reads as a label
+                // rather than something you can check before you send it.
                 child: Text(
-                  url.replaceFirst(RegExp(r'^https?://'), ''),
+                  url,
                   style: theme.bodyMedium.override(font: GoogleFonts.sourceSans3(), fontSize: 15.0, color: theme.primaryText, letterSpacing: 0.0),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                  maxLines: 3,
                 ),
               ),
               const SizedBox(width: 12.0),
@@ -592,7 +572,7 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  _urlOf(link).replaceFirst(RegExp(r'^https?://'), ''),
+                  _urlOf(link),
                   style: theme.bodySmall.override(font: GoogleFonts.sourceSans3(), fontSize: 13.0, color: theme.primaryText, letterSpacing: 0.0),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

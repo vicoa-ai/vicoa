@@ -1968,9 +1968,6 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get shareLinkPreview => '以访客身份预览';
-
-  @override
   String get shareLinkRevoke => '撤销链接';
 
   @override

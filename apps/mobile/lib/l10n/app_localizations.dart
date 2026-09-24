@@ -3776,12 +3776,6 @@ abstract class AppLocalizations {
   /// **'{count, plural, =1{1 other link} other{{count} other links}}'**
   String shareLinkOtherLinks(num count);
 
-  /// No description provided for @shareLinkPreview.
-  ///
-  /// In en, this message translates to:
-  /// **'Preview as a visitor'**
-  String get shareLinkPreview;
-
   /// No description provided for @shareLinkRevoke.
   ///
   /// In en, this message translates to:
