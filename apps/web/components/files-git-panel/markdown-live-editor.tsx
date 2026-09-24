@@ -52,8 +52,9 @@ const syntaxTheme = (dark: boolean) => (dark ? oneDark : []);
 
 const baseTheme = EditorView.theme({
   '&': { height: '100%', fontSize: '13px', backgroundColor: PANEL_BG },
-  // A document-scale reading column, not a code gutter, for the "formatted" feel.
-  '.cm-content': { maxWidth: '820px', padding: '10px 20px 40px' },  // margin: '0 auto', to make the markdown content central algined. 
+  // Full panel width, like the source editor and the read-only preview it
+  // toggles against — the panel is the user's reading column, and they size it.
+  '.cm-content': { padding: '10px 20px 40px' },
   '.cm-scroller': {
     fontFamily: 'var(--font-mono, ui-sans-serif, system-ui, sans-serif)',
     lineHeight: '1.7',
