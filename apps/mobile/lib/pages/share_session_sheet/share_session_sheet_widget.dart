@@ -456,6 +456,11 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
 
     return [
       _group(theme, [_urlRow(theme, l10n, link)]),
+      const SizedBox(height: 14.0),
+      // The section's one filled button, directly under the link it sends:
+      // tapping the URL copies, so this is the other way out of the sheet, and
+      // the settings below can open without pushing it down the page.
+      _primaryButton(theme, label: l10n.commonShare, icon: Icons.ios_share_rounded, onPressed: () => _shareNative(_urlOf(link))),
       const SizedBox(height: 16.0),
       _group(theme, [
         _disclosureRow(
@@ -488,11 +493,6 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
         _divider(theme),
         _actionRow(theme, icon: Icons.link_off_rounded, label: l10n.shareLinkRevoke, onTap: () => _revoke(link)),
       ]),
-      const SizedBox(height: 16.0),
-      // The section's one filled button, and the last thing under it: tapping
-      // the URL copies, so the OS share sheet is the other way out, not a
-      // second version of the same action next to it.
-      _primaryButton(theme, label: l10n.commonShare, icon: Icons.ios_share_rounded, onPressed: () => _shareNative(_urlOf(link))),
       if (_model.others.isNotEmpty) ...[
         const SizedBox(height: 16.0),
         _group(theme, [
