@@ -27,7 +27,10 @@ self.addEventListener('notificationclick', function(event) {
   
   event.notification.close();
   
-  const url = event.notification.data.url || '/dashboard/agents';
+  // Fall back to the dashboard home (which lists the sessions) when the push
+  // carried no target. NOT /dashboard/agents — that is the saved-presets page;
+  // it only looked right back when session routes lived under that prefix.
+  const url = event.notification.data.url || '/dashboard';
   
   event.waitUntil(
     clients.openWindow(url)

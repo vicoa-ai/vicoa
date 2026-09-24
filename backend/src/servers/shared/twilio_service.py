@@ -205,7 +205,7 @@ Your agent {display_name} has a question:
 
 {question_text}
 
-You can respond at: {_dashboard_base()}/dashboard/instances/{instance_id}
+You can respond at: {_dashboard_base()}/dashboard/sessions/{instance_id}
 
 Best regards,
 The Vicoa Team
@@ -261,7 +261,7 @@ Your agent {display_name} has logged a new step:
 
 {step_description}
 
-You can view the full session at: {_dashboard_base()}/dashboard/instances/{instance_id}
+You can view the full session at: {_dashboard_base()}/dashboard/sessions/{instance_id}
 
 Best regards,
 The Vicoa Team
