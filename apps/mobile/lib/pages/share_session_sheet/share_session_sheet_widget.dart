@@ -198,9 +198,13 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
 
   // --- small actions ------------------------------------------------------
 
+  /// A toast. Deliberately not awaited inside: `showModalBottomSheet` completes
+  /// when the sheet is *dismissed*, so awaiting it would keep the caller's
+  /// future pending for as long as the toast is up, and anything keyed on that
+  /// future (a button's own spinner, a re-entry guard) would stay stuck.
   Future<void> _snack(String message) async {
     if (!mounted) return;
-    await showModalBottomSheet(
+    showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -758,6 +762,13 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
       onPressed: onPressed,
       text: label,
       icon: Icon(icon, size: 18.0, color: Colors.white),
+      // The label already carries the state ("Creating…", and disabled with
+      // it), which FFButtonWidget's own spinner would replace rather than add
+      // to. It also spins for as long as the callback's future runs, on
+      // whichever button ends up in that slot: create finishes by swapping
+      // itself for Share, so the spinner landed on a button that was not doing
+      // anything.
+      showLoadingIndicator: false,
       options: FFButtonOptions(
         width: double.infinity,
         height: 52.0,
