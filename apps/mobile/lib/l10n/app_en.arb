@@ -941,7 +941,6 @@
       }
     }
   },
-  "shareLinkWarning": "Anyone with this link can read the full transcript, including any file contents or credentials the agent printed.",
   "shareOptionsSheetCopiedToClipboard": "Content copied to clipboard",
   "shareOptionsSheetCopyToClipboard": "Copy to clipboard",
   "shareOptionsSheetShareAs": "Share as",

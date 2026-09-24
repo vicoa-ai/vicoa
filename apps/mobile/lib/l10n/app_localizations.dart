@@ -3854,12 +3854,6 @@ abstract class AppLocalizations {
   /// **'{count, plural, =0{No views} =1{1 view} other{{count} views}}'**
   String shareLinkViews(num count);
 
-  /// No description provided for @shareLinkWarning.
-  ///
-  /// In en, this message translates to:
-  /// **'Anyone with this link can read the full transcript, including any file contents or credentials the agent printed.'**
-  String get shareLinkWarning;
-
   /// No description provided for @shareOptionsSheetCopiedToClipboard.
   ///
   /// In en, this message translates to:

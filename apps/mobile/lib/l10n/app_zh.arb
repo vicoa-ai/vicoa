@@ -626,7 +626,6 @@
   "shareLinkShowOwner": "显示我的名字和头像",
   "shareLinkUpdateFailed": "无法保存该设置",
   "shareLinkViews": "{count, plural, =0{暂无访问} =1{1 次访问} other{{count} 次访问}}",
-  "shareLinkWarning": "任何拿到此链接的人都能阅读完整对话记录，包括代理输出过的文件内容或凭据。",
   "shareOptionsSheetCopiedToClipboard": "内容已复制到剪贴板",
   "shareOptionsSheetCopyToClipboard": "复制到剪贴板",
   "shareOptionsSheetShareAs": "分享为",

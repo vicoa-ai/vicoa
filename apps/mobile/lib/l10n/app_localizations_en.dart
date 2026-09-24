@@ -2100,10 +2100,6 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get shareLinkWarning =>
-      'Anyone with this link can read the full transcript, including any file contents or credentials the agent printed.';
-
-  @override
   String get shareOptionsSheetCopiedToClipboard =>
       'Content copied to clipboard';
 

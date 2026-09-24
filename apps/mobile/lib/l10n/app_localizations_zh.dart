@@ -2016,9 +2016,6 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get shareLinkWarning => '任何拿到此链接的人都能阅读完整对话记录，包括代理输出过的文件内容或凭据。';
-
-  @override
   String get shareOptionsSheetCopiedToClipboard => '内容已复制到剪贴板';
 
   @override

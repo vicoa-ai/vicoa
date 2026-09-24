@@ -423,8 +423,6 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
             },
           ),
         ]),
-        const SizedBox(height: 12.0),
-        _warning(theme, l10n),
       ];
     }
 
@@ -449,8 +447,6 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
             ),
           ),
         ]),
-        const SizedBox(height: 12.0),
-        _warning(theme, l10n),
       ];
     }
 
@@ -467,8 +463,6 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
           icon: Icons.link_rounded,
           onPressed: _model.creating ? null : _create,
         ),
-        const SizedBox(height: 14.0),
-        _warning(theme, l10n),
       ];
     }
 
@@ -485,8 +479,6 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
       ]),
       const SizedBox(height: 14.0),
       _primaryButton(theme, label: l10n.commonShare, icon: Icons.ios_share_rounded, onPressed: () => _shareNative(_urlOf(link))),
-      const SizedBox(height: 14.0),
-      _warning(theme, l10n),
       const SizedBox(height: 16.0),
       _group(theme, [
         _disclosureRow(
@@ -558,24 +550,6 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
   Widget _divider(FlutterFlowTheme theme) => Padding(
         padding: const EdgeInsetsDirectional.fromSTEB(16.0, 0.0, 0.0, 0.0),
         child: Container(height: 0.5, color: theme.secondaryText.withValues(alpha: 0.12)),
-      );
-
-  /// The line that must stay visible wherever a link can be made: transcripts
-  /// are not redacted, so this sentence is the whole mitigation.
-  Widget _warning(FlutterFlowTheme theme, AppLocalizations l10n) => Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsetsDirectional.fromSTEB(2.0, 2.0, 8.0, 0.0),
-            child: Icon(Icons.warning_amber_rounded, size: 15.0, color: theme.warning),
-          ),
-          Expanded(
-            child: Text(
-              l10n.shareLinkWarning,
-              style: theme.bodySmall.override(font: GoogleFonts.sourceSans3(), fontSize: 12.0, color: theme.warning, letterSpacing: 0.0),
-            ),
-          ),
-        ],
       );
 
   Widget _urlRow(FlutterFlowTheme theme, AppLocalizations l10n, Map<String, dynamic> link) {
