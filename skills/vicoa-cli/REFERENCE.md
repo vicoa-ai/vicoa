@@ -143,6 +143,27 @@ not in this terminal.
 | `--list-machines` | | List registered machines and exit |
 | `--list-models` | | List agents/models/efforts/modes and exit |
 
+**Nothing is inherited from the calling session.** `--agent` defaults to
+`claude` and the rest to that agent's defaults, regardless of what the session
+running the command is configured with — only `--agent-profile` fills flags
+from somewhere else. To start a copy of the current session, read its config
+and pass the flags explicitly:
+
+```bash
+vicoa session get "$VICOA_AGENT_INSTANCE_ID" --json --limit 1 \
+  | jq -r '.instance.session_config'
+# {"agent":"claude","model":"claude-opus-5","current_model":"claude-opus-5",
+#  "permission_mode":"auto","thinking_effort":"xhigh"}
+```
+
+`session_config.agent` is the catalog id `--agent` wants; the sibling
+`agent_type_name` is a display label (`claude code`) and is **not** a valid
+`--agent` value. `current_model` is the model the session is running now,
+`model` only what it was spawned with. Efforts live under `thinking_effort`
+(claude) or `reasoning_effort` (codex) — both map to the one `--effort` flag.
+Carry model/effort/permission-mode only when the new session runs the **same**
+agent; those vocabularies are per-agent.
+
 ### `vicoa session message <session_id> <text>`
 
 Send a message into a session. Inserts a USER message, flips the session back to

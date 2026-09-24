@@ -176,6 +176,44 @@ defaults to this host's daemon and accepts an id, an id prefix, or a
 display-name/hostname substring. Every agent except `amp` can be spawned this
 way; `amp` only runs from a local `vicoa --agent amp`.
 
+#### Match the session you're in
+
+**`session start` does not inherit anything from you.** `--agent` falls back to
+`claude` and model / effort / permission-mode to that agent's defaults, however
+the session running this command is configured. So a Codex session on high
+reasoning that shells out to a bare `vicoa session start` silently gets a
+default-model Claude.
+
+Unless the user asked for something different, start the new session as a copy
+of this one — read your own config and pass it through:
+
+```bash
+CFG=$(vicoa session get "$VICOA_AGENT_INSTANCE_ID" --json --limit 1 \
+  | jq -r '.instance.session_config')
+vicoa session start --dir "$PWD" \
+  --agent          "$(jq -rn --argjson c "$CFG" '$c.agent')" \
+  --model          "$(jq -rn --argjson c "$CFG" '$c.current_model // $c.model')" \
+  --effort         "$(jq -rn --argjson c "$CFG" '$c.thinking_effort // $c.reasoning_effort // empty')" \
+  --permission-mode "$(jq -rn --argjson c "$CFG" '$c.permission_mode // empty')"
+```
+
+Three things to get right when reading that payload:
+
+- **The agent id is `session_config.agent`** (`claude`, `codex`). The sibling
+  `agent_type_name` is a *display label* — it reads `claude code` on most rows,
+  which is not a value `--agent` accepts.
+- **Prefer `current_model` over `model`.** `model` is what the session was
+  spawned with; `current_model` is what it is running now, and the two diverge
+  the moment anyone switches model mid-session.
+- **Don't carry settings across a different agent.** Model slugs, efforts, and
+  permission modes are per-agent vocabularies — if the user asked for a
+  *different* agent, pass only `--agent` and let the rest default. A Claude
+  model slug handed to Codex is worse than no inheritance at all.
+
+Omit a flag whose value came back empty rather than passing an empty string.
+`--effort` only applies to claude and codex; for other agents it's ignored with
+a warning.
+
 **Stopping:**
 
 ```bash
