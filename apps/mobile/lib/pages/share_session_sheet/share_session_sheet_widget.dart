@@ -121,13 +121,11 @@ class _ShareSessionSheetWidgetState extends State<ShareSessionSheetWidget> with 
       await _snack(AppLocalizations.of(context).shareLinkCreateFailed);
       return;
     }
-    // On a phone the endpoint of "create a link" is sending it to someone, so
-    // the clipboard is the fallback, not the destination: copy it, then hand
-    // straight over to the OS share sheet.
-    final url = actions.shareLinkUrl(link['token']?.toString() ?? '');
-    await Clipboard.setData(ClipboardData(text: url));
-    if (!mounted) return;
-    await _shareNative(url);
+    // On the clipboard, ready to paste, and nothing further. The OS share
+    // sheet used to open itself here, which put a full-screen prompt in front
+    // of someone who may only have wanted the link to exist; Share is one tap
+    // away below when sending it is the intent.
+    await _copy(link);
   }
 
   /// Apply one setting to the current link. Optimistic: the row moves at once
