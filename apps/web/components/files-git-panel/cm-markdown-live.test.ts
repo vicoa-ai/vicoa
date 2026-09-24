@@ -4,9 +4,12 @@ import { ensureSyntaxTree } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import {
   buildTableDecorations,
+  cellRanges,
   computeMarkdownDecorations,
   frontMatterRange,
   parseTable,
+  sourceOffsetInCell,
+  tableCellOffsets,
 } from './cm-markdown-live';
 
 interface Deco {
@@ -259,5 +262,50 @@ describe('buildTableDecorations', () => {
   test('a table with the cursor inside it stays raw markdown', () => {
     const doc = `x\n\n${TABLE}\n`;
     expect(tableBlocks(doc, 5)).toEqual([]);
+  });
+});
+
+describe('table cell offsets', () => {
+  const at = (line: string) => cellRanges(line).map((r) => line.slice(r.from, r.to));
+
+  test('cellRanges: outer pipes and padding are excluded', () => {
+    expect(at('| a | bb |')).toEqual(['a', 'bb']);
+    expect(at('a | bb')).toEqual(['a', 'bb']); // outer pipes are optional
+    expect(at('|a|')).toEqual(['a']);
+    expect(at('| a |  | c |')).toEqual(['a', '', 'c']);
+  });
+
+  test('cellRanges: an escaped pipe belongs to the cell', () => {
+    expect(at('| a \\| b | c |')).toEqual(['a \\| b', 'c']);
+  });
+
+  test('cellRanges and the rendered cells come from one splitter', () => {
+    const line = '| a \\| b |  c  |';
+    const rendered = parseTable(`${line}\n| --- | --- |\n| 1 | 2 |`)?.header;
+    // Same cells, one unescaped for display and one kept as source offsets.
+    expect(rendered).toEqual(['a | b', 'c']);
+    expect(at(line)).toEqual(['a \\| b', 'c']);
+  });
+
+  test('tableCellOffsets: row 0 is the header, the delimiter row is skipped', () => {
+    const src = '| Name | Age |\n|:--|--:|\n| Bob | 30 |\n| Ann | 7 |';
+    const text = tableCellOffsets(src).map((row) => row.map((c) => src.slice(c.from, c.to)));
+    expect(text).toEqual([
+      ['Name', 'Age'],
+      ['Bob', '30'],
+      ['Ann', '7'],
+    ]);
+    // The offsets are into the table's own source, so a click resolves to a
+    // document position by adding the widget's start.
+    expect(src.slice(tableCellOffsets(src)[2][0].from)).toBe('Ann | 7 |');
+  });
+
+  test('sourceOffsetInCell: an escape costs one source character', () => {
+    // Source `a\|b` renders as `a|b`, so rendered index 2 is source index 3.
+    expect(sourceOffsetInCell('a\\|b', 0)).toBe(0);
+    expect(sourceOffsetInCell('a\\|b', 1)).toBe(1);
+    expect(sourceOffsetInCell('a\\|b', 2)).toBe(3);
+    expect(sourceOffsetInCell('plain', 3)).toBe(3);
+    expect(sourceOffsetInCell('short', 99)).toBe(5); // past the end clamps
   });
 });

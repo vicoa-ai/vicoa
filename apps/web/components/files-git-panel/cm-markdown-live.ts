@@ -263,12 +263,87 @@ export interface ParsedTable {
   rows: string[][];
 }
 
+/**
+ * Where each cell's text sits in a table row, as offsets into `line` — the one
+ * splitter for table rows, so what the grid renders and what a click resolves
+ * to can never drift apart. Outer pipes and surrounding space are excluded; an
+ * escaped `\|` is part of the cell.
+ */
+export function cellRanges(line: string): Array<{ from: number; to: number }> {
+  let start = line.length - line.trimStart().length;
+  let end = line.trimEnd().length;
+  if (line[start] === '|') start += 1;
+  if (end - 1 > start && line[end - 1] === '|' && line[end - 2] !== '\\') end -= 1;
+
+  const out: Array<{ from: number; to: number }> = [];
+  let cell = start;
+  for (let i = start; i <= end; i++) {
+    if (i < end && !(line[i] === '|' && line[i - 1] !== '\\')) continue;
+    let from = cell;
+    let to = i;
+    while (from < to && /\s/.test(line[from])) from += 1;
+    while (to > from && /\s/.test(line[to - 1])) to -= 1;
+    out.push({ from, to });
+    cell = i + 1;
+  }
+  return out;
+}
+
 /** Split a markdown table row into trimmed cells, honoring escaped `\|`. */
 function splitTableRow(line: string): string[] {
-  let s = line.trim();
-  if (s.startsWith('|')) s = s.slice(1);
-  if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1);
-  return s.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
+  return cellRanges(line).map(({ from, to }) => line.slice(from, to).replace(/\\\|/g, '|'));
+}
+
+/**
+ * The source offsets of every rendered cell of `src`, as `[row][col]` — row 0
+ * is the header and the delimiter row is skipped, so the indices line up with
+ * {@link ParsedTable}. Offsets are relative to the table's own text.
+ */
+export function tableCellOffsets(src: string): Array<Array<{ from: number; to: number }>> {
+  const out: Array<Array<{ from: number; to: number }>> = [];
+  let offset = 0;
+  let row = 0;
+  for (const line of src.split('\n')) {
+    if (line.trim() !== '') {
+      // Row 1 is the `---|---` delimiter: rendered as the grid's shape, not a row.
+      if (row !== 1) {
+        out.push(cellRanges(line).map(({ from, to }) => ({ from: from + offset, to: to + offset })));
+      }
+      row += 1;
+    }
+    offset += line.length + 1; // the `\n`
+  }
+  return out;
+}
+
+/** A rendered character index inside a cell, as an offset into its source —
+ *  they differ by the backslash of every `\|` before it. */
+export function sourceOffsetInCell(cellSrc: string, rendered: number): number {
+  let seen = 0;
+  for (let i = 0; i < cellSrc.length; i++) {
+    if (seen === rendered) return i;
+    if (cellSrc[i] === '\\' && cellSrc[i + 1] === '|') i += 1;
+    seen += 1;
+  }
+  return cellSrc.length;
+}
+
+/** The character of `el`'s text the pointer is over. Both spellings of the API
+ *  are tried (Blink/WebKit, then the standard one) before giving up. */
+function caretIndexIn(el: HTMLElement, event: MouseEvent): number {
+  const doc = el.ownerDocument as Document & {
+    // Structural types: `Range` in this file is CodeMirror's, not the DOM's.
+    caretRangeFromPoint?: (
+      x: number,
+      y: number,
+    ) => { startContainer: Node; startOffset: number } | null;
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  };
+  const range = doc.caretRangeFromPoint?.(event.clientX, event.clientY);
+  if (range && el.contains(range.startContainer)) return range.startOffset;
+  const caret = doc.caretPositionFromPoint?.(event.clientX, event.clientY);
+  if (caret && el.contains(caret.offsetNode)) return caret.offset;
+  return 0;
 }
 
 /** Parse a GFM table's source into header/alignment/rows, or `null` when the
@@ -330,6 +405,8 @@ class TableWidget extends WidgetType {
     parsed.header.forEach((cell, i) => {
       const th = document.createElement('th');
       th.textContent = cell; // textContent, not innerHTML — no injection.
+      th.dataset.row = '0';
+      th.dataset.col = String(i);
       const a = parsed.align[i];
       if (a) th.style.textAlign = a;
       headRow.appendChild(th);
@@ -338,30 +415,45 @@ class TableWidget extends WidgetType {
     table.appendChild(thead);
 
     const tbody = document.createElement('tbody');
-    for (const row of parsed.rows) {
+    parsed.rows.forEach((row, r) => {
       const tr = document.createElement('tr');
       for (let i = 0; i < parsed.header.length; i++) {
         const td = document.createElement('td');
         td.textContent = row[i] ?? '';
+        td.dataset.row = String(r + 1); // row 0 is the header
+        td.dataset.col = String(i);
         const a = parsed.align[i];
         if (a) td.style.textAlign = a;
         tr.appendChild(td);
       }
       tbody.appendChild(tr);
-    }
+    });
     table.appendChild(tbody);
     wrap.appendChild(table);
 
     // Click the rendered grid to drop the cursor into its source (posAtDOM keeps
     // this correct across edits above the table), which reveals the raw markdown
-    // via the selection-touch check so it can be edited.
+    // via the selection-touch check so it can be edited. The caret lands on the
+    // character that was clicked: revealing the source swaps the grid for text,
+    // so sending every click to the table's first character lost the user's
+    // place in it.
     wrap.addEventListener('mousedown', (e) => {
       e.preventDefault();
-      const pos = view.posAtDOM(wrap);
-      view.dispatch({ selection: { anchor: pos } });
+      view.dispatch({ selection: { anchor: view.posAtDOM(wrap) + this.clickOffset(e) } });
       view.focus();
     });
     return wrap;
+  }
+
+  /** Where in the table's source a click landed, or 0 (its start) for a click
+   *  that missed the cells — the border, the padding around them. */
+  private clickOffset(event: MouseEvent): number {
+    const target = event.target instanceof Element ? event.target.closest('th,td') : null;
+    if (!(target instanceof HTMLElement)) return 0;
+    const cell = tableCellOffsets(this.src)[Number(target.dataset.row)]?.[Number(target.dataset.col)];
+    if (!cell) return 0;
+    const inCell = sourceOffsetInCell(this.src.slice(cell.from, cell.to), caretIndexIn(target, event));
+    return cell.from + inCell;
   }
   ignoreEvent(): boolean {
     return true;
