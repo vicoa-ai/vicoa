@@ -126,10 +126,10 @@ not in this terminal.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--machine <ID\|NAME>` | this host's daemon | Target machine: id, or a display-name/hostname substring |
-| `--dir <PATH>` | daemon default | Directory on the target machine |
+| `--machine <ID\|NAME>` | this host's daemon | Target machine: full id, id prefix, or a display-name/hostname substring (`--list-machines`) |
+| `--dir <PATH>` | — (**required**) | Directory on the target machine |
 | `--allow-offline` | off | Queue the request; it runs when the daemon reconnects |
-| `--agent <name>` | `claude` | Agent to run (also filters `--list-models`) |
+| `--agent <name>` | `claude` | Agent to run — every supported agent **except `amp`**, which only runs locally. Also filters `--list-models` |
 | `--agent-profile <NAME>` | — | Start from a saved agent (`vicoa agent ls`); explicit flags still win |
 | `--model <slug>` | — | Model slug |
 | `--effort <level>` | — | Reasoning effort (claude/codex) |
@@ -173,7 +173,11 @@ to a pull request.
 | `--list` | | List the session's live links instead of creating one |
 | `--web-url <URL>` | `VICOA_AUTH_URL` / vicoa.ai | Web origin used to print the URL |
 
-Without `--new`, an equivalent live link is reused rather than duplicated.
+On success it prints **only the URL**, so it drops straight into a `$(…)`:
+`gh pr comment 123 --body "Session transcript: $(vicoa session share)"`.
+Without `--new`, an equivalent live link is reused rather than duplicated — but
+`--expires` always mints a fresh link. A shared page shows the transcript only:
+never the machine, the working directory, or session secrets.
 
 ### `vicoa session unshare [session_id]`
 
@@ -182,6 +186,10 @@ Without `--new`, an equivalent live link is reused rather than duplicated.
 | `--link <LINK_ID>` | Revoke this link (id or prefix from `session share --list`) |
 | `--all` | Revoke every live link on the session |
 | `--web-url <URL>` | Web origin for listed URLs |
+
+With neither `--link` nor `--all` it prints the session's live links and exits
+without revoking anything. A revoked URL stops working everywhere it was
+pasted.
 
 ## Starting / stopping sessions locally
 
@@ -220,10 +228,15 @@ These run the agent in the current terminal (not part of the `session` group).
 | `all` | Daemon + sessions |
 | `<id or 8-char prefix>` | Stop that one session |
 
-Flags: `--agent <name>` (limit `sessions`/`all` to one agent type),
-`-y`/`--yes`, `--base-url` (scope `stop daemon` to one base URL; without it, a
-bare `stop daemon` stops every running daemon). `vicoa disconnect` is an alias
-for `vicoa stop daemon`.
+Flags: `--agent <name>` — only `claude`, `codex`, `opencode`, `amp` here, a
+narrower set than the launch verbs take — plus `-y`/`--yes` and `--base-url`
+(scope `stop daemon` to one base URL; without it, a bare `stop daemon` stops
+every running daemon). `vicoa disconnect` is an alias for `vicoa stop daemon`.
+
+A session-id prefix that matches **more than one** session stops all the
+matches after a single confirmation; pass the full UUID to disambiguate. Each
+session is asked to shut down gracefully and force-stopped if it doesn't exit
+in a short grace period.
 
 ## `vicoa task ...` — task backlog
 
@@ -243,7 +256,7 @@ identifiers), `STATUS`, `PRIO`, `PROJECT`, `TITLE`.
 | `--status <status>` | Filter by status (enum above) |
 | `--priority <priority>` | Filter by priority (enum above) |
 | `--label <NAME>` | Only tasks carrying this label (repeatable; **every** one must match) |
-| `--json` | Raw JSON |
+| `--json` | Raw JSON — a bare array; rows carry `project_id` and `project_name` |
 
 ### Task references
 
@@ -259,8 +272,13 @@ The server resolves both on the path (`GET /api/v1/tasks/VIC-42` works).
 travels in the request body as a typed UUID.
 
 Keys are unique **per owner**, not globally: `VIC-1` names a different task in a
-different account, and neither can reach the other. A task predating the
-identifiers has no key — use its UUID.
+different account, and neither can reach the other.
+
+Not every task has one. An identifier is a **project key + per-project number**,
+so a task filed under **No project** has none — and moving a task to `none`
+drops its identifier, just as moving it between projects renumbers it
+(`VIC-20 → VIC2-2`). A task predating identifiers has none either. Both print
+`—` in the `KEY` column; use the UUID.
 
 ### `vicoa task get <task_ref>`
 
@@ -296,7 +314,10 @@ flags you pass change (PATCH with exclude-unset); passing none is an error.
 | `--label <NAME>` | Set the labels to **exactly** these (repeatable) |
 | `--add-label <NAME>` | Add a label, keeping the rest (repeatable) |
 | `--remove-label <NAME>` | Remove a label, keeping the rest (repeatable) |
-| `--json` | Raw JSON |
+| `--json` | Raw JSON — one object for one ref, a list for several |
+
+With several refs, a ref that fails (typo, 404) is reported on stderr and the
+rest still run; the exit code is `1` if any failed.
 
 ### `vicoa task delete <task_ref>`
 
@@ -343,10 +364,11 @@ automatically, from the folder a session runs in).
 | Command | Meaning |
 |---|---|
 | `project ls [--include-archived] [--json]` | Columns `ID`, `KEY`, `NAME`, `PATH`, `TASKS` — `KEY`/`NAME`/`ID` are the refs `--project` takes |
-| `project get <REF> [--json]` | One project's detail; `<REF>` is a key, name, or id |
+| `project get <REF> [--json]` | One project's detail — including every machine's checkout path; `<REF>` is a key, name, or id |
 
-`none` is not a project — it is the sentinel `--project` accepts for **No
-project** (the unfiled tasks).
+`PATH` is this machine's checkout; `TASKS` counts **open** tasks (everything but
+`done` and `cancelled`). `none` is not a project — it is the sentinel
+`--project` accepts for **No project** (the unfiled tasks).
 
 ## `vicoa label ...` — task labels
 
@@ -356,7 +378,11 @@ per-project labels).
 | Command | Meaning |
 |---|---|
 | `label ls [--json]` | Columns `ID`, `NAME`, `COLOR` — `NAME` is what `--label` takes |
-| `label create <name> [--color '#RRGGBB'] [--json]` | Create one; names are unique case-insensitively, colour defaults to the one the web would pick |
+| `label create <name> [--color '#RRGGBB'] [--json]` | Create one; colour defaults to the one the web would pick from the name |
+
+`create` refuses a name that already exists (case-insensitively), so a
+`--label <name>` reference is never ambiguous. Rename, recolour, and delete
+stay in the apps.
 
 ## `vicoa automation ...` — scheduled automations
 
@@ -432,6 +458,53 @@ Accepts all `create` flags (schedule, session config, target) plus `--title`,
 convenience flag — change the agent via `--session-config-json` (which replaces
 the config wholesale).
 
+## `vicoa worktree setup [path]`
+
+Runs the source repository's `worktree.setup` commands — from its committed
+`.vicoa/config.json` (or root `vicoa.json`) — inside the checkout at `path`
+(default: the current directory), echoing each command and streaming its
+output. This is the same run the daemon performs automatically when it creates
+a worktree for a new session, so it writes the same run record and the
+dashboard's setup badge shows it.
+
+| Flag | Meaning |
+|---|---|
+| `--dry-run` | List the commands that would run, without running them |
+| `--trust` | Also mark the source repository as trusted on this machine, so the daemon sets up new worktrees automatically |
+| `--force` | Run even if a setup run for this worktree is already in progress |
+
+Each command runs in the worktree under a login shell with
+`$VICOA_WORKTREE_PATH`, `$VICOA_ROOT_PATH` (the main checkout the config came
+from) and `$VICOA_BRANCH_NAME` set. The run stops at the first failure and
+returns that command's exit code. The config is always read from the **source**
+repository's working tree, so a linked worktree runs the same setup as the
+checkout it was forked from.
+
+**Trust.** A cloned repository's config can contain arbitrary shell, so the
+daemon only *auto-runs* setup for repositories approved on that machine. Typing
+the command yourself is approval for that one run — nothing is gated — and
+`--trust` records it for the future. Reach for this to re-run after a failed
+automatic setup, or to bring up a worktree whose setup never ran.
+
+## Machine-readable output
+
+Every `session` / `task` / `project` / `label` / `agent` / `automation`
+subcommand, plus `vicoa ls`, takes `--json`. The shapes are not uniform:
+
+- **Paginated lists** (`session ls`) come wrapped:
+  `{items, total, limit, offset, has_more}`.
+- **Everything else** (`task ls`, `project ls`, `label ls`, `vicoa ls`) is the
+  bare array the API returns.
+- `task update --json` prints one object for a single ref, a list for several.
+
+```bash
+vicoa session ls --active --json | jq '.items[].id'
+vicoa task ls --project VIC --json | jq '.[].identifier'
+```
+
+The "new version available" banner is written to **stderr** so it never lands
+in a `--json` pipe — don't merge the streams with `2>&1` before parsing.
+
 ## Other groups
 
 | Command | Meaning |
@@ -439,4 +512,3 @@ the config wholesale).
 | `vicoa agent ls\|add\|rm` | Saved agent profiles (provider + model + config + instructions) reused by `session start --agent-profile` and the dashboard |
 | `vicoa provider ...` | Add, check and manage the ACP coding agents this machine can run |
 | `vicoa plugin ...` | Install and manage local Vicoa plugins (themes, sidebar, composer) |
-| `vicoa worktree setup` | Run a worktree's committed setup commands from `.vicoa/config.json` |

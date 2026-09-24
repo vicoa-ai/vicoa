@@ -171,6 +171,11 @@ vicoa session start --machine <id|name> --dir ~/code/app \
   --agent claude --prompt "Triage the failing tests" --wait
 ```
 
+`--dir` is **required** — there is no default working directory. `--machine`
+defaults to this host's daemon and accepts an id, an id prefix, or a
+display-name/hostname substring. Every agent except `amp` can be spawned this
+way; `amp` only runs from a local `vicoa --agent amp`.
+
 **Stopping:**
 
 ```bash
@@ -189,9 +194,13 @@ vicoa session share 3f9c1a2b --list       # existing live links
 vicoa session unshare 3f9c1a2b --all      # revoke
 ```
 
-The link is public by default and the owner's name is hidden unless
-`--show-owner`. Re-running `share` reuses an equivalent live link rather than
-minting a second one (`--new` forces a fresh one).
+On success `share` prints **only the URL**, so it drops straight into a
+`$(…)` — `gh pr comment 123 --body "Session: $(vicoa session share)"`. The link
+is public by default and the owner's name is hidden unless `--show-owner`.
+Re-running `share` reuses an equivalent live link rather than minting a second
+one (`--new` forces a fresh one; `--expires` always mints a new link).
+`unshare` with neither `--link` nor `--all` just lists the live links and
+revokes nothing.
 
 ## Tasks
 
@@ -229,9 +238,10 @@ loud — works everywhere a task reference is taken: the positional argument on
 works too. Prefer the identifier: it is the only handle you and the user both
 have. Matching is case-insensitive.
 
-A task created before identifiers shipped has no key and prints `—` in that
-column; use its UUID. (`vicoa --task` and `session update --task` still need the
-UUID.)
+Not every task has one: a task filed under **No project** has no identifier
+(moving a task to `none` drops it), and so does a task created before
+identifiers shipped. Both print `—` in the `KEY` column — use the UUID.
+(`vicoa --task` and `session update --task` always want the UUID.)
 
 ### Projects and labels
 
@@ -327,8 +337,9 @@ Rarely what a question is about, but worth knowing they exist:
 - `vicoa provider` — add and check the ACP coding agents this machine can run.
 - `vicoa plugin` — install and manage local Vicoa plugins (themes, sidebar,
   composer).
-- `vicoa worktree setup` — run a worktree's committed setup commands from
-  `.vicoa/config.json`.
+- `vicoa worktree setup [path]` — run a worktree's committed setup commands from
+  `.vicoa/config.json` (`--dry-run` to see them first). Useful when a worktree's
+  automatic setup failed or never ran.
 
 ## Errors & recovery
 
@@ -337,6 +348,11 @@ Rarely what a question is about, but worth knowing they exist:
 | `Authentication failed … run vicoa --reauth` (HTTP 401) | Key is invalid/expired — ask the user to run `vicoa --reauth` (opens a browser; you can't). |
 | `No Vicoa API key found` | Set `VICOA_API_KEY`, pass `--api-key`, or have the user run `vicoa --auth`. |
 | `No machine to run on` (automation create) | Run `vicoa daemon` on the target box first (it auto-registers), or pass `--machine-id`. |
+| `--dir is required to start a session` | `session start` has no default directory — pass `--dir <PATH>`; `--list-machines` / `--list-models` first if you need to pick. |
+| `Daemon on <machine> looks offline` (session start) | Start `vicoa daemon` there, or pass `--allow-offline` to queue the request until it reconnects. |
+| `no project with key or name '…'` / `N projects are named '…'` | `--project` matches a key, name, or id exactly — check `vicoa project ls`; pass the key or id when two projects share a name. |
+| `no label named '…'` | `--label` takes an existing name — `vicoa label ls`, or `vicoa label create <name>`. |
+| `no session given and VICOA_AGENT_INSTANCE_ID is not set` | `session share`/`unshare` default to the session they run inside; outside one, pass the session id. |
 | `'<ref>' is ambiguous` / `No session found matching` | The 8-char prefix collided or aged out — use more characters or the full UUID. |
 | `404` on `task get/update/delete` | Use the `VIC-42` identifier or the **full UUID** — the 8-char prefix in the ID column is display-only. Automations still need their full UUID. |
 | `Nothing to update — pass at least one field` | `update` is a PATCH; pass ≥1 flag (e.g. `--status done`). |
@@ -364,6 +380,17 @@ Rarely what a question is about, but worth knowing they exist:
   a footer reports how much was hidden.
 - **`--role` filters after `--limit`.** `--limit` counts both senders, so pair
   `--role` with `--all` or you'll get fewer rows than you asked for.
+- **`--json` shapes differ.** `session ls` is wrapped —
+  `{items, total, limit, offset, has_more}` — while `task ls`, `project ls`, and
+  `label ls` return the bare array. `task update --json` prints one object for
+  one ref and a list for several.
+- **Don't merge streams before parsing.** The "new version available" banner
+  goes to **stderr** precisely so it stays out of a `--json` pipe; `2>&1` puts
+  it back in and breaks `jq`.
+- **`vicoa stop <prefix>` stops every match.** A prefix that hits more than one
+  session stops them all after a single confirmation — pass the full UUID when
+  you mean one. `stop sessions --agent` takes only `claude`, `codex`,
+  `opencode`, or `amp`.
 
 See **[REFERENCE.md](REFERENCE.md)** for the complete flag tables (every session,
 task, project, label, and automation option; transcript verbosity flags; schedule
