@@ -4,12 +4,15 @@ import { ensureSyntaxTree } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import {
   buildTableDecorations,
+  cellEdit,
   cellRanges,
+  escapeCellText,
   computeMarkdownDecorations,
   frontMatterRange,
   parseTable,
   sourceOffsetInCell,
   tableCellOffsets,
+  tableRowSources,
 } from './cm-markdown-live';
 
 interface Deco {
@@ -307,5 +310,60 @@ describe('table cell offsets', () => {
     expect(sourceOffsetInCell('a\\|b', 2)).toBe(3);
     expect(sourceOffsetInCell('plain', 3)).toBe(3);
     expect(sourceOffsetInCell('short', 99)).toBe(5); // past the end clamps
+  });
+});
+
+describe('cellEdit', () => {
+  const TABLE = '| a | b |\n| --- | --- |\n| 1 | 2 |';
+  /** `src` with the edit applied — what the document would end up holding. */
+  const applied = (src: string, row: number, col: number, value: string): string | null => {
+    const edit = cellEdit(src, row, col, value);
+    return edit ? src.slice(0, edit.from) + edit.insert + src.slice(edit.to) : null;
+  };
+
+  test('replaces the cell, leaving the rest of the table byte for byte', () => {
+    expect(applied(TABLE, 0, 1, 'bee')).toBe('| a | bee |\n| --- | --- |\n| 1 | 2 |');
+    expect(applied(TABLE, 1, 0, 'one')).toBe('| a | b |\n| --- | --- |\n| one | 2 |');
+  });
+
+  test('a typed pipe is escaped, so the cell cannot split the row', () => {
+    expect(escapeCellText('a | b')).toBe('a \\| b');
+    expect(escapeCellText('already \\| escaped')).toBe('already \\| escaped');
+    expect(escapeCellText('two\nlines')).toBe('two lines');
+    expect(applied(TABLE, 1, 1, 'x | y')).toBe('| a | b |\n| --- | --- |\n| 1 | x \\| y |');
+  });
+
+  test('the padding around a cell is the author\u2019s, and survives an edit', () => {
+    // Typing a trailing space must not add one to the source on every
+    // keystroke, and a hand-aligned table keeps its columns.
+    expect(applied(TABLE, 1, 0, 'one ')).toBe('| a | b |\n| --- | --- |\n| one | 2 |');
+    const padded = '| a   | b |\n| --- | --- |\n| 1   | 2 |';
+    expect(applied(padded, 1, 0, 'x')).toBe('| a   | b |\n| --- | --- |\n| x   | 2 |');
+  });
+
+  test('an empty value empties the cell rather than removing it', () => {
+    expect(applied(TABLE, 1, 1, '')).toBe('| a | b |\n| --- | --- |\n| 1 |  |');
+  });
+
+  test('typing in a padded cell grows the row', () => {
+    // Three header columns, a row with two: the grid renders an empty third.
+    const short = '| a | b | c |\n| --- | --- | --- |\n| 1 | 2 |';
+    expect(applied(short, 1, 2, 'three')).toBe(
+      '| a | b | c |\n| --- | --- | --- |\n| 1 | 2 | three |',
+    );
+    // …including across a gap, and on a row written without outer pipes.
+    const bare = 'a | b | c\n--- | --- | ---\n1';
+    expect(applied(bare, 1, 2, 'z')).toBe('a | b | c\n--- | --- | ---\n1 |  | z');
+  });
+
+  test('no such row', () => {
+    expect(cellEdit(TABLE, 9, 0, 'x')).toBe(null);
+  });
+
+  test('tableRowSources: line bounds exclude the trailing newline', () => {
+    const rows = tableRowSources(TABLE);
+    expect(rows).toHaveLength(2);
+    expect(TABLE.slice(rows[0].from, rows[0].to)).toBe('| a | b |');
+    expect(TABLE.slice(rows[1].from, rows[1].to)).toBe('| 1 | 2 |');
   });
 });

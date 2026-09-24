@@ -5,6 +5,7 @@ import {
   Decoration,
   type DecorationSet,
   EditorView,
+  runScopeHandlers,
   ViewPlugin,
   type ViewUpdate,
   WidgetType,
@@ -294,26 +295,86 @@ function splitTableRow(line: string): string[] {
   return cellRanges(line).map(({ from, to }) => line.slice(from, to).replace(/\\\|/g, '|'));
 }
 
+/** A rendered row of a table: the line it occupies and its cells, all as
+ *  offsets into the table's own source. */
+export interface TableRowSource {
+  /** The row's line, trailing whitespace excluded. */
+  from: number;
+  to: number;
+  cells: Array<{ from: number; to: number }>;
+}
+
 /**
- * The source offsets of every rendered cell of `src`, as `[row][col]` — row 0
- * is the header and the delimiter row is skipped, so the indices line up with
- * {@link ParsedTable}. Offsets are relative to the table's own text.
+ * The source of every rendered row of `src`, in `[row]` order — row 0 is the
+ * header and the delimiter row is skipped, so the indices line up with
+ * {@link ParsedTable}.
  */
-export function tableCellOffsets(src: string): Array<Array<{ from: number; to: number }>> {
-  const out: Array<Array<{ from: number; to: number }>> = [];
+export function tableRowSources(src: string): TableRowSource[] {
+  const out: TableRowSource[] = [];
   let offset = 0;
   let row = 0;
   for (const line of src.split('\n')) {
     if (line.trim() !== '') {
       // Row 1 is the `---|---` delimiter: rendered as the grid's shape, not a row.
       if (row !== 1) {
-        out.push(cellRanges(line).map(({ from, to }) => ({ from: from + offset, to: to + offset })));
+        out.push({
+          from: offset + (line.length - line.trimStart().length),
+          to: offset + line.trimEnd().length,
+          cells: cellRanges(line).map(({ from, to }) => ({ from: from + offset, to: to + offset })),
+        });
       }
       row += 1;
     }
     offset += line.length + 1; // the `\n`
   }
   return out;
+}
+
+/**
+ * The source offsets of every rendered cell of `src`, as `[row][col]`.
+ * Offsets are relative to the table's own text.
+ */
+export function tableCellOffsets(src: string): Array<Array<{ from: number; to: number }>> {
+  return tableRowSources(src).map((row) => row.cells);
+}
+
+/** A cell's text as it must be written back: a typed `|` would split the cell
+ *  in two, and a pasted newline would end the table. */
+export function escapeCellText(value: string): string {
+  return value.replace(/\r?\n/g, ' ').replace(/(?<!\\)\|/g, '\\|');
+}
+
+/**
+ * The document change that sets cell `[row][col]` of a table to `value`, as
+ * offsets into the table's own source — the one place that knows how an edit in
+ * the grid becomes markdown.
+ *
+ * A row rendered with fewer cells than the header has empty ones padded in by
+ * the grid; typing in one of those appends the cells it needs to the row rather
+ * than refusing the edit.
+ */
+export function cellEdit(
+  src: string,
+  row: number,
+  col: number,
+  value: string,
+): { from: number; to: number; insert: string } | null {
+  const rows = tableRowSources(src);
+  const line = rows[row];
+  if (!line) return null;
+  // Trimmed, because a cell's source range is its *text*: the spaces around it
+  // are the author's padding, which an edit has no business rewriting (and
+  // which a typed trailing space would otherwise pile up in, one per keystroke).
+  const text = escapeCellText(value).trim();
+  const cell = line.cells[col];
+  if (cell) return { from: cell.from, to: cell.to, insert: text };
+
+  // Past the end of the row: grow it, filling any gap with empty cells.
+  const gap = '|  '.repeat(Math.max(0, col - line.cells.length));
+  const endsWithPipe = src.slice(line.to - 1, line.to) === '|';
+  const at = endsWithPipe ? line.to - 1 : line.to;
+  const insert = endsWithPipe ? `${gap}| ${text} ` : ` ${gap}| ${text}`;
+  return { from: at, to: at, insert };
 }
 
 /** A rendered character index inside a cell, as an offset into its source —
@@ -326,24 +387,6 @@ export function sourceOffsetInCell(cellSrc: string, rendered: number): number {
     seen += 1;
   }
   return cellSrc.length;
-}
-
-/** The character of `el`'s text the pointer is over. Both spellings of the API
- *  are tried (Blink/WebKit, then the standard one) before giving up. */
-function caretIndexIn(el: HTMLElement, event: MouseEvent): number {
-  const doc = el.ownerDocument as Document & {
-    // Structural types: `Range` in this file is CodeMirror's, not the DOM's.
-    caretRangeFromPoint?: (
-      x: number,
-      y: number,
-    ) => { startContainer: Node; startOffset: number } | null;
-    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
-  };
-  const range = doc.caretRangeFromPoint?.(event.clientX, event.clientY);
-  if (range && el.contains(range.startContainer)) return range.startOffset;
-  const caret = doc.caretPositionFromPoint?.(event.clientX, event.clientY);
-  if (caret && el.contains(caret.offsetNode)) return caret.offset;
-  return 0;
 }
 
 /** Parse a GFM table's source into header/alignment/rows, or `null` when the
@@ -381,7 +424,14 @@ function parseTableCached(src: string): ParsedTable | null {
   return parsed;
 }
 
-/** The rendered grid a GFM table collapses to when the cursor isn't inside it. */
+/** The rendered grid a GFM table collapses to when the cursor isn't inside it.
+ *
+ *  Its cells are `<input>`s, so the grid is edited in place rather than turning
+ *  back into pipes the moment it is touched. Inputs, not `contenteditable`:
+ *  typing in one mutates no text node CodeMirror's DOM observer is watching and
+ *  moves no document selection, so the editor and the grid never fight over the
+ *  DOM. Every keystroke is written straight back into the table's markdown
+ *  through {@link cellEdit} — the buffer stays the file's exact source. */
 class TableWidget extends WidgetType {
   constructor(readonly src: string) {
     super();
@@ -389,6 +439,7 @@ class TableWidget extends WidgetType {
   eq(other: TableWidget): boolean {
     return other.src === this.src;
   }
+
   toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement('div');
     wrap.className = 'cm-md-table-wrap';
@@ -397,19 +448,16 @@ class TableWidget extends WidgetType {
       wrap.textContent = this.src;
       return wrap;
     }
+    // The handlers below read the *current* source from here: the widget they
+    // were created with is replaced on every edit, but this DOM lives on.
+    wrap.dataset.src = this.src;
+
     const table = document.createElement('table');
     table.className = 'cm-md-table';
-
     const thead = document.createElement('thead');
     const headRow = document.createElement('tr');
-    parsed.header.forEach((cell, i) => {
-      const th = document.createElement('th');
-      th.textContent = cell; // textContent, not innerHTML — no injection.
-      th.dataset.row = '0';
-      th.dataset.col = String(i);
-      const a = parsed.align[i];
-      if (a) th.style.textAlign = a;
-      headRow.appendChild(th);
+    parsed.header.forEach((cell, col) => {
+      headRow.appendChild(buildCell('th', cell, 0, col, parsed.align[col]));
     });
     thead.appendChild(headRow);
     table.appendChild(thead);
@@ -417,47 +465,187 @@ class TableWidget extends WidgetType {
     const tbody = document.createElement('tbody');
     parsed.rows.forEach((row, r) => {
       const tr = document.createElement('tr');
-      for (let i = 0; i < parsed.header.length; i++) {
-        const td = document.createElement('td');
-        td.textContent = row[i] ?? '';
-        td.dataset.row = String(r + 1); // row 0 is the header
-        td.dataset.col = String(i);
-        const a = parsed.align[i];
-        if (a) td.style.textAlign = a;
-        tr.appendChild(td);
+      for (let col = 0; col < parsed.header.length; col++) {
+        tr.appendChild(buildCell('td', row[col] ?? '', r + 1, col, parsed.align[col]));
       }
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
     wrap.appendChild(table);
 
-    // Click the rendered grid to drop the cursor into its source (posAtDOM keeps
-    // this correct across edits above the table), which reveals the raw markdown
-    // via the selection-touch check so it can be edited. The caret lands on the
-    // character that was clicked: revealing the source swaps the grid for text,
-    // so sending every click to the table's first character lost the user's
-    // place in it.
-    wrap.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      view.dispatch({ selection: { anchor: view.posAtDOM(wrap) + this.clickOffset(e) } });
+    wrap.addEventListener('input', (event) => this.onInput(wrap, view, event));
+    wrap.addEventListener('keydown', (event) => this.onKeyDown(wrap, view, event));
+    wrap.addEventListener('mousedown', (event) => {
+      // A click on the input itself belongs to the browser: it focuses the
+      // cell and puts the caret under the pointer. A click elsewhere in the
+      // same cell (its padding, past the end of a short value) still means
+      // that cell, so it takes the caret to the end of the text.
+      if (event.target instanceof HTMLInputElement) return;
+      const cell = event.target instanceof Element ? event.target.closest('th,td') : null;
+      event.preventDefault();
+      const input = cell?.querySelector('input');
+      if (input) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+        return;
+      }
+      // Outside the cells — the grid's own padding. Drop the caret into the
+      // markdown, which reveals it for the edits the grid cannot express:
+      // adding a column, changing the alignment row.
+      view.dispatch({ selection: { anchor: view.posAtDOM(wrap) } });
       view.focus();
     });
     return wrap;
   }
 
-  /** Where in the table's source a click landed, or 0 (its start) for a click
-   *  that missed the cells — the border, the padding around them. */
-  private clickOffset(event: MouseEvent): number {
-    const target = event.target instanceof Element ? event.target.closest('th,td') : null;
-    if (!(target instanceof HTMLElement)) return 0;
-    const cell = tableCellOffsets(this.src)[Number(target.dataset.row)]?.[Number(target.dataset.col)];
-    if (!cell) return 0;
-    const inCell = sourceOffsetInCell(this.src.slice(cell.from, cell.to), caretIndexIn(target, event));
-    return cell.from + inCell;
-  }
-  ignoreEvent(): boolean {
+  /** Update the grid in place for a new source — called by CodeMirror instead
+   *  of redrawing, which is what keeps the caret inside the cell being typed
+   *  in. A shape change (a column added in the source) redraws. */
+  updateDOM(dom: HTMLElement, _view: EditorView, _old: WidgetType): boolean {
+    const parsed = parseTableCached(this.src);
+    const inputs = dom.querySelectorAll('input');
+    if (!parsed || !dom.dataset.src) return false;
+    const cells = [parsed.header, ...parsed.rows.map((r) => padRow(r, parsed.header.length))];
+    if (cells.reduce((n, row) => n + row.length, 0) !== inputs.length) return false;
+
+    dom.dataset.src = this.src;
+    let i = 0;
+    for (const row of cells) {
+      for (const text of row) {
+        const input = inputs[i++];
+        // Typing into a cell leaves its input already holding the new text, so
+        // this is a no-op for the cell being edited. It is not skipped, though:
+        // an undo, or the file changing under the editor, must reach the
+        // focused cell too — with the caret kept where it was.
+        if (input.value !== text) {
+          const caret = input.selectionStart;
+          setCellValue(input, text);
+          if (input === input.ownerDocument.activeElement && caret !== null) {
+            const at = Math.min(caret, text.length);
+            input.setSelectionRange(at, at);
+          }
+        }
+      }
+    }
     return true;
   }
+
+  /** A keystroke in a cell, written back into the table's markdown. */
+  private onInput(wrap: HTMLElement, view: EditorView, event: Event): void {
+    const input = event.target;
+    const cell = input instanceof HTMLInputElement ? input.parentElement : null;
+    if (!(input instanceof HTMLInputElement) || !(cell instanceof HTMLElement)) return;
+    const src = wrap.dataset.src;
+    if (src == null) return;
+    const edit = cellEdit(src, Number(cell.dataset.row), Number(cell.dataset.col), input.value);
+    if (!edit) return;
+    cell.dataset.value = input.value; // keeps the cell as wide as its text
+    const base = view.posAtDOM(wrap);
+    view.dispatch({
+      changes: { from: base + edit.from, to: base + edit.to, insert: edit.insert },
+      userEvent: 'input.type',
+    });
+  }
+
+  private onKeyDown(wrap: HTMLElement, view: EditorView, event: KeyboardEvent): void {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      focusSibling(wrap, input, event.shiftKey ? -1 : 1);
+      return;
+    }
+    if (event.key === 'Enter' || event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const columns = wrap.querySelectorAll('thead th').length;
+      const step = event.key === 'ArrowUp' ? -columns : columns;
+      if (focusSibling(wrap, input, step)) event.preventDefault();
+      return;
+    }
+    if (event.key === 'Escape') {
+      // Out of the grid and into the markdown, at the same character.
+      event.preventDefault();
+      const cell = input.parentElement;
+      const src = wrap.dataset.src;
+      const offsets =
+        cell instanceof HTMLElement && src != null
+          ? tableCellOffsets(src)[Number(cell.dataset.row)]?.[Number(cell.dataset.col)]
+          : undefined;
+      const inCell = offsets
+        ? sourceOffsetInCell(src!.slice(offsets.from, offsets.to), input.selectionStart ?? 0)
+        : 0;
+      view.dispatch({
+        selection: { anchor: view.posAtDOM(wrap) + (offsets ? offsets.from + inCell : 0) },
+      });
+      view.focus();
+      return;
+    }
+    // Editor shortcuts still work from inside a cell (save, undo, find…), while
+    // the clipboard and select-all keep their meaning for the input's own text.
+    // Undo is deliberately the document's, not the input's: they are the same
+    // edits, and only one of the two histories knows about the rest of the file.
+    if ((event.metaKey || event.ctrlKey) && !'acvx'.includes(event.key.toLowerCase())) {
+      if (runScopeHandlers(view, event, 'editor')) event.preventDefault();
+    }
+  }
+
+  ignoreEvent(): boolean {
+    // Every event inside the grid is the grid's own: CodeMirror must not read a
+    // keystroke in a cell as a keystroke in the document.
+    return true;
+  }
+}
+
+/** `row` padded out to the header's width, so every rendered cell has a slot. */
+function padRow(row: string[], columns: number): string[] {
+  return Array.from({ length: columns }, (_, i) => row[i] ?? '');
+}
+
+/** Set a cell input's text, keeping the sizing shadow in step. */
+function setCellValue(input: HTMLInputElement, text: string): void {
+  input.value = text;
+  if (input.parentElement) input.parentElement.dataset.value = text;
+}
+
+/** One cell: an input for the text inside a box that carries the same text in a
+ *  `data-value` the CSS draws invisibly behind it. That shadow is what gives
+ *  the column its natural width — an input has none of its own — and it is why
+ *  the box, not the `th`/`td`, is the element with `display: grid` (a table
+ *  cell that stops being a table cell takes the grid's alignment with it). */
+function buildCell(
+  tag: 'th' | 'td',
+  text: string,
+  row: number,
+  col: number,
+  align: 'left' | 'right' | 'center' | null,
+): HTMLElement {
+  const cell = document.createElement(tag);
+  if (align) cell.style.textAlign = align;
+  const box = document.createElement('span');
+  box.className = 'cm-md-tcell';
+  box.dataset.row = String(row);
+  box.dataset.col = String(col);
+  box.dataset.value = text;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = text;
+  // An input's natural width is 20 characters; left at that, every column would
+  // be 20 wide. One character, and the `data-value` shadow sets the width.
+  input.size = 1;
+  input.spellcheck = false;
+  input.setAttribute('aria-label', `row ${row + 1}, column ${col + 1}`);
+  box.appendChild(input);
+  cell.appendChild(box);
+  return cell;
+}
+
+/** Move the caret `step` cells along, if there is one. */
+function focusSibling(wrap: HTMLElement, input: HTMLInputElement, step: number): boolean {
+  const inputs = Array.from(wrap.querySelectorAll('input'));
+  const next = inputs[inputs.indexOf(input) + step];
+  if (!next) return false;
+  next.focus();
+  next.select();
+  return true;
 }
 
 /** The only block nodes a GFM table can sit inside — everything else is skipped
@@ -570,6 +758,31 @@ const markdownLiveTheme = EditorView.theme({
     textAlign: 'left',
   },
   '.cm-md-table th': { fontWeight: '600', backgroundColor: 'hsl(var(--foreground) / 0.06)' },
+  // An editable cell: the input and the invisible copy of its text share one
+  // grid area, so the column is as wide as the text however it is edited.
+  '.cm-md-tcell': { display: 'inline-grid', verticalAlign: 'top' },
+  '.cm-md-tcell::after': {
+    content: 'attr(data-value) " "',
+    gridArea: '1 / 1',
+    visibility: 'hidden',
+    whiteSpace: 'pre',
+    font: 'inherit',
+  },
+  '.cm-md-tcell input': {
+    gridArea: '1 / 1',
+    width: '100%',
+    minWidth: '1.5em',
+    margin: '0',
+    padding: '0',
+    border: 'none',
+    outline: 'none',
+    background: 'transparent',
+    color: 'inherit',
+    font: 'inherit',
+    textAlign: 'inherit',
+  },
+  '.cm-md-tcell input:focus': { outline: 'none' },
+  '.cm-md-tcell input::selection': { backgroundColor: 'hsl(var(--info) / 0.3)' },
 });
 
 /** The live-preview layer: pair with the GFM `markdownLanguage` base in an
