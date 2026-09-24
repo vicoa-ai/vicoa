@@ -9,6 +9,7 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { markdownLivePreview } from './cm-markdown-live';
 import { markdownLinkOpener } from './cm-markdown-links';
+import { markdownPaste } from './cm-markdown-paste';
 import { SCROLL_PERSIST_MS, scrollToAnchor, topAnchor } from './cm-scroll';
 import { CM_SCROLLBAR_FIREFOX, CM_SCROLLBAR_WEBKIT, PANEL_BG } from './styles';
 import { resolvedThemeNow, useIsDarkTheme } from '@/lib/hooks/use-resolved-theme';
@@ -133,6 +134,8 @@ export function MarkdownLiveEditor({
           // ⌘/Ctrl+click a link to open it in the browser; a plain click
           // still places the cursor (which reveals the link's markdown).
           markdownLinkOpener(),
+          // Rich text on the clipboard arrives as markdown, not as bare words.
+          markdownPaste(),
           wrapComp.current.of(wrap ? EditorView.lineWrapping : []),
           updateListener,
         ],
