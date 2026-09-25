@@ -354,7 +354,7 @@ class TestReferenceExpansion:
         body = authenticated_client.get(f"/api/v1/references/task/{task['id']}").json()
         assert body["kind"] == "task"
         assert body["token"] == task["identifier"]
-        assert f"Task {task['identifier']} — Fix the diff editor" in body["context"]
+        assert f"Task {task['identifier']}: Fix the diff editor" in body["context"]
         assert "scanLimit collapses the file" in body["context"]
         assert f"vicoa task get {task['identifier']}" in body["context"]
 
