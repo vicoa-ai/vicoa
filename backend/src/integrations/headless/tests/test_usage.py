@@ -120,6 +120,7 @@ def test_claude_context_window_seed_matches_claude_code_defaults():
     assert claude_context_window_for_model("claude-sonnet-5[1m]") == 1_000_000
     assert claude_context_window_for_model("claude-fable-5") == 1_000_000
     assert claude_context_window_for_model("claude-opus-5") == 1_000_000
+    assert claude_context_window_for_model("claude-opus-5-5") == 1_000_000
 
 
 def test_claude_compaction_post_tokens_accepts_key_variants():

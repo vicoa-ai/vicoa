@@ -26,7 +26,7 @@ from protocol.acp_catalog import ACP_CATALOG
 
 
 AGENT_CATALOG: dict[str, Any] = {
-    "version": "2026-09-16-1",
+    "version": "2026-09-25-1",
     "min_cli_version": "1.20.0",
     "min_client_version": "0.42.0",
     "agents": [
@@ -51,16 +51,27 @@ AGENT_CATALOG: dict[str, Any] = {
                 # with the depth-of-reasoning to justify the agent-level `high`
                 # baseline being bumped. `default_thinking_effort` overrides
                 # `is_default` when this model is selected.
-                # Fable 5 and Opus 5 are natively 1M-context (max == default),
-                # so they have no `[1m]` variant — see
+                # Fable 5, Opus 5 and Opus 5.5 are natively 1M-context (max ==
+                # default), so they have no `[1m]` variant — see
                 # ``integrations/headless/usage.py`` (_CLAUDE_CONTEXT_WINDOWS).
                 # Fable 5 is premium-priced and thinking-always-on, so it is not
                 # the picker default. `xhigh` is the recommended coding/agentic
-                # effort tier for both.
+                # effort tier for Fable 5 and Opus 5.
                 {
                     "id": "claude-fable-5",
                     "label": "Fable 5",
                     "default_thinking_effort": "xhigh",
+                    "permission_modes": ["auto"],
+                },
+                # Opus 5.5 is the newest Opus (Claude Code 2.1.282+, where the
+                # bare `opus` alias resolves to it). No `default_thinking_effort`
+                # on purpose: Claude Code's own default for it is `medium`, so it
+                # takes the agent-level `high` rather than Opus 5's `xhigh`.
+                # The model rejects disabled thinking, so the `off` tier is
+                # coerced back on by the CLI rather than erroring.
+                {
+                    "id": "claude-opus-5-5",
+                    "label": "Opus 5.5",
                     "permission_modes": ["auto"],
                 },
                 {

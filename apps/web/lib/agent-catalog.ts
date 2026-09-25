@@ -530,7 +530,7 @@ export function savePersistedSelection(payload: Partial<PersistedSelection>): vo
 // ---------------------------------------------------------------------------
 
 export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
-  version: "2026-09-16-1",
+  version: "2026-09-25-1",
   min_cli_version: "1.20.0",
   min_client_version: "0.42.0",
   agents: [
@@ -541,9 +541,12 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
       models: [
         // Opus 4.7+ default to xhigh via `default_thinking_effort` (per-model
         // override of the agent-level `high` is_default).
-        // Fable 5 and Opus 5 are natively 1M-context (no `[1m]` variant); Fable 5
-        // is premium-priced and thinking-always-on — offered but not the picker default.
+        // Fable 5, Opus 5 and Opus 5.5 are natively 1M-context (no `[1m]` variant);
+        // Fable 5 is premium-priced and thinking-always-on — offered but not the picker default.
+        // Opus 5.5 carries no `default_thinking_effort` on purpose: Claude Code's own
+        // default for it is `medium`, so it takes the agent-level `high`, not Opus 5's `xhigh`.
         { id: "claude-fable-5", label: "Fable 5", default_thinking_effort: "xhigh", permission_modes: ["auto"] },
+        { id: "claude-opus-5-5", label: "Opus 5.5", permission_modes: ["auto"] },
         { id: "claude-opus-5", label: "Opus 5", default_thinking_effort: "xhigh", permission_modes: ["auto"] },
         { id: "claude-opus-4-8", label: "Opus 4.8", default_thinking_effort: "xhigh", permission_modes: ["auto"] },
         { id: "claude-opus-4-8[1m]", label: "Opus 4.8 1M", default_thinking_effort: "xhigh", permission_modes: ["auto"] },

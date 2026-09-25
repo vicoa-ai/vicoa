@@ -449,7 +449,7 @@ String sessionConfigSummary(AgentCatalog catalog, SessionConfig config) {
 /// the flag today; this comment is the rule.
 const String _agentCatalogFallbackJson = r'''
 {
-  "version": "2026-09-16-1",
+  "version": "2026-09-25-1",
   "min_cli_version": "1.20.0",
   "min_client_version": "0.42.0",
   "agents": [
@@ -459,6 +459,7 @@ const String _agentCatalogFallbackJson = r'''
       "supports_steer": true,
       "models": [
         {"id": "claude-fable-5", "label": "Fable 5", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
+        {"id": "claude-opus-5-5", "label": "Opus 5.5", "permission_modes": ["auto"]},
         {"id": "claude-opus-5", "label": "Opus 5", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
         {"id": "claude-opus-4-8", "label": "Opus 4.8", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
         {"id": "claude-opus-4-8[1m]", "label": "Opus 4.8 1M", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},

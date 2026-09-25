@@ -51,6 +51,13 @@ class TestAgentCatalogShape:
         assert len(defaults) == 1
         assert defaults[0]["id"] == "high"
 
+    def test_opus_55_takes_agent_level_high(self):
+        """Opus 5.5 must not inherit Opus 5's `xhigh` override."""
+        claude = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "claude")
+        opus_55 = next(m for m in claude["models"] if m["id"] == "claude-opus-5-5")
+        assert opus_55.get("default_thinking_effort") is None
+        assert "auto" in opus_55["permission_modes"]
+
     def test_auto_marked_opt_in_at_agent_level(self):
         """`auto` is an opt-in capability — only modern models opt in."""
         claude = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "claude")
@@ -81,14 +88,21 @@ class TestAgentCatalogShape:
                 assert "auto" not in perm_opts, f"{model_id} must NOT opt into `auto`"
 
     def test_opus_47_plus_default_to_xhigh(self):
-        """Opus 4.7/4.8, Opus 5, and Fable 5 per-model `default_thinking_effort` → `xhigh`."""
+        """Opus 4.7/4.8, Opus 5, and Fable 5 per-model `default_thinking_effort` → `xhigh`.
+
+        Opus 5.5 is the deliberate exception: Claude Code's own default for it
+        is `medium`, so it carries no override and takes the agent-level `high`.
+        """
         claude = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "claude")
         for model in claude["models"]:
             model_id = model["id"]
             is_opus_47_plus = (
                 model_id.startswith("claude-opus-4-7")
                 or model_id.startswith("claude-opus-4-8")
-                or model_id.startswith("claude-opus-5")
+                or (
+                    model_id.startswith("claude-opus-5")
+                    and not model_id.startswith("claude-opus-5-5")
+                )
             )
             # Fable 5 is the deepest-reasoning tier, so it shares the xhigh
             # baseline with Opus 4.7+.
