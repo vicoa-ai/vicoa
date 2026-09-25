@@ -30,7 +30,7 @@ from shared.database.enums import AgentStatus
 from shared.database.project_matching import canonical_path, path_at_or_under
 from shared.database.task_models import ProjectDirectory
 
-from .queries import CLOSED_STATUSES, _get_instance_message_stats
+from .queries import CLOSED_STATUSES
 from .search_queries import _escape_like
 from .task_serializers import serialize_task, serialize_tasks
 
@@ -49,7 +49,6 @@ GROUP_LIMIT = 8
 # can't blow the agent's first turn.
 MAX_DESCRIPTION_CHARS = 2000
 MAX_PROMPT_CHARS = 2000
-MAX_LAST_MESSAGE_CHARS = 500
 
 # Token slugs stay short enough to read inline mid-sentence.
 MAX_TOKEN_CHARS = 32
@@ -391,7 +390,6 @@ def _expand_session(db: Session, user_id: UUID, ref_id: UUID) -> dict | None:
     if instance is None:
         return None
 
-    stats = _get_instance_message_stats(db, [instance.id]).get(instance.id, {})
     label = instance.name or f"Session {_short_id(instance.id)}"
     lines = [
         f'Session "{label}"',
@@ -406,9 +404,12 @@ def _expand_session(db: Session, user_id: UUID, ref_id: UUID) -> dict | None:
         ),
         f"Full transcript: `vicoa session get {_short_id(instance.id)}`",
     ]
-    last = _truncate(stats.get("latest_message"), MAX_LAST_MESSAGE_CHARS)
-    if last:
-        lines.append(f"Last message: {last}")
+    # No trailing "last message": `latest_message` is the newest row whatever
+    # its sender, so on a running session it is usually half a tool call or a
+    # mid-stream fragment. It reads like a summary without being one, which is
+    # worse than saying nothing — the transcript command above is the honest
+    # way in. A session reference is deliberately a pointer plus the facts that
+    # identify it; a task and an automation carry content because theirs fits.
     return {
         "kind": "session",
         "id": str(instance.id),

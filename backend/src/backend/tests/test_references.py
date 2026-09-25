@@ -358,9 +358,13 @@ class TestReferenceExpansion:
         assert "scanLimit collapses the file" in body["context"]
         assert f"vicoa task get {task['identifier']}" in body["context"]
 
-    def test_session_block_carries_the_last_message(
+    def test_session_block_is_a_pointer_not_a_transcript(
         self, authenticated_client, test_db, test_user, test_agent_type
     ):
+        """Facts that identify the run, plus the way in. Deliberately NOT the
+        newest message: that is whatever row landed last, so on a running
+        session it is usually half a tool call, and it reads like a summary
+        without being one."""
         instance = _make_instance(
             test_db, test_user.id, test_agent_type.id, name="Rotate the widget"
         )
@@ -378,8 +382,10 @@ class TestReferenceExpansion:
             f"/api/v1/references/session/{instance.id}"
         ).json()
         assert body["token"] == "rotate-the-widget"
-        assert "rotated the widget by ninety degrees" in body["context"]
+        assert 'Session "Rotate the widget"' in body["context"]
+        assert "~/projects/vicoa" in body["context"]
         assert f"vicoa session get {str(instance.id)[:8]}" in body["context"]
+        assert "rotated the widget by ninety degrees" not in body["context"]
 
     def test_automation_block_carries_the_prompt_and_schedule(
         self, authenticated_client, test_db, test_user
