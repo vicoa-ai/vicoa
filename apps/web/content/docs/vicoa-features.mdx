@@ -57,6 +57,53 @@ Reference multiple files in a single message, e.g.,
 - No need to remember exact file names
 - Perfect for targeted refactoring, debugging, or code reviews
 
+## Reference Sessions, Tasks and Automations
+
+Use the # key to pull another part of your workspace into the chat: a running session, a task, or an automation. Where @ reaches into your files, # reaches into Vicoa itself.
+
+Available in the web app and the desktop app.
+
+### How to Use
+
+Type `#` in the message box and start typing a name. The panel lists your running sessions, open tasks, and enabled automations, e.g.
+
+```
+continue from #zesty-quartz, it left the migration half applied
+```
+
+Press `#` on its own to see the most recent of each without typing. Pick a row with Enter or a click. You can also open the picker from the "+" button next to the message box, under **Reference a session or task**.
+
+### What the Agent Receives
+
+The token stays in your message, and Vicoa appends a short block underneath with the details the agent needs:
+
+```
+Task VIC-42: Fix the diff editor
+status: in_progress · priority: high · project: Vicoa
+Live record: `vicoa task get VIC-42`
+Description: ...
+```
+
+A session reference carries its agent, folder, worktree and last message. An automation carries its schedule and its prompt. Every block ends with the `vicoa` command for the full record, so the agent can dig further on its own instead of asking you to paste more.
+
+### Referencing a Task Files the Session Under It
+
+Reference a task and the session joins that task's **Sessions** list, and the task moves to *In Progress*. The message box says so before you send:
+
+> Sending files this session under Fix the diff editor
+
+A session belongs to one task at a time. If it already belongs to one, referencing another task still hands the agent that task's details, but leaves the filing alone, so nothing moves on your board by surprise.
+
+### Removing a Reference
+
+Delete the `#token` from your message. The details attached to it go too.
+
+### Benefits
+
+- Hand one agent the context of another without copying and pasting
+- Point an agent at a task without retyping the description you already wrote
+- Keep the board honest, since work started from a task ends up filed under it
+
 ## Slash Commands
 
 Access powerful commands quickly by typing `/` in the chat interface.

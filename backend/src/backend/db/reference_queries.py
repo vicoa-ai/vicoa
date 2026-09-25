@@ -426,7 +426,7 @@ def _expand_task(db: Session, user_id: UUID, ref_id: UUID) -> dict | None:
         return None
     response = serialize_task(db, task)
     heading = (
-        f"Task {response.identifier} — {response.title}"
+        f"Task {response.identifier}: {response.title}"
         if response.identifier
         else f'Task "{response.title}"'
     )
