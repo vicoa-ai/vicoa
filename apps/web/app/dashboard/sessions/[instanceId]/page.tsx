@@ -44,7 +44,13 @@ import { loadFullHistory } from '@/lib/fork-history';
 import { FilesGitPanel, FilesGitPanelToggle, OpenInSubMenu, usePanelState, type OpenFileRequest, type PanelPendingAction } from '@/components/files-git-panel';
 import { ChatInput, PermissionModeValue, OpencodeAgentModeValue, type ChatUploadedAttachment, type ChatInputHandle } from '@/components/chat-input';
 import { collectComposerDrop } from '@/lib/chat-drop';
-import { matchesShortcut, getShortcutCombo } from '@/lib/desktop-shortcuts';
+import {
+  matchesShortcut,
+  getShortcutCombo,
+  comboInline,
+  shortcutHasModifier,
+  subscribeShortcuts,
+} from '@/lib/desktop-shortcuts';
 import { extractChatAttachments } from '@/components/chat-attachments';
 import { SessionEmptyState } from '@/components/dashboard/session-empty-state';
 import { SessionActionsMenu } from '@/components/dashboard/session-actions-menu';
@@ -258,6 +264,14 @@ function AgentInstanceContent() {
   // spring-loaded key (peek while held). Either one reveals the chat.
   const [peekSticky, setPeekSticky] = useState(false);
   const [peekHold, setPeekHold] = useState(false);
+  // The peek binding, spelled for this OS, for the header button's tooltip.
+  // Post-mount (the ⌘-vs-Ctrl split reads `navigator`) and re-read on a rebind.
+  const [peekHint, setPeekHint] = useState('');
+  useEffect(() => {
+    const read = () => setPeekHint(comboInline(getShortcutCombo('peek-chat')));
+    read();
+    return subscribeShortcuts(read);
+  }, []);
   const desktopChrome = useDesktopChrome();
   const [permissionMode, setPermissionMode] = useState<PermissionModeValue | null>(null);
   const [pendingPermissionMode, setPendingPermissionMode] = useState<PermissionModeValue | null>(null);
@@ -1605,7 +1619,7 @@ function AgentInstanceContent() {
   // Depend on the stable `setOpen`, not the `panel` object — usePanelState
   // returns a fresh object every render, and this callback feeds the
   // FileLinkProvider value that every message's link renderer subscribes to.
-  const { setOpen: setPanelOpen } = panel;
+  const { setOpen: setPanelOpen, setMaximized: setPanelMaximized } = panel;
   const handleOpenSearchedFile = useCallback((path: string, line?: number) => {
     setPanelOpen(true);
     setOpenFileRequest((prev) => ({ path, line, instanceId, nonce: (prev?.nonce ?? 0) + 1 }));
@@ -1864,8 +1878,13 @@ function AgentInstanceContent() {
 
   // Spring-loaded peek: hold the "Peek chat" shortcut (Settings → Keyboard
   // shortcuts, default `) to reveal the chat while held, release to snap back.
-  // Only while focused, and ignored while typing so a bare-key binding never
-  // eats a real keystroke. A window blur releases it (no stuck peek).
+  // Only while focused. A window blur releases it (no stuck peek).
+  //
+  // Capture phase, like every other app chord: the file editor (CodeMirror) and
+  // the terminal (xterm, which yields only a keydown the app already prevented)
+  // see the key first otherwise, and turn it into text. A binding with no
+  // modifier is itself a real keystroke, so that one still yields whenever the
+  // caret is in a text surface.
   useEffect(() => {
     if (!fileOverlay) return;
     const isTyping = (el: EventTarget | null) => {
@@ -1879,8 +1898,8 @@ function AgentInstanceContent() {
       );
     };
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.repeat || isTyping(e.target)) return;
-      if (!matchesShortcut(e, 'peek-chat')) return;
+      if (e.repeat || !matchesShortcut(e, 'peek-chat')) return;
+      if (isTyping(e.target) && !shortcutHasModifier('peek-chat')) return;
       e.preventDefault();
       setPeekHold(true);
     };
@@ -1889,35 +1908,43 @@ function AgentInstanceContent() {
       if (e.code === getShortcutCombo('peek-chat').code) setPeekHold(false);
     };
     const onBlur = () => setPeekHold(false);
-    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', onBlur);
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keydown', onKeyDown, true);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
       setPeekHold(false);
     };
   }, [fileOverlay]);
 
-  // Latching peek: the no-hold sibling of the gesture above (default ⌥`). Tap to
-  // lock the chat visible beneath the file layer, tap again to snap back — the
-  // same toggle the header's peek button drives. Only in focus mode, and
-  // ignored while typing so the near-bare key never eats a real keystroke.
+  // Focus mode from the keyboard (default ⌘E), the toolbar button and the
+  // divider double-click having been the only ways in or out. One binding, both
+  // directions: a closed or side-by-side panel goes to focus mode, focus mode
+  // drops back to the rail. `setMaximized` rather than `toggleMaximized`,
+  // because `maximized` persists per session and may already be true under a
+  // closed panel. Nothing to toggle on a narrow viewport, where an open panel
+  // fills the window anyway (the toolbar hides its button there too).
+  //
+  // Capture phase, like every other app chord: the editor and the terminal see
+  // the key first otherwise. No typing guard — dropping out of focus mode with
+  // the caret in the file is the main thing this is for, and ⌘E is unambiguous.
   useEffect(() => {
-    if (!fileOverlay) return;
+    if (panel.isOverlay) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      const node = e.target as HTMLElement | null;
-      const tag = node?.tagName;
-      const isTyping =
-        tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || node?.isContentEditable === true;
-      if (e.repeat || isTyping || !matchesShortcut(e, 'peek-chat-toggle')) return;
+      if (e.repeat || !matchesShortcut(e, 'focus-mode')) return;
       e.preventDefault();
-      setPeekSticky((v) => !v);
+      if (fileOverlay) {
+        setPanelMaximized(false);
+      } else {
+        setPanelOpen(true);
+        setPanelMaximized(true);
+      }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [fileOverlay]);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [panel.isOverlay, fileOverlay, setPanelOpen, setPanelMaximized]);
 
   if (isLoading) {
     return (
@@ -2258,7 +2285,13 @@ function AgentInstanceContent() {
                     style={NO_DRAG}
                     onClick={() => setPeekSticky((v) => !v)}
                     aria-label={peeking ? 'Back to file' : 'Peek chat'}
-                    title={peeking ? 'Back to file' : 'Peek chat (hold ` for a quick look)'}
+                    title={
+                      peeking
+                        ? 'Back to file'
+                        : peekHint
+                          ? `Peek chat (hold ${peekHint} for a quick look)`
+                          : 'Peek chat'
+                    }
                     className={`ml-1 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded hover:bg-muted ${
                       peeking ? 'text-foreground' : 'text-muted-foreground'
                     }`}

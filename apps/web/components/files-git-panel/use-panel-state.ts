@@ -38,6 +38,9 @@ interface PanelStateApi {
   setWidth: (next: number) => void;
   setActiveTab: (next: PanelTab) => void;
   toggleMaximized: () => void;
+  /** Focus mode to an explicit state — what the ⌘E shortcut needs, since it may
+   *  arrive with the panel closed and `maximized` already left true. */
+  setMaximized: (next: boolean) => void;
   setSplit: (next: boolean) => void;
   toggleSplitTop: () => void;
   setSplitHeight: (next: number) => void;
@@ -125,6 +128,7 @@ export function usePanelState(instanceId: string): PanelStateApi {
   const setOpen = useCallback((next: boolean) => setOpenState(next), []);
   const toggleOpen = useCallback(() => setOpenState((prev) => !prev), []);
   const toggleMaximized = useCallback(() => setMaximizedState((prev) => !prev), []);
+  const setMaximized = useCallback((next: boolean) => setMaximizedState(next), []);
   const setSplit = useCallback((next: boolean) => setSplitState(next), []);
   const toggleSplitTop = useCallback(() => setSplitTopState((prev) => !prev), []);
 
@@ -162,6 +166,7 @@ export function usePanelState(instanceId: string): PanelStateApi {
     setWidth,
     setActiveTab,
     toggleMaximized,
+    setMaximized,
     setSplit,
     toggleSplitTop,
     setSplitHeight,

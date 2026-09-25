@@ -8,6 +8,8 @@ import {
   isModifierCode,
   keycapForCode,
   matchesShortcut,
+  shortcutHasModifier,
+  SHORTCUT_DEFS,
 } from './desktop-shortcuts';
 
 // No window in the vitest node env, so all combos resolve to the defaults —
@@ -113,5 +115,43 @@ describe('helpers', () => {
     expect(isModifierCode('MetaLeft')).toBe(true);
     expect(isModifierCode('ShiftRight')).toBe(true);
     expect(isModifierCode('KeyA')).toBe(false);
+  });
+});
+
+describe('focus-mode bindings', () => {
+  it('toggles focus mode on ⌘E, with nothing left on the ` key', () => {
+    usePlatform('Macintosh');
+    // Every two-key chord on ` is spoken for: ⌘`/⇧⌘` never reach the app (macOS
+    // window cycling) and a bare ⌥` is the dead-key grave accent, which typed a
+    // ` into the open file instead of firing.
+    expect(getShortcutCombo('focus-mode')).toEqual({
+      code: 'KeyE', meta: true, shift: false, alt: false,
+    });
+    expect(matchesShortcut(keyEvent({ code: 'KeyE', metaKey: true }), 'focus-mode')).toBe(true);
+    expect(matchesShortcut(keyEvent({ code: 'Backquote', altKey: true }), 'focus-mode')).toBe(false);
+  });
+
+  it('claims ⌘E on mac and Ctrl+E elsewhere, neither of which CodeMirror binds', () => {
+    // CM's emacs-style Ctrl-a/e/k/… keymap is mac-only, and on mac our chord is
+    // ⌘E — so the editor's line-end binding survives on both platforms.
+    usePlatform('Macintosh');
+    expect(matchesShortcut(keyEvent({ code: 'KeyE', ctrlKey: true }), 'focus-mode')).toBe(false);
+    usePlatform('Windows NT 10.0');
+    expect(matchesShortcut(keyEvent({ code: 'KeyE', ctrlKey: true }), 'focus-mode')).toBe(true);
+  });
+
+  it('marks the peek hold as modifier-less, so it yields to text input', () => {
+    expect(shortcutHasModifier('peek-chat')).toBe(false);
+    expect(shortcutHasModifier('focus-mode')).toBe(true);
+    expect(shortcutHasModifier('open-search')).toBe(true);
+  });
+});
+
+describe('default bindings', () => {
+  it('no two defaults claim the same combo', () => {
+    for (const def of SHORTCUT_DEFS) {
+      const conflict = findShortcutConflict(def.id, def.defaultCombo);
+      expect(conflict, `${def.label} collides with ${conflict?.label}`).toBeNull();
+    }
   });
 });

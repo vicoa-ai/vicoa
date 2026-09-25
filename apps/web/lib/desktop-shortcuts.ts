@@ -37,7 +37,7 @@ export type ShortcutId =
   | 'open-diff'
   | 'open-files'
   | 'peek-chat'
-  | 'peek-chat-toggle'
+  | 'focus-mode'
   | 'terminal-new-focused'
   | 'terminal-new'
   | 'terminal-close'
@@ -139,16 +139,25 @@ export const SHORTCUT_DEFS: ShortcutDef[] = [
     defaultCombo: { code: 'Backquote', meta: false, shift: false, alt: false },
   },
   {
-    id: 'peek-chat-toggle',
+    id: 'focus-mode',
     section: 'Panel',
-    // Sibling of the hold-peek above, for anyone who'd rather latch it than hold
-    // the key: press once to reveal the chat beneath the maximized file view,
-    // again to snap back. Defaults to ⌥` — same physical key as the hold
-    // gesture, plus Option. NOT ⌘` (or ⇧⌘`): macOS reserves those for "move
-    // focus to next/previous window" and swallows the keydown before the app
-    // ever sees it, so the handler would never fire.
-    label: 'Peek chat (toggle, focus mode)',
-    defaultCombo: { code: 'Backquote', meta: false, shift: false, alt: true },
+    // The keyboard path into and out of focus mode (the file view maximized over
+    // the chat). One binding covers both directions, so there is no separate
+    // "leave" key: from a closed or side-by-side panel it focuses, from focus
+    // mode it drops back. Before this the only ways in or out were the toolbar
+    // button and a double-click on the panel divider.
+    //
+    // ⌘E, and deliberately nothing on the peek gesture's ` key: that key has no
+    // two-key chord left. ⌘` and ⇧⌘` are macOS's "move focus to next/previous
+    // window", swallowed before the app sees the keydown, and a bare ⌥` is the
+    // US layout's dead-key grave accent, which typed a literal ` into the open
+    // file instead of firing. ⌘E is two keys under one hand, emits no character
+    // with ⌘ held, and is claimed by nothing else: not macOS, not this list, not
+    // the desktop shell's menu roles, and not any CodeMirror keymap the editor
+    // loads (Mod-e is unbound, and CM's Ctrl-e line-end binding is macOS-only,
+    // where our chord is ⌘E rather than Ctrl+E).
+    label: 'Toggle focus mode',
+    defaultCombo: { code: 'KeyE', meta: true, shift: false, alt: false },
   },
   {
     id: 'terminal-new-focused',
@@ -279,6 +288,20 @@ export function matchesShortcut(event: KeyboardEvent, id: ShortcutId): boolean {
     event.shiftKey === combo.shift &&
     event.altKey === combo.alt
   );
+}
+
+/**
+ * Does this binding carry ⌘/Ctrl or ⌥/Alt?
+ *
+ * A modifier-less binding (the hold-peek default is a bare `) is also a real
+ * keystroke, so handlers must let it through to whatever has the caret — an
+ * editor, a terminal, an input. A modified chord is unambiguous, so the handler
+ * claims it wherever focus happens to be. Mirrors the recorder's "Include ⌘ or
+ * ⌥" rule; Shift alone doesn't count, since ⇧` is just another character.
+ */
+export function shortcutHasModifier(id: ShortcutId): boolean {
+  const combo = getShortcutCombo(id);
+  return combo.meta || combo.alt;
 }
 
 /**
