@@ -12,6 +12,7 @@ import {
   MoreHorizontal,
   Settings,
   Share,
+  Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -1187,11 +1188,11 @@ export function SidebarSessions({
           </div>
         </Button>
 
-        {/* Hover actions: archive + a three-dot menu (same actions as the
-            right-click menu). stopPropagation/preventDefault keep the clicks
-            from navigating into the session. */}
+        {/* Hover actions: archive (or delete, once archived) + a three-dot menu
+            (same actions as the right-click menu). stopPropagation/preventDefault
+            keep the clicks from navigating into the session. */}
         <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/session:opacity-100">
-          {instance.status !== 'COMPLETED' && (
+          {instance.status !== 'COMPLETED' ? (
             <button
               type="button"
               title="Archive"
@@ -1204,6 +1205,23 @@ export function SidebarSessions({
               className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground"
             >
               <Archive className="h-3 w-3" />
+            </button>
+          ) : (
+            // Already archived: there is nothing left to archive, so the same
+            // slot offers the one remaining disposal. Opens the confirm dialog
+            // rather than deleting on the spot.
+            <button
+              type="button"
+              title="Delete"
+              aria-label="Delete session"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                setDeleteDialog({ open: true, sessionId: instance.id, sessionName: title });
+              }}
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground"
+            >
+              <Trash2 className="h-3 w-3" />
             </button>
           )}
           <div onClick={(e) => e.stopPropagation()}>
