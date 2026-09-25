@@ -197,12 +197,12 @@ const cardFeatures: CardFeature[] = [
   },
   {
     icon: <Hash className="h-8 w-8" />,
-    title: 'Reference Sessions & Tasks with #',
-    description: 'Hand an agent another session, a task, or an automation, the way @ hands it a file.',
+    title: 'Reference Sessions & Tasks',
+    description: 'Hand an agent another session, a task, or an automation with #.',
     details: [
-      'Type # in the message box to pick a running session, an open task, or an automation',
-      'The agent gets the details inline: a task\u2019s description, a session\u2019s last message, an automation\u2019s prompt',
-      'Reference a task and the session is filed under it, so it joins that task on your board'
+      'Type # in the message box to pick a running session, a task, or an automation',
+      'The agent gets the details inline',
+      'Reference a task and the session will link to it'
     ]
   },
   {
