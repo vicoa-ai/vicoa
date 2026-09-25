@@ -36,6 +36,7 @@ from .api import (
     support,
     tasks,
     automations,
+    references,
     search,
     shares,
     users,
@@ -182,6 +183,7 @@ app.include_router(file_mentions.router, prefix=settings.api_v1_prefix)
 app.include_router(support.router, prefix=settings.api_v1_prefix)
 app.include_router(tasks.router, prefix=settings.api_v1_prefix)
 app.include_router(automations.router, prefix=settings.api_v1_prefix)
+app.include_router(references.router, prefix=settings.api_v1_prefix)
 app.include_router(search.router, prefix=settings.api_v1_prefix)
 app.include_router(users.router, prefix=settings.api_v1_prefix)
 app.include_router(shares.router, prefix=settings.api_v1_prefix)

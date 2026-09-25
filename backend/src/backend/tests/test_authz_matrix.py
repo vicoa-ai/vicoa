@@ -687,6 +687,35 @@ ENDPOINTS: list[Endpoint] = [
         "owner",
         lambda c, w: c.delete(f"/api/v1/auth/api-keys/{w.api_key.id}"),
     ),
+    # `#` composer references. Owner-only on purpose, like the cmd+K search
+    # they sit beside: "#" reaches your own workspace, not a board you were
+    # granted. A collaborator who may read the task through /tasks/{id} still
+    # gets nothing here — narrower than the grant, never wider.
+    Endpoint(
+        "GET /references",
+        "owner_only",
+        "owner",
+        lambda c, w: c.get("/api/v1/references"),
+        listed_ids=_ids(),
+    ),
+    Endpoint(
+        "GET /references/task/{id}",
+        "owner_only",
+        "owner",
+        lambda c, w: c.get(f"/api/v1/references/task/{w.task.id}"),
+    ),
+    Endpoint(
+        "GET /references/session/{id}",
+        "owner_only",
+        "owner",
+        lambda c, w: c.get(f"/api/v1/references/session/{w.instance.id}"),
+    ),
+    Endpoint(
+        "GET /references/automation/{id}",
+        "owner_only",
+        "owner",
+        lambda c, w: c.get(f"/api/v1/references/automation/{w.automation.id}"),
+    ),
 ]
 
 # What each list endpoint should (not) contain for the world's object.
@@ -696,6 +725,7 @@ _LISTED_OBJECT: dict[str, Callable[[World], str]] = {
     "GET /tasks": lambda w: str(w.task.id),
     "GET /agent-instances?scope=all": lambda w: str(w.instance.id),
     "GET /automations": lambda w: str(w.automation.id),
+    "GET /references": lambda w: str(w.task.id),
 }
 
 

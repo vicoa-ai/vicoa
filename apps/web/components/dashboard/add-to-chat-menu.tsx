@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { Plus, AtSign, Paperclip, FolderPlus } from 'lucide-react';
+import { Plus, AtSign, Hash, Paperclip, FolderPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -29,6 +29,7 @@ export interface AddToChatExtraItem {
  * session-config panel) with two actions whose only job is to insert a trigger
  * character into the message box so the existing mention / slash panels surface:
  *   - "Mention files" inserts "@"
+ *   - "Reference a session or task" inserts "#"
  *   - "Skills or Commands" / "Commands" inserts "/"
  *
  * The actual insertion + panel-opening lives in the parent (it owns the
@@ -39,6 +40,7 @@ export function AddToChatMenu({
   onAddFiles,
   onAddFolder,
   onMentionFiles,
+  onReference,
   onCommands,
   hasSkills,
   disabled,
@@ -52,6 +54,9 @@ export function AddToChatMenu({
   // can't hand a real filesystem path to the page, so callers omit this on web.
   onAddFolder?: () => void;
   onMentionFiles: () => void;
+  // Inserts "#" to open the Vicoa reference picker. Optional — surfaces that
+  // can't act on a pick (the new-session prompt) omit it and the row is hidden.
+  onReference?: () => void;
   onCommands: () => void;
   // Claude / OpenCode surface both skills and commands through the same slash
   // trigger ("Skills or Commands"); Codex (and ACP agents) only have commands.
@@ -112,6 +117,15 @@ export function AddToChatMenu({
           <AtSign className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
           <span className="truncate">Mention files</span>
         </DropdownMenuItem>
+        {onReference && (
+          <DropdownMenuItem
+            onClick={onReference}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer"
+          >
+            <Hash className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+            <span className="truncate">Reference a session or task</span>
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem
           onClick={onCommands}
           className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer"

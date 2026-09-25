@@ -14,7 +14,10 @@ import type { TextareaHTMLAttributes } from 'react';
 import { createPortal } from 'react-dom';
 import { Folder, FileText } from 'lucide-react';
 import { useFileMentions } from '@/lib/hooks/use-file-mentions';
-import type { FileMention } from '@/lib/backend-api';
+import { useReferenceCandidates } from '@/lib/hooks/use-references';
+import { ReferenceSuggestions } from '@/components/dashboard/reference-suggestions';
+import { detectTriggerToken, replaceTriggerToken } from '@/lib/composer-references';
+import type { FileMention, ReferenceCandidate } from '@/lib/backend-api';
 import { getCaretViewportRect } from '@/lib/textarea-caret';
 
 /** Index entries for folders carry a trailing "/" (see the daemon's
@@ -69,11 +72,28 @@ export interface MentionTextareaProps
   // an older daemon can't serve. Optional; the store copes without it.
   machine?: { metadata?: Record<string, unknown> | null } | null;
   mentionsEnabled?: boolean;
+  /**
+   * Enable the `#` trigger: a picker over the user's own sessions, tasks and
+   * automations. Off by default — only the surfaces that can act on a pick
+   * (today, the session composer) turn it on.
+   */
+  referencesEnabled?: boolean;
+  /** Session doing the referencing; dropped from the candidates. */
+  referenceExcludeSessionId?: string | null;
+  /**
+   * A `#` row was chosen. The token is already in the text by the time this
+   * fires — the caller's job is the *reference* (fetching its context block,
+   * linking a task), not the text.
+   */
+  onReferencePick?: (item: ReferenceCandidate) => void;
+  /** Reports either picker being open, so the caller can hide its own panel. */
   onMentionOpenChange?: (open: boolean) => void;
   // Increment to imperatively insert "@" at the cursor and open the mention
   // panel — the web counterpart of the mobile Add-to-chat sheet's "Mention
   // files" action. Each new value (vs. the previous render) triggers one insert.
   openMentionSignal?: number;
+  /** The same imperative entry point for "#". */
+  openReferenceSignal?: number;
   // Render the suggestion panel into a body portal, positioned above the
   // textarea. Needed inside scroll containers and dialogs, where the default
   // absolutely-positioned panel is clipped by an `overflow` ancestor. The
@@ -95,8 +115,12 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
       machineId,
       machine,
       mentionsEnabled = true,
+      referencesEnabled = false,
+      referenceExcludeSessionId = null,
+      onReferencePick,
       onMentionOpenChange,
       openMentionSignal,
+      openReferenceSignal,
       portalMentionPanel = false,
       containerClassName = '',
       onKeyDown,
@@ -128,13 +152,31 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
     const [selectedFileIndex, setSelectedFileIndex] = useState(0);
     const lastSearchKeyRef = useRef<string | null>(null);
     const prevOpenSignalRef = useRef(openMentionSignal);
+    const prevReferenceSignalRef = useRef(openReferenceSignal);
     const didRefreshMentionsRef = useRef(false);
+
+    // `#` picker. The query doubles as the open flag: null = closed. There is
+    // no local index to filter (sessions/tasks/automations live server-side),
+    // so the hook debounces a request per keystroke instead.
+    const [referenceQuery, setReferenceQuery] = useState<string | null>(null);
+    const [selectedRefIndex, setSelectedRefIndex] = useState(0);
+    const refListRef = useRef<HTMLDivElement>(null);
+    const {
+      items: referenceItems,
+      isLoading: referencesLoading,
+      unavailable: referencesUnavailable,
+    } = useReferenceCandidates({
+      query: referenceQuery,
+      excludeSessionId: referenceExcludeSessionId,
+      enabled: referencesEnabled,
+    });
+    const showReferences = referenceQuery !== null;
 
     useImperativeHandle(ref, () => textareaRef.current as HTMLTextAreaElement, []);
 
     useEffect(() => {
-      onMentionOpenChange?.(showFileMentions);
-    }, [showFileMentions, onMentionOpenChange]);
+      onMentionOpenChange?.(showFileMentions || showReferences);
+    }, [showFileMentions, showReferences, onMentionOpenChange]);
 
     // One background refresh per mount, fired the first time the panel opens.
     // Mirrors the mobile policy in `agent_chat_model.dart`: the list on screen
@@ -204,15 +246,38 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
       [searchableFiles, mentionsEnabled, showFileMentions]
     );
 
+    /** Is the caret inside a `#` token? Opens/updates the reference panel.
+     *
+     * Cheap by construction: the panel's contents come from a debounced
+     * request, so this only decides *which* query is live — there is no
+     * per-keystroke scan the way `@` has over the file index.
+     */
+    const detectReference = useCallback(
+      (text: string, cursorIndex: number): boolean => {
+        if (!referencesEnabled || referencesUnavailable) return false;
+        const token = detectTriggerToken(text, cursorIndex, '#');
+        if (!token) return false;
+        setReferenceQuery(token.query);
+        setSelectedRefIndex(0);
+        return true;
+      },
+      [referencesEnabled, referencesUnavailable]
+    );
+
     const handleChange = useCallback(
       (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         const next = e.target.value;
         const cursorIndex = e.target.selectionStart ?? next.length;
         onChange(next);
+        // `@` wins when it claims the caret: both detectors require their
+        // trigger to open the token the caret sits in, so only one can match,
+        // and asking files first keeps the existing behaviour untouched.
         const matched = detectMention(next, cursorIndex);
         if (!matched && showFileMentions) setShowFileMentions(false);
+        const matchedReference = !matched && detectReference(next, cursorIndex);
+        if (!matchedReference && showReferences) setReferenceQuery(null);
       },
-      [onChange, detectMention, showFileMentions]
+      [onChange, detectMention, detectReference, showFileMentions, showReferences]
     );
 
     // Imperative "@" insertion driven by `openMentionSignal` (incremented by
@@ -235,8 +300,55 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
       const newCursor = before.length + insert.length;
       pendingCursorRef.current = newCursor;
       onChange(next);
+      setReferenceQuery(null);
       detectMention(next, newCursor);
     }, [openMentionSignal, value, onChange, detectMention]);
+
+    // "#" counterpart of the `openMentionSignal` effect above, driven by the
+    // Add-to-chat menu's "Reference a session or task" row.
+    useEffect(() => {
+      if (
+        openReferenceSignal === undefined ||
+        openReferenceSignal === prevReferenceSignalRef.current
+      ) {
+        return;
+      }
+      prevReferenceSignalRef.current = openReferenceSignal;
+      const el = textareaRef.current;
+      const cursor = el?.selectionStart ?? value.length;
+      const before = value.slice(0, cursor);
+      const after = value.slice(cursor);
+      const needsLeadingSpace = before.length > 0 && !/\s/.test(before[before.length - 1]);
+      const insert = needsLeadingSpace ? ' #' : '#';
+      const next = before + insert + after;
+      const newCursor = before.length + insert.length;
+      pendingCursorRef.current = newCursor;
+      onChange(next);
+      setShowFileMentions(false);
+      detectReference(next, newCursor);
+    }, [openReferenceSignal, value, onChange, detectReference]);
+
+    /** Swap the partial `#` token for the picked row's token, then hand the
+     * reference itself up. The text lands immediately; fetching what the
+     * reference *means* is the caller's async problem. */
+    const pickReference = useCallback(
+      (item: ReferenceCandidate) => {
+        const cursor = textareaRef.current?.selectionStart ?? value.length;
+        const token = detectTriggerToken(value, cursor, '#');
+        const next = token
+          ? replaceTriggerToken(value, token, '#', item.token)
+          : {
+              text: `${value}#${item.token} `,
+              cursor: value.length + item.token.length + 2,
+            };
+        pendingCursorRef.current = next.cursor;
+        onChange(next.text);
+        setReferenceQuery(null);
+        onReferencePick?.(item);
+        focusTextarea();
+      },
+      [value, onChange, onReferencePick, focusTextarea]
+    );
 
     const insertFileMention = useCallback(
       (filePath: string) => {
@@ -303,6 +415,39 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
             return;
           }
         }
+
+        if (showReferences) {
+          // Arrows and Enter only belong to the panel while it has rows —
+          // otherwise they stay caret movement and send, as the user expects
+          // from a panel that is visibly saying "no matches".
+          if (referenceItems.length > 0) {
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              setSelectedRefIndex((prev) =>
+                prev < referenceItems.length - 1 ? prev + 1 : 0
+              );
+              return;
+            }
+            if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              setSelectedRefIndex((prev) =>
+                prev > 0 ? prev - 1 : referenceItems.length - 1
+              );
+              return;
+            }
+            if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+              e.preventDefault();
+              const item = referenceItems[selectedRefIndex];
+              if (item) pickReference(item);
+              return;
+            }
+          }
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            setReferenceQuery(null);
+            return;
+          }
+        }
         onKeyDown?.(e);
       },
       [
@@ -310,6 +455,10 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
         filteredFiles,
         selectedFileIndex,
         insertFileMention,
+        showReferences,
+        referenceItems,
+        selectedRefIndex,
+        pickReference,
         focusTextarea,
         onKeyDown,
       ]
@@ -334,12 +483,26 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
       }
     }, [selectedFileIndex, showFileMentions]);
 
+    // Reference rows are one wrapper <div> each (the group heading rides
+    // inside its group's first wrapper), so index maps straight to a child.
     useEffect(() => {
-      if (!showFileMentions) return;
+      if (!showReferences || !refListRef.current) return;
+      const el = refListRef.current.children[selectedRefIndex] as
+        | HTMLElement
+        | undefined;
+      el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, [selectedRefIndex, showReferences]);
+
+    useEffect(() => {
+      if (!showFileMentions && !showReferences) return;
+      const closeAll = () => {
+        setShowFileMentions(false);
+        setReferenceQuery(null);
+      };
       const handleEscape = (e: KeyboardEvent) => {
         if (e.key === 'Escape') {
           e.preventDefault();
-          setShowFileMentions(false);
+          closeAll();
         }
       };
       const handleClick = (e: MouseEvent) => {
@@ -349,7 +512,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
         // click lands and selection silently does nothing.
         const inside =
           containerRef.current?.contains(target) || fileListRef.current?.contains(target);
-        if (!inside) setShowFileMentions(false);
+        if (!inside) closeAll();
       };
       document.addEventListener('keydown', handleEscape);
       document.addEventListener('mousedown', handleClick);
@@ -357,14 +520,17 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
         document.removeEventListener('keydown', handleEscape);
         document.removeEventListener('mousedown', handleClick);
       };
-    }, [showFileMentions]);
+    }, [showFileMentions, showReferences]);
 
     // Viewport coordinates for the portalled panel: sits above the textarea
     // like the inline one, flipping below when there isn't room. Measured each
     // time the panel opens (and on the file list changing, which resizes it).
     const [portalPanelStyle, setPortalPanelStyle] = useState<React.CSSProperties>();
+    const panelOpen =
+      (showFileMentions && filteredFiles.length > 0) || showReferences;
+
     useEffect(() => {
-      if (!portalMentionPanel || !showFileMentions) return;
+      if (!portalMentionPanel || !panelOpen) return;
       const measure = () => {
         const rect = containerRef.current?.getBoundingClientRect();
         const textarea = textareaRef.current;
@@ -398,9 +564,9 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
       };
       // `value` is included so the panel follows the caret as the token is
       // typed, not just when the match count changes.
-    }, [portalMentionPanel, showFileMentions, filteredFiles.length, value]);
+    }, [portalMentionPanel, panelOpen, filteredFiles.length, referenceItems.length, value]);
 
-    const panel = showFileMentions && filteredFiles.length > 0 && (
+    const panel = panelOpen && (
       <div
         ref={fileListRef}
         style={portalMentionPanel ? portalPanelStyle : undefined}
@@ -410,7 +576,17 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
             : 'absolute bottom-full left-0 right-0 mb-2 bg-popover border border-border rounded-lg shadow-lg overflow-y-auto z-50 max-h-[320px] custom-scrollbar'
         }
       >
-        {filteredFiles.map((file, index) => {
+        {showReferences ? (
+          <ReferenceSuggestions
+            items={referenceItems}
+            selectedIndex={selectedRefIndex}
+            isLoading={referencesLoading}
+            onSelect={pickReference}
+            onHover={setSelectedRefIndex}
+            listRef={refListRef}
+          />
+        ) : (
+        filteredFiles.map((file, index) => {
           const isSelected = index === selectedFileIndex;
           const isFirst = index === 0;
           const isLast = index === filteredFiles.length - 1;
@@ -439,7 +615,8 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
               </span>
             </button>
           );
-        })}
+        })
+        )}
       </div>
     );
 

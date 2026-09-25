@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo, memo, forwardRef, useImperativeHandle } from 'react';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, ArrowUp, Square, X, File as FileIcon } from 'lucide-react';
+import { RefreshCw, ArrowUp, Square, X, File as FileIcon, Link2 } from 'lucide-react';
 import { formatFileSize } from '@/components/chat-attachments';
 import { useMessageDraft } from '@/lib/hooks/use-message-draft';
 import { useSlashCommands } from '@/lib/hooks/use-slash-commands';
@@ -22,6 +22,16 @@ import { SlashCommandSuggestions } from '@/components/dashboard/slash-command-su
 import { QueuedMessagesBar, type QueuedMessageItem } from '@/components/dashboard/queue-status';
 import { applySlashCommandSelection, commandInsertText, detectSlashCommand, slashCommandMatches } from '@/lib/slash-command-utils';
 import { shouldShowStopButton } from '@/lib/chat-composer';
+import {
+  activeReferences,
+  addReference,
+  candidateToComposerReference,
+  composeOutgoingMessage,
+  taskLinkForSend,
+  toComposerReference,
+  type ComposerReference,
+} from '@/lib/composer-references';
+import { getBackendAPI, type ReferenceCandidate } from '@/lib/backend-api';
 import { getDesktopConfig } from '@/lib/runtime-config';
 import { comboInline, getShortcutCombo, matchesShortcut } from '@/lib/desktop-shortcuts';
 import { folderPathToMention } from '@/lib/chat-drop';
@@ -131,6 +141,14 @@ interface ChatInputProps {
   // The session's agent can take a queued message mid-turn (catalog
   // `supports_steer`); shows the Steer button on each queued row.
   canSteer?: boolean;
+  // Enable the `#` picker over the user's sessions, tasks and automations.
+  referencesEnabled?: boolean;
+  // The task this session is already filed under, if any. A `#` reference to
+  // a task links the session only when this is null — see `taskLinkForSend`.
+  sessionTaskId?: string | null;
+  // File the session under a referenced task. The parent owns the PATCH (and
+  // the refetch that follows), since it owns the instance.
+  onLinkTask?: (taskId: string) => void;
 }
 
 export type PermissionModeValue = 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions' | 'auto';
@@ -174,7 +192,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
   opencodeAgentMode,
   pendingOpencodeAgentMode,
   onOpencodeAgentModeChange,
-  placeholder = 'Type messages, @files, /skills or commands',
+  placeholder,
   disabled = false,
   sessionModels,
   currentModel,
@@ -189,6 +207,9 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
   usage = null,
   queuedItems = [],
   canSteer = false,
+  referencesEnabled = false,
+  sessionTaskId = null,
+  onLinkTask,
 }: ChatInputProps, ref) {
   const { draft: message, setDraft: setMessage, clearDraft } = useMessageDraft({
     instanceId,
@@ -215,9 +236,28 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
     if (!providerHasUsageFetcher(provider) || !machineId) return undefined;
     return () => fetchProviderUsageWindows(machineId, provider);
   }, [usageProviderId, agentType, machineId]);
+  // The trigger list the field advertises, so `#` is discoverable from the
+  // same place `@` and `/` are. Callers that pass their own copy (the
+  // closed-session / offline hints) win.
+  const effectivePlaceholder =
+    placeholder ??
+    (referencesEnabled
+      ? 'Type messages, @files, #sessions or tasks, /skills or commands'
+      : 'Type messages, @files, /skills or commands');
+
   // Bumped by the Add-to-chat "+" menu's "Mention files" action to make the
   // MentionTextarea insert "@" and open the file panel.
   const [mentionSignal, setMentionSignal] = useState(0);
+  // Same, for the menu's "Reference a session or task" row and "#".
+  const [referenceSignal, setReferenceSignal] = useState(0);
+
+  // `#` picks for the next message. Not persisted with the draft: the token
+  // survives a reload as plain text, the attached context does not — the same
+  // deal the folder chips make, and better than silently re-attaching context
+  // the user can no longer see.
+  const [pendingRefs, setPendingRefs] = useState<ComposerReference[]>([]);
+  const pendingRefsRef = useRef<ComposerReference[]>([]);
+  pendingRefsRef.current = pendingRefs;
 
   // Image attachments for the next message — eagerly uploaded on pick so the
   // ids are ready at send time. Previews are object URLs of the picked files.
@@ -234,6 +274,23 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
   const [pendingFolderRefs, setPendingFolderRefs] = useState<string[]>([]);
   const pendingFolderRefsRef = useRef<string[]>([]);
   pendingFolderRefsRef.current = pendingFolderRefs;
+
+  // References still present in the draft. Recomputed per keystroke (the list
+  // is at most a handful) so deleting a token updates the link hint below at
+  // the same moment it stops attaching context.
+  const liveRefs = useMemo(
+    () => activeReferences(pendingRefs, message.trim()),
+    [pendingRefs, message],
+  );
+  // The task that sending would file this session under, if any. Surfaced
+  // because it writes to the user's board — a side effect that big shouldn't
+  // happen from a "#" with nothing on screen to say so.
+  const pendingTaskLink = useMemo(() => {
+    const taskId = taskLinkForSend(liveRefs, sessionTaskId);
+    return taskId
+      ? (liveRefs.find((r) => r.kind === 'task' && r.id === taskId) ?? null)
+      : null;
+  }, [liveRefs, sessionTaskId]);
 
   // Anything the user could send right now — text, a finished upload, or a folder.
   const hasComposerContent =
@@ -480,6 +537,34 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
     setMentionSignal((n) => n + 1);
   }, []);
 
+  // Add-to-chat "+" → "Reference a session or task": the same trick with "#".
+  const handleInsertReference = useCallback(() => {
+    setShowSlashCommands(false);
+    setReferenceSignal((n) => n + 1);
+  }, []);
+
+  // A `#` row was picked. Record it immediately from what the panel already
+  // knew, then upgrade it in place when the expansion lands — so a send in
+  // that window still carries a resolvable line, and a failed fetch degrades
+  // to one instead of dropping the reference.
+  const handleReferencePick = useCallback((item: ReferenceCandidate) => {
+    setPendingRefs((prev) => addReference(prev, candidateToComposerReference(item)));
+    getBackendAPI()
+      .getReference(item.kind, item.id)
+      .then((detail) => {
+        setPendingRefs((prev) =>
+          prev.map((r) =>
+            r.kind === detail.kind && r.id === detail.id
+              ? toComposerReference(detail)
+              : r,
+          ),
+        );
+      })
+      .catch(() => {
+        /* Keep the panel's own line; see candidateToComposerReference. */
+      });
+  }, []);
+
   // Add-to-chat "+" → "Add folder": desktop only. Opens the native OS folder
   // picker and inserts the chosen folder as an @path/ reference (project-
   // relative when inside the project) — no upload. Hidden on web, where the
@@ -531,12 +616,25 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
     const folderText = folderRefs
       .map((p) => `@${folderPathToMention(p, projectPath)}`)
       .join(' ');
-    const outgoing = [trimmed, folderText].filter(Boolean).join(' ');
+    // `#` references: only the ones whose token survived editing, so deleting
+    // the token is how you drop the attachment. Recomputed here rather than
+    // read off `liveRefs` so the send doesn't depend on a render having
+    // happened since the last keystroke.
+    const refs = activeReferences(pendingRefsRef.current, trimmed);
+    const outgoing = composeOutgoingMessage(
+      [trimmed, folderText].filter(Boolean).join(' '),
+      refs,
+    );
+    // Referencing a task files the session under it — the same late link the
+    // Tasks board draws, on the column that already exists.
+    const linkTaskId = taskLinkForSend(refs, sessionTaskId);
+    if (linkTaskId) onLinkTask?.(linkTaskId);
     onSendMessage(outgoing, readyAttachments.map(u => u.meta!));
     readyAttachments.forEach(u => URL.revokeObjectURL(u.previewUrl));
     // Failed picks stay in the strip for retry/removal.
     setPendingUploads(prev => prev.filter(u => !u.meta));
     setPendingFolderRefs([]);
+    setPendingRefs([]);
     clearDraft();
     // Reset textarea height and refocus
     if (textareaRef.current) {
@@ -547,7 +645,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
     requestAnimationFrame(() => {
       focusTextarea();
     });
-  }, [message, projectPath, onSendMessage, clearDraft, focusTextarea]);
+  }, [message, projectPath, sessionTaskId, onLinkTask, onSendMessage, clearDraft, focusTextarea]);
 
   // Add-to-chat "+" → "Add files": open the system file picker. Deferred a
   // frame so the dropdown closes before the (focus-stealing) dialog opens.
@@ -763,6 +861,16 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
         <div className="mb-2 text-[11px] text-destructive">{attachmentError}</div>
       )}
 
+      {/* Sending will file this session under a referenced task. */}
+      {pendingTaskLink && (
+        <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Link2 className="h-3 w-3 flex-shrink-0" />
+          <span className="truncate">
+            Sending files this session under {pendingTaskLink.label}
+          </span>
+        </div>
+      )}
+
       {/* Pending attachments (uploads) + folder references (path chips) */}
       {(pendingUploads.length > 0 || pendingFolderRefs.length > 0) && (
         <div className="flex items-center gap-2 mb-2 flex-wrap">
@@ -847,10 +955,14 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
             projectPath={projectPath}
             machineId={machineId}
             mentionsEnabled={!!projectPath}
+            referencesEnabled={referencesEnabled}
+            referenceExcludeSessionId={instanceId}
+            onReferencePick={handleReferencePick}
             onMentionOpenChange={handleMentionOpenChange}
-            placeholder={placeholder}
+            placeholder={effectivePlaceholder}
             disabled={disabled || !canSendMessage || isSending}
             openMentionSignal={mentionSignal}
+            openReferenceSignal={referenceSignal}
             className="w-full bg-transparent border-0 py-2 px-2 text-sm resize-none focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50 leading-5 placeholder:text-muted-foreground/50"
             style={{
               height: '36px',
@@ -877,6 +989,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
             onAddFiles={handleAddFiles}
             onAddFolder={getDesktopShellBridge() ? handleInsertFolder : undefined}
             onMentionFiles={handleInsertMention}
+            onReference={referencesEnabled ? handleInsertReference : undefined}
             onCommands={handleInsertSlash}
             hasSkills={hasSkills}
             disabled={disabled || !canSendMessage}

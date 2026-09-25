@@ -120,6 +120,11 @@ class AgentInstanceResponse(BaseModel):
     # session ↔ project link). Null when no project is set up for that checkout;
     # the sidebar's top-level group falls back to the `project` path when null.
     project_id: str | None = None
+    # The task this run works on (tasks plan §8b). Read-only here; it is set by
+    # PATCH /agent-instances/{id}. Clients need it to tell "this session already
+    # belongs to a task" from "this session is unfiled" — the `#` composer
+    # reference uses it to decide whether a referenced task is a new link.
+    task_id: str | None = None
     home_dir: str | None = None
     machine_id: str | None = None
     pinned_at: datetime | None = None
@@ -267,6 +272,9 @@ class AgentInstanceDetail(BaseModel):
     # body is the bare column set), so without it the new session groups by
     # path basename and shows as a second "project" until the next list load.
     project_id: str | None = None
+    # See AgentInstanceResponse.task_id. The chat page reads the session from
+    # this detail, so the composer's `#` reference needs it here too.
+    task_id: str | None = None
     home_dir: str | None = None
     machine_id: str | None = None
     # See AgentInstanceResponse.worktree_name.
@@ -1204,6 +1212,71 @@ class WorkspaceSearchResponse(BaseModel):
     sessions: list[SearchSessionResult]
     tasks: list[SearchTaskResult]
     automations: list[SearchAutomationResult]
+
+
+# ---------------------------------------------------------------------------
+# `#` references (composer) — point the current session at another Vicoa thing
+#
+# Deliberately NOT the search DTOs above: the palette navigates, so it ranks
+# message bodies and carries snippets; `#` *attaches*, so every kind collapses
+# to the same four fields the panel draws and the one `token` the message
+# carries. One shape per kind would make the client branch three ways for a
+# list it renders identically.
+# ---------------------------------------------------------------------------
+
+ReferenceKindLiteral = Literal["session", "task", "automation"]
+
+
+class ReferenceProject(BaseModel):
+    """Just enough of a project to draw its icon and name on a picker row —
+    the same fields `ProjectIcon` reads on the web (generated initial-square,
+    emoji, or the uploaded image behind `/api/projects/{id}/icon`)."""
+
+    id: str
+    name: str
+    icon: str | None = None
+    icon_image_uri: str | None = None
+    updated_at: datetime | None = None
+
+
+class ReferenceCandidate(BaseModel):
+    kind: ReferenceKindLiteral
+    id: str
+    # What the panel row reads.
+    label: str
+    # What follows "#" in the composer: a slug, or "VIC-42" for an identified
+    # task. Never contains whitespace — a token ends at the first space.
+    token: str
+    # Trailing text on the row's single line: the project's name when the
+    # session/task/automation is filed under one, otherwise the folder it runs
+    # in (and nothing at all for an unfiled task). One line per row is a
+    # product decision — the panel opens over the composer, and a two-line row
+    # halves how many candidates fit above the fold.
+    meta: str | None = None
+    # The project behind `meta`, when there is one. Present only so the row can
+    # show the project's icon; `meta` already carries its name.
+    project: ReferenceProject | None = None
+    # Tasks only, and only when the task really has a key. Rendered after
+    # `meta`, so a filed task reads "Vicoa  VIC-42".
+    identifier: str | None = None
+    status: str | None = None
+
+
+class ReferenceCandidatesResponse(BaseModel):
+    query: str
+    # Kind-ordered (sessions, tasks, automations) so the client can draw a
+    # group header wherever `kind` changes and still run one keyboard list.
+    items: list[ReferenceCandidate]
+
+
+class ReferenceDetail(BaseModel):
+    kind: ReferenceKindLiteral
+    id: str
+    label: str
+    token: str
+    # The rendered block appended to the outgoing message. Fetched at pick
+    # time so sending never waits on the network.
+    context: str
 
 
 # ============================================================================

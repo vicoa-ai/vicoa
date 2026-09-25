@@ -491,3 +491,11 @@ def backfill_project_id_for_directory(
         {AgentInstance.project_id: project_id}, synchronize_session="fetch"
     )
     return len(adopt)
+
+
+# Public aliases of the two comparison helpers above. The `#` reference picker
+# resolves an *automation's* folder to a project — automations carry no
+# `project_id` column, so they re-run tier 2 by hand — and it must not drift
+# from the rules a session is matched by.
+canonical_path = _normalize_path
+path_at_or_under = _path_at_or_under

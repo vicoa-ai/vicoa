@@ -554,6 +554,21 @@ function AgentInstanceContent() {
     });
   }, [instanceId]);
 
+  // A `#` reference to a task files this session under it (tasks plan §8b —
+  // the `agent_instances.task_id` column, no new join table). Optimistic so
+  // the composer stops offering to link on the next send, then persisted; on
+  // failure the local flip is rolled back and the next `#task` tries again.
+  const handleLinkTask = useCallback(async (taskId: string) => {
+    const previous = instance?.task_id ?? null;
+    getMessageStore().patchInstance(instanceId, { task_id: taskId });
+    try {
+      await dashboardContext.api?.updateAgentInstance(instanceId, { task_id: taskId });
+    } catch (err) {
+      console.error('Failed to link session to referenced task:', err);
+      getMessageStore().patchInstance(instanceId, { task_id: previous });
+    }
+  }, [instance?.task_id, instanceId, dashboardContext]);
+
   const handleTogglePin = useCallback(async () => {
     const wasPinned = !!instance?.pinned_at;
     const optimisticNext = wasPinned ? null : new Date().toISOString();
@@ -2730,6 +2745,9 @@ function AgentInstanceContent() {
               usage={instance.instance_metadata?.usage ?? null}
               queuedItems={queuedItems}
               canSteer={canSteer}
+              referencesEnabled
+              sessionTaskId={instance.task_id ?? null}
+              onLinkTask={handleLinkTask}
             />
           </div>
         </div>

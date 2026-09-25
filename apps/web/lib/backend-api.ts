@@ -124,6 +124,12 @@ export interface AgentInstanceResponse {
    * `project` path basename). See session-grouping.ts `projectGroupKey`.
    */
   project_id?: string | null;
+  /**
+   * The task this run works on. Read-only on this DTO — it is written by
+   * `updateAgentInstance(id, { task_id })`. The composer's `#` reference reads
+   * it to tell a new link from a session that already belongs to a task.
+   */
+  task_id?: string | null;
   home_dir?: string | null;
   pinned_at?: string | null;
   /**
@@ -289,6 +295,8 @@ export interface AgentInstanceDetail {
   agent_profile_id?: string | null;
   /** See AgentInstanceResponse.project_id. */
   project_id?: string | null;
+  /** See AgentInstanceResponse.task_id. */
+  task_id?: string | null;
   instance_metadata?: SessionInstanceMetadata | null;
   machine_id?: string | null;
   last_heartbeat_at?: string | null;
@@ -778,6 +786,60 @@ export interface WorkspaceSearchResponse {
   sessions: SearchSessionResult[];
   tasks: SearchTaskResult[];
   automations: SearchAutomationResult[];
+}
+
+// --- `#` composer references ------------------------------------------------
+// Deliberately not the search DTOs above: the palette navigates (so it ranks
+// message bodies and carries snippets), `#` attaches — every kind collapses to
+// the same row the panel draws plus the one token the message carries.
+
+export type ReferenceKind = 'session' | 'task' | 'automation';
+
+/** Just enough of a project to draw its icon — the fields `ProjectIcon` reads. */
+export interface ReferenceProject {
+  id: string;
+  name: string;
+  icon: string | null;
+  icon_image_uri: string | null;
+  updated_at: string | null;
+}
+
+export interface ReferenceCandidate {
+  kind: ReferenceKind;
+  id: string;
+  /** What the panel row reads. */
+  label: string;
+  /** What follows "#" in the composer — a slug, or "VIC-42" for a task with
+   * an identifier. Never contains whitespace. */
+  token: string;
+  /** Trailing text on the row's single line: the project's name when the item
+   * is filed under one, otherwise the folder it runs in (and nothing at all
+   * for an unfiled task). */
+  meta: string | null;
+  /** The project behind `meta`, when there is one. Present only so the row can
+   * draw its icon — `meta` already carries the name. */
+  project: ReferenceProject | null;
+  /** Tasks only, and only when the task really has a key; rendered after
+   * `meta` so a filed task reads "Vicoa  VIC-42". */
+  identifier: string | null;
+  status: string | null;
+}
+
+export interface ReferenceCandidatesResponse {
+  query: string;
+  /** Kind-ordered (sessions → tasks → automations) so the panel can draw a
+   * group header wherever `kind` changes and still run one keyboard list. */
+  items: ReferenceCandidate[];
+}
+
+export interface ReferenceDetail {
+  kind: ReferenceKind;
+  id: string;
+  label: string;
+  token: string;
+  /** The block appended to the outgoing message. Fetched at pick time so
+   * sending never waits on the network. */
+  context: string;
 }
 
 // --- Share links (collaboration §3.4, P4) -----------------------------------
@@ -1956,6 +2018,35 @@ class BackendAPI {
       `/api/v1/search?${params.toString()}`,
       { signal: options.signal },
     );
+  }
+
+  // --- `#` composer references ----------------------------------------------
+
+  /** Candidates for the composer's `#` panel. An empty `q` is legal and means
+   * "what's live and recent", so `#` on its own opens a useful list. */
+  async listReferences(
+    query: string,
+    options: {
+      limit?: number;
+      /** The session doing the referencing; dropped from the results. */
+      excludeSessionId?: string | null;
+      signal?: AbortSignal;
+    } = {},
+  ): Promise<ReferenceCandidatesResponse> {
+    const params = new URLSearchParams({ q: query });
+    if (options.limit) params.set('limit', String(options.limit));
+    if (options.excludeSessionId) {
+      params.set('exclude_session_id', options.excludeSessionId);
+    }
+    return this.request<ReferenceCandidatesResponse>(
+      `/api/v1/references?${params.toString()}`,
+      { signal: options.signal },
+    );
+  }
+
+  /** One pick, expanded into the text block the agent reads. */
+  async getReference(kind: ReferenceKind, id: string): Promise<ReferenceDetail> {
+    return this.request<ReferenceDetail>(`/api/v1/references/${kind}/${id}`);
   }
 }
 
