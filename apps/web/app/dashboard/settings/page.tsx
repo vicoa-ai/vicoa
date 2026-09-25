@@ -32,6 +32,12 @@ import { ProvidersSettingsSection } from '@/components/dashboard/providers-setti
 import { MachinesSettingsSection } from '@/components/dashboard/machines-settings-section';
 import { TasksSettingsSection } from '@/components/dashboard/tasks-settings-section';
 import { ThemeSelect } from '@/components/plugins/theme-select';
+import { Switch } from '@/components/ui/switch';
+import {
+  SIDEBAR_NAV_ITEMS,
+  setSidebarNavItemHidden,
+  useHiddenSidebarNavItems,
+} from '@/lib/sidebar-nav-pref';
 import {
   PROJECTS_CHANGED_EVENT,
   projectSettingsHref,
@@ -288,22 +294,25 @@ function SettingsContent() {
             )}
 
             {activeTab === 'appearance' && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Appearance</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                    <div className="space-y-1">
-                      <p className="text-sm text-foreground">Theme</p>
-                      <p className="text-xs text-muted-foreground">
-                        Base mode, or a theme installed from a plugin
-                      </p>
+              <>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Appearance</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                      <div className="space-y-1">
+                        <p className="text-sm text-foreground">Theme</p>
+                        <p className="text-xs text-muted-foreground">
+                          Base mode, or a theme installed from a plugin
+                        </p>
+                      </div>
+                      <ThemeSelect />
                     </div>
-                    <ThemeSelect />
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+                <SidebarItemsCard />
+              </>
             )}
 
             {activeTab === 'account' && (
@@ -439,6 +448,47 @@ function SettingsContent() {
       </div>
     </div>
     </>
+  );
+}
+
+/**
+ * Which fixed nav rows the sidebar shows. Everything is on by default; turning a
+ * row off only hides the shortcut — the page itself stays reachable by URL, and
+ * Search keeps its ⌘K binding. The session list below the rows is not
+ * configurable.
+ */
+function SidebarItemsCard() {
+  const hiddenNav = useHiddenSidebarNavItems();
+  // The preference is read post-mount, so hold the switches until it is in —
+  // otherwise every row would flash "on" first.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Sidebar</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {SIDEBAR_NAV_ITEMS.map((item) => (
+          <div
+            key={item.id}
+            className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+          >
+            <div className="space-y-1">
+              <p className="text-sm text-foreground">{item.label}</p>
+              <p className="text-xs text-muted-foreground">{item.description}</p>
+            </div>
+            <Switch
+              checked={mounted ? !hiddenNav.has(item.id) : true}
+              onCheckedChange={(checked) => setSidebarNavItemHidden(item.id, !checked)}
+              aria-label={`Show ${item.label} in the sidebar`}
+              disabled={!mounted}
+            />
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
 

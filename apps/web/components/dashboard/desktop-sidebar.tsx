@@ -22,6 +22,7 @@ import { getDesktopAuthBridge } from '@/lib/desktop-auth';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { DesktopTitlebarLead } from '@/components/desktop/window-chrome';
 import { useMobileSidebarHidden } from '@/lib/mobile-sidebar-pref';
+import { useHiddenSidebarNavItems } from '@/lib/sidebar-nav-pref';
 import { ReportIssueDialog } from '@/components/dashboard/report-issue-dialog';
 import { SidebarUpdateCallout } from '@/components/dashboard/sidebar-update-callout';
 import { comboKeycaps, getShortcutCombo } from '@/lib/desktop-shortcuts';
@@ -67,6 +68,8 @@ export function DesktopSidebar({
   const router = useRouter();
   const pathname = usePathname();
   const mobileHidden = useMobileSidebarHidden();
+  // Nav rows the user has hidden in Settings → Appearance.
+  const hiddenNav = useHiddenSidebarNavItems();
   const { api, updateInstanceStatus } = useAgentDashboard();
 
   // Archiving/completing/deleting a session tears its terminals + persisted
@@ -199,15 +202,17 @@ export function DesktopSidebar({
 
       {/* New session */}
       <div className="px-2">
-        <Button
-          variant="subtle"
-          className="w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal"
-          onClick={() => router.push('/dashboard/sessions/new')}
-          title="Start new session"
-        >
-          <Plus className="h-4 w-4 mr-1.5" />
-          New Session
-        </Button>
+        {!hiddenNav.has('new-session') && (
+          <Button
+            variant="subtle"
+            className="w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal"
+            onClick={() => router.push('/dashboard/sessions/new')}
+            title="Start new session"
+          >
+            <Plus className="h-4 w-4 mr-1.5" />
+            New Session
+          </Button>
+        )}
         {!mobileHidden && (
           <Button
             variant="subtle"
@@ -223,87 +228,97 @@ export function DesktopSidebar({
           </Button>
         )}
         {/* Human task backlog — distinct from the session list below. */}
-        <Button
-          variant="subtle"
-          className={cn(
-            'w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal',
-            pathname === '/dashboard/tasks' && ITEM_SELECTED,
-          )}
-          onClick={() => router.push('/dashboard/tasks')}
-          title="Tasks"
-        >
-          <ListTodo className="h-4 w-4 mr-1.5" />
-          Tasks
-        </Button>
+        {!hiddenNav.has('tasks') && (
+          <Button
+            variant="subtle"
+            className={cn(
+              'w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal',
+              pathname === '/dashboard/tasks' && ITEM_SELECTED,
+            )}
+            onClick={() => router.push('/dashboard/tasks')}
+            title="Tasks"
+          >
+            <ListTodo className="h-4 w-4 mr-1.5" />
+            Tasks
+          </Button>
+        )}
 
         {/* Scheduled agent runs. */}
-        <Button
-          variant="subtle"
-          className={cn(
-            'w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal',
-            pathname === '/dashboard/automation' && ITEM_SELECTED,
-          )}
-          onClick={() => router.push('/dashboard/automation')}
-          title="Automations"
-        >
-          <CalendarClock className="h-4 w-4 mr-1.5" />
-          Automations
-        </Button>
+        {!hiddenNav.has('automations') && (
+          <Button
+            variant="subtle"
+            className={cn(
+              'w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal',
+              pathname === '/dashboard/automation' && ITEM_SELECTED,
+            )}
+            onClick={() => router.push('/dashboard/automation')}
+            title="Automations"
+          >
+            <CalendarClock className="h-4 w-4 mr-1.5" />
+            Automations
+          </Button>
+        )}
 
         {/* Saved agent presets (provider + model + instructions). Distinct from
             the session list below, which is what those agents are doing. */}
-        <Button
-          variant="subtle"
-          className={cn(
-            'w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal',
-            pathname === '/dashboard/agents' && ITEM_SELECTED,
-          )}
-          onClick={() => router.push('/dashboard/agents')}
-          title="Agents"
-        >
-          <Bot className="h-4 w-4 mr-1.5" />
-          Agents
-        </Button>
+        {!hiddenNav.has('agents') && (
+          <Button
+            variant="subtle"
+            className={cn(
+              'w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal',
+              pathname === '/dashboard/agents' && ITEM_SELECTED,
+            )}
+            onClick={() => router.push('/dashboard/agents')}
+            title="Agents"
+          >
+            <Bot className="h-4 w-4 mr-1.5" />
+            Agents
+          </Button>
+        )}
 
         {/* Agent skills installed per machine. */}
-        <Button
-          variant="subtle"
-          className={cn(
-            'w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal',
-            pathname === '/dashboard/skills' && ITEM_SELECTED,
-          )}
-          onClick={() => router.push('/dashboard/skills')}
-          title="Skills"
-        >
-          <BookOpen className="h-4 w-4 mr-1.5" />
-          Skills
-        </Button>
+        {!hiddenNav.has('skills') && (
+          <Button
+            variant="subtle"
+            className={cn(
+              'w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal',
+              pathname === '/dashboard/skills' && ITEM_SELECTED,
+            )}
+            onClick={() => router.push('/dashboard/skills')}
+            title="Skills"
+          >
+            <BookOpen className="h-4 w-4 mr-1.5" />
+            Skills
+          </Button>
+        )}
 
         {/* Nav entries contributed by installed plugins (Tier 1). */}
         <PluginSidebarItems slot="nav" />
 
         {/* Workspace search across sessions, tasks, automations (also ⌘K). */}
-        <Button
-          variant="subtle"
-          className="w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal"
-          onClick={onOpenSearch}
-          title="Search"
-        >
-          <Search className="h-4 w-4 mr-1.5" />
-          Search
-          {searchKeycaps.length > 0 ? (
-            <span className="ml-auto flex gap-0.5">
-              {searchKeycaps.map((key) => (
-                <kbd
-                  key={key}
-                  className="rounded border bg-muted px-1 py-0.5 font-sans text-[10px] font-medium leading-none text-foreground/70"
-                >
-                  {key}
-                </kbd>
-              ))}
-            </span>
-          ) : null}
-        </Button>
+        {!hiddenNav.has('search') && (
+          <Button
+            variant="subtle"
+            className="w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal"
+            onClick={onOpenSearch}
+            title="Search"
+          >
+            <Search className="h-4 w-4 mr-1.5" />
+            Search
+            {searchKeycaps.length > 0 ? (
+              <span className="ml-auto flex gap-0.5">
+                {searchKeycaps.map((key) => (
+                  <kbd
+                    key={key}
+                    className="rounded border bg-muted px-1 py-0.5 font-sans text-[10px] font-medium leading-none text-foreground/70"
+                  >
+                    {key}
+                  </kbd>
+                ))}
+              </span>
+            ) : null}
+          </Button>
+        )}
       </div>
 
       <div className="bg-muted/30 h-px" />

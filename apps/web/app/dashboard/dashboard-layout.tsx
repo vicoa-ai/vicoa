@@ -52,6 +52,7 @@ import { DesktopSettingsSidebar, DESKTOP_LAST_APP_PATH_KEY } from '@/components/
 import { TerminalSessionsProvider, useTerminalSessions } from '@/components/terminal-pane/terminal-sessions';
 import { matchesShortcut, comboKeycaps, getShortcutCombo } from '@/lib/desktop-shortcuts';
 import { SearchPalette } from '@/components/dashboard/search-palette';
+import { useHiddenSidebarNavItems } from '@/lib/sidebar-nav-pref';
 import { useDesktopNotificationNavigation } from '@/lib/hooks/use-desktop-session-notifications';
 import { DesktopConnectionBanner } from '@/components/dashboard/desktop-connection-banner';
 import { DesktopNotificationNudge } from '@/components/dashboard/desktop-notification-nudge';
@@ -115,6 +116,9 @@ function DashboardSidebar({
   const { api } = useAgentDashboard();
   const { data: user } = useSWR<AuthUser>('/api/supabase-user', fetcher);
   const showSideBar = !isCollapsed;
+
+  // Nav rows the user has hidden in Settings → Appearance.
+  const hiddenNav = useHiddenSidebarNavItems();
 
   // Platform-dependent (⌘ K vs Ctrl K) — computed post-mount to avoid a
   // server/client hydration mismatch.
@@ -366,29 +370,31 @@ function DashboardSidebar({
 
         {/* Navigation Tabs */}
         <div className={cn("px-2", !showSideBar && "flex flex-col items-center gap-2 px-1")}>
-          {!showSideBar ? (
-            <Button
-              variant="subtle"
-              size="icon"
-              className="h-9 w-9 rounded-lg bg-transparent"
-              onClick={onStartRemoteSession}
-              disabled={!api}
-              title="Start new session"
-            >
-              <Plus className="h-4 w-4" />
-              <span className="sr-only">Start new session</span>
-            </Button>
-          ) : (
-            <Button
-              variant="subtle"
-              className="w-full justify-start h-auto py-1.5 text-xs"
-              onClick={onStartRemoteSession}
-              disabled={!api}
-              title="Start new session"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              New Session
-            </Button>
+          {!hiddenNav.has('new-session') && (
+            !showSideBar ? (
+              <Button
+                variant="subtle"
+                size="icon"
+                className="h-9 w-9 rounded-lg bg-transparent"
+                onClick={onStartRemoteSession}
+                disabled={!api}
+                title="Start new session"
+              >
+                <Plus className="h-4 w-4" />
+                <span className="sr-only">Start new session</span>
+              </Button>
+            ) : (
+              <Button
+                variant="subtle"
+                className="w-full justify-start h-auto py-1.5 text-xs"
+                onClick={onStartRemoteSession}
+                disabled={!api}
+                title="Start new session"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                New Session
+              </Button>
+            )
           )}
 
           {/* Kanban lives in the Workspaces row (shared list) when expanded; the
@@ -407,69 +413,77 @@ function DashboardSidebar({
           )}
 
           {/* Human task backlog — distinct from Kanban (agent sessions). */}
-          <Button
-            variant="subtle"
-            className={cn(
-              !showSideBar
-                ? "h-9 w-9 justify-center rounded-lg px-0 bg-transparent"
-                : "w-full justify-start h-auto py-1.5 mt-1 text-xs",
-              showSideBar && activeTab === 'tasks' && sidebarItemSelected
-            )}
-            onClick={() => handleTabClick('tasks')}
-            title="Tasks"
-          >
-            <ListTodo className={cn("h-4 w-4", showSideBar && "mr-2")} />
-            {showSideBar ? 'Tasks' : null}
-          </Button>
+          {!hiddenNav.has('tasks') && (
+            <Button
+              variant="subtle"
+              className={cn(
+                !showSideBar
+                  ? "h-9 w-9 justify-center rounded-lg px-0 bg-transparent"
+                  : "w-full justify-start h-auto py-1.5 mt-1 text-xs",
+                showSideBar && activeTab === 'tasks' && sidebarItemSelected
+              )}
+              onClick={() => handleTabClick('tasks')}
+              title="Tasks"
+            >
+              <ListTodo className={cn("h-4 w-4", showSideBar && "mr-2")} />
+              {showSideBar ? 'Tasks' : null}
+            </Button>
+          )}
 
           {/* Scheduled agent runs. */}
-          <Button
-            variant="subtle"
-            className={cn(
-              !showSideBar
-                ? "h-9 w-9 justify-center rounded-lg px-0 bg-transparent"
-                : "w-full justify-start h-auto py-1.5 mt-1 text-xs",
-              showSideBar && activeTab === 'automation' && sidebarItemSelected
-            )}
-            onClick={() => handleTabClick('automation')}
-            title="Automations"
-          >
-            <CalendarClock className={cn("h-4 w-4", showSideBar && "mr-2")} />
-            {showSideBar ? 'Automations' : null}
-          </Button>
+          {!hiddenNav.has('automations') && (
+            <Button
+              variant="subtle"
+              className={cn(
+                !showSideBar
+                  ? "h-9 w-9 justify-center rounded-lg px-0 bg-transparent"
+                  : "w-full justify-start h-auto py-1.5 mt-1 text-xs",
+                showSideBar && activeTab === 'automation' && sidebarItemSelected
+              )}
+              onClick={() => handleTabClick('automation')}
+              title="Automations"
+            >
+              <CalendarClock className={cn("h-4 w-4", showSideBar && "mr-2")} />
+              {showSideBar ? 'Automations' : null}
+            </Button>
+          )}
 
           {/* Saved agent presets (provider + model + instructions). Distinct
               from the session list below, which is what those agents are doing. */}
-          <Button
-            variant="subtle"
-            className={cn(
-              !showSideBar
-                ? "h-9 w-9 justify-center rounded-lg px-0 bg-transparent"
-                : "w-full justify-start h-auto py-1.5 mt-1 text-xs",
-              showSideBar && activeTab === 'agents' && sidebarItemSelected
-            )}
-            onClick={() => handleTabClick('agents')}
-            title="Agents"
-          >
-            <Bot className={cn("h-4 w-4", showSideBar && "mr-2")} />
-            {showSideBar ? 'Agents' : null}
-          </Button>
+          {!hiddenNav.has('agents') && (
+            <Button
+              variant="subtle"
+              className={cn(
+                !showSideBar
+                  ? "h-9 w-9 justify-center rounded-lg px-0 bg-transparent"
+                  : "w-full justify-start h-auto py-1.5 mt-1 text-xs",
+                showSideBar && activeTab === 'agents' && sidebarItemSelected
+              )}
+              onClick={() => handleTabClick('agents')}
+              title="Agents"
+            >
+              <Bot className={cn("h-4 w-4", showSideBar && "mr-2")} />
+              {showSideBar ? 'Agents' : null}
+            </Button>
+          )}
 
           {/* Agent skills installed per machine. */}
-          <Button
-            variant="subtle"
-            className={cn(
-              !showSideBar
-                ? "h-9 w-9 justify-center rounded-lg px-0 bg-transparent"
-                : "w-full justify-start h-auto py-1.5 mt-1 text-xs",
-              showSideBar && activeTab === 'skills' && sidebarItemSelected
-            )}
-            onClick={() => handleTabClick('skills')}
-            title="Skills"
-          >
-            <Layers2 className={cn("h-4 w-4", showSideBar && "mr-2")} />
-            {showSideBar ? 'Skills' : null}
-          </Button>
+          {!hiddenNav.has('skills') && (
+            <Button
+              variant="subtle"
+              className={cn(
+                !showSideBar
+                  ? "h-9 w-9 justify-center rounded-lg px-0 bg-transparent"
+                  : "w-full justify-start h-auto py-1.5 mt-1 text-xs",
+                showSideBar && activeTab === 'skills' && sidebarItemSelected
+              )}
+              onClick={() => handleTabClick('skills')}
+              title="Skills"
+            >
+              <Layers2 className={cn("h-4 w-4", showSideBar && "mr-2")} />
+              {showSideBar ? 'Skills' : null}
+            </Button>
+          )}
 
           {/* Nav entries contributed by installed plugins (Tier 1). */}
           <PluginSidebarItems
@@ -479,31 +493,33 @@ function DashboardSidebar({
           />
 
           {/* Workspace search across sessions, tasks, automations (also ⌘K). */}
-          <Button
-            variant="subtle"
-            className={cn(
-              !showSideBar
-                ? "h-9 w-9 justify-center rounded-lg px-0 bg-transparent"
-                : "w-full justify-start h-auto py-1.5 mt-1 text-xs"
-            )}
-            onClick={() => { onOpenSearch(); onMobileClose(); }}
-            title="Search"
-          >
-            <Search className={cn("h-4 w-4", showSideBar && "mr-2")} />
-            {showSideBar ? 'Search' : null}
-            {showSideBar && searchKeycaps.length > 0 ? (
-              <span className="ml-auto flex gap-0.5">
-                {searchKeycaps.map((key) => (
-                  <kbd
-                    key={key}
-                    className="rounded border bg-muted px-1 py-0.5 font-sans text-[10px] font-medium leading-none text-foreground/70"
-                  >
-                    {key}
-                  </kbd>
-                ))}
-              </span>
-            ) : null}
-          </Button>
+          {!hiddenNav.has('search') && (
+            <Button
+              variant="subtle"
+              className={cn(
+                !showSideBar
+                  ? "h-9 w-9 justify-center rounded-lg px-0 bg-transparent"
+                  : "w-full justify-start h-auto py-1.5 mt-1 text-xs"
+              )}
+              onClick={() => { onOpenSearch(); onMobileClose(); }}
+              title="Search"
+            >
+              <Search className={cn("h-4 w-4", showSideBar && "mr-2")} />
+              {showSideBar ? 'Search' : null}
+              {showSideBar && searchKeycaps.length > 0 ? (
+                <span className="ml-auto flex gap-0.5">
+                  {searchKeycaps.map((key) => (
+                    <kbd
+                      key={key}
+                      className="rounded border bg-muted px-1 py-0.5 font-sans text-[10px] font-medium leading-none text-foreground/70"
+                    >
+                      {key}
+                    </kbd>
+                  ))}
+                </span>
+              ) : null}
+            </Button>
+          )}
         </div>
 
         {showSideBar && (

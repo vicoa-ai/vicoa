@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { LogIn, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -31,6 +31,7 @@ import {
 } from '@/lib/runtime-config';
 import { getPref, setPref } from '@/lib/desktop-prefs';
 import { ThemeSelect } from '@/components/plugins/theme-select';
+import { Switch } from '@/components/ui/switch';
 import {
   checkForUpdates,
   getAppVersion,
@@ -83,6 +84,11 @@ import { TasksSettingsSection } from './tasks-settings-section';
 import { ProjectSettingsPane } from './project-settings-pane';
 import { projectSettingsHref, projectSettingsSection } from '@/lib/project-settings-route';
 import { useMobileSidebarHidden, setMobileSidebarHidden } from '@/lib/mobile-sidebar-pref';
+import {
+  SIDEBAR_NAV_ITEMS,
+  setSidebarNavItemHidden,
+  useHiddenSidebarNavItems,
+} from '@/lib/sidebar-nav-pref';
 
 /**
  * Middle-panel content for the desktop settings page. The tab comes from the
@@ -402,9 +408,9 @@ const NOTIFICATION_MODE_LABELS: Record<NotificationMode, string> = {
   always: 'Always',
 };
 
-/** Appearance tab: theme selection (base modes + plugin themes) and, on Linux,
- *  the title-bar choice. Its own tab so it has room to grow (e.g. accent tint,
- *  density) beyond the Theme row. */
+/** Appearance tab: theme selection (base modes + plugin themes), which nav rows
+ *  the sidebar shows, and on Linux the title-bar choice. Its own tab so it has
+ *  room to grow (e.g. accent tint, density) beyond the Theme row. */
 function AppearanceSection() {
   return (
     <section>
@@ -420,8 +426,59 @@ function AppearanceSection() {
           </SettingsRow>
         </SettingsCard>
       </div>
+      <SidebarItemsSettings />
       <TitleBarSettings />
     </section>
+  );
+}
+
+/**
+ * Which fixed nav rows the sidebar shows. Everything is on by default; turning a
+ * row off only hides the shortcut — the page itself stays reachable by URL, and
+ * Search keeps its ⌘K binding. The session list below the rows is not
+ * configurable.
+ */
+function SidebarItemsSettings() {
+  const hiddenNav = useHiddenSidebarNavItems();
+  const mobileHidden = useMobileSidebarHidden();
+  const [mounted, setMounted] = useState(false);
+
+  // Both preferences read post-mount (preload-injected on desktop), so render
+  // the switches only once the real values are in — otherwise every row would
+  // flash "on" first.
+  useEffect(() => setMounted(true), []);
+
+  return (
+    <div className="mt-8">
+      <h2 className="mb-3 text-sm text-foreground/90">Sidebar</h2>
+      <SettingsCard>
+        {SIDEBAR_NAV_ITEMS.map((item) => (
+          <Fragment key={item.id}>
+            <SettingsRow title={item.label} description={item.description}>
+              <Switch
+                checked={mounted ? !hiddenNav.has(item.id) : true}
+                onCheckedChange={(checked) => setSidebarNavItemHidden(item.id, !checked)}
+                aria-label={`Show ${item.label} in the sidebar`}
+                disabled={!mounted}
+              />
+            </SettingsRow>
+            {/* Desktop-only row, and its preference predates this list (the
+                Vicoa Mobile page toggles it too), so it keeps its own module —
+                listed here in the position it occupies in the sidebar. */}
+            {item.id === 'new-session' && (
+              <SettingsRow title="Vicoa Mobile" description="Get the app on your phone">
+                <Switch
+                  checked={mounted ? !mobileHidden : true}
+                  onCheckedChange={(checked) => setMobileSidebarHidden(!checked)}
+                  aria-label="Show Vicoa Mobile in the sidebar"
+                  disabled={!mounted}
+                />
+              </SettingsRow>
+            )}
+          </Fragment>
+        ))}
+      </SettingsCard>
+    </div>
   );
 }
 
@@ -500,7 +557,6 @@ function TitleBarSettings() {
 
 function GeneralSection() {
   const [mounted, setMounted] = useState(false);
-  const mobileHidden = useMobileSidebarHidden();
   const [mode, setMode] = useState<NotificationMode>('unfocused');
   const [authorization, setAuthorization] = useState<NotificationAuthorizationStatus | null>(null);
   const [isMac, setIsMac] = useState(false);
@@ -649,35 +705,6 @@ function GeneralSection() {
             <Button variant="outline" size="sm" className="text-xs" onClick={sendTest}>
               Send test
             </Button>
-          </SettingsRow>
-        </SettingsCard>
-      </div>
-      <div className="mt-8">
-        <h2 className="mb-3 text-sm text-foreground/90">Sidebar</h2>
-        <SettingsCard>
-          <SettingsRow
-            title="Vicoa Mobile"
-            description="Show the Vicoa Mobile page in the sidebar"
-          >
-            <Select
-              value={mobileHidden ? 'hidden' : 'shown'}
-              onValueChange={(v) => setMobileSidebarHidden(v === 'hidden')}
-            >
-              <SelectTrigger
-                aria-label="Vicoa Mobile sidebar visibility"
-                className="h-7 w-auto gap-1.5 border-border/70 bg-foreground/[0.06] px-2.5 py-0 text-xs shadow-none focus:ring-0 focus:ring-offset-0"
-              >
-                <SelectValue>{mobileHidden ? 'Hidden' : 'Shown'}</SelectValue>
-              </SelectTrigger>
-              <SelectContent align="end" className="bg-menu font-mono">
-                <SelectItem value="shown" className="cursor-pointer text-xs focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 focus:text-foreground">
-                  Shown
-                </SelectItem>
-                <SelectItem value="hidden" className="cursor-pointer text-xs focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 focus:text-foreground">
-                  Hidden
-                </SelectItem>
-              </SelectContent>
-            </Select>
           </SettingsRow>
         </SettingsCard>
       </div>
