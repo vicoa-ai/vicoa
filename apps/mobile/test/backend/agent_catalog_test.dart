@@ -100,8 +100,8 @@ void main() {
     test('keeps per-model capability metadata for ids the catalog knows', () {
       // Headless Claude reports its real model list (catalog + the machine's
       // custom slugs). The cached entries carry only {id, label}; dropping the
-      // catalog's per-model arrays would hide the `auto` permission mode and
-      // the Opus xhigh thinking default from the new-session sheet.
+      // catalog's per-model fields would lose the default model and the Opus
+      // xhigh thinking default from the new-session sheet.
       final merged = catalogWithCachedModels(agentCatalogFallback(), {
         'claude': [
           {'id': 'claude-sonnet-5', 'label': 'Sonnet 5'},
@@ -111,12 +111,23 @@ void main() {
       });
       final models = merged.agentById('claude')!.models!;
       expect(models.map((m) => m.id).toList(), ['claude-sonnet-5', 'claude-opus-4-8', 'my-org/custom-sonnet']);
-      final sonnet = models.firstWhere((m) => m.id == 'claude-sonnet-5');
-      expect(sonnet.permissionModes, ['auto']);
-      expect(sonnet.isDefault, isTrue);
+      expect(models.firstWhere((m) => m.id == 'claude-sonnet-5').isDefault, isTrue);
       expect(models.firstWhere((m) => m.id == 'claude-opus-4-8').defaultThinkingEffort, 'xhigh');
-      // A slug the catalog has never heard of gets the common set only.
-      expect(models.firstWhere((m) => m.id == 'my-org/custom-sonnet').permissionModes, isNull);
+      // A slug the catalog has never heard of gets no per-model extras.
+      expect(models.firstWhere((m) => m.id == 'my-org/custom-sonnet').defaultThinkingEffort, isNull);
+    });
+
+    test('a Claude model the catalog predates still gets auto mode', () {
+      // `auto` is common, not opt-in, so a model shipped after this build
+      // (known only from the session's reported model list, as in the chat
+      // gear) offers and defaults to it.
+      final merged = catalogWithCachedModels(agentCatalogFallback(), {
+        'claude': [{'id': 'claude-opus-9', 'label': 'Opus 9'}],
+      });
+      final claude = merged.agentById('claude')!;
+      expect(claude.permissionModes.where((e) => e.optIn), isEmpty);
+      expect(SessionConfig(agent: 'claude', model: 'claude-opus-9').reconcileAgainst(merged).permissionMode, 'auto');
+      expect(SessionConfig(agent: 'claude', model: 'claude-opus-9', permissionMode: 'default').reconcileAgainst(merged).permissionMode, 'default');
     });
 
     test('empty cache returns the base catalog unchanged', () {

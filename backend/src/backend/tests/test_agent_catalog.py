@@ -56,36 +56,22 @@ class TestAgentCatalogShape:
         claude = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "claude")
         opus_55 = next(m for m in claude["models"] if m["id"] == "claude-opus-5-5")
         assert opus_55.get("default_thinking_effort") is None
-        assert "auto" in opus_55["permission_modes"]
 
-    def test_auto_marked_opt_in_at_agent_level(self):
-        """`auto` is an opt-in capability — only modern models opt in."""
+    def test_auto_is_common_and_default(self):
+        """`auto` shows for every Claude model, including ones a client's
+        baked-in catalog predates, and is the default permission mode."""
         claude = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "claude")
         auto = next(e for e in claude["permission_modes"] if e["id"] == "auto")
-        assert auto.get("opt_in") is True
+        assert auto.get("opt_in") is not True
+        defaults = [e["id"] for e in claude["permission_modes"] if e.get("is_default")]
+        assert defaults == ["auto"]
 
-    def test_modern_models_opt_into_auto(self):
-        """Sonnet 4.6+, Opus 4.7+, Opus 5, and Fable 5 per-model arrays opt into `auto`."""
+    def test_no_claude_model_gates_permission_modes(self):
+        """No per-model `permission_modes`: with every mode common they would
+        be dead weight, and they invite re-adding a per-model `auto` gate."""
         claude = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "claude")
         for model in claude["models"]:
-            model_id = model["id"]
-            is_opus_47_plus = (
-                model_id.startswith("claude-opus-4-7")
-                or model_id.startswith("claude-opus-4-8")
-                or model_id.startswith("claude-opus-5")
-            )
-            is_sonnet_46_plus = model_id.startswith(
-                "claude-sonnet-4-6"
-            ) or model_id.startswith("claude-sonnet-5")
-            # Fable 5 is newer/more capable than Opus 4.8, so it carries the
-            # same `auto`-mode SDK capability.
-            is_fable_5 = model_id.startswith("claude-fable-5")
-            should_have_auto = is_opus_47_plus or is_sonnet_46_plus or is_fable_5
-            perm_opts = model.get("permission_modes", [])
-            if should_have_auto:
-                assert "auto" in perm_opts, f"{model_id} should opt into `auto`"
-            else:
-                assert "auto" not in perm_opts, f"{model_id} must NOT opt into `auto`"
+            assert "permission_modes" not in model, model["id"]
 
     def test_opus_47_plus_default_to_xhigh(self):
         """Opus 4.7/4.8, Opus 5, and Fable 5 per-model `default_thinking_effort` → `xhigh`.
