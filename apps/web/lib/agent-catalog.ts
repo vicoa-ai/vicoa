@@ -202,11 +202,11 @@ export function catalogWithCachedModels(
       // A machine reports only `{id, label}` — no capability metadata. Carry the
       // catalog entry's fields over for ids we already know (`is_default`,
       // `permission_modes`, `default_thinking_effort`, …); without this, the
-      // opt-in gates see an empty per-model array and silently drop `auto` /
-      // `xhigh` from the pickers the moment an agent starts reporting its
-      // models — which is exactly what happened when headless Claude began
-      // PATCHing `available_models`. Genuinely custom ids (a user's
-      // ANTHROPIC_MODEL slug, an ACP variant) keep the common set only.
+      // pickers silently lose per-model behaviour (the Opus `xhigh` default)
+      // the moment an agent starts reporting its models — which is exactly
+      // what happened when headless Claude began PATCHing `available_models`.
+      // Genuinely custom ids (a user's ANTHROPIC_MODEL slug, an ACP variant)
+      // keep the common set only.
       const catalogById = new Map((a.models ?? []).map((m) => [m.id, m] as const));
       const cachedModels: CatalogModel[] = cached.map((m) => {
         const known = catalogById.get(m.id);
@@ -312,8 +312,7 @@ export function reconcileAgainst(config: SessionConfig, catalog: AgentCatalog): 
   }
 
   // Common + per-model opt-ins: every entry without `opt_in` is shown;
-  // opt_in entries only when the model names them. `auto` is opt_in and
-  // is named by Sonnet 4.6+ and Opus 4.7+.
+  // opt_in entries only when the model names them.
   const pickWithModelFilter = (
     entries: CatalogEnumEntry[] | undefined,
     optIns: string[] | undefined,
@@ -530,7 +529,7 @@ export function savePersistedSelection(payload: Partial<PersistedSelection>): vo
 // ---------------------------------------------------------------------------
 
 export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
-  version: "2026-09-25-1",
+  version: "2026-09-26-1",
   min_cli_version: "1.20.0",
   min_client_version: "0.42.0",
   agents: [
@@ -545,19 +544,19 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
         // Fable 5 is premium-priced and thinking-always-on — offered but not the picker default.
         // Opus 5.5 carries no `default_thinking_effort` on purpose: Claude Code's own
         // default for it is `medium`, so it takes the agent-level `high`, not Opus 5's `xhigh`.
-        { id: "claude-fable-5", label: "Fable 5", default_thinking_effort: "xhigh", permission_modes: ["auto"] },
-        { id: "claude-opus-5-5", label: "Opus 5.5", permission_modes: ["auto"] },
-        { id: "claude-opus-5", label: "Opus 5", default_thinking_effort: "xhigh", permission_modes: ["auto"] },
-        { id: "claude-opus-4-8", label: "Opus 4.8", default_thinking_effort: "xhigh", permission_modes: ["auto"] },
-        { id: "claude-opus-4-8[1m]", label: "Opus 4.8 1M", default_thinking_effort: "xhigh", permission_modes: ["auto"] },
-        { id: "claude-opus-4-7", label: "Opus 4.7", default_thinking_effort: "xhigh", permission_modes: ["auto"] },
-        { id: "claude-opus-4-7[1m]", label: "Opus 4.7 1M", default_thinking_effort: "xhigh", permission_modes: ["auto"] },
+        { id: "claude-fable-5", label: "Fable 5", default_thinking_effort: "xhigh" },
+        { id: "claude-opus-5-5", label: "Opus 5.5" },
+        { id: "claude-opus-5", label: "Opus 5", default_thinking_effort: "xhigh" },
+        { id: "claude-opus-4-8", label: "Opus 4.8", default_thinking_effort: "xhigh" },
+        { id: "claude-opus-4-8[1m]", label: "Opus 4.8 1M", default_thinking_effort: "xhigh" },
+        { id: "claude-opus-4-7", label: "Opus 4.7", default_thinking_effort: "xhigh" },
+        { id: "claude-opus-4-7[1m]", label: "Opus 4.7 1M", default_thinking_effort: "xhigh" },
         { id: "claude-opus-4-6", label: "Opus 4.6" },
         { id: "claude-opus-4-6[1m]", label: "Opus 4.6 1M" },
-        { id: "claude-sonnet-5", label: "Sonnet 5", is_default: true, permission_modes: ["auto"] },
-        { id: "claude-sonnet-5[1m]", label: "Sonnet 5 1M", permission_modes: ["auto"] },
-        { id: "claude-sonnet-4-6", label: "Sonnet 4.6", permission_modes: ["auto"] },
-        { id: "claude-sonnet-4-6[1m]", label: "Sonnet 4.6 1M", permission_modes: ["auto"] },
+        { id: "claude-sonnet-5", label: "Sonnet 5", is_default: true },
+        { id: "claude-sonnet-5[1m]", label: "Sonnet 5 1M" },
+        { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+        { id: "claude-sonnet-4-6[1m]", label: "Sonnet 4.6 1M" },
         { id: "claude-haiku-4-5", label: "Haiku 4.5" },
       ],
       thinking_efforts: [
@@ -568,13 +567,12 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
         { id: "low", label: "Low" },
         { id: "off", label: "Off" },
       ],
-      // `auto` is the default for every model that opts into it (Sonnet 4.6+,
-      // Opus 4.7+, Opus 5, Fable 5), mirroring Claude Code's auto-by-default.
-      // It stays `opt_in`, so models that don't support it (Opus 4.6, Haiku 4.5)
-      // fall through to `default` via pickWithModelFilter.
+      // `auto` is the default for every model, mirroring Claude Code. It is
+      // deliberately not `opt_in`, so a model this fallback predates still gets
+      // it (see the canonical catalog in backend/src/protocol/agent_catalog.py).
       permission_modes: [
         { id: "default", label: "Default" },
-        { id: "auto", label: "Auto mode", opt_in: true, is_default: true },
+        { id: "auto", label: "Auto mode", is_default: true },
         { id: "acceptEdits", label: "Accept Edits" },
         { id: "plan", label: "Plan" },
         { id: "bypassPermissions", label: "Skip permissions (Yolo)" },
