@@ -359,6 +359,20 @@ usually want:
 - **`TWILIO_*`** — SMS/email when an agent is waiting on you.
 - **`SENTRY_DSN`** — error tracking.
 
+### Billing
+
+Vicoa's own billing is closed, but the seam it plugs into is open: on start,
+`backend/main.py` imports a Python package named `cloud` if one is on
+`PYTHONPATH` and lets it mount routers and register hooks
+(`backend/src/shared/hooks.py`). The backend `Dockerfile` takes an
+`OVERLAY_SRC` build arg that copies such a package into the image, and the web,
+desktop and mobile clients already call `/api/v1/billing/*`, so an overlay can
+turn the Upgrade button into a real checkout without touching this repo.
+
+One community overlay exists:
+[vicoa-coinpay-overlay](https://github.com/profullstack/vicoa-coinpay-overlay)
+sells prepaid Pro passes for crypto through CoinPay (`provider: "coinpay"`).
+
 ## Troubleshooting
 
 **The dashboard loads but nothing updates live.** The realtime bridge is
