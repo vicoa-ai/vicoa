@@ -74,7 +74,22 @@ def create_agent_instance(
 
 
 def get_agent_instance(db: Session, instance_id: str | UUID) -> AgentInstance | None:
-    """Get an agent instance by ID"""
+    """Get an agent instance by ID.
+
+    Raises:
+        ValueError: If ``instance_id`` is not a UUID. Left to Postgres, the
+            ``::UUID`` cast fails as a DataError and every caller turns that
+            into a 500. The usual culprit is a short id prefix, which no
+            Vicoa surface accepts: only the full UUID names a session.
+    """
+    if not isinstance(instance_id, UUID):
+        try:
+            instance_id = UUID(instance_id)
+        except ValueError:
+            raise ValueError(
+                "Invalid agent_instance_id format: must be a valid UUID, "
+                f"got '{instance_id}'"
+            ) from None
     return db.query(AgentInstance).filter(AgentInstance.id == instance_id).first()
 
 

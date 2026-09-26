@@ -1688,7 +1688,7 @@ Examples:
         default="daemon",
         help=(
             "What to stop: 'daemon' (default), 'sessions', 'all', "
-            "or a session ID / 8-char prefix from `vicoa ls`."
+            "or a full session id from `vicoa ls`."
         ),
     )
     stop_parser.add_argument(
@@ -2242,7 +2242,7 @@ Examples:
     )
     session_get.add_argument(
         "session_id",
-        help="Session id or 8-char prefix (from `vicoa ls` / `vicoa session ls`)",
+        help="Full session id (from `vicoa ls` / `vicoa session ls`)",
     )
     session_get.add_argument(
         "--limit",
@@ -2303,7 +2303,7 @@ Examples:
     )
     session_update.add_argument(
         "session_id",
-        help="Session id or 8-char prefix (from `vicoa session ls`)",
+        help="Full session id (from `vicoa session ls`)",
     )
     session_update.add_argument(
         "--title", help="New session title (renames the session)"
@@ -2337,7 +2337,7 @@ Examples:
     )
     session_message.add_argument(
         "session_id",
-        help="Session id or 8-char prefix (from `vicoa session ls`)",
+        help="Full session id (from `vicoa session ls`)",
     )
     session_message.add_argument(
         "text",
@@ -2351,7 +2351,7 @@ Examples:
     )
     session_continue.add_argument(
         "session_id",
-        help="Session id or 8-char prefix (from `vicoa session ls`)",
+        help="Full session id (from `vicoa session ls`)",
     )
 
     session_share = session_sub.add_parser(
@@ -2363,7 +2363,7 @@ Examples:
     session_share.add_argument(
         "session_id",
         nargs="?",
-        help="Session id or 8-char prefix; defaults to the session this runs in "
+        help="Full session id; defaults to the session this runs in "
         "(VICOA_AGENT_INSTANCE_ID)",
     )
     session_share.add_argument(
@@ -2415,12 +2415,12 @@ Examples:
     session_unshare.add_argument(
         "session_id",
         nargs="?",
-        help="Session id or 8-char prefix; defaults to the session this runs in",
+        help="Full session id; defaults to the session this runs in",
     )
     session_unshare.add_argument(
         "--link",
         metavar="LINK_ID",
-        help="Revoke this link (id or prefix from `session share --list`)",
+        help="Revoke this link (its id from `session share --list`)",
     )
     session_unshare.add_argument(
         "--all",

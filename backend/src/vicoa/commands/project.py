@@ -39,10 +39,6 @@ def _fit(s: str, width: int) -> str:
     return s if len(s) <= width else s[: width - 1] + "…"
 
 
-def _short(value: Optional[str], n: int = 8) -> str:
-    return value[:n] if value else "—"
-
-
 def _local_path(project: dict, machine_id: Optional[str]) -> str:
     """The checkout on this machine when the project has one, else the first
     one anywhere — a listing wants *a* path, and the local one is the useful
@@ -66,7 +62,7 @@ def _print_project_table(projects: list[dict], machine_id: Optional[str]) -> Non
         print("No projects found.")
         return
     header = (
-        f"{'ID':<8}  {'KEY':<6} {'NAME':<{_NAME_W}} {'PATH':<{_PATH_W}} {'TASKS':>5}"
+        f"{'KEY':<6} {'NAME':<{_NAME_W}} {'PATH':<{_PATH_W}} {'TASKS':>5}  {'ID':<36}"
     )
     print(header)
     print("-" * len(header))
@@ -74,11 +70,11 @@ def _print_project_table(projects: list[dict], machine_id: Optional[str]) -> Non
         archived = " (archived)" if p.get("is_archived") else ""
         count = p.get("task_count")
         print(
-            f"{_short(p.get('id')):<8}  "
             f"{str(p.get('key') or '—'):<6} "
             f"{_fit(str(p.get('name') or '') + archived, _NAME_W):<{_NAME_W}} "
             f"{_fit(_local_path(p, machine_id), _PATH_W):<{_PATH_W}} "
-            f"{(count if count is not None else '—'):>5}"
+            f"{(count if count is not None else '—'):>5}  "
+            f"{p.get('id') or '—'}"
         )
     print(f"\n{len(projects)} project(s).")
 
@@ -99,7 +95,7 @@ def _print_project_detail(p: dict) -> None:
     if directories:
         print("\ndirectories:")
         for d in directories:
-            machine = d.get("machine_name") or _short(d.get("machine_id"))
+            machine = d.get("machine_name") or d.get("machine_id") or "—"
             print(f"  {machine}: {d.get('local_path')}")
 
 

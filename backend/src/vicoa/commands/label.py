@@ -100,14 +100,14 @@ def _print_label_table(labels: list[dict]) -> None:
     if not labels:
         print("No labels yet. Create one with `vicoa label create <name>`.")
         return
-    header = f"{'ID':<8}  {'NAME':<24} {'COLOR':<8}"
+    header = f"{'NAME':<24} {'COLOR':<8}  {'ID':<36}"
     print(header)
     print("-" * len(header))
     for lbl in labels:
         print(
-            f"{str(lbl.get('id') or '')[:8]:<8}  "
             f"{str(lbl.get('name') or ''):<24} "
-            f"{str(lbl.get('color') or ''):<8}"
+            f"{str(lbl.get('color') or ''):<8}  "
+            f"{lbl.get('id') or '—'}"
         )
     print(f"\n{len(labels)} label(s).")
 

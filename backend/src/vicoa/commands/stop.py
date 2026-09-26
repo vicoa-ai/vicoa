@@ -85,7 +85,7 @@ def _stop_sessions(*, agent_filter: Optional[str], assume_yes: bool) -> bool:
     Optionally filtered by agent type. Returns True if all matched sessions stopped.
     """
     from vicoa.agent_processes import list_running_agents, stop_pid
-    from vicoa.commands.ls import _short_id
+    from vicoa.commands.ls import _session_label
 
     sessions = [a for a in list_running_agents() if a.kind == "headless"]
     if agent_filter:
@@ -110,31 +110,33 @@ def _stop_sessions(*, agent_filter: Optional[str], assume_yes: bool) -> bool:
         ok, msg = stop_pid(s.pid, timeout=10.0)
         marker = "✓" if ok else "✗"
         print(
-            f"  {marker} pid={s.pid} agent={s.agent} session={_short_id(s.session_id, s.pid)} — {msg}"
+            f"  {marker} pid={s.pid} agent={s.agent} session={_session_label(s.session_id, s.pid)} — {msg}"
         )
         if not ok:
             all_stopped = False
     return all_stopped
 
 
-def _stop_session_by_id(session_id_prefix: str, *, assume_yes: bool) -> None:
-    """Stop one or more sessions identified by a full or 8-char-prefix UUID."""
+def _stop_session_by_id(session_id: str, *, assume_yes: bool) -> None:
+    """Stop the running session(s) with this full session UUID."""
     from vicoa.agent_processes import list_running_agents, stop_pid
-    from vicoa.commands.ls import _short_id
+    from vicoa.commands.ls import _session_label
 
+    wanted = session_id.strip().lower()
     agents = list_running_agents()
-    matches = [
-        a for a in agents if a.session_id and a.session_id.startswith(session_id_prefix)
-    ]
+    matches = [a for a in agents if a.session_id and a.session_id.lower() == wanted]
 
     if not matches:
-        print(f"No running session matches '{session_id_prefix}'.")
+        print(
+            f"No running session has the id '{session_id}'. Pass the full id "
+            "from `vicoa ls`."
+        )
         sys.exit(1)
 
     label = (
-        f"session {_short_id(matches[0].session_id, matches[0].pid)}"
+        f"session {_session_label(matches[0].session_id, matches[0].pid)}"
         if len(matches) == 1
-        else f"{len(matches)} sessions matching '{session_id_prefix}'"
+        else f"{len(matches)} processes for session '{session_id}'"
     )
     if not _confirm(f"Stop {label}?", assume_yes=assume_yes):
         print("Aborted.")
@@ -145,7 +147,7 @@ def _stop_session_by_id(session_id_prefix: str, *, assume_yes: bool) -> None:
         ok, msg = stop_pid(s.pid, timeout=10.0)
         marker = "✓" if ok else "✗"
         print(
-            f"  {marker} {_short_id(s.session_id, s.pid)} ({s.agent}, pid={s.pid}) — {msg}"
+            f"  {marker} {_session_label(s.session_id, s.pid)} ({s.agent}, pid={s.pid}) — {msg}"
         )
         if not ok:
             all_stopped = False
@@ -161,8 +163,8 @@ def cmd_stop(args) -> None:
       * ``sessions`` — stop all daemon-spawned headless sessions, optionally
         filtered by ``--agent``. Leaves the daemon running.
       * ``all`` — stop sessions first, then the daemon.
-      * ``<session-id>`` — stop a single session by its full UUID or 8-char
-        prefix (as shown in ``vicoa ls``).
+      * ``<session-id>`` — stop a single session by its full UUID (as shown in
+        ``vicoa ls``).
     """
     target = getattr(args, "target", None) or "daemon"
     agent_filter = getattr(args, "agent", None)
@@ -197,7 +199,7 @@ def cmd_stop(args) -> None:
             sys.exit(1)
         return
 
-    # Treat any other value as a session ID prefix.
+    # Treat any other value as a session id.
     if agent_filter:
         print("--agent only applies to `vicoa stop sessions` / `vicoa stop all`.")
         sys.exit(2)
