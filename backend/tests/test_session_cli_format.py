@@ -11,6 +11,8 @@ import re
 import types
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from vicoa.commands import instance as I
 
 # A rendered timestamp header, e.g. "[2026-08-01 18:15]" — matched by pattern so
@@ -178,6 +180,32 @@ def _instance(**over):
     return base
 
 
+class TestFullIds:
+    """Every id the CLI prints is the full UUID, so whatever a person or an
+    agent copies out of the output works as input anywhere."""
+
+    _UUID = "abcdef12-0000-4000-8000-000000000000"
+
+    def test_session_table_prints_the_full_id(self, capsys):
+        I._print_instance_table([_instance(id=self._UUID)], total=1)
+        header, _rule, row = capsys.readouterr().out.splitlines()[:3]
+        assert header.rstrip().endswith("ID")
+        assert row.endswith(self._UUID)
+
+    def test_machine_table_prints_the_full_id(self, capsys):
+        I._print_machines(
+            [{"machine_id": self._UUID, "display_name": "laptop", "hostname": "h"}]
+        )
+        assert capsys.readouterr().out.splitlines()[2].endswith(self._UUID)
+
+    def test_machine_is_matched_by_full_id_or_name_but_not_an_id_prefix(self):
+        machines = [{"machine_id": self._UUID, "display_name": "laptop"}]
+        assert I._match_machine(machines, self._UUID.upper()) is machines[0]
+        assert I._match_machine(machines, "lap") is machines[0]
+        with pytest.raises(SystemExit):
+            I._match_machine(machines, "abcdef12")
+
+
 class TestRateLimitTable:
     def test_reset_column_shown_only_when_a_row_is_rate_limited(self, capsys):
         # No limited rows -> no RESET column.
@@ -200,30 +228,35 @@ class TestRateLimitTable:
 
 
 class TestContinueAndMessage:
+    _UUID = "abcdef12-0000-4000-8000-000000000000"
+
     def _args(self, **over):
-        base = {"session_id": "abcdef12", "json": False, "text": None}
+        base = {"session_id": self._UUID, "json": False, "text": None}
         base.update(over)
         return types.SimpleNamespace(**base)
 
-    def test_continue_posts_literal_continue(self, monkeypatch):
-        calls = []
+    def _record(self, monkeypatch) -> list:
+        calls: list = []
 
         def fake_request(args, api_key, method, endpoint, *, params=None, json=None):
             calls.append((method, endpoint, json))
-            # First call resolves the id (GET list); handler posts on the second.
-            if method == "GET":
-                return {"items": [{"id": "abcdef12-0000-0000"}]}
             return {"success": True, "message_id": "m1"}
 
         monkeypatch.setattr(I, "request", fake_request)
+        return calls
+
+    def test_continue_posts_literal_continue(self, monkeypatch, capsys):
+        calls = self._record(monkeypatch)
         rc = I._cmd_continue(self._args(), "key")
         assert rc == 0
-        post = [c for c in calls if c[0] == "POST"][0]
-        assert post[1] == "/api/v1/messages/user"
-        assert post[2] == {
-            "agent_instance_id": "abcdef12-0000-0000",
-            "content": "continue",
-        }
+        assert calls == [
+            (
+                "POST",
+                "/api/v1/messages/user",
+                {"agent_instance_id": self._UUID, "content": "continue"},
+            )
+        ]
+        assert f"Continued session {self._UUID}." in capsys.readouterr().out
 
     def test_message_requires_non_empty_text(self, monkeypatch):
         def boom(*a, **k):
@@ -234,19 +267,25 @@ class TestContinueAndMessage:
         assert rc == 2
 
     def test_message_posts_given_text(self, monkeypatch):
-        calls = []
-
-        def fake_request(args, api_key, method, endpoint, *, params=None, json=None):
-            calls.append((method, endpoint, json))
-            if method == "GET":
-                return {"items": [{"id": "abcdef12-0000-0000"}]}
-            return {"success": True, "message_id": "m1"}
-
-        monkeypatch.setattr(I, "request", fake_request)
+        calls = self._record(monkeypatch)
         rc = I._cmd_message(self._args(text="run the tests"), "key")
         assert rc == 0
-        post = [c for c in calls if c[0] == "POST"][0]
-        assert post[2]["content"] == "run the tests"
+        assert calls[0][2] == {
+            "agent_instance_id": self._UUID,
+            "content": "run the tests",
+        }
+
+    def test_a_short_id_is_refused_before_any_request(self, monkeypatch, capsys):
+        """A prefix is not an identity: after a delete it can quietly name a
+        different session, and `message` writes to whatever it names."""
+        calls = self._record(monkeypatch)
+        with pytest.raises(SystemExit) as exc:
+            I._cmd_message(self._args(session_id="abcdef12", text="hi"), "key")
+        assert exc.value.code == 2
+        assert calls == []
+        err = capsys.readouterr().err
+        assert "'abcdef12' is not a session id" in err
+        assert "vicoa session ls" in err
 
 
 class TestGetRoleFilter:

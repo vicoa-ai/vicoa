@@ -35,8 +35,8 @@ are fetched and merged when a key is available.
 |---|---|
 | `--json` | Raw JSON array of `{pid, agent, kind, session_id, name, project_path, age}` |
 
-Table columns: `ID` (8-char session prefix, or `pid:<n>` when no session id),
-`AGENT`, `NAME`, `PROJECT` (basename), `PID`, `AGE`.
+Table columns: `AGENT`, `NAME`, `PROJECT` (basename), `PID`, `AGE`, `ID` (the
+full session id, or `pid:<n>` when there is none).
 
 ## `vicoa session ...` — sessions from the backend
 
@@ -56,8 +56,9 @@ from `vicoa ls` (local processes only).
 | `--offset N` | 0 | Skip the newest N (page with `--limit`) |
 | `--json` | | Raw JSON `{items: [...], total, limit, offset, has_more}` |
 
-Columns: `ID` (8-char), `AGENT`, `MODEL`, `STATUS`, `NAME`, `PROJECT`, `MSGS`,
-`STARTED` (plus a `RESET` column when any listed session is rate-limited).
+Columns: `AGENT`, `MODEL`, `STATUS`, `NAME`, `PROJECT`, `MSGS`, `STARTED`
+(plus a `RESET` column when any listed session is rate-limited), then `ID`,
+the full session id.
 
 **`--since` / `--until` forms.** A date (`2026-09-20` = local midnight), a
 datetime (`2026-09-20T14:30`, local unless it carries an offset or `Z`),
@@ -78,8 +79,8 @@ automations' rate-limited sessions and a manual `session ls` are unaffected.
 
 ### `vicoa session get <session_id>`
 
-`session_id` accepts a full UUID or an 8-char prefix (resolved against the
-caller's recent sessions; ambiguous prefixes error).
+`session_id` is the full UUID `session ls` prints; every `session` command
+takes only that. A short prefix is refused (`'<ref>' is not a session id`).
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -126,7 +127,7 @@ not in this terminal.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--machine <ID\|NAME>` | this host's daemon | Target machine: full id, id prefix, or a display-name/hostname substring (`--list-machines`) |
+| `--machine <ID\|NAME>` | this host's daemon | Target machine: full id, or a display-name/hostname substring (`--list-machines`) |
 | `--dir <PATH>` | — (**required**) | Directory on the target machine |
 | `--allow-offline` | off | Queue the request; it runs when the daemon reconnects |
 | `--agent <name>` | `claude` | Agent to run — every supported agent **except `amp`**, which only runs locally. Also filters `--list-models` |
@@ -168,8 +169,7 @@ agent; those vocabularies are per-agent.
 
 Send a message into a session. Inserts a USER message, flips the session back to
 `ACTIVE`, and delivers it to the running agent (the same primitive the web/app
-use), scoped to the caller's own sessions. `session_id` accepts an 8-char
-prefix. Fails if the target machine is offline (retry when it's back).
+use), scoped to the caller's own sessions. `session_id` is the full UUID. Fails if the target machine is offline (retry when it's back).
 
 ### `vicoa session continue <session_id>`
 
@@ -204,7 +204,7 @@ never the machine, the working directory, or session secrets.
 
 | Flag | Meaning |
 |---|---|
-| `--link <LINK_ID>` | Revoke this link (id or prefix from `session share --list`) |
+| `--link <LINK_ID>` | Revoke this link (its full id from `session share --list`) |
 | `--all` | Revoke every live link on the session |
 | `--web-url <URL>` | Web origin for listed URLs |
 
@@ -247,16 +247,14 @@ These run the agent in the current terminal (not part of the `session` group).
 | `daemon` (default) | Stop the local background daemon(s) |
 | `sessions` | Stop all local agent sessions |
 | `all` | Daemon + sessions |
-| `<id or 8-char prefix>` | Stop that one session |
+| `<session id>` | Stop that one session (the full id `vicoa ls` prints) |
 
 Flags: `--agent <name>` — only `claude`, `codex`, `opencode`, `amp` here, a
 narrower set than the launch verbs take — plus `-y`/`--yes` and `--base-url`
 (scope `stop daemon` to one base URL; without it, a bare `stop daemon` stops
 every running daemon). `vicoa disconnect` is an alias for `vicoa stop daemon`.
 
-A session-id prefix that matches **more than one** session stops all the
-matches after a single confirmation; pass the full UUID to disambiguate. Each
-session is asked to shut down gracefully and force-stopped if it doesn't exit
+Each session is asked to shut down gracefully and force-stopped if it doesn't exit
 in a short grace period.
 
 ## `vicoa task ...` — task backlog
@@ -268,8 +266,8 @@ Endpoints: `/api/v1/tasks`. **Enums** (server-enforced):
 
 ### `vicoa task ls`
 
-Columns: `ID` (8-char prefix), `KEY` (`VIC-42`, or `—` for a task older than the
-identifiers), `STATUS`, `PRIO`, `PROJECT`, `TITLE`.
+Columns: `KEY` (`VIC-42`, or `—` for a task older than the identifiers),
+`STATUS`, `PRIO`, `PROJECT`, `TITLE`, `ID` (full UUID).
 
 | Flag | Meaning |
 |---|---|
@@ -384,7 +382,7 @@ automatically, from the folder a session runs in).
 
 | Command | Meaning |
 |---|---|
-| `project ls [--include-archived] [--json]` | Columns `ID`, `KEY`, `NAME`, `PATH`, `TASKS` — `KEY`/`NAME`/`ID` are the refs `--project` takes |
+| `project ls [--include-archived] [--json]` | Columns `KEY`, `NAME`, `PATH`, `TASKS`, `ID` — `KEY`/`NAME`/`ID` are the refs `--project` takes |
 | `project get <REF> [--json]` | One project's detail — including every machine's checkout path; `<REF>` is a key, name, or id |
 
 `PATH` is this machine's checkout; `TASKS` counts **open** tasks (everything but
@@ -398,7 +396,7 @@ per-project labels).
 
 | Command | Meaning |
 |---|---|
-| `label ls [--json]` | Columns `ID`, `NAME`, `COLOR` — `NAME` is what `--label` takes |
+| `label ls [--json]` | Columns `NAME`, `COLOR`, `ID` — `NAME` is what `--label` takes |
 | `label create <name> [--color '#RRGGBB'] [--json]` | Create one; colour defaults to the one the web would pick from the name |
 
 `create` refuses a name that already exists (case-insensitively), so a
@@ -417,11 +415,11 @@ there is no run-now.
 - `get <AUTOMATION_UUID>` — full detail incl. `machine_id`, `directory`,
   `worktree`, `frequency`, `timezone`, `next_run_at`, `last_run_at`,
   `last_run_status`, `session_config`, and the prompt. `--json`.
-- `runs <AUTOMATION_UUID>` — run history (ID, STATUS, FIRED AT, INSTANCE,
-  DETAIL). `--json`.
+- `runs <AUTOMATION_UUID>` — run history (STATUS, FIRED AT, DETAIL, and the
+  full SESSION id each run started). `--json` adds the run ids.
 - `delete <AUTOMATION_UUID>` — `-y`/`--yes` to skip confirm.
 
-Automation ids are always **full UUIDs** — no prefix matching.
+Automation ids are always **full UUIDs**, like every other id the CLI takes.
 
 ### `vicoa automation create "<title>"`
 

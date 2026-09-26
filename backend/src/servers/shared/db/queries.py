@@ -79,8 +79,8 @@ def get_agent_instance(db: Session, instance_id: str | UUID) -> AgentInstance | 
     Raises:
         ValueError: If ``instance_id`` is not a UUID. Left to Postgres, the
             ``::UUID`` cast fails as a DataError and every caller turns that
-            into a 500; the usual culprit is the 8-char prefix `vicoa session
-            ls` prints, which only the CLI knows how to expand.
+            into a 500. The usual culprit is a short id prefix, which no
+            Vicoa surface accepts: only the full UUID names a session.
     """
     if not isinstance(instance_id, UUID):
         try:

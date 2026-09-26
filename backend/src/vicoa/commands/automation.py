@@ -224,10 +224,6 @@ def _fit(s: str, width: int) -> str:
     return s if len(s) <= width else s[: width - 1] + "…"
 
 
-def _short(value: Optional[str], n: int = 8) -> str:
-    return value[:n] if value else "—"
-
-
 def _short_dt(value: Optional[str]) -> str:
     """Trim an ISO timestamp to ``YYYY-MM-DD HH:MM`` for table display."""
     if not value:
@@ -263,17 +259,17 @@ def _print_automation_table(rows: list[dict]) -> None:
         print("No automations found.")
         return
     header = (
-        f"{'ID':<8}  {'TITLE':<{_TITLE_W}} {'ON':<3} {'SCHEDULE':<18} {'NEXT RUN':<16}"
+        f"{'TITLE':<{_TITLE_W}} {'ON':<3} {'SCHEDULE':<18} {'NEXT RUN':<16}  {'ID':<36}"
     )
     print(header)
     print("-" * len(header))
     for a in rows:
         print(
-            f"{_short(a.get('id')):<8}  "
             f"{_fit(a.get('title', ''), _TITLE_W):<{_TITLE_W}} "
             f"{('yes' if a.get('enabled') else 'no'):<3} "
             f"{_fit(_schedule_summary(a), 18):<18} "
-            f"{_short_dt(a.get('next_run_at')):<16}"
+            f"{_short_dt(a.get('next_run_at')):<16}  "
+            f"{a.get('id') or '—'}"
         )
     print(f"\n{len(rows)} automation(s).")
 
@@ -307,16 +303,17 @@ def _print_runs_table(runs: list[dict]) -> None:
     if not runs:
         print("No runs yet.")
         return
-    header = f"{'ID':<8}  {'STATUS':<14} {'FIRED AT':<16} {'INSTANCE':<8} DETAIL"
+    # No run-id column: nothing takes one (`--json` still carries it). The
+    # session id is the full UUID, so it can go straight into `vicoa session`.
+    header = f"{'STATUS':<14} {'FIRED AT':<16} {'DETAIL':<40}  {'SESSION':<36}"
     print(header)
     print("-" * len(header))
     for r in runs:
         print(
-            f"{_short(r.get('id')):<8}  "
             f"{str(r.get('status', '')):<14} "
             f"{_short_dt(r.get('fired_at')):<16} "
-            f"{_short(r.get('agent_instance_id')):<8} "
-            f"{_fit(r.get('detail') or '—', 40)}"
+            f"{_fit(r.get('detail') or '—', 40):<40}  "
+            f"{r.get('agent_instance_id') or '—'}"
         )
     print(f"\n{len(runs)} run(s).")
 

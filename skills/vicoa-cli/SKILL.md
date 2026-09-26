@@ -101,21 +101,21 @@ vicoa session ls --rate-limited      # only sessions blocked by a rate limit (ad
 vicoa session ls --limit 50 --offset 50   # page back through history
 vicoa session ls --json
 
-# Inspect one session + its transcript (accepts full UUID or 8-char prefix)
-vicoa session get 3f9c1a2b           # last 50 messages, clean chat view
-vicoa session get 3f9c1a2b --all     # full transcript
-vicoa session get 3f9c1a2b --all --role user   # only what the human asked for
-vicoa session get 3f9c1a2b --full    # + timestamps, emails, control msgs, tool payloads
-vicoa session get 3f9c1a2b --json    # {"instance": {...}, "messages": [...]}
+# Inspect one session + its transcript (the full id `session ls` prints)
+vicoa session get <SESSION_ID>       # last 50 messages, clean chat view
+vicoa session get <SESSION_ID> --all # full transcript
+vicoa session get <SESSION_ID> --all --role user # only what the human asked for
+vicoa session get <SESSION_ID> --full # + timestamps, emails, control msgs, tool payloads
+vicoa session get <SESSION_ID> --json # {"instance": {...}, "messages": [...]}
 
 # Rename a session / link it to a task (task status then follows the session)
-vicoa session update 3f9c1a2b --title "Refactor auth"
-vicoa session update 3f9c1a2b --task <TASK_UUID>
-vicoa session update 3f9c1a2b --unlink-task
+vicoa session update <SESSION_ID> --title "Refactor auth"
+vicoa session update <SESSION_ID> --task <TASK_UUID>
+vicoa session update <SESSION_ID> --unlink-task
 
 # Send input into a running session (delivered to the agent; flips it ACTIVE)
-vicoa session message 3f9c1a2b "run the tests and fix failures"
-vicoa session continue 3f9c1a2b      # sugar: sends the literal "continue"
+vicoa session message <SESSION_ID> "run the tests and fix failures"
+vicoa session continue <SESSION_ID>  # sugar: sends the literal "continue"
 ```
 
 `--since` / `--until` take a date (`2026-09-20`, local midnight), a datetime, an
@@ -172,7 +172,7 @@ vicoa session start --machine <id|name> --dir ~/code/app \
 ```
 
 `--dir` is **required** — there is no default working directory. `--machine`
-defaults to this host's daemon and accepts an id, an id prefix, or a
+defaults to this host's daemon and accepts a full id or a
 display-name/hostname substring. Every agent except `amp` can be spawned this
 way; `amp` only runs from a local `vicoa --agent amp`.
 
@@ -219,17 +219,17 @@ a warning.
 ```bash
 vicoa stop                 # stop the local background daemon (prompts)
 vicoa stop sessions -y     # stop all local agent sessions, no prompt
-vicoa stop 3f9c1a2b        # stop one session by id / 8-char prefix
+vicoa stop <SESSION_ID>    # stop one session by its full id (from `vicoa ls`)
 ```
 
 ### Share links
 
 ```bash
 vicoa session share                       # the session this runs in
-vicoa session share 3f9c1a2b --expires 7  # public link, gone in a week
-vicoa session share 3f9c1a2b --audience authenticated --show-branch
-vicoa session share 3f9c1a2b --list       # existing live links
-vicoa session unshare 3f9c1a2b --all      # revoke
+vicoa session share <SESSION_ID> --expires 7 # public link, gone in a week
+vicoa session share <SESSION_ID> --audience authenticated --show-branch
+vicoa session share <SESSION_ID> --list   # existing live links
+vicoa session unshare <SESSION_ID> --all  # revoke
 ```
 
 On success `share` prints **only the URL**, so it drops straight into a
@@ -391,8 +391,8 @@ Rarely what a question is about, but worth knowing they exist:
 | `no project with key or name '…'` / `N projects are named '…'` | `--project` matches a key, name, or id exactly — check `vicoa project ls`; pass the key or id when two projects share a name. |
 | `no label named '…'` | `--label` takes an existing name — `vicoa label ls`, or `vicoa label create <name>`. |
 | `no session given and VICOA_AGENT_INSTANCE_ID is not set` | `session share`/`unshare` default to the session they run inside; outside one, pass the session id. |
-| `'<ref>' is ambiguous` / `No session found matching` | The 8-char prefix collided or aged out — use more characters or the full UUID. |
-| `404` on `task get/update/delete` | Use the `VIC-42` identifier or the **full UUID** — the 8-char prefix in the ID column is display-only. Automations still need their full UUID. |
+| `'<ref>' is not a session id` | Pass the full session id from `vicoa session ls`; short prefixes are not accepted. |
+| `404` on `task get/update/delete` | Use the `VIC-42` identifier or the **full UUID** from the `ID` column. |
 | `Nothing to update — pass at least one field` | `update` is a PATCH; pass ≥1 flag (e.g. `--status done`). |
 | `Aborted (pass --yes to delete non-interactively)` | Re-run `delete` with `-y` (only after the user confirms). |
 | `pass only one schedule (… are mutually exclusive)` | `automation create` takes exactly one of `--at/--daily/--hourly/--weekdays/--weekly/--frequency-json`. |
@@ -402,9 +402,9 @@ Rarely what a question is about, but worth knowing they exist:
 
 - **`vicoa ls` ≠ `vicoa session ls`.** `ls` lists OS processes on *this* machine
   only; `session ls` reads the backend (all machines + finished sessions).
-- **Id forms differ.** `session get/update` and `vicoa stop` accept an 8-char
-  prefix; `task` takes `VIC-42` or a full UUID (not a prefix); `automation` ids
-  must be the full UUID.
+- **Ids are always the full UUID.** Every id the CLI prints is the full one and
+  every command takes exactly that; no short prefixes. Tasks additionally take
+  their `VIC-42` identifier.
 - **Task keys are per-owner, not global.** `VIC-1` names a different task in a
   different account, and a task that moves project is renumbered.
 - **`--effort` is claude/codex only** (maps to `thinking_effort` /

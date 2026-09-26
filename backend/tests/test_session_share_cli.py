@@ -173,12 +173,19 @@ class TestUnshare:
         assert not any(m == "DELETE" for m, *_ in server.sent)
         assert "--link" in capsys.readouterr().err
 
-    def test_link_prefix_revokes_that_one(self, server, capsys):
+    def test_link_id_revokes_that_one(self, server, capsys):
         server.links = [_link("aaaa1111-x", "t1"), _link("bbbb2222-y", "t2")]
-        assert I._cmd_unshare(_args(link="bbbb"), "k") == 0
+        assert I._cmd_unshare(_args(link="bbbb2222-y"), "k") == 0
         deleted = [e for m, e, *_ in server.sent if m == "DELETE"]
         assert deleted == ["/api/v1/shares/bbbb2222-y"]
         assert "Revoked 1 link(s)" in capsys.readouterr().out
+
+    def test_a_link_id_prefix_revokes_nothing(self, server):
+        """A revoked URL is dead wherever it was pasted, so only the exact id
+        the `--list` table prints may name one."""
+        server.links = [_link("aaaa1111-x", "t1"), _link("bbbb2222-y", "t2")]
+        assert I._cmd_unshare(_args(link="bbbb"), "k") == 1
+        assert not any(m == "DELETE" for m, *_ in server.sent)
 
     def test_unknown_link_is_an_error(self, server, capsys):
         server.links = [_link("aaaa1111-x", "t1")]

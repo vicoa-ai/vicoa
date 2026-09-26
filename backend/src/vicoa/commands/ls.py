@@ -41,10 +41,10 @@ def _format_age(etime: str | None) -> str:
         return etime
 
 
-def _short_id(session_id: str | None, pid: int) -> str:
-    """8-char prefix of a session UUID, falling back to PID when absent."""
+def _session_label(session_id: str | None, pid: int) -> str:
+    """The full session UUID, falling back to PID when absent."""
     if session_id:
-        return session_id[:8]
+        return session_id
     return f"pid:{pid}"
 
 
@@ -162,17 +162,20 @@ def cmd_ls(args, api_key: Optional[str] = None) -> None:
         if not rows:
             print("  (none)")
             return
-        header = f"  {'ID':<12} {'AGENT':<10} {'NAME':<{_NAME_W}} {'PROJECT':<{_PROJECT_W}} {'PID':<8} {'AGE'}"
+        header = (
+            f"  {'AGENT':<10} {'NAME':<{_NAME_W}} {'PROJECT':<{_PROJECT_W}} "
+            f"{'PID':<8} {'AGE':<5} {'ID':<36}"
+        )
         print(header)
         print(f"  {'-' * (len(header) - 2)}")
         for r in rows:
             print(
-                f"  {_short_id(r.session_id, r.pid):<12} "
-                f"{r.agent:<10} "
+                f"  {r.agent:<10} "
                 f"{_fit(r.name or '—', _NAME_W):<{_NAME_W}} "
                 f"{_shorten_path(r.project_path):<{_PROJECT_W}} "
                 f"{r.pid:<8} "
-                f"{_format_age(r.age)}"
+                f"{_format_age(r.age):<5} "
+                f"{_session_label(r.session_id, r.pid)}"
             )
 
     _print_section("DAEMON SESSIONS", headless)
