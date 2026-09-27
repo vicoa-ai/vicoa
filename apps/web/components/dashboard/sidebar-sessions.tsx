@@ -9,7 +9,9 @@ import {
   Archive,
   ChevronRight,
   Kanban,
+  MessageCircleMore,
   MoreHorizontal,
+  Plus,
   Settings,
   Share,
   Trash2,
@@ -275,7 +277,7 @@ export interface SidebarSessionsProps {
 
 /**
  * The shared central region of both sidebars: the "Workspaces" header row
- * (filter + Kanban), the grouped/collapsible session list, per-row hover actions
+ * (Kanban + filter + new session), the grouped/collapsible session list, per-row hover actions
  * (archive + a three-dot menu) plus the right-click context menu, and the
  * rename/delete/worktree confirmation dialogs.
  *
@@ -1352,6 +1354,15 @@ export function SidebarSessions({
                 </FilterSubRow>
               </DropdownMenuContent>
             </DropdownMenu>
+            <button
+              type="button"
+              title="New session"
+              aria-label="New session"
+              onClick={() => router.push('/dashboard/sessions/new')}
+              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
           </div>
         </div>
         <div
@@ -1371,8 +1382,12 @@ export function SidebarSessions({
               ))}
             </div>
           ) : recentInstances.length === 0 ? (
-            <div className="px-2 py-4 text-sm text-muted-foreground text-center">
-              No sessions yet
+            <div className="flex flex-col items-center px-4 pt-10 pb-4 text-center">
+              <MessageCircleMore className="h-8 w-8 text-muted-foreground" strokeWidth={1.5} />
+              <p className="mt-3 text-xs font-medium text-foreground">No sessions yet</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                Sessions you start will show up here.
+              </p>
             </div>
           ) : (
             <div className="space-y-1 pb-2">
