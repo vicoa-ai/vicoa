@@ -376,19 +376,42 @@ def _git_stderr(proc: subprocess.CompletedProcess[bytes], fallback: str) -> str:
     return proc.stderr.decode("utf-8", errors="replace").strip() or fallback
 
 
-def _refuse_unless_forced(worktree: Path) -> str | None:
-    """git's own preconditions for an un-forced `worktree remove`, as an error
-    string (or None when the worktree may go). Mirrors builtin/worktree.c:
-    no submodules in the index, and `status --porcelain` empty — ignored files
-    (node_modules, build output) don't count, exactly as for git."""
-    ls = subprocess.run(
-        ["git", "-C", str(worktree), "ls-files", "--stage"],
+def _has_checked_out_submodules(worktree: Path) -> bool:
+    """builtin/worktree.c's `validate_no_submodules`: the worktree's own git dir
+    has a `modules/`, or a gitlink in its index is populated (has a `.git`). A
+    gitlink that was never `submodule update`d — the norm in a fresh worktree —
+    doesn't count, so a repo that merely declares a submodule stays removable."""
+    git_dir = subprocess.run(
+        ["git", "-C", str(worktree), "rev-parse", "--absolute-git-dir"],
         capture_output=True,
         check=False,
     )
-    if ls.returncode == 0 and any(
-        line.startswith(b"160000 ") for line in ls.stdout.splitlines()
-    ):
+    if git_dir.returncode == 0:
+        if (Path(os.fsdecode(git_dir.stdout.strip())) / "modules").is_dir():
+            return True
+    ls = subprocess.run(
+        ["git", "-C", str(worktree), "ls-files", "--stage", "-z"],
+        capture_output=True,
+        check=False,
+    )
+    if ls.returncode != 0:
+        return False
+    for entry in ls.stdout.split(b"\0"):
+        meta, _, name = entry.partition(b"\t")
+        if (
+            meta.startswith(b"160000 ")
+            and (worktree / os.fsdecode(name) / ".git").exists()
+        ):
+            return True
+    return False
+
+
+def _refuse_unless_forced(worktree: Path) -> str | None:
+    """git's own preconditions for an un-forced `worktree remove`, as an error
+    string (or None when the worktree may go). Mirrors builtin/worktree.c:
+    no checked-out submodules, and `status --porcelain` empty — ignored files
+    (node_modules, build output) don't count, exactly as for git."""
+    if _has_checked_out_submodules(worktree):
         return "working trees containing submodules cannot be moved or removed"
     status = subprocess.run(
         [

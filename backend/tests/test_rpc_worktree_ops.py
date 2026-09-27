@@ -624,12 +624,8 @@ def test_remove_worktree_unforced_ignores_ignored_files(
     assert not path.exists()
 
 
-def test_remove_worktree_unforced_refuses_submodules(
-    home: Path, committed_repo: Path, tmp_path: Path
-):
-    from vicoa.rpc.worktree_ops import create_worktree, remove_worktree
-
-    # A second repo to embed as a submodule of the first.
+def _add_submodule(committed_repo: Path, tmp_path: Path) -> None:
+    """Commit a submodule at `vendor/sub` into `committed_repo`."""
     sub = tmp_path / "sub"
     sub.mkdir()
     subprocess.run(["git", "init", "-q", "-b", "main", str(sub)], check=True)
@@ -651,14 +647,47 @@ def test_remove_worktree_unforced_refuses_submodules(
     )
     _git(committed_repo, "commit", "-q", "-m", "add submodule")
 
+
+def test_remove_worktree_unforced_refuses_checked_out_submodules(
+    home: Path, committed_repo: Path, tmp_path: Path
+):
+    from vicoa.rpc.worktree_ops import create_worktree, remove_worktree
+
+    _add_submodule(committed_repo, tmp_path)
     created = create_worktree(str(committed_repo))
     path = Path(created["path"])
+    _git(
+        path,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "update",
+        "-q",
+        "--init",
+    )
 
     refused = remove_worktree(str(committed_repo), created["path"], force=False)
     assert "submodules" in refused.get("error", "")
     assert path.exists()
 
     assert remove_worktree(str(committed_repo), created["path"], force=True) == {
+        "ok": True
+    }
+    assert not path.exists()
+
+
+def test_remove_worktree_unforced_allows_uninitialized_submodules(
+    home: Path, committed_repo: Path, tmp_path: Path
+):
+    """A fresh worktree has the gitlink in its index but an empty folder; git
+    removes that without --force, so the un-forced delete must too."""
+    from vicoa.rpc.worktree_ops import create_worktree, remove_worktree
+
+    _add_submodule(committed_repo, tmp_path)
+    created = create_worktree(str(committed_repo))
+    path = Path(created["path"])
+
+    assert remove_worktree(str(committed_repo), created["path"], force=False) == {
         "ok": True
     }
     assert not path.exists()
