@@ -54,11 +54,19 @@ List<dynamic> _extractItems(dynamic result) {
 
 Future<Map<String, dynamic>> apiGetAllAgentInstances({
   int page = 1,
-  int pageSize = 20,
+  int pageSize = 50,
+  bool? activeOnly,
 }) async {
   try {
     final offset = (page - 1) * pageSize;
-    final endpoint = '/api/v1/agent-instances?limit=$pageSize&offset=$offset';
+    final query = <String>['limit=$pageSize', 'offset=$offset'];
+    // The backend defaults to active_only=false; only send it when narrowing to
+    // non-closed sessions, so a status-filtered view paginates over the right
+    // set instead of pulling pages of closed rows the client would just hide.
+    if (activeOnly == true) {
+      query.add('active_only=true');
+    }
+    final endpoint = '/api/v1/agent-instances?${query.join('&')}';
     final result = await vicoaApiRequest('get', endpoint, null);
     final items = _extractItems(result);
 
