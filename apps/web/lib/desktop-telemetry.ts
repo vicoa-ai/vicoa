@@ -77,6 +77,9 @@ type EventMap = {
    * Windows split comes free from the autocaptured `$os`; `app_version` is
    * carried here because Electron's app version is not in the user agent, so
    * posthog-js cannot autocapture it (`$app_version` is a mobile-SDK property).
+   * Every other event gets it from the super property (`registerAppVersion`);
+   * the explicit payload stays so queries written against this event keep
+   * working.
    */
   desktop_app_opened: { first_run: boolean; app_version: string | null };
 
@@ -161,6 +164,41 @@ function capture<E extends EventName>(
   ...[payload]: EventMap[E] extends Record<string, never> ? [] : [EventMap[E]]
 ): void {
   posthog.capture(event, payload);
+}
+
+// ── Super properties ──────────────────────────────────────────────────────
+
+/** The running desktop build's version, once the updates bridge has answered. */
+let appVersion: string | null = null;
+
+/**
+ * Stamp every event from this bundle with its surface and, on desktop, the app
+ * version once known. Runs at client init (`instrumentation-client.ts`) and
+ * again after `posthog.reset()`, which wipes super properties along with the
+ * identity.
+ */
+export function registerSuperProperties(): void {
+  try {
+    posthog.register(
+      appVersion ? { source: SURFACE, app_version: appVersion } : { source: SURFACE },
+    );
+  } catch {
+    // Never let an analytics failure surface in the caller's path.
+  }
+}
+
+/**
+ * Tag every subsequent event with the desktop app version, so any funnel can be
+ * split release-over-release by filtering on `app_version` rather than joining
+ * back to `desktop_app_opened`.
+ *
+ * The version arrives over async IPC, so an event that beats it (in practice
+ * the autocaptured first pageview) carries the value persisted by the previous
+ * launch: the old version, on the first launch after an update.
+ */
+export function registerAppVersion(version: string): void {
+  appVersion = version;
+  registerSuperProperties();
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────
@@ -466,4 +504,9 @@ export function resetIdentity(): void {
   } catch {
     // As above.
   }
+  // reset() also clears super properties. Without re-applying them, the next
+  // person to sign in on this machine emits events with no `source` or
+  // `app_version` until the app is relaunched, and drops out of the desktop
+  // funnel entirely.
+  registerSuperProperties();
 }

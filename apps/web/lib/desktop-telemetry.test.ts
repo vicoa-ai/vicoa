@@ -9,6 +9,7 @@ const { mockPosthog } = vi.hoisted(() => ({
     capture: vi.fn(),
     identify: vi.fn(),
     reset: vi.fn(),
+    register: vi.fn(),
   },
 }));
 
@@ -248,6 +249,66 @@ describe('shared business events', () => {
   it('keeps paywall_skipped_entitled desktop-specific — no other surface has it', () => {
     t.trackPaywallSkippedEntitled('apple');
     expect(onlyCapture()).toEqual(['desktop_paywall_skipped_entitled', { provider: 'apple' }]);
+  });
+});
+
+describe('super properties', () => {
+  it('registers the surface alone until the app version is known', async () => {
+    const t = await loadTelemetry('desktop');
+    vi.clearAllMocks();
+
+    t.registerSuperProperties();
+
+    expect(mockPosthog.register).toHaveBeenCalledExactlyOnceWith({ source: 'desktop' });
+  });
+
+  it('tags the web bundle as web', async () => {
+    const t = await loadTelemetry('web');
+    vi.clearAllMocks();
+
+    t.registerSuperProperties();
+
+    expect(mockPosthog.register).toHaveBeenCalledExactlyOnceWith({ source: 'web' });
+  });
+
+  it('adds app_version alongside the surface', async () => {
+    const t = await loadTelemetry('desktop');
+    vi.clearAllMocks();
+
+    t.registerAppVersion('1.2.3');
+
+    expect(mockPosthog.register).toHaveBeenCalledExactlyOnceWith({
+      source: 'desktop',
+      app_version: '1.2.3',
+    });
+  });
+
+  it('re-applies both after a sign-out reset wipes them', async () => {
+    // posthog.reset() clears super properties; without this the next user on a
+    // shared machine emits unsourced, unversioned events until a relaunch.
+    const t = await loadTelemetry('desktop');
+    t.registerAppVersion('1.2.3');
+    vi.clearAllMocks();
+
+    t.resetIdentity();
+
+    expect(mockPosthog.register).toHaveBeenCalledExactlyOnceWith({
+      source: 'desktop',
+      app_version: '1.2.3',
+    });
+    expect(mockPosthog.reset.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPosthog.register.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('swallows a throwing register', async () => {
+    const t = await loadTelemetry('desktop');
+    vi.clearAllMocks();
+    mockPosthog.register.mockImplementationOnce(() => {
+      throw new Error('posthog exploded');
+    });
+
+    expect(() => t.registerAppVersion('1.2.3')).not.toThrow();
   });
 });
 
