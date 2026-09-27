@@ -4748,11 +4748,11 @@ abstract class AppLocalizations {
   /// **'Let\'s start your journey to \nvibe code anywhere.'**
   String get welcomeStartYourJourney;
 
-  /// No description provided for @worktreeActionsActiveSession.
+  /// No description provided for @worktreeActionsArchiveFailed.
   ///
   /// In en, this message translates to:
-  /// **'A session is still running in this worktree.'**
-  String get worktreeActionsActiveSession;
+  /// **'Couldn\'t archive the worktree\'s sessions, so it wasn\'t removed.'**
+  String get worktreeActionsArchiveFailed;
 
   /// No description provided for @worktreeActionsCleanupContent.
   ///
@@ -4796,6 +4796,12 @@ abstract class AppLocalizations {
   /// **'Couldn\'t remove worktree: {code}'**
   String worktreeActionsRemoveFailedCode(Object code);
 
+  /// No description provided for @worktreeActionsRemoveSessionsNote.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Its running session will be archived first.} other{Its {count} running sessions will be archived first.}}'**
+  String worktreeActionsRemoveSessionsNote(int count);
+
   /// No description provided for @worktreeActionsRemoveTitle.
   ///
   /// In en, this message translates to:
@@ -4829,7 +4835,7 @@ abstract class AppLocalizations {
   /// No description provided for @worktreeDetailInUseDescription.
   ///
   /// In en, this message translates to:
-  /// **'A session is still running in this worktree. End it before removing.'**
+  /// **'A session is running in this worktree. Removing the worktree archives the session first. The branch is kept, so commits stay safe.'**
   String get worktreeDetailInUseDescription;
 
   /// No description provided for @worktreeDetailNotManagedNote.

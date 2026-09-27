@@ -2510,7 +2510,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get welcomeStartYourJourney => '开启你的旅程，\n随时随地畅快编程。';
 
   @override
-  String get worktreeActionsActiveSession => '此工作树中仍有任务在运行。';
+  String get worktreeActionsArchiveFailed => '无法归档工作树中的任务，因此没有移除工作树。';
 
   @override
   String get worktreeActionsCleanupContent =>
@@ -2541,6 +2541,17 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String worktreeActionsRemoveSessionsNote(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '其中正在运行的 $count 个任务会先被归档。',
+      one: '其中正在运行的任务会先被归档。',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get worktreeActionsRemoveTitle => '移除工作树';
 
   @override
@@ -2556,7 +2567,8 @@ class AppLocalizationsZh extends AppLocalizations {
   String get worktreeDetailCopyPath => '复制路径';
 
   @override
-  String get worktreeDetailInUseDescription => '此工作树中仍有任务在运行。请先结束任务再移除。';
+  String get worktreeDetailInUseDescription =>
+      '此工作树中有任务正在运行。移除工作树会先归档该任务。分支会保留，因此提交不会丢失。';
 
   @override
   String get worktreeDetailNotManagedNote => '此工作树不是由 Vicoa 创建的，因此无法在 App 内管理。';

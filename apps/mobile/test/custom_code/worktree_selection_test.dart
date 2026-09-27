@@ -131,24 +131,48 @@ void main() {
       expect(worktreeHasActiveSession(wt, sessions), isTrue);
     });
 
-    test('AWAITING_INPUT and REVIEWED also count as active', () {
-      expect(
-        worktreeHasActiveSession(wt, [
-          {'project': wt, 'status': 'AWAITING_INPUT'},
-        ]),
-        isTrue,
-      );
-      expect(
-        worktreeHasActiveSession(wt, [
-          {'project': wt, 'status': 'REVIEWED'},
-        ]),
-        isTrue,
-      );
+    test('every not-closed status counts as active, as on the web', () {
+      for (final status in [
+        'STARTING',
+        'AWAITING_INPUT',
+        'PAUSED',
+        'STALE',
+        'REVIEWED',
+      ]) {
+        expect(
+          worktreeHasActiveSession(wt, [
+            {'project': wt, 'status': status},
+          ]),
+          isTrue,
+          reason: status,
+        );
+      }
     });
 
-    test('false when the only session in the worktree is COMPLETED', () {
+    test('false when every session in the worktree is closed', () {
       final sessions = [
-        {'project': wt, 'status': 'COMPLETED'},
+        for (final status in [
+          'COMPLETED',
+          'FAILED',
+          'KILLED',
+          'DELETED',
+          'DISCONNECTED',
+        ])
+          {'project': wt, 'status': status},
+      ];
+      expect(worktreeHasActiveSession(wt, sessions), isFalse);
+    });
+
+    test('a session in a folder inside the worktree counts', () {
+      final sessions = [
+        {'project': '$wt/apps/web', 'status': 'ACTIVE'},
+      ];
+      expect(worktreeHasActiveSession(wt, sessions), isTrue);
+    });
+
+    test('a sibling worktree sharing the name prefix does not', () {
+      final sessions = [
+        {'project': '$wt-2', 'status': 'ACTIVE'},
       ];
       expect(worktreeHasActiveSession(wt, sessions), isFalse);
     });
@@ -167,6 +191,35 @@ void main() {
         {'project': wt}, // no status
       ];
       expect(worktreeHasActiveSession(wt, sessions), isFalse);
+    });
+  });
+
+  group('worktreeActiveSessionIds', () {
+    const wt = '/Users/u/vicoa/workspaces/app-1a2b/brave-river';
+
+    test('the live sessions in the worktree, the ones a removal archives', () {
+      final sessions = [
+        {'id': 'root', 'project': wt, 'status': 'ACTIVE'},
+        {'id': 'sub', 'project': '$wt/apps/web', 'status': 'STALE'},
+        {'id': 'done', 'project': wt, 'status': 'COMPLETED'},
+        {'id': 'elsewhere', 'project': '/some/other/dir', 'status': 'ACTIVE'},
+        {'project': wt, 'status': 'ACTIVE'}, // no id: nothing to archive
+      ];
+      expect(worktreeActiveSessionIds(wt, sessions), ['root', 'sub']);
+    });
+
+    test('matches the ~-form session project against the absolute path', () {
+      final sessions = [
+        {
+          'id': 'a',
+          'project': '~/vicoa/workspaces/app-1a2b/brave-river',
+          'status': 'AWAITING_INPUT',
+        },
+      ];
+      expect(
+        worktreeActiveSessionIds(wt, sessions, homeDir: '/Users/u'),
+        ['a'],
+      );
     });
   });
 

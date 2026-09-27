@@ -2613,8 +2613,8 @@ class AppLocalizationsEn extends AppLocalizations {
       'Let\'s start your journey to \nvibe code anywhere.';
 
   @override
-  String get worktreeActionsActiveSession =>
-      'A session is still running in this worktree.';
+  String get worktreeActionsArchiveFailed =>
+      'Couldn\'t archive the worktree\'s sessions, so it wasn\'t removed.';
 
   @override
   String get worktreeActionsCleanupContent =>
@@ -2645,6 +2645,17 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String worktreeActionsRemoveSessionsNote(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Its $count running sessions will be archived first.',
+      one: 'Its running session will be archived first.',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get worktreeActionsRemoveTitle => 'Remove worktree';
 
   @override
@@ -2661,7 +2672,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get worktreeDetailInUseDescription =>
-      'A session is still running in this worktree. End it before removing.';
+      'A session is running in this worktree. Removing the worktree archives the session first. The branch is kept, so commits stay safe.';
 
   @override
   String get worktreeDetailNotManagedNote =>
