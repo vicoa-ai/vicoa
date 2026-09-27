@@ -500,6 +500,29 @@ def test_remove_worktree_removes_a_stale_registration_from_the_main_checkout(
     assert _branch_exists(committed_repo, created["branch"])
 
 
+@pytest.mark.parametrize("force", [True, False])
+@pytest.mark.parametrize("subdir", ["", "apps/web"])
+def test_remove_worktree_from_inside_the_worktree_itself(
+    home: Path, committed_repo: Path, force: bool, subdir: str
+):
+    """The mobile app lists worktrees from a session's folder and removes one
+    with that same folder as `cwd`. The trash path renames the worktree away
+    before unregistering it, so a `git -C <cwd>` would hit a missing folder
+    ("cannot change to …") and the rename was rolled back; git must run from
+    the main checkout whatever `cwd` names."""
+    from vicoa.rpc.worktree_ops import create_worktree, list_worktrees, remove_worktree
+
+    created = create_worktree(str(committed_repo))
+    path = Path(created["path"])
+    cwd = path / subdir
+    cwd.mkdir(parents=True, exist_ok=True)
+
+    assert remove_worktree(str(cwd), created["path"], force=force) == {"ok": True}
+    assert not path.exists()
+    assert list_worktrees(str(committed_repo))["worktrees"] == []
+    assert _branch_exists(committed_repo, created["branch"])
+
+
 def test_remove_worktree_prunes_branch_dir_despite_finder_ds_store(
     home: Path, committed_repo: Path
 ):

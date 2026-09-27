@@ -304,7 +304,11 @@ def remove_worktree(
     removal whose RPC timed out) cannot host the git call. Such a stale entry
     is still removed cleanly from the main checkout (git prunes it), and a path
     that is neither on disk nor registered is reported as already removed —
-    idempotent, so the app can always finish its own bookkeeping.
+    idempotent, so the app can always finish its own bookkeeping. Any other
+    folder of the repo still works — the worktree being removed, or a
+    subfolder — because every git call past the listing runs from the main
+    checkout the listing names, never from `cwd`: the trash path renames the
+    worktree away, and a `git -C` into it would then fail.
 
     A managed worktree is not unlinked here: it is renamed into the project's
     `.trash/` and unregistered (milliseconds), and its files are reclaimed on a
@@ -324,6 +328,7 @@ def remove_worktree(
     listing = list_worktrees(cwd)
     if "error" in listing:
         return listing
+    abs_repo = Path(listing["main_path"]).resolve()
     listed = {Path(w["path"]).resolve() for w in listing["worktrees"]}
     if resolved not in listed:
         if resolved.exists():
