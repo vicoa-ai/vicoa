@@ -2,7 +2,8 @@
 """Post one version's changelog section to a Discord channel webhook.
 
     DISCORD_WEBHOOK_URL=... python3 .github/scripts/discord_release_post.py \
-        apps/web/content/docs/changelog/desktop-app.mdx 0.1.32 [--title "Vicoa desktop"] [--dry-run]
+        apps/web/content/docs/changelog/desktop-app.mdx 0.1.32 \
+        [--title "Vicoa desktop"] [--note "How to get it"] [--dry-run]
 
 Reads the `### v<version>` section of a docs changelog (the user-facing notes,
 not the commit list in the GitHub release body) and posts it as one embed that
@@ -23,6 +24,7 @@ from typing import Any
 SITE = os.environ.get("VICOA_SITE_URL", "https://vicoa.ai").rstrip("/")
 EMBED_DESCRIPTION_LIMIT = 4096
 EMBED_COLOR = 0x3B82F6
+DEFAULT_NOTE = f"Already installed? The app updates itself. New here? [Download]({SITE}/download)"
 
 
 def read_section(changelog: Path, version: str) -> tuple[str | None, list[str]]:
@@ -44,10 +46,10 @@ def absolute_links(line: str) -> str:
     return re.sub(r"\]\(/", f"]({SITE}/", line)
 
 
-def build_payload(changelog: Path, version: str, title: str) -> dict[str, Any]:
+def build_payload(changelog: Path, version: str, title: str, note: str = DEFAULT_NOTE) -> dict[str, Any]:
     date, bullets = read_section(changelog, version)
     page = f"{SITE}/docs/changelog/{changelog.stem}#v{version.replace('.', '')}"
-    footer = f"\n\nAlready installed? The app updates itself.\n[Download]({SITE}/download) · [Full changelog]({page})"
+    footer = f"\n\n{note}\n[Full changelog]({page})"
     body: list[str] = []
     for n, bullet in enumerate(bullets):
         line = absolute_links(bullet)
@@ -84,10 +86,11 @@ def main() -> None:
     parser.add_argument("changelog", type=Path)
     parser.add_argument("version", help="version without the leading v, e.g. 0.1.32")
     parser.add_argument("--title", default="Vicoa desktop")
+    parser.add_argument("--note", default=DEFAULT_NOTE, help="line above the changelog link: how to get this version")
     parser.add_argument("--dry-run", action="store_true", help="print the payload instead of posting")
     args = parser.parse_args()
 
-    payload = build_payload(args.changelog, args.version.lstrip("v"), args.title)
+    payload = build_payload(args.changelog, args.version.lstrip("v"), args.title, args.note)
     if args.dry_run:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return
