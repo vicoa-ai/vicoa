@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronsDown, ChevronsUp } from 'lucide-react';
 
 // User messages can be arbitrarily long (pasted logs, specs, stack traces).
@@ -15,7 +15,14 @@ export function CollapsibleUserMessage({ children }: { children: ReactNode }) {
   const [isOverflow, setIsOverflow] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
 
-  useEffect(() => {
+  // A layout effect, not a passive one: the first measurement must collapse
+  // the bubble before the browser lays it out for paint. Measured after paint,
+  // the row mounts at full height and shrinks a frame later — and the
+  // transcript's Virtuoso list reacts to that resize. When the bubble sits at
+  // the edge of Virtuoso's overscan band, the shrink scrolls it back out of the
+  // band (unmount), it re-enters at full height (remount), and the list flips
+  // between two scroll positions every frame.
+  useLayoutEffect(() => {
     const el = contentRef.current;
     if (!el) return;
     // The inner div is never height-constrained (the parent clips), so its
