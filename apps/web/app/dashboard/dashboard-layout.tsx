@@ -44,6 +44,8 @@ import { parseAskUserQuestionPayload } from '@/components/dashboard/ask-user-que
 import { extractMessageOptions } from '@/components/ui/message-markdown-utils';
 // import { getBillingPlanLabel } from '@/lib/billing';
 import { ReportIssueDialog } from '@/components/dashboard/report-issue-dialog';
+import { DiscordIcon } from '@/components/discord-icon';
+import { DISCORD_APP_INVITE_URL } from '@/lib/constants/links';
 import { OnboardingModal } from '@/components/dashboard/onboarding-modal';
 import { DesktopSidebar } from '@/components/dashboard/desktop-sidebar';
 import { SidebarSessions } from '@/components/dashboard/sidebar-sessions';
@@ -640,6 +642,20 @@ function DashboardSidebar({
                   >
                     <Flag className="h-4 w-4" />
                     <span>Report an issue</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    asChild
+                    className="cursor-pointer px-4 py-2.5 text-xs text-foreground/80"
+                  >
+                    <a
+                      href={DISCORD_APP_INVITE_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex w-full items-center gap-2"
+                    >
+                      <DiscordIcon className="h-4 w-4" />
+                      <span>Join Discord</span>
+                    </a>
                   </DropdownMenuItem>
                 </div>
 

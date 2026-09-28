@@ -24,6 +24,8 @@ import { DesktopTitlebarLead } from '@/components/desktop/window-chrome';
 import { useMobileSidebarHidden } from '@/lib/mobile-sidebar-pref';
 import { useHiddenSidebarNavItems } from '@/lib/sidebar-nav-pref';
 import { ReportIssueDialog } from '@/components/dashboard/report-issue-dialog';
+import { DiscordIcon } from '@/components/discord-icon';
+import { DISCORD_APP_INVITE_URL } from '@/lib/constants/links';
 import { SidebarUpdateCallout } from '@/components/dashboard/sidebar-update-callout';
 import { comboKeycaps, getShortcutCombo } from '@/lib/desktop-shortcuts';
 import { SidebarSessions } from '@/components/dashboard/sidebar-sessions';
@@ -504,6 +506,17 @@ function CloudAccountArea() {
         >
           <Flag className="h-4 w-4" />
           <span>Report an issue</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild className="cursor-pointer gap-2 text-xs text-foreground/80">
+          <a
+            href={DISCORD_APP_INVITE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex w-full items-center gap-2"
+          >
+            <DiscordIcon className="h-4 w-4" />
+            <span>Join Discord</span>
+          </a>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
