@@ -27,8 +27,6 @@ export type NewMessageBody = {
   instance_id: string;
   sender_type: string;
   sender_user_id: string | null;
-  /** Only on a live dashboard send; catch-up rows leave it out. */
-  sender_user_display_name?: string | null;
   content: string;
   created_at: string | null;
   requires_user_input: boolean;

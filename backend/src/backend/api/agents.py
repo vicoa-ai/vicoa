@@ -407,9 +407,7 @@ def create_user_message_endpoint(
             requires_user_input=message.requires_user_input,
             message_metadata=message.message_metadata,
         )
-        payload = build_new_message_update(
-            message, sender_display_name=current_user.display_name
-        )
+        payload = build_new_message_update(message)
         # Rooms are keyed by the session's OWNER, not the sender: a
         # collaborator's message has to reach the owner's open clients.
         # (Fan-out to other watchers is P6.)

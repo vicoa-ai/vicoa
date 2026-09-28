@@ -225,10 +225,6 @@ export interface MessageResponse {
   created_at: string;
   requires_user_input: boolean;
   message_metadata?: Record<string, unknown> | null;
-  /** Who wrote a user message (null for the agent, or a CLI-typed prompt). */
-  sender_user_id?: string | null;
-  /** Their display name. Never an email on anyone else's session (§10.4). */
-  sender_user_display_name?: string | null;
 }
 
 /** One session/weekly rate-limit window in the usage blob. */

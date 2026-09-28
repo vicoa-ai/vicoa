@@ -38,7 +38,6 @@ import {
   TranscriptRow,
   type TranscriptItem,
 } from '@/components/dashboard/session-transcript';
-import { senderLabeler } from '@/lib/shared-session-compose';
 import { getChatItemSearchText } from '@/lib/chat-search';
 import { buildForkTranscript, saveForkContext } from '@/lib/fork-session';
 import { loadFullHistory } from '@/lib/fork-history';
@@ -218,23 +217,6 @@ function AgentInstanceContent() {
   useEffect(() => {
     if (openedAsGrantee) router.replace(`/dashboard/shared/sessions/${instanceId}`);
   }, [openedAsGrantee, instanceId, router]);
-
-  // Once someone you shared this session with has prompted it, every user
-  // message says who wrote it (§8.2); a solo session reads as before. Your
-  // own id (for "You") is only fetched when that happens.
-  const [viewerId, setViewerId] = useState<string | null>(null);
-  const senderLabel = useMemo(
-    () => senderLabeler(instance?.messages ?? [], viewerId),
-    [instance?.messages, viewerId],
-  );
-  const needsViewerId = senderLabel !== undefined && viewerId === null;
-  useEffect(() => {
-    if (!needsViewerId || !dashboardContext.api) return;
-    dashboardContext.api
-      .getCurrentUserProfile()
-      .then((me) => setViewerId(me.id))
-      .catch(() => {});
-  }, [needsViewerId, dashboardContext.api]);
   const sessionAgentProfile = instance?.agent_profile_id
     ? (agentProfilesById.get(instance.agent_profile_id) ?? null)
     : null;
@@ -2581,7 +2563,6 @@ function AgentInstanceContent() {
                 onFork={handleForkMessage}
                 forkingMessageId={forkingMessageId}
                 turnCopyText={turnCopyText}
-                senderLabel={senderLabel}
               />
             )}
             context={virtuosoContext}

@@ -38,16 +38,8 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat()
 
 
-def build_new_message_update(
-    msg: Message, *, sender_display_name: str | None = None
-) -> dict:
-    """`update` payload for a newly inserted `messages` row (append-only).
-
-    `sender_display_name` is passed only where it is already in hand (the
-    dashboard's send endpoint knows its caller); a shared session names its
-    writers by it (§8.2). Nothing loads it: the catch-up path builds whole
-    pages of these on the relay, and a lookup per row there is not free.
-    """
+def build_new_message_update(msg: Message) -> dict:
+    """`update` payload for a newly inserted `messages` row (append-only)."""
     return {
         "entity": "messages",
         "entity_id": str(msg.id),
@@ -60,7 +52,6 @@ def build_new_message_update(
             "sender_user_id": (
                 str(msg.sender_user_id) if msg.sender_user_id is not None else None
             ),
-            "sender_user_display_name": sender_display_name,
             "content": msg.content,
             "created_at": _iso(msg.created_at),
             "requires_user_input": msg.requires_user_input,

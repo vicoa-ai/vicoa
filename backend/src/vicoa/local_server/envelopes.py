@@ -29,9 +29,6 @@ def build_new_message_update(msg: "StoredMessage") -> dict:
             "instance_id": msg.agent_instance_id,
             "sender_type": msg.sender_type,
             "sender_user_id": msg.sender_user_id,
-            # Parity with the cloud envelope. Local mode has one user, so
-            # there is never another writer to name.
-            "sender_user_display_name": None,
             "content": msg.content,
             "created_at": msg.created_at,
             "requires_user_input": msg.requires_user_input,

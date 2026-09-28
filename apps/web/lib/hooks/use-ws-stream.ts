@@ -43,8 +43,6 @@ function bodyToMessage(body: NewMessageBody): MessageResponse {
     created_at: body.created_at ?? '',
     requires_user_input: body.requires_user_input,
     message_metadata: body.message_metadata,
-    sender_user_id: body.sender_user_id,
-    sender_user_display_name: body.sender_user_display_name ?? null,
   };
 }
 

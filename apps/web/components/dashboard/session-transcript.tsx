@@ -179,12 +179,6 @@ export interface TranscriptRowProps {
   forkingMessageId?: string | null;
   /** Turn-end copy text by message id (see `computeTranscriptTurns`). */
   turnCopyText?: ReadonlyMap<string, string>;
-  /**
-   * Who wrote a user message, drawn above it. Only set for a session with
-   * more than one writer (see `senderLabeler`), so a solo transcript is
-   * unchanged.
-   */
-  senderLabel?: (message: MessageResponse) => string | null;
 }
 
 const ROW_SHELL = 'max-w-4xl mx-auto px-6';
@@ -204,7 +198,6 @@ export function TranscriptRow({
   onFork,
   forkingMessageId = null,
   turnCopyText,
-  senderLabel,
 }: TranscriptRowProps) {
   const agentType = resolveAgentType(agentTypeName || undefined);
   if (item.type === 'separator') {
@@ -271,12 +264,8 @@ export function TranscriptRow({
       </div>
     );
   }
-  const sender = senderLabel?.(item.message) ?? null;
   return (
     <div className={ROW_SHELL}>
-      {sender && (
-        <p className="mb-0.5 mt-2 text-right font-mono text-[11px] text-muted-foreground">{sender}</p>
-      )}
       <MessageItem
         message={item.message}
         onOptionClick={onOptionClick}
@@ -390,8 +379,6 @@ export interface SessionTranscriptProps {
   /** Rendered when there is nothing to show yet. */
   empty?: ReactNode;
   className?: string;
-  /** See `TranscriptRowProps.senderLabel`. */
-  senderLabel?: (message: MessageResponse) => string | null;
 }
 
 /**
@@ -410,7 +397,6 @@ export function SessionTranscript({
   onLoadOlder,
   empty,
   className,
-  senderLabel,
 }: SessionTranscriptProps) {
   const ordered = useMemo(() => orderTranscriptMessages(messages), [messages]);
   const grouped = useMemo(() => groupMessagesByDate(ordered), [ordered]);
@@ -480,7 +466,6 @@ export function SessionTranscript({
                 expandedKeys={expandedKeys}
                 onToggleExpanded={toggleExpanded}
                 turnCopyText={turnCopyText}
-                senderLabel={senderLabel}
               />
             )}
             context={context}
