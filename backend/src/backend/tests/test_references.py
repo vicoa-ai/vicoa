@@ -384,7 +384,7 @@ class TestReferenceExpansion:
         assert body["token"] == "rotate-the-widget"
         assert 'Session "Rotate the widget"' in body["context"]
         assert "~/projects/vicoa" in body["context"]
-        assert f"vicoa session get {str(instance.id)[:8]}" in body["context"]
+        assert f"vicoa session get {instance.id}`" in body["context"]
         assert "rotated the widget by ninety degrees" not in body["context"]
 
     def test_automation_block_carries_the_prompt_and_schedule(

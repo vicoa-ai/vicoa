@@ -402,7 +402,7 @@ def _expand_session(db: Session, user_id: UUID, ref_id: UUID) -> dict | None:
                 ("id", str(instance.id)),
             ]
         ),
-        f"Full transcript: `vicoa session get {_short_id(instance.id)}`",
+        f"Full transcript: `vicoa session get {instance.id}`",
     ]
     # No trailing "last message": `latest_message` is the newest row whatever
     # its sender, so on a running session it is usually half a tool call or a

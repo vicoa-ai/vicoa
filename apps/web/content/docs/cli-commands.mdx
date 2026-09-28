@@ -113,24 +113,25 @@ vicoa ls
 
 ```
 DAEMON SESSIONS (2)
-  ID           AGENT      PID      AGE      PROJECT
-  -------------------------------------------------
-  7d4577a7     claude     10573    1d       ~/projects/my-app
-  abcbe849     codex      74527    3h       ~/projects/api
+  AGENT      NAME             PROJECT    PID      AGE   ID
+  ------------------------------------------------------------------------------------------
+  claude     Refactor auth    my-app     10573    1d    7d4577a7-2c1e-4b8a-9f3d-5e6a7b8c9d01
+  codex      —                api        74527    3h    abcbe849-1f2e-4d3c-8b7a-6e5f4d3c2b10
 
 TUI SESSIONS (1)
-  ID           AGENT      PID      AGE      PROJECT
-  -------------------------------------------------
-  pid:3415     claude     3415     2h       —
+  AGENT      NAME             PROJECT    PID      AGE   ID
+  ------------------------------------------------------------------------------------------
+  claude     —                —          3415     2h    pid:3415
 ```
 
 Columns:
 
-- **ID** — the first 8 characters of the session ID. TUI sessions show `pid:<n>` instead, since their session ID isn't visible to `vicoa ls`.
 - **AGENT** — `claude`, `codex`, `opencode`, or `amp`.
+- **NAME** — the session title, when it has one.
+- **PROJECT** — the working directory (`—` when not detectable).
 - **PID** — the operating-system process ID.
 - **AGE** — how long the session has been running.
-- **PROJECT** — the working directory (`—` when not detectable).
+- **ID** — the full session ID, the form every command takes. TUI sessions show `pid:<n>` instead, since their session ID isn't visible to `vicoa ls`.
 
 For scripting, output raw JSON instead of the table:
 
@@ -169,7 +170,7 @@ vicoa session start --dir ~/projects/api \
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--machine <ID\|NAME>` | this host's daemon | Target machine: full id, id prefix, or a display-name/hostname substring (`--list-machines` to see them) |
+| `--machine <ID\|NAME>` | this host's daemon | Target machine: full id, or a display-name/hostname substring (`--list-machines` to see them) |
 | `--dir <PATH>` | — (**required**) | Directory on the target machine to start the session in |
 | `--allow-offline` | off | Queue the request even if the daemon looks offline (it runs when the daemon next reconnects) |
 
@@ -240,18 +241,18 @@ vicoa session ls --json
 
 `WHEN` accepts a date (`2026-09-20`), a datetime (`2026-09-20T14:30`, optionally with `Z` or an offset like `+08:00`), `today` / `yesterday`, or an age counted back from now (`30m`, `24h`, `7d`, `2w`). Times without an offset are your local time, the same zone the `STARTED` column prints in. A bare date on `--until` includes that whole day, so `--since 2026-09-20 --until 2026-09-20` is exactly the 20th. The window filters on when each session **started**, and `total` in `--json` counts the window.
 
-Columns: `ID` (8-char prefix), `AGENT`, `MODEL`, `STATUS`, `NAME`, `PROJECT`, `MSGS`, `STARTED`.
+Columns: `AGENT`, `MODEL`, `STATUS`, `NAME`, `PROJECT`, `MSGS`, `STARTED`, `ID` (the full session ID).
 
 ### vicoa session get
 
-Print one session's details and its message transcript. The id accepts a **full UUID or an 8-character prefix** (resolved against your recent sessions).
+Print one session's details and its message transcript. Every `session` command takes the **full session ID** that `vicoa session ls` prints. Short prefixes are not accepted, since one that names the right session today can name another after a delete.
 
 ```bash
-vicoa session get 3f9c1a2b            # last 50 messages, clean chat view
-vicoa session get 3f9c1a2b --all      # the full transcript
-vicoa session get 3f9c1a2b --full     # everything: timestamps, emails, control msgs, tool payloads
-vicoa session get 3f9c1a2b --json     # {"instance": {...}, "messages": [...]}
-vicoa session get 3f9c1a2b --role user --all   # only your messages, whole history
+vicoa session get <SESSION_ID>        # last 50 messages, clean chat view
+vicoa session get <SESSION_ID> --all  # the full transcript
+vicoa session get <SESSION_ID> --full # everything: timestamps, emails, control msgs, tool payloads
+vicoa session get <SESSION_ID> --json # {"instance": {...}, "messages": [...]}
+vicoa session get <SESSION_ID> --role user --all # only your messages, whole history
 ```
 
 By default `session get` prints a clean chat log: tool-use header lines appear, but tool payloads, in-band control messages, timestamps, and sender emails are hidden. A footer reports how many messages and payloads were suppressed. Add flags to reveal what you need:
@@ -275,11 +276,11 @@ By default `session get` prints a clean chat log: tool-use header lines appear, 
 Rename a session, link it to a task, or move it to a worktree.
 
 ```bash
-vicoa session update 3f9c1a2b --title "Refactor auth"
-vicoa session update 3f9c1a2b --task 5f2c9d1e-...-full-uuid
-vicoa session update 3f9c1a2b --unlink-task
-vicoa session update 3f9c1a2b --worktree feat/auth
-vicoa session update 3f9c1a2b --worktree main
+vicoa session update <SESSION_ID> --title "Refactor auth"
+vicoa session update <SESSION_ID> --task 5f2c9d1e-...-full-uuid
+vicoa session update <SESSION_ID> --unlink-task
+vicoa session update <SESSION_ID> --worktree feat/auth
+vicoa session update <SESSION_ID> --worktree main
 ```
 
 | Flag | Meaning |
@@ -295,10 +296,10 @@ Linking drives the task's status from the session's status: a running linked ses
 
 ### vicoa session message
 
-Send a message into a running session — it's delivered to the agent as user input and flips the session `ACTIVE`, the same as typing in the app. Pairs naturally with `session start`: start a session blank, then drive it with `message`. The id accepts a full UUID or an 8-character prefix.
+Send a message into a running session — it's delivered to the agent as user input and flips the session `ACTIVE`, the same as typing in the app. Pairs naturally with `session start`: start a session blank, then drive it with `message`. The id is the full session ID.
 
 ```bash
-vicoa session message 3f9c1a2b "run the tests and fix any failures"
+vicoa session message <SESSION_ID> "run the tests and fix any failures"
 ```
 
 If the target machine is offline the message can't be delivered — retry once its daemon is back.
@@ -308,7 +309,7 @@ If the target machine is offline the message can't be delivered — retry once i
 Shorthand that sends the literal text `continue` into a session — handy after a rate-limit window resets (see `vicoa session ls --rate-limited`).
 
 ```bash
-vicoa session continue 3f9c1a2b
+vicoa session continue <SESSION_ID>
 ```
 
 ### vicoa session share
@@ -316,11 +317,11 @@ vicoa session continue 3f9c1a2b
 Create a public link to a session's transcript and print its URL — the same link the dashboard's Share dialog makes. Built for attaching the session that produced a change to its pull request:
 
 ```bash
-vicoa session share 3f9c1a2b                  # → https://vicoa.ai/share/<token>
+vicoa session share <SESSION_ID>              # → https://vicoa.ai/share/<token>
 vicoa session share                           # inside a Vicoa session: shares *this* session
 vicoa session share --show-branch --expires 7 # show the git branch; dead after 7 days
-vicoa session share 3f9c1a2b --list           # the session's live links
-vicoa session share 3f9c1a2b --json           # the link record, with `url` added
+vicoa session share <SESSION_ID> --list       # the session's live links
+vicoa session share <SESSION_ID> --json       # the link record, with `url` added
 
 # Attach the session to the PR you just opened
 gh pr comment 123 --body "Session transcript: $(vicoa session share)"
@@ -345,8 +346,8 @@ A shared page shows the transcript only: never the machine, the working director
 Revoke a link. A revoked URL stops working everywhere it was pasted, so this never guesses which one:
 
 ```bash
-vicoa session unshare 3f9c1a2b --link 7c2e9a10   # one link, by id or prefix from --list
-vicoa session unshare 3f9c1a2b --all             # every live link on the session
+vicoa session unshare <SESSION_ID> --link <LINK_ID> # one link, by its id from --list
+vicoa session unshare <SESSION_ID> --all         # every live link on the session
 ```
 
 With neither flag it prints the live links and exits without revoking anything.
@@ -410,25 +411,16 @@ Each session is asked to shut down gracefully first; if it doesn't exit within a
 
 ### vicoa stop &lt;session-id&gt;
 
-Stop one specific session. Use the 8-character ID prefix shown in `vicoa ls`, or the full UUID:
+Stop one specific session by the full ID shown in `vicoa ls`:
 
 ```bash
-vicoa ls
-# DAEMON SESSIONS (2)
-#   ID           AGENT      PID      AGE      PROJECT
-#   -------------------------------------------------
-#   7d4577a7     claude     10573    1d       ~/projects/my-app
-#   abcbe849     codex      74527    3h       ~/projects/api
-
-vicoa stop 7d4577a7
+vicoa stop 7d4577a7-2c1e-4b8a-9f3d-5e6a7b8c9d01
 ```
 
 ```
-Stop session 7d4577a7? [y/N] y
-  ✓ 7d4577a7 (claude, pid=10573) — Stopped
+Stop session 7d4577a7-2c1e-4b8a-9f3d-5e6a7b8c9d01? [y/N] y
+  ✓ 7d4577a7-2c1e-4b8a-9f3d-5e6a7b8c9d01 (claude, pid=10573) — Stopped
 ```
-
-If the prefix matches more than one session, all matches are listed and stopped together after a single confirmation. Pass the full UUID to disambiguate.
 
 ### vicoa stop all
 
@@ -513,7 +505,7 @@ vicoa task delete VIC-42 -y
 | `--title <text>` | New title (`update` only; `create` takes the title as its argument) |
 | `--json` | Raw JSON — a bare array from `ls`; `update` prints one object for one ref, a list for several |
 
-Columns of `task ls`: `ID` (8-char prefix), `KEY` (identifier), `STATUS`, `PRIO`, `PROJECT` (name), `TITLE`. `--json` rows carry `project_id` and `project_name`.
+Columns of `task ls`: `KEY` (identifier), `STATUS`, `PRIO`, `PROJECT` (name), `TITLE`, `ID` (full UUID). `--json` rows carry `project_id` and `project_name`.
 
 > **`update` is a PATCH** — pass at least one field, or it errors. With several refs, a ref that fails (typo, 404) is reported on stderr and the rest still run; the exit code is `1` if any failed.
 
@@ -661,8 +653,9 @@ The "new version available" banner goes to **stderr**, so it never lands in a `-
 | `No machine to run on` (automation create) | Run `vicoa daemon` on the target machine first, or pass `--machine-id`. |
 | `Daemon on <machine> looks offline` (session start) | Start `vicoa daemon` on that machine, or pass `--allow-offline` to queue the request until it reconnects. |
 | `--dir is required to start a session` | `vicoa session start` needs `--dir <PATH>`; run it with `--list-machines` / `--list-models` first to see your options. |
-| `'<ref>' is ambiguous` / `No session found matching` | The 8-char prefix (or `--machine` name) collided or aged out — use more characters or the full UUID/id. |
-| `404` on `task get/update/delete` | Use the `VIC-42` identifier or the **full UUID** — the 8-char `ID` column is display-only. Automations still need their full UUID; only `session` commands and `vicoa stop` accept an 8-char prefix. |
+| `'<ref>' is not a session id` | Pass the full session ID from `vicoa session ls` (or `vicoa ls`); short prefixes are not accepted. |
+| `'<ref>' is ambiguous` (`--machine`) | The name or hostname matched more than one machine; pass more of it, or the full machine id. |
+| `404` on `task get/update/delete` | Use the `VIC-42` identifier or the **full UUID** from the `ID` column. |
 | `no project with key or name '…'` / `N projects are named '…'` | `--project` matches a key, name, or id exactly — run `vicoa project ls`; when two projects share a name, pass the key or id. |
 | `no label named '…'` | `--label` takes an existing name — `vicoa label ls`, or `vicoa label create <name>`. |
 | `no session given and VICOA_AGENT_INSTANCE_ID is not set` | `session share`/`unshare` without an id only work inside a Vicoa session; pass the session id. |

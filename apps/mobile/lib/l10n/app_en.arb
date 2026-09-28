@@ -1160,7 +1160,7 @@
   "welcomeGladToHaveYou": "Glad to have you with us 👋",
   "welcomeSkipForNow": "Skip for now",
   "welcomeStartYourJourney": "Let's start your journey to \nvibe code anywhere.",
-  "worktreeActionsActiveSession": "A session is still running in this worktree.",
+  "worktreeActionsArchiveFailed": "Couldn't archive the worktree's sessions, so it wasn't removed.",
   "worktreeActionsCleanupContent": "This session ran in a vicoa worktree with no remaining changes. Delete the worktree, or keep the files?",
   "worktreeActionsCleanupTitle": "Delete worktree?",
   "worktreeActionsDeleted": "Worktree deleted.",
@@ -1189,12 +1189,20 @@
       }
     }
   },
+  "worktreeActionsRemoveSessionsNote": "{count, plural, =1{Its running session will be archived first.} other{Its {count} running sessions will be archived first.}}",
+  "@worktreeActionsRemoveSessionsNote": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "worktreeActionsRemoveTitle": "Remove worktree",
   "worktreeActionsRemoved": "Worktree removed.",
   "worktreeActionsThisWorktree": "this worktree",
   "worktreeDetailBranch": "Branch",
   "worktreeDetailCopyPath": "Copy path",
-  "worktreeDetailInUseDescription": "A session is still running in this worktree. End it before removing.",
+  "worktreeDetailInUseDescription": "A session is running in this worktree. Removing the worktree archives the session first. The branch is kept, so commits stay safe.",
   "worktreeDetailNotManagedNote": "This worktree wasn't created by Vicoa, so it can't be managed from the app.",
   "worktreeDetailOrigin": "Origin",
   "worktreeDetailOriginExternal": "External",

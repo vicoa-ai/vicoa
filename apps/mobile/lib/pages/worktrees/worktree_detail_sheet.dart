@@ -199,7 +199,9 @@ class _WorktreeDetailSheetState extends State<_WorktreeDetailSheet> {
         l10n.worktreeDetailNotManagedNote,
       );
     }
-    final disabled = inUse || _removing;
+    // A running session doesn't block removal: the confirm names it and the
+    // remove archives it first (WorktreeActions).
+    final disabled = _removing;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

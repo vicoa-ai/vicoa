@@ -57,8 +57,8 @@ describe('catalogWithCachedModels', () => {
   test('keeps per-model capability metadata for ids the catalog knows', () => {
     // Headless Claude reports its real model list (catalog + the machine's
     // custom slugs). The cached entries carry only {id, label}; dropping the
-    // catalog's per-model arrays would hide the `auto` permission mode and the
-    // Opus xhigh thinking default from the new-session picker.
+    // catalog's per-model fields would lose the default model and the Opus
+    // xhigh thinking default from the new-session picker.
     const merged = catalogWithCachedModels(AGENT_CATALOG_FALLBACK, {
       claude: [
         { id: 'claude-sonnet-5', label: 'Sonnet 5' },
@@ -72,11 +72,20 @@ describe('catalogWithCachedModels', () => {
       'claude-opus-4-8',
       'my-org/custom-sonnet',
     ]);
-    expect(models?.find((m) => m.id === 'claude-sonnet-5')?.permission_modes).toEqual(['auto']);
     expect(models?.find((m) => m.id === 'claude-sonnet-5')?.is_default).toBe(true);
     expect(models?.find((m) => m.id === 'claude-opus-4-8')?.default_thinking_effort).toBe('xhigh');
-    // A slug the catalog has never heard of gets the common set only.
-    expect(models?.find((m) => m.id === 'my-org/custom-sonnet')?.permission_modes).toBeUndefined();
+    // A slug the catalog has never heard of gets no per-model extras.
+    expect(models?.find((m) => m.id === 'my-org/custom-sonnet')?.default_thinking_effort).toBeUndefined();
+  });
+
+  test('a Claude model the catalog predates still gets auto mode', () => {
+    // `auto` is common, not opt_in, so a model shipped after this build (only
+    // known from the machine's reported list) offers and defaults to it.
+    const merged = catalogWithCachedModels(AGENT_CATALOG_FALLBACK, {
+      claude: [{ id: 'claude-opus-9', label: 'Opus 9' }],
+    });
+    expect(reconcileAgainst({ agent: 'claude', model: 'claude-opus-9' }, merged).permission_mode).toBe('auto');
+    expect(reconcileAgainst({ agent: 'claude', model: 'claude-opus-9', permission_mode: 'default' }, merged).permission_mode).toBe('default');
   });
 
   test('empty cache returns the base catalog unchanged', () => {

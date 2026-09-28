@@ -235,7 +235,7 @@ class TestCmdUpdate:
             return {"agent_instance_id": "s-1", "project": json["project"]}
 
         monkeypatch.setattr(I, "request", fake_request)
-        monkeypatch.setattr(I, "_resolve_instance_id", lambda a, k, ref: "s-1")
+        monkeypatch.setattr(I, "_require_session_id", lambda ref: "s-1")
         monkeypatch.setattr(I, "_local_machine_id", lambda args: "m-1")
         monkeypatch.setattr(
             "vicoa.rpc.worktree_ops.list_worktrees", lambda cwd: checkouts["listing"]
@@ -263,7 +263,7 @@ class TestCmdUpdate:
             return {"agent_instance_id": "s-1", "project": "~/src/app"}
 
         monkeypatch.setattr(I, "request", fake_request)
-        monkeypatch.setattr(I, "_resolve_instance_id", lambda a, k, ref: "s-1")
+        monkeypatch.setattr(I, "_require_session_id", lambda ref: "s-1")
         monkeypatch.setattr(I, "_local_machine_id", lambda args: "m-1")
         monkeypatch.setattr(
             "vicoa.rpc.worktree_ops.list_worktrees", lambda cwd: checkouts["listing"]
@@ -284,7 +284,7 @@ class TestCmdUpdate:
             return {"id": "s-1", "project": "~/src/app", "machine_id": "m-1"}
 
         monkeypatch.setattr(I, "request", fake_request)
-        monkeypatch.setattr(I, "_resolve_instance_id", lambda a, k, ref: "s-1")
+        monkeypatch.setattr(I, "_require_session_id", lambda ref: "s-1")
         monkeypatch.setattr(I, "_local_machine_id", lambda args: "m-1")
         monkeypatch.setattr(
             "vicoa.rpc.worktree_ops.list_worktrees", lambda cwd: checkouts["listing"]

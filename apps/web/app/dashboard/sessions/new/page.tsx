@@ -587,7 +587,7 @@ function NewSessionContent() {
   );
 
   // Per-model filter: agent-level lists are the superset (labels + order);
-  // opt_in entries (xhigh, auto) only appear when the active model names
+  // opt_in entries only appear when the active model names
   // them in its per-model array. Common entries are always shown.
   const visibleThinking: CatalogEnumEntry[] = useMemo(() => {
     if (!activeAgentDef?.thinking_efforts?.length) return [];

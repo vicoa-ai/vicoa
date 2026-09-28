@@ -1,6 +1,7 @@
 // New-session worktree selection state + the spawn-arg decision logic.
 // See `plans/todos/vicoa-app-worktree.md` §5.3.
 
+import '../../pages/home/session_status.dart';
 import 'project_paths.dart';
 
 /// How the new session relates to a git worktree:
@@ -45,14 +46,6 @@ WorktreeSpawn resolveWorktreeSpawn({
   }
 }
 
-/// Session statuses that mean a session is still live. Mirrors the active set
-/// used by the home session list; anything else (e.g. COMPLETED) is terminal.
-const Set<String> kActiveSessionStatuses = {
-  'ACTIVE',
-  'AWAITING_INPUT',
-  'REVIEWED',
-};
-
 /// Whether [path] looks like a vicoa-managed worktree (under
 /// `~/vicoa/workspaces/`). A heuristic used only to decide whether to OFFER
 /// cleanup — the daemon is the real authority and re-validates on remove.
@@ -81,26 +74,40 @@ String relativizeHome(String path, String? homeDir) {
   return p;
 }
 
-/// Whether any session in [sessions] is still live AND running in
-/// [worktreePath]. The daemon is a dumb executor with no session knowledge, so
-/// the app must enforce "don't remove a worktree out from under a live session"
-/// before calling `git-worktree-remove` (§5.5). [sessions] are raw agent
-/// instance maps (`{'project': ..., 'status': ...}`); malformed entries are
-/// ignored. [homeDir] (the machine's home) is required to match the absolute
-/// git worktree path against the `~`-form session `project`; without it the
-/// comparison falls back to exact string match.
-bool worktreeHasActiveSession(String worktreePath, List<dynamic> sessions,
-    {String? homeDir}) {
+/// The sessions in [sessions] that are still live (not closed, the same set as
+/// the web's `CLOSED_STATUSES`) AND running in [worktreePath], at its root or
+/// in a folder inside it. The daemon is a dumb executor with no session
+/// knowledge, so the app must find these before calling `git-worktree-remove`
+/// (§5.5) and archive them rather than pull the folder out from under them.
+/// [sessions] are raw agent instance maps (`{'project': ..., 'status': ...}`);
+/// malformed entries are ignored. [homeDir] (the machine's home) is required
+/// to match the absolute git worktree path against the `~`-form session
+/// `project`; without it the comparison falls back to exact string match.
+Iterable<Map> _liveSessionsIn(String worktreePath, List<dynamic> sessions,
+    {String? homeDir}) sync* {
   final target = relativizeHome(worktreePath, homeDir);
   for (final s in sessions) {
     if (s is! Map) continue;
     final project = s['project'];
     final status = s['status'];
-    if (project is! String || status is! String) continue;
-    if (relativizeHome(project, homeDir) == target &&
-        kActiveSessionStatuses.contains(status)) {
-      return true;
+    if (project is! String || status is! String || isClosedStatus(status)) {
+      continue;
     }
+    final p = relativizeHome(project, homeDir);
+    if (p == target || p.startsWith('$target/')) yield s;
   }
-  return false;
 }
+
+/// Whether any live session runs in [worktreePath]; see [_liveSessionsIn].
+bool worktreeHasActiveSession(String worktreePath, List<dynamic> sessions,
+        {String? homeDir}) =>
+    _liveSessionsIn(worktreePath, sessions, homeDir: homeDir).isNotEmpty;
+
+/// The ids of the live sessions in [worktreePath], the ones a worktree removal
+/// archives first; see [_liveSessionsIn].
+List<String> worktreeActiveSessionIds(String worktreePath, List<dynamic> sessions,
+        {String? homeDir}) =>
+    _liveSessionsIn(worktreePath, sessions, homeDir: homeDir)
+        .map((s) => s['id'])
+        .whereType<String>()
+        .toList();

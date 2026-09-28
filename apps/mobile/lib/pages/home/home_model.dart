@@ -20,7 +20,7 @@ export '/flutter_flow/custom_functions.dart' show ErrorType;
 enum LoadingState { initial, loading, loaded, error }
 
 class HomeModel extends FlutterFlowModel<HomeWidget> {
-  static const int pageSize = 20;
+  static const int pageSize = 50;
 
   // Agent instances (sessions) state
   List<dynamic> agentInstances = [];
@@ -304,10 +304,28 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     }
   }
 
+  // Which status tabs show only non-closed sessions — for those we let the
+  // backend paginate the active set directly (active_only=true), matching the
+  // web sidebar. "All" and "Closed" need closed rows in the page, so they page
+  // over the full set. Without this, closed sessions (usually the majority)
+  // fill every page and the client status filter empties them, so scrolling an
+  // "Active" view surfaces almost nothing.
+  bool get _fetchActiveOnly => selectedTab != 'All' && selectedTab != 'Closed';
+
+  // Rewind the pagination cursor to the first page. Used when the backend
+  // result set changes under us (the active_only ⇄ full switch on a tab change).
+  void _resetPagination() {
+    _nextPage = 1;
+    _highestLoadedPage = 1;
+    hasMorePages = true;
+    _reachedPaginationEnd = false;
+  }
+
   // Core data fetching logic - single source of truth
   Future<void> _fetchAllData({
     required bool showLoading,
     bool notifyUI = false,
+    bool resetWindow = false,
   }) async {
     if (_isRefreshing) return;
 
@@ -345,6 +363,7 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
       final response = await actions.apiGetAllAgentInstances(
         page: 1,
         pageSize: refreshFetchSize,
+        activeOnly: _fetchActiveOnly,
       );
       final refreshedProjects = await projectsFuture;
       if (refreshedProjects.isNotEmpty) {
@@ -356,9 +375,10 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
       // For a true full-range refresh, treat the fetched window as authoritative
       // (drops any locally-cached items that were deleted on the server within
       // that range). Only preserve a tail when the user has scrolled past the
-      // backend's 100-item cap.
+      // backend's 100-item cap. A resetWindow refetch (the fetch-set changed on
+      // a tab switch) is always authoritative — never carry the old tail over.
       final preserveTail =
-          !showLoading && agentInstances.length > newInstances.length;
+          !showLoading && !resetWindow && agentInstances.length > newInstances.length;
       final mergedInstances =
           _mergeRefreshedInstances(newInstances, preserveExistingTail: preserveTail);
       final responseHasMore = response['hasMore'] == true;
@@ -487,6 +507,7 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
       final response = await actions.apiGetAllAgentInstances(
         page: pageToLoad,
         pageSize: pageSize,
+        activeOnly: _fetchActiveOnly,
       );
       final nextItems = (response['items'] as List?) ?? <dynamic>[];
       final existingIds = agentInstances
@@ -516,16 +537,20 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
         _refreshCheckoutBranches(onlyUnknown: true);
       }
 
-      if (uniqueNextItems.isEmpty) {
+      // End pagination only on the backend's word — an empty page or
+      // hasMore=false. A page whose rows were all already loaded (dedup emptied
+      // `uniqueNextItems`, e.g. a WS-prepended head shifted the offsets) is NOT
+      // the end: advance so the scroll doesn't wedge with more sessions still
+      // unfetched. An offset past the end returns an empty page, which stops us.
+      final rawCount = nextItems.length;
+      final responseHasMore = response['hasMore'] == true;
+      if (rawCount == 0 || !responseHasMore) {
         hasMorePages = false;
         _nextPage = null;
         _reachedPaginationEnd = true;
       } else {
-        hasMorePages = response['hasMore'] == true;
-        _nextPage = response['nextPage'] as int?;
-        if (_nextPage == null && hasMorePages) {
-          _nextPage = pageToLoad + 1;
-        }
+        hasMorePages = true;
+        _nextPage = (response['nextPage'] as int?) ?? (pageToLoad + 1);
         _reachedPaginationEnd = false;
       }
     } catch (e) {
@@ -845,8 +870,19 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
   // Filter changes can bring sessions on screen whose checkout was never
   // probed (targets are taken from the visible list only).
   void selectTab(String tab) {
+    final previousFetchActiveOnly = _fetchActiveOnly;
     selectedTab = tab;
     FFAppState().updateUserPreferences((p) => p..homeFilterStatus = tab);
+    // Switching between an active-only view and one that needs closed rows
+    // changes the backend result set, so the offset cursor no longer lines up —
+    // rewind and refetch the first page over the new set (resetWindow so the
+    // old tail isn't carried across).
+    if (_fetchActiveOnly != previousFetchActiveOnly) {
+      _resetPagination();
+      unawaited(
+        _fetchAllData(showLoading: false, notifyUI: true, resetWindow: true),
+      );
+    }
     _refreshCheckoutBranches(onlyUnknown: true);
   }
 

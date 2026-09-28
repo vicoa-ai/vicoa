@@ -15,18 +15,39 @@ import '/pages/confirm_dialog/confirm_dialog_widget.dart';
 /// behaves identically.
 ///
 /// Safety model (`plans/todos/vicoa-app-worktree.md` §5.5 / §8): the daemon is
-/// a dumb executor with no session knowledge, so the app enforces the
-/// active-session gate; the branch is always kept by the daemon, so a removed
-/// worktree's commits stay recoverable.
+/// a dumb executor with no session knowledge, so the app finds the worktree's
+/// live sessions, names them in the confirm and archives them before the folder
+/// goes (as the web does); the branch is always kept by the daemon, so a
+/// removed worktree's commits stay recoverable.
 class WorktreeActions {
   WorktreeActions._();
 
   static actions.VicoaWsClient get _ws => actions.VicoaWsClient.instance;
 
+  /// How long a failure stays on screen: it carries git's reason, which needs
+  /// reading, unlike a success toast.
+  static const int _errorSnackMs = 6000;
+
+  /// The repo's main checkout for [cwd] (any folder of the repo, the worktree
+  /// being removed included), or [cwd] when it can't be resolved. Older
+  /// daemons run the remove's git from `cwd` after moving the worktree away,
+  /// so a `cwd` inside that worktree (the Worktrees page opened from one of
+  /// its sessions, or the post-session offer) failed with "cannot change to".
+  static Future<String> _mainCheckout(String machineId, String cwd) async {
+    try {
+      final listing = await rpcGitWorktreeListing(
+          call: _ws.callRpc, machineId: machineId, cwd: cwd);
+      return listing.mainPath ?? cwd;
+    } catch (_) {
+      return cwd;
+    }
+  }
+
   /// Remove [worktree] with full safety:
-  ///   1. refuse if another live session runs in it (the daemon can't know);
-  ///   2. if the worktree is dirty, confirm with a force warning;
-  ///   3. otherwise confirm normally, then remove (branch kept).
+  ///   1. find the live sessions running in it (the daemon can't know);
+  ///   2. confirm, warning that those sessions get archived and, if the
+  ///      worktree is dirty, that the remove is forced;
+  ///   3. archive the sessions, then remove (branch kept).
   /// [repoCwd] is any path within the repo (used to run the git command).
   /// Returns true iff the worktree was removed.
   static Future<bool> removeWorktree(
@@ -37,15 +58,11 @@ class WorktreeActions {
     bool showSuccessSnack = true,
     String? homeDir,
   }) async {
-    // 1. Active-session gate — never pull a worktree out from under a live run.
-    final sessions = FFAppState().cachedAgentInstances;
-    if (worktreeHasActiveSession(worktree.path, sessions, homeDir: homeDir)) {
-      await SessionActions.showSnack(
-        context,
-        AppLocalizations.of(context).worktreeActionsActiveSession,
-      );
-      return false;
-    }
+    // 1. Live sessions in the worktree: archived after the confirm, so a
+    //    session is never left running in a folder that's gone.
+    final sessionIds = worktreeActiveSessionIds(
+        worktree.path, FFAppState().cachedAgentInstances,
+        homeDir: homeDir);
 
     // 2. Dirty check (best-effort). Unknown status falls through as clean; the
     //    daemon refuses a dirty non-force remove and we surface that below.
@@ -67,6 +84,12 @@ class WorktreeActions {
     final branch = worktree.branch.isNotEmpty
         ? worktree.branch
         : l10n.worktreeActionsThisWorktree;
+    var content = dirty
+        ? l10n.worktreeActionsRemoveDirtyContent(branch)
+        : l10n.worktreeActionsRemoveContent(branch);
+    if (sessionIds.isNotEmpty) {
+      content = '$content\n\n${l10n.worktreeActionsRemoveSessionsNote(sessionIds.length)}';
+    }
     final confirmed = await showDialog<bool>(
           context: context,
           barrierDismissible: false,
@@ -74,21 +97,39 @@ class WorktreeActions {
             backgroundColor: Colors.transparent,
             child: ConfirmDialogWidget(
               title: l10n.worktreeActionsRemoveTitle,
-              content: dirty
-                  ? l10n.worktreeActionsRemoveDirtyContent(branch)
-                  : l10n.worktreeActionsRemoveContent(branch),
+              content: content,
             ),
           ),
         ) ??
         false;
     if (!confirmed || !context.mounted) return false;
 
-    // 4. Remove.
+    // 4. Archive its sessions, all at once (the web's archive: status
+    //    COMPLETED). If any fails, stop: the folder stays until they're gone.
+    if (sessionIds.isNotEmpty) {
+      final results = await Future.wait(sessionIds.map(
+          (id) => actions.apiUpdateInstanceStatus(id, 'COMPLETED')));
+      _markArchivedInCache([
+        for (var i = 0; i < sessionIds.length; i++)
+          if (results[i]) sessionIds[i],
+      ]);
+      if (results.contains(false)) {
+        if (context.mounted) {
+          await SessionActions.showSnack(
+              context, AppLocalizations.of(context).worktreeActionsArchiveFailed,
+              waitTime: _errorSnackMs);
+        }
+        return false;
+      }
+      if (!context.mounted) return false;
+    }
+
+    // 5. Remove.
     try {
       await rpcGitWorktreeRemove(
         call: _ws.callRpc,
         machineId: machineId,
-        cwd: repoCwd,
+        cwd: await _mainCheckout(machineId, repoCwd),
         worktreePath: worktree.path,
         force: dirty,
       );
@@ -102,16 +143,34 @@ class WorktreeActions {
         await SessionActions.showSnack(
           context,
           AppLocalizations.of(context).worktreeActionsRemoveFailedCode(e.code),
+          waitTime: _errorSnackMs,
         );
       }
       return false;
     } catch (_) {
       if (context.mounted) {
         await SessionActions.showSnack(
-            context, AppLocalizations.of(context).worktreeActionsRemoveFailed);
+            context, AppLocalizations.of(context).worktreeActionsRemoveFailed,
+            waitTime: _errorSnackMs);
       }
       return false;
     }
+  }
+
+  /// Mark [ids] closed in the shared session cache right away, so the worktree
+  /// screens (and a retry after a failed remove) stop counting them as live
+  /// before the home list next reloads from the server.
+  static void _markArchivedInCache(List<String> ids) {
+    if (ids.isEmpty) return;
+    final archived = ids.toSet();
+    final app = FFAppState();
+    app.cachedAgentInstances = [
+      for (final s in app.cachedAgentInstances)
+        if (s is Map<String, dynamic> && archived.contains(s['id']))
+          {...s, 'status': 'COMPLETED'}
+        else
+          s,
+    ];
   }
 
   /// After a session ends, offer to delete its worktree when it's a managed
@@ -166,7 +225,7 @@ class WorktreeActions {
       await rpcGitWorktreeRemove(
         call: _ws.callRpc,
         machineId: machineId,
-        cwd: worktreePath,
+        cwd: await _mainCheckout(machineId, worktreePath),
         worktreePath: worktreePath,
         force: false,
       );

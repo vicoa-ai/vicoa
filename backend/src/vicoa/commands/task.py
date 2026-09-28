@@ -62,10 +62,6 @@ def _fit(s: str, width: int) -> str:
     return s if len(s) <= width else s[: width - 1] + "…"
 
 
-def _short(value: Optional[str], n: int = 8) -> str:
-    return value[:n] if value else "—"
-
-
 def _project_label(t: dict) -> str:
     """What the PROJECT column shows: the name, or "—" for No project."""
     if not t.get("project_id"):
@@ -77,9 +73,7 @@ def _project_label(t: dict) -> str:
         return str(name)
     identifier = str(t.get("identifier") or "")
     return (
-        identifier.rsplit("-", 1)[0]
-        if "-" in identifier
-        else _short(t.get("project_id"))
+        identifier.rsplit("-", 1)[0] if "-" in identifier else str(t.get("project_id"))
     )
 
 
@@ -87,23 +81,23 @@ def _print_task_table(tasks: list[dict]) -> None:
     if not tasks:
         print("No tasks found.")
         return
-    # Both an id and an identifier: the short id is what the other subcommands
-    # take (truncated, so it is a browsing aid either way), while "VIC-42" is
-    # what an agent quotes back to its user and what the web deep-links to.
+    # Both an identifier and an id, and the other subcommands take either:
+    # "VIC-42" is what an agent quotes back to its user and what the web
+    # deep-links to; the full UUID sits last so the rest stays readable.
     header = (
-        f"{'ID':<8}  {'KEY':<9} {'STATUS':<12} {'PRIO':<7} "
-        f"{'PROJECT':<{_PROJECT_W}} {'TITLE':<{_TITLE_W}}"
+        f"{'KEY':<9} {'STATUS':<12} {'PRIO':<7} "
+        f"{'PROJECT':<{_PROJECT_W}} {'TITLE':<{_TITLE_W}}  {'ID':<36}"
     )
     print(header)
     print("-" * len(header))
     for t in tasks:
         print(
-            f"{_short(t.get('id')):<8}  "
             f"{str(t.get('identifier') or '—'):<9} "
             f"{str(t.get('status', '')):<12} "
             f"{str(t.get('priority', '')):<7} "
             f"{_fit(_project_label(t), _PROJECT_W):<{_PROJECT_W}} "
-            f"{_fit(t.get('title', ''), _TITLE_W):<{_TITLE_W}}"
+            f"{_fit(t.get('title', ''), _TITLE_W):<{_TITLE_W}}  "
+            f"{t.get('id') or '—'}"
         )
     print(f"\n{len(tasks)} task(s).")
 

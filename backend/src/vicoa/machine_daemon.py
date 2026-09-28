@@ -100,6 +100,82 @@ def _find_cli_in_common_locations(name: str) -> str | None:
     return find_npm_cli(name)
 
 
+def _session_creationflags() -> int:
+    """Windows creation flags for a headless session child.
+
+    ``CREATE_NO_WINDOW``, but only when the daemon has no console of its own,
+    which is the case when the CLI starts it in the background
+    (``DETACHED_PROCESS``). Windows then gives every session a fresh console,
+    and without this flag that console gets a window. Creating the window
+    draws on desktop heap and needs an interactive desktop; when either is
+    missing the child dies with 0xC0000142 (STATUS_DLL_INIT_FAILED) before it
+    runs a line. With the flag the console is windowless, which also stops a
+    blank console window popping up per session.
+
+    A daemon that does have a console (the desktop app spawns it without
+    hiding one) keeps the old behaviour on purpose: sessions share that
+    console and no new one is created, so nothing there can hit this failure,
+    and a path that works stays exactly as it was.
+
+    Deliberately not ``CREATE_NEW_PROCESS_GROUP``: it would disable Ctrl+C for
+    the whole session tree, which agent CLIs may rely on to interrupt the
+    commands they run, and sessions have never had it.
+
+    0 elsewhere (Popen rejects anything else off Windows); POSIX detaches via
+    the ``start_new_session`` passed alongside.
+    """
+    if sys.platform == "win32" and not _attached_to_console():
+        return subprocess.CREATE_NO_WINDOW
+    return 0
+
+
+def _attached_to_console() -> bool:
+    """Whether the daemon has a console a child would inherit (Windows only).
+
+    ``GetConsoleProcessList`` counts the processes attached to our console and
+    fails (returns 0) when there is none. If the probe itself breaks, report no
+    console: the caller then adds ``CREATE_NO_WINDOW``, and a windowless
+    console is harmless whether or not one existed.
+    """
+    if sys.platform != "win32":
+        return False
+    import ctypes
+
+    try:
+        pids = (ctypes.c_ulong * 1)()
+        return ctypes.windll.kernel32.GetConsoleProcessList(pids, 1) > 0
+    except Exception:  # noqa: BLE001 - a failed probe must never block a spawn
+        return False
+
+
+# Windows NTSTATUS failure codes start here. No POSIX exit code reaches this
+# range, so a code at or above it is always Windows reporting that it killed
+# the process itself.
+_WINDOWS_STATUS_MIN = 0xC0000000
+
+# NTSTATUS codes a session child can die with before running any of its own
+# code, so its stderr log stays empty and the exit code is the only clue.
+_WINDOWS_STATUS_NAMES: dict[int, str] = {
+    0xC0000005: "STATUS_ACCESS_VIOLATION: the process crashed",
+    0xC0000135: "STATUS_DLL_NOT_FOUND: a required DLL is missing",
+    0xC0000142: "STATUS_DLL_INIT_FAILED: Windows could not initialize the process",
+}
+
+
+def _describe_exit_code(code: int | None) -> str:
+    """Render a child's exit code for a failure message.
+
+    Popen reports a Windows NTSTATUS as a large unsigned int (0xC0000142 comes
+    back as 3221225794), which reads as noise; render those in hex, named when
+    known. Every other code is left as is.
+    """
+    if code is None or code < _WINDOWS_STATUS_MIN:
+        return str(code)
+    hex_code = f"0x{code:08X}"
+    name = _WINDOWS_STATUS_NAMES.get(code)
+    return f"{hex_code} ({name})" if name else hex_code
+
+
 def _pid_exists(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -1901,6 +1977,45 @@ class MachineDaemon:
             logger.debug("could not open stderr log for %s: %s", session_id, exc)
             return subprocess.DEVNULL
 
+    def _launch_session_process(
+        self,
+        command: list[str],
+        *,
+        cwd: str,
+        env: dict[str, str],
+        session_id: str,
+    ) -> subprocess.Popen[bytes]:
+        """Start a headless session child, detached from the daemon.
+
+        The one launch both spawn paths share (the app's ``spawn-session`` RPC
+        and the queued spawn requests ``vicoa session start`` files), so the
+        detach flags can't drift between them again.
+
+        stdio is detached too. Inheriting the daemon's stdout/stderr ties the
+        child to the desktop shell's pipes: quitting the app closes them and
+        the otherwise-detached session dies on its next write (BrokenPipeError).
+        stdin/stdout go to DEVNULL; stderr goes to the per-session file (owned
+        by the OS, not the app, so the child still outlives a daemon/app exit)
+        so a startup crash is captured instead of lost.
+        """
+        stderr_log = self._open_session_stderr(session_id)
+        try:
+            return subprocess.Popen(
+                command,
+                cwd=cwd,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=stderr_log,
+                start_new_session=True,
+                creationflags=_session_creationflags(),
+            )
+        finally:
+            # The child holds its own dup'd fd now; drop the daemon's copy
+            # (the DEVNULL fallback is a bare int with nothing to close).
+            if not isinstance(stderr_log, int):
+                stderr_log.close()
+
     def _read_session_stderr_tail(self, session_id: str, max_bytes: int = 4000) -> str:
         """Last few KB of a session's captured stderr, for crash diagnostics."""
         try:
@@ -1941,7 +2056,10 @@ class MachineDaemon:
                 )
             else:
                 stderr_tail = self._read_session_stderr_tail(session_id)
-                message = f"Headless session exited with code {return_code}"
+                message = (
+                    "Headless session exited with code "
+                    f"{_describe_exit_code(return_code)}"
+                )
                 if stderr_tail:
                     # The child's dying words — a startup crash (rejected model,
                     # missing dep, auth failure) that DEVNULL used to swallow.
@@ -2560,33 +2678,12 @@ class MachineDaemon:
                 agent_session_id=resume_agent_session_id,
             )
             self.send_heartbeat()
-            # Detach the session's stdio from the daemon's. Without this the
-            # child inherits the daemon's stdout/stderr; under the desktop shell
-            # those are pipes owned by the Electron process, so quitting the app
-            # closes them and the otherwise-detached session dies on its next
-            # write (BrokenPipeError). stdin/stdout go to DEVNULL; stderr goes to
-            # a per-session FILE (also owned by the OS, not the app's pipes, so
-            # the child still outlives a daemon/app exit) so a startup crash is
-            # captured instead of lost. The wrapper logs to its own file too.
-            stderr_log = self._open_session_stderr(session_id)
             # A resume reuses the id; make sure no stale marker from a previous
             # run can satisfy the wait below.
             clear_session_registered(session_id)
-            try:
-                process = subprocess.Popen(
-                    command,
-                    cwd=expanded_directory,
-                    env=env,
-                    start_new_session=True,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=stderr_log,
-                )
-            finally:
-                # The child holds its own dup'd fd now; drop the daemon's copy
-                # (the DEVNULL fallback is a bare int with nothing to close).
-                if not isinstance(stderr_log, int):
-                    stderr_log.close()
+            process = self._launch_session_process(
+                command, cwd=expanded_directory, env=env, session_id=session_id
+            )
         except (ValueError, RuntimeError) as exc:
             self._rollback_worktree(worktree_info)
             return {"error": str(exc)}
@@ -2937,21 +3034,9 @@ class MachineDaemon:
             # Send immediate heartbeat to show machine is active
             self.send_heartbeat()
 
-            # Detach stdio so the session survives the daemon/app exit —
-            # inheriting the daemon's Electron-owned stdout/stderr pipes kills
-            # the detached child on quit (BrokenPipeError). stderr goes to a
-            # per-session file (OS-owned, so still survives) to capture startup
-            # crashes. See the matching note in spawn_session_rpc.
-            stderr_log = self._open_session_stderr(session_id)
             try:
-                process = subprocess.Popen(
-                    command,
-                    cwd=expanded_directory,
-                    env=env,
-                    start_new_session=True,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=stderr_log,
+                process = self._launch_session_process(
+                    command, cwd=expanded_directory, env=env, session_id=session_id
                 )
             except Exception as exc:
                 self.report_request_status(
@@ -2960,11 +3045,6 @@ class MachineDaemon:
                     message=f"Failed to launch headless session: {exc}",
                 )
                 return
-            finally:
-                # The child holds its own dup'd fd now; drop the daemon's copy
-                # (the DEVNULL fallback is a bare int with nothing to close).
-                if not isinstance(stderr_log, int):
-                    stderr_log.close()
 
             if not self._wait_for_process_ready(process):
                 exit_code = process.poll()
@@ -2974,7 +3054,8 @@ class MachineDaemon:
                     message=(
                         "Headless session failed to start"
                         if exit_code is None
-                        else f"Headless process exited with code {exit_code}"
+                        else "Headless process exited with code "
+                        f"{_describe_exit_code(exit_code)}"
                     ),
                 )
                 return
@@ -3060,6 +3141,14 @@ class MachineDaemon:
                 reason = tail.splitlines()[-1][:300] if tail else ""
                 if reason:
                     return f"Couldn't start the session: {reason}"
+                if code >= _WINDOWS_STATUS_MIN:
+                    # Windows killed it before it ran a line, so there is no
+                    # stderr to show and a retry rarely helps; the status code
+                    # is the only clue, so don't hide it behind "try again".
+                    return (
+                        "Couldn't start the session: the agent exited with "
+                        f"{_describe_exit_code(code)}"
+                    )
                 return (
                     "Couldn't start the session. The agent exited "
                     "unexpectedly, please try again."

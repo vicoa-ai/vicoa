@@ -120,11 +120,10 @@ void main() {
   });
 
   group('SessionConfig.defaultsFor', () {
-    test('claude default permission_mode is "default" (not "acceptEdits")', () {
-      // Catalog flipped is_default from acceptEdits → default so newly-
-      // spawned sessions don't surprise users with auto-accept-edits.
+    test('claude default permission_mode is "auto"', () {
+      // Mirrors Claude Code, which starts new sessions in auto mode.
       final config = SessionConfig.defaultsFor(catalog, 'claude');
-      expect(config.permissionMode, 'default');
+      expect(config.permissionMode, 'auto');
     });
   });
 }

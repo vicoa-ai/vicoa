@@ -198,6 +198,29 @@ export function parseAskUserQuestionPayload(message: MessageResponse): AskUserQu
   };
 }
 
+function initialAnswers(askUserQuestion: AskUserQuestionPayload | null): AskUserQuestionAnswer[] {
+  if (!askUserQuestion) return [];
+  return askUserQuestion.questions.map((question) => {
+    if (question.options.length === 0) {
+      return { mode: 'text', text: '' } as AskUserQuestionAnswer;
+    }
+    if (question.multi_select) {
+      return {
+        mode: 'option',
+        option_indexes: [],
+        question_multi_select: true,
+        option_count: question.options.length,
+      } as AskUserQuestionAnswer;
+    }
+    return {
+      mode: 'option',
+      option_index: 0,
+      question_multi_select: false,
+      option_count: question.options.length,
+    } as AskUserQuestionAnswer;
+  });
+}
+
 type AskUserQuestionPanelProps = {
   message: MessageResponse;
   onSubmit?: (payload: AskUserQuestionSubmitPayload) => void;
@@ -207,35 +230,15 @@ type AskUserQuestionPanelProps = {
 export function AskUserQuestionPanel({ message, onSubmit, onCancel }: AskUserQuestionPanelProps) {
   const askUserQuestion = parseAskUserQuestionPayload(message);
   const [activeTab, setActiveTab] = useState(0);
-  const [answers, setAnswers] = useState<AskUserQuestionAnswer[]>([]);
+  // Seeded on the first render, not only in the effect below: a free-text
+  // question's textarea is part of the row's height, and the transcript's
+  // virtual list remounts this panel whenever the row scrolls back into range.
+  // Filling answers after paint made every remount grow the row a frame late,
+  // which the list reacts to (see collapsible-user-message.tsx).
+  const [answers, setAnswers] = useState<AskUserQuestionAnswer[]>(() => initialAnswers(askUserQuestion));
 
   useEffect(() => {
-    if (!askUserQuestion) {
-      setAnswers([]);
-      setActiveTab(0);
-      return;
-    }
-    setAnswers(
-      askUserQuestion.questions.map((question) => {
-        if (question.options.length === 0) {
-          return { mode: 'text', text: '' } as AskUserQuestionAnswer;
-        }
-        if (question.multi_select) {
-          return {
-            mode: 'option',
-            option_indexes: [],
-            question_multi_select: true,
-            option_count: question.options.length,
-          } as AskUserQuestionAnswer;
-        }
-        return {
-          mode: 'option',
-          option_index: 0,
-          question_multi_select: false,
-          option_count: question.options.length,
-        } as AskUserQuestionAnswer;
-      })
-    );
+    setAnswers(initialAnswers(askUserQuestion));
     setActiveTab(0);
   }, [askUserQuestion?.tool_use_id, askUserQuestion?.questions.length]);
 

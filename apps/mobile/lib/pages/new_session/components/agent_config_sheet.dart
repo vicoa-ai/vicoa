@@ -417,9 +417,7 @@ class _AgentConfigSheetState extends State<_AgentConfigSheet> {
     }
 
     if (agent.permissionModes.isNotEmpty) {
-      // Same common + opt-ins shape as thinkingEfforts above. `auto` only
-      // appears for Opus 4.7+ because only those models name it in their
-      // per-model array.
+      // Same common + opt-ins shape as thinkingEfforts above.
       final optInsPerm = <String>{};
       if (_config.model != null && agent.models != null) {
         final m = agent.models!.firstWhere((m) => m.id == _config.model, orElse: () => CatalogModel(id: _config.model!, label: _config.model!));

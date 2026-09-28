@@ -1,5 +1,5 @@
 import posthog from 'posthog-js'
-import { SURFACE } from '@/lib/desktop-telemetry'
+import { registerSuperProperties } from '@/lib/desktop-telemetry'
 
 const posthogToken = process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN
 
@@ -26,5 +26,8 @@ if (posthogToken) {
   // why the hardcoded `source: 'web'` event props had to be deleted from
   // `sessions/new/page.tsx` outright: left in place they would shadow this and
   // keep counting desktop activations as web ones.
-  posthog.register({ source: SURFACE })
+  //
+  // Registered through the telemetry module, which also re-applies it after a
+  // sign-out's posthog.reset() and adds the desktop `app_version` once known.
+  registerSuperProperties()
 }

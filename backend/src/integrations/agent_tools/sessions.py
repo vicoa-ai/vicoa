@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict, List
+from uuid import UUID
 
 from integrations.agent_tools.context import (
     AgentToolContext,
@@ -36,6 +37,30 @@ _MAX_TRANSCRIPT_MESSAGES = 100
 #: Per-message excerpt in a transcript read. Long enough to be useful, short
 #: enough that 100 messages don't blow the model's context.
 _TRANSCRIPT_EXCERPT_CHARS = 400
+_SESSION_ID_HELP = "Full session id (a UUID), as `vicoa_list_sessions` returns it."
+
+
+def _session_id(ref: str) -> str:
+    """``ref`` as a session id, which must be the full UUID.
+
+    Checked here rather than left to the server so a short prefix (what older
+    `vicoa session ls` printed) fails with a message the model can act on,
+    before any request. Short ids are deliberately not expanded: a prefix is
+    not an identity, and one that names the right session today can name a
+    different one after a delete.
+    """
+    try:
+        return str(UUID(ref))
+    except ValueError:
+        raise AgentToolError(
+            f"'{ref}' is not a session id. Pass the full id from `vicoa_list_sessions`."
+        ) from None
+
+
+def _target_session_id(context: AgentToolContext, arguments: Dict[str, Any]) -> str:
+    """The ``session_id`` argument, else the calling session."""
+    ref = optional_str(arguments, "session_id")
+    return context.agent_instance_id if ref is None else _session_id(ref)
 
 
 def _session_line(row: Dict[str, Any]) -> str:
@@ -70,7 +95,7 @@ async def list_sessions(
 async def get_session(
     context: AgentToolContext, arguments: Dict[str, Any]
 ) -> ToolResult:
-    session_id = optional_str(arguments, "session_id") or context.agent_instance_id
+    session_id = _target_session_id(context, arguments)
     row = await context.client.request("GET", f"/api/v1/agent-instances/{session_id}")
     if not isinstance(row, dict):
         raise AgentToolError(f"Session {session_id} not found")
@@ -81,7 +106,7 @@ async def get_session(
 async def read_session_transcript(
     context: AgentToolContext, arguments: Dict[str, Any]
 ) -> ToolResult:
-    session_id = optional_str(arguments, "session_id") or context.agent_instance_id
+    session_id = _target_session_id(context, arguments)
     limit = parse_positive_int(
         arguments.get("limit"),
         name="limit",
@@ -203,7 +228,7 @@ async def start_session(
 async def send_session_message(
     context: AgentToolContext, arguments: Dict[str, Any]
 ) -> ToolResult:
-    session_id = require_str(arguments, "session_id")
+    session_id = _session_id(require_str(arguments, "session_id"))
     content = require_str(arguments, "content")
     if session_id == context.agent_instance_id:
         # Prompting yourself is an infinite loop with extra steps: the message
@@ -226,7 +251,7 @@ async def send_session_message(
 async def interrupt_session(
     context: AgentToolContext, arguments: Dict[str, Any]
 ) -> ToolResult:
-    session_id = require_str(arguments, "session_id")
+    session_id = _session_id(require_str(arguments, "session_id"))
     await context.client.request(
         "POST",
         "/api/v1/messages/user",
@@ -244,7 +269,7 @@ async def interrupt_session(
 async def end_session(
     context: AgentToolContext, arguments: Dict[str, Any]
 ) -> ToolResult:
-    session_id = require_str(arguments, "session_id")
+    session_id = _session_id(require_str(arguments, "session_id"))
     if session_id == context.agent_instance_id:
         raise AgentToolError(
             "Refusing to end this session from inside it. Finish your turn "
@@ -296,7 +321,7 @@ TOOLS = (
             "session when session_id is omitted."
         ),
         parameters=object_schema(
-            {"session_id": {"type": "string", "description": "Session id."}}
+            {"session_id": {"type": "string", "description": _SESSION_ID_HELP}}
         ),
         handler=get_session,
     ),
@@ -309,7 +334,7 @@ TOOLS = (
         ),
         parameters=object_schema(
             {
-                "session_id": {"type": "string", "description": "Session id."},
+                "session_id": {"type": "string", "description": _SESSION_ID_HELP},
                 "limit": {
                     "type": "integer",
                     "description": (
@@ -383,7 +408,7 @@ TOOLS = (
         ),
         parameters=object_schema(
             {
-                "session_id": {"type": "string", "description": "Target session id."},
+                "session_id": {"type": "string", "description": _SESSION_ID_HELP},
                 "content": {"type": "string", "description": "Message to send."},
             },
             required=["session_id", "content"],
@@ -399,7 +424,7 @@ TOOLS = (
             "open and awaiting input."
         ),
         parameters=object_schema(
-            {"session_id": {"type": "string", "description": "Target session id."}},
+            {"session_id": {"type": "string", "description": _SESSION_ID_HELP}},
             required=["session_id"],
         ),
         handler=interrupt_session,
@@ -413,7 +438,7 @@ TOOLS = (
             "when a session you started has finished its work."
         ),
         parameters=object_schema(
-            {"session_id": {"type": "string", "description": "Target session id."}},
+            {"session_id": {"type": "string", "description": _SESSION_ID_HELP}},
             required=["session_id"],
         ),
         handler=end_session,

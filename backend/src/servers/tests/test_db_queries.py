@@ -706,6 +706,18 @@ index 1234567..abcdefg 100644
             )
 
     @pytest.mark.integration
+    def test_create_user_message_short_id_prefix(self, test_db, test_user):
+        """A short id prefix is a 400-able ValueError, not a DataError (500)."""
+        with pytest.raises(ValueError, match="must be a valid UUID"):
+            create_user_message(
+                db=test_db,
+                agent_instance_id=str(uuid4())[:8],
+                content="Message to a prefix",
+                user_id=str(test_user.id),
+                mark_as_read=True,
+            )
+
+    @pytest.mark.integration
     def test_user_messages_in_polling(self, test_db, test_user):
         """Test that user messages created with mark_as_read=False appear in polling."""
         # Create an agent instance with a question

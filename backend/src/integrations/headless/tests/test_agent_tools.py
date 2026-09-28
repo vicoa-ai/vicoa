@@ -16,6 +16,9 @@ from integrations.agent_tools.registry import (
     to_host_tool_definitions,
 )
 
+SELF_ID = "5e1f0000-0000-4000-8000-000000000001"
+OTHER_ID = "0de70000-0000-4000-8000-000000000002"
+
 
 class FakeClient:
     """Records calls and replays canned responses keyed by ``METHOD path``."""
@@ -35,7 +38,7 @@ class FakeClient:
 def make_context(client=None, **kwargs):
     return AgentToolContext(
         client=client or FakeClient(),
-        agent_instance_id=kwargs.pop("agent_instance_id", "self-1"),
+        agent_instance_id=kwargs.pop("agent_instance_id", SELF_ID),
         project_path=kwargs.pop("project_path", "/work/repo"),
         machine_id=kwargs.pop("machine_id", "machine-1"),
         **kwargs,
@@ -212,7 +215,7 @@ async def test_a_spawned_session_records_its_parent_and_its_new_depth(registry):
         registry, make_context(client), "vicoa_start_session", {"prompt": "go"}
     )
     metadata = client.calls[0][2]["metadata"]
-    assert metadata["spawned_by_agent_instance_id"] == "self-1"
+    assert metadata["spawned_by_agent_instance_id"] == SELF_ID
     assert metadata["agent_tool_depth"] == 1
 
 
@@ -231,14 +234,14 @@ async def test_messaging_yourself_is_refused(registry):
         registry,
         make_context(),
         "vicoa_send_session_message",
-        {"session_id": "self-1", "content": "hi"},
+        {"session_id": SELF_ID, "content": "hi"},
     )
     assert result.is_error and "loop" in result.text
 
 
 async def test_ending_your_own_session_from_inside_it_is_refused(registry):
     result = await dispatch(
-        registry, make_context(), "vicoa_end_session", {"session_id": "self-1"}
+        registry, make_context(), "vicoa_end_session", {"session_id": SELF_ID}
     )
     assert result.is_error
 
@@ -249,13 +252,44 @@ async def test_interrupt_sends_the_same_control_envelope_the_stop_button_does(re
         registry,
         make_context(client),
         "vicoa_interrupt_session",
-        {"session_id": "other"},
+        {"session_id": OTHER_ID},
     )
     from integrations.headless.control_command import parse_control_command
 
     body = client.calls[0][2]
-    assert body["agent_instance_id"] == "other"
+    assert body["agent_instance_id"] == OTHER_ID
     assert parse_control_command(body["content"]) == {"setting": "interrupt"}
+
+
+async def test_a_short_id_is_refused_before_any_request(registry):
+    """A prefix is not an identity: one that names the right session today can
+    name a different one after a delete. So it is refused, not expanded, with
+    a message that says where the full id comes from."""
+    for tool, arguments in (
+        ("vicoa_send_session_message", {"session_id": "3f9c1a2b", "content": "hi"}),
+        ("vicoa_interrupt_session", {"session_id": "3f9c1a2b"}),
+        ("vicoa_end_session", {"session_id": "3f9c1a2b"}),
+        ("vicoa_get_session", {"session_id": "3f9c1a2b"}),
+        ("vicoa_read_session_transcript", {"session_id": "3f9c1a2b"}),
+    ):
+        client = FakeClient()
+        result = await dispatch(registry, make_context(client), tool, arguments)
+        assert result.is_error, tool
+        assert "'3f9c1a2b' is not a session id" in result.text
+        assert "vicoa_list_sessions" in result.text
+        assert client.calls == [], tool
+
+
+async def test_a_full_id_is_normalised_so_the_self_guard_still_matches(registry):
+    """The guard compares canonical UUIDs, so an upper-case copy of this
+    session's own id is still refused."""
+    result = await dispatch(
+        registry,
+        make_context(),
+        "vicoa_send_session_message",
+        {"session_id": SELF_ID.upper(), "content": "hi"},
+    )
+    assert result.is_error and "loop" in result.text
 
 
 async def test_the_rate_limit_bounds_fan_out_that_depth_alone_does_not(registry):

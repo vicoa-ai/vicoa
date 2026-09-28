@@ -8,7 +8,7 @@ import { getDesktopConfig } from '@/lib/runtime-config';
 import { getDesktopAuthBridge } from '@/lib/desktop-auth';
 import { hasCompletedDesktopSetup, hasSeenDesktopIntro } from '@/lib/desktop-onboarding';
 import { getAppVersion } from '@/lib/desktop-updates';
-import { trackAppOpened } from '@/lib/desktop-telemetry';
+import { registerAppVersion, trackAppOpened } from '@/lib/desktop-telemetry';
 
 // Compile-time desktop signal (identical on server + client for a desktop
 // build, so wrapping children never causes a hydration mismatch on web).
@@ -154,13 +154,17 @@ export function DesktopAuthGate({ children }: { children: React.ReactNode }) {
   // any onboarding/auth branch, so returning users who never re-see the intro
   // are still counted — unlike desktop_onboarding_intro_started. `first_run` is
   // read here, before the intro flow sets the seen-flag; app_version is
-  // best-effort (null on web / when the updates bridge is absent).
+  // best-effort (null on web / when the updates bridge is absent), and is
+  // registered first so every later event carries it too.
   useEffect(() => {
     if (!IS_DESKTOP) return;
     const first_run = !hasSeenDesktopIntro();
     void getAppVersion()
       .catch(() => null)
-      .then((app_version) => trackAppOpened({ first_run, app_version }));
+      .then((app_version) => {
+        if (app_version) registerAppVersion(app_version);
+        trackAppOpened({ first_run, app_version });
+      });
   }, []);
 
   useEffect(() => {

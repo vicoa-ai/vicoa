@@ -26,7 +26,7 @@ from protocol.acp_catalog import ACP_CATALOG
 
 
 AGENT_CATALOG: dict[str, Any] = {
-    "version": "2026-09-25-1",
+    "version": "2026-09-26-1",
     "min_cli_version": "1.20.0",
     "min_client_version": "0.42.0",
     "agents": [
@@ -44,9 +44,9 @@ AGENT_CATALOG: dict[str, Any] = {
             "models": [
                 # Per-model `thinking_efforts` / `permission_modes` arrays list
                 # ONLY the opt-in ids this model adds beyond the common set.
-                # Omit the field entirely when the model has no opt-ins.
-                # `auto` permission requires SDK capabilities present in
-                # Sonnet 4.6+ and Opus 4.7+; older models omit it.
+                # Omit the field entirely when the model has no opt-ins. No
+                # Claude model needs one: every permission mode is common, so a
+                # new model gets `auto` without a per-model field.
                 # Opus 4.7+ default to xhigh thinking — they're the only models
                 # with the depth-of-reasoning to justify the agent-level `high`
                 # baseline being bumped. `default_thinking_effort` overrides
@@ -61,7 +61,6 @@ AGENT_CATALOG: dict[str, Any] = {
                     "id": "claude-fable-5",
                     "label": "Fable 5",
                     "default_thinking_effort": "xhigh",
-                    "permission_modes": ["auto"],
                 },
                 # Opus 5.5 is the newest Opus (Claude Code 2.1.282+, where the
                 # bare `opus` alias resolves to it). No `default_thinking_effort`
@@ -69,40 +68,31 @@ AGENT_CATALOG: dict[str, Any] = {
                 # takes the agent-level `high` rather than Opus 5's `xhigh`.
                 # The model rejects disabled thinking, so the `off` tier is
                 # coerced back on by the CLI rather than erroring.
-                {
-                    "id": "claude-opus-5-5",
-                    "label": "Opus 5.5",
-                    "permission_modes": ["auto"],
-                },
+                {"id": "claude-opus-5-5", "label": "Opus 5.5"},
                 {
                     "id": "claude-opus-5",
                     "label": "Opus 5",
                     "default_thinking_effort": "xhigh",
-                    "permission_modes": ["auto"],
                 },
                 {
                     "id": "claude-opus-4-8",
                     "label": "Opus 4.8",
                     "default_thinking_effort": "xhigh",
-                    "permission_modes": ["auto"],
                 },
                 {
                     "id": "claude-opus-4-8[1m]",
                     "label": "Opus 4.8 1M",
                     "default_thinking_effort": "xhigh",
-                    "permission_modes": ["auto"],
                 },
                 {
                     "id": "claude-opus-4-7",
                     "label": "Opus 4.7",
                     "default_thinking_effort": "xhigh",
-                    "permission_modes": ["auto"],
                 },
                 {
                     "id": "claude-opus-4-7[1m]",
                     "label": "Opus 4.7 1M",
                     "default_thinking_effort": "xhigh",
-                    "permission_modes": ["auto"],
                 },
                 {"id": "claude-opus-4-6", "label": "Opus 4.6"},
                 {"id": "claude-opus-4-6[1m]", "label": "Opus 4.6 1M"},
@@ -110,23 +100,10 @@ AGENT_CATALOG: dict[str, Any] = {
                     "id": "claude-sonnet-5",
                     "label": "Sonnet 5",
                     "is_default": True,
-                    "permission_modes": ["auto"],
                 },
-                {
-                    "id": "claude-sonnet-5[1m]",
-                    "label": "Sonnet 5 1M",
-                    "permission_modes": ["auto"],
-                },
-                {
-                    "id": "claude-sonnet-4-6",
-                    "label": "Sonnet 4.6",
-                    "permission_modes": ["auto"],
-                },
-                {
-                    "id": "claude-sonnet-4-6[1m]",
-                    "label": "Sonnet 4.6 1M",
-                    "permission_modes": ["auto"],
-                },
+                {"id": "claude-sonnet-5[1m]", "label": "Sonnet 5 1M"},
+                {"id": "claude-sonnet-4-6", "label": "Sonnet 4.6"},
+                {"id": "claude-sonnet-4-6[1m]", "label": "Sonnet 4.6 1M"},
                 {"id": "claude-haiku-4-5", "label": "Haiku 4.5"},
             ],
             # Agent-level lists carry labels + display order for ALL known
@@ -142,20 +119,18 @@ AGENT_CATALOG: dict[str, Any] = {
                 {"id": "low", "label": "Low"},
                 {"id": "off", "label": "Off"},
             ],
-            # `auto` is the default for every model that opts into it (Sonnet
-            # 4.6+, Opus 4.7+, Opus 5, Fable 5), mirroring Claude Code — which
-            # now starts new sessions in auto mode by default. `auto` stays
-            # `opt_in`, so models that don't support it (Opus 4.6, Haiku 4.5)
-            # fall through to `default` via the per-model filter (see
-            # reconcileAgainst / pickWithModelFilter in the web/mobile catalogs).
+            # `auto` is the default for every model, mirroring Claude Code,
+            # which starts new sessions in auto mode. It is deliberately NOT
+            # `opt_in`: an opt-in entry only shows for a model the client's
+            # catalog names, and mobile/desktop gear sheets read the catalog
+            # baked into the build, so every new model lost `auto` there until
+            # an app release (Opus 5.5). Claude Code 2.1.282 starts Opus 4.6 and
+            # Haiku 4.5 in auto without error, and a live switch the CLI refuses
+            # is recovered by the daemon (the permission_mode control in
+            # ``integrations/headless/claude_code.py``).
             "permission_modes": [
                 {"id": "default", "label": "Default"},
-                {
-                    "id": "auto",
-                    "label": "Auto mode",
-                    "opt_in": True,
-                    "is_default": True,
-                },
+                {"id": "auto", "label": "Auto mode", "is_default": True},
                 {"id": "acceptEdits", "label": "Accept Edits"},
                 {"id": "plan", "label": "Plan"},
                 {"id": "bypassPermissions", "label": "Skip permissions (Yolo)"},

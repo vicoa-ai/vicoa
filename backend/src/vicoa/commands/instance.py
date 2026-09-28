@@ -31,8 +31,8 @@ from uuid import UUID
 from vicoa.commands._api import request, resolve_api_key
 from vicoa.utils import get_project_path
 
-# One backend page is enough to resolve a short id and, at 500, to pull most
-# transcripts in a single round-trip. Mirrors the server's ``le=500`` cap.
+# At 500, one backend page pulls most transcripts in a single round-trip.
+# Mirrors the server's ``le=500`` cap.
 _MSG_PAGE = 500
 
 
@@ -44,6 +44,7 @@ _AGENT_W = 12  # fits "Claude Code" / "OpenCode" without truncating to "Claude �
 _MODEL_W = 18
 _NAME_W = 24
 _PROJECT_W = 18
+_ID_W = 36  # a full UUID
 
 
 def _fit(s: str, width: int) -> str:
@@ -51,8 +52,8 @@ def _fit(s: str, width: int) -> str:
     return s if len(s) <= width else s[: width - 1] + "…"
 
 
-def _short(value: Optional[str], n: int = 8) -> str:
-    return value[:n] if value else "—"
+def _or_dash(value: Optional[str]) -> str:
+    return str(value) if value else "—"
 
 
 def _model_of(item: dict) -> str:
@@ -164,17 +165,19 @@ def _print_instance_table(items: list[dict], total: Optional[int]) -> None:
     # Only surface the RESET column when it carries information — a plain
     # `session ls` shouldn't widen for a field that's empty on every row.
     show_reset = any(it.get("rate_limited") for it in items)
+    # The id is the full UUID — the one form every command and API takes — and
+    # sits last, so the columns a person reads stay put when a row wraps.
     header = (
-        f"{'ID':<8}  {'AGENT':<{_AGENT_W}} {'MODEL':<{_MODEL_W}} {'STATUS':<12} "
+        f"{'AGENT':<{_AGENT_W}} {'MODEL':<{_MODEL_W}} {'STATUS':<12} "
         f"{'NAME':<{_NAME_W}} {'PROJECT':<{_PROJECT_W}} {'MSGS':>5}  {'STARTED':<19}"
     )
     if show_reset:
         header += f"  {'RESET':<{_RESET_W}}"
+    header += f"  {'ID':<{_ID_W}}"
     print(header)
     print("-" * len(header))
     for it in items:
         line = (
-            f"{_short(it.get('id')):<8}  "
             f"{_fit(str(it.get('agent_type_name') or '—'), _AGENT_W):<{_AGENT_W}} "
             f"{_fit(_model_of(it), _MODEL_W):<{_MODEL_W}} "
             f"{str(it.get('status') or ''):<12} "
@@ -190,7 +193,7 @@ def _print_instance_table(items: list[dict], total: Optional[int]) -> None:
                 else "—"
             )
             line += f"  {reset:<{_RESET_W}}"
-        print(line)
+        print(f"{line}  {_or_dash(it.get('id'))}")
     shown = len(items)
     suffix = f" of {total}" if total is not None and total > shown else ""
     print(f"\n{shown} session(s){suffix}.")
@@ -288,44 +291,22 @@ def _print_instance_detail(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_instance_id(args, api_key: str, ref: str) -> str:
-    """Resolve a full UUID as-is, or a short prefix via the backend list.
+def _require_session_id(ref: str) -> str:
+    """``ref`` as a session id, which must be the full UUID, or exit 2.
 
-    ``vicoa ls`` prints 8-char prefixes, so accept those here (like
-    ``vicoa stop``). Prefix lookup only scans the caller's most-recent
-    ``_MSG_PAGE`` sessions; a full UUID always works if the prefix is too old
-    or ambiguous.
+    Short prefixes are not accepted: a prefix is not an identity. One that is
+    unique today goes ambiguous as sessions are added, and after a delete it
+    can quietly name a different session. Every id the CLI prints is the full
+    one, so there is nothing short to copy.
     """
     try:
-        UUID(ref)
-        return ref
-    except ValueError:
-        pass
-
-    data = request(
-        args,
-        api_key,
-        "GET",
-        "/api/v1/agent-instances",
-        params={"limit": 100},
-    )
-    items = data.get("items", []) if isinstance(data, dict) else []
-    matches = [it for it in items if str(it.get("id", "")).startswith(ref)]
-    if not matches:
+        return str(UUID(ref))
+    except (ValueError, TypeError, AttributeError):
         print(
-            f"No session found matching '{ref}'. "
-            "Pass the full id, or run `vicoa session ls` to find it.",
+            f"'{ref}' is not a session id. Pass the full id from `vicoa session ls`.",
             file=sys.stderr,
         )
-        sys.exit(1)
-    if len(matches) > 1:
-        shown = ", ".join(str(m.get("id"))[:8] for m in matches)
-        print(
-            f"'{ref}' is ambiguous — matches {shown}. Use more characters.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    return str(matches[0]["id"])
+        sys.exit(2)
 
 
 def _fetch_transcript(
@@ -509,7 +490,7 @@ def _apply_window_locally(
 
 
 def _cmd_get(args, api_key: str) -> int:
-    instance_id = _resolve_instance_id(args, api_key, args.session_id)
+    instance_id = _require_session_id(args.session_id)
     header = request(args, api_key, "GET", f"/api/v1/agent-instances/{instance_id}")
     fetch_all = getattr(args, "all_messages", False)
     messages = _fetch_transcript(
@@ -702,7 +683,7 @@ def _cmd_update(args, api_key: str) -> int:
         )
         return 2
 
-    instance_id = _resolve_instance_id(args, api_key, args.session_id)
+    instance_id = _require_session_id(args.session_id)
     if worktree:
         try:
             body.update(_resolve_worktree_move(args, api_key, instance_id, worktree))
@@ -737,9 +718,7 @@ def _cmd_update(args, api_key: str) -> int:
         changes.append(f'title set to "{body["name"]}"')
     if "task_id" in body:
         changes.append(
-            f"linked to task {_short(body['task_id'])}"
-            if body["task_id"]
-            else "task unlinked"
+            f"linked to task {body['task_id']}" if body["task_id"] else "task unlinked"
         )
     if "project" in body:
         changes.append(
@@ -747,7 +726,7 @@ def _cmd_update(args, api_key: str) -> int:
             if body.get("worktree_name")
             else f"moved to the main checkout ({body['project']})"
         )
-    print(f"Updated session {_short(instance_id)} — {', '.join(changes)}.")
+    print(f"Updated session {instance_id} — {', '.join(changes)}.")
     return 0
 
 
@@ -774,12 +753,12 @@ def _cmd_message(args, api_key: str) -> int:
     if not content:
         print("Message text is required.", file=sys.stderr)
         return 2
-    instance_id = _resolve_instance_id(args, api_key, args.session_id)
+    instance_id = _require_session_id(args.session_id)
     result = _send_user_message(args, api_key, instance_id, content)
     if getattr(args, "json", False):
         print(_json.dumps(result, indent=2))
         return 0
-    print(f"Sent message to session {_short(instance_id)}.")
+    print(f"Sent message to session {instance_id}.")
     return 0
 
 
@@ -789,12 +768,12 @@ def _cmd_continue(args, api_key: str) -> int:
     This is what an auto-continue automation calls once a rate-limited session's
     window has reset — the CLI equivalent of typing ``continue`` in the TUI.
     """
-    instance_id = _resolve_instance_id(args, api_key, args.session_id)
+    instance_id = _require_session_id(args.session_id)
     result = _send_user_message(args, api_key, instance_id, "continue")
     if getattr(args, "json", False):
         print(_json.dumps(result, indent=2))
         return 0
-    print(f"Continued session {_short(instance_id)}.")
+    print(f"Continued session {instance_id}.")
     return 0
 
 
@@ -841,7 +820,7 @@ def _print_share_table(args, links: list[dict]) -> None:
     if not links:
         print("No live share links.")
         return
-    header = f"{'LINK':<8}  {'AUDIENCE':<14} {'VIEWS':>5}  {'EXPIRES':<19}  URL"
+    header = f"{'AUDIENCE':<14} {'VIEWS':>5}  {'EXPIRES':<19}  {'LINK':<{_ID_W}}  URL"
     print(header)
     print("-" * len(header))
     for link in links:
@@ -849,10 +828,10 @@ def _print_share_table(args, links: list[dict]) -> None:
             _local_time(link.get("expires_at")) if link.get("expires_at") else "never"
         )
         print(
-            f"{_short(link.get('id')):<8}  "
             f"{str(link.get('audience') or ''):<14} "
             f"{link.get('view_count', 0):>5}  "
             f"{expires:<19}  "
+            f"{_or_dash(link.get('id')):<{_ID_W}}  "
             f"{_share_url(args, str(link.get('token') or ''))}"
         )
     print(f"\n{len(links)} link(s).")
@@ -893,7 +872,7 @@ def _cmd_share(args, api_key: str) -> int:
     "Session: $(vicoa session share)"``. ``--list`` shows the live links
     instead; ``--json`` prints the link record with ``url`` added.
     """
-    instance_id = _resolve_instance_id(args, api_key, _session_ref_or_self(args))
+    instance_id = _require_session_id(_session_ref_or_self(args))
     links = _live_links(args, api_key, instance_id)
     if getattr(args, "list", False):
         if getattr(args, "json", False):
@@ -938,11 +917,11 @@ def _cmd_unshare(args, api_key: str) -> int:
     A revoked URL is dead wherever it was pasted, so this never guesses: with
     neither flag it lists what it would revoke and exits 2.
     """
-    instance_id = _resolve_instance_id(args, api_key, _session_ref_or_self(args))
+    instance_id = _require_session_id(_session_ref_or_self(args))
     links = _live_links(args, api_key, instance_id)
     link_ref = getattr(args, "link", None)
     if link_ref:
-        matches = [lk for lk in links if str(lk.get("id", "")).startswith(link_ref)]
+        matches = [lk for lk in links if str(lk.get("id", "")) == link_ref.strip()]
         if len(matches) != 1:
             what = "no live link" if not matches else f"{len(matches)} links"
             print(
@@ -970,7 +949,7 @@ def _cmd_unshare(args, api_key: str) -> int:
     if not targets:
         print("No live share links to revoke.")
     else:
-        print(f"Revoked {len(targets)} link(s) on session {_short(instance_id)}.")
+        print(f"Revoked {len(targets)} link(s) on session {instance_id}.")
     return 0
 
 
@@ -1010,7 +989,7 @@ def _fetch_machines(args, api_key: str) -> list[dict]:
 
 
 def _machine_label(m: dict) -> str:
-    return m.get("display_name") or m.get("hostname") or _short(m.get("machine_id"))
+    return m.get("display_name") or m.get("hostname") or _or_dash(m.get("machine_id"))
 
 
 # Mirrors ``settings.liveness_online_threshold_seconds`` (90) and the web's
@@ -1066,36 +1045,35 @@ def _print_machines(machines: list[dict]) -> None:
         )
         return
     header = (
-        f"{'ID':<10}  {'NAME':<20} {'HOSTNAME':<20} {'PLATFORM':<10} "
-        f"{'STATUS':<8} {'LAST SEEN':<16}"
+        f"{'NAME':<20} {'HOSTNAME':<20} {'PLATFORM':<10} "
+        f"{'STATUS':<8} {'LAST SEEN':<16}  {'ID':<{_ID_W}}"
     )
     print(header)
     print("-" * len(header))
     for m in machines:
         status = "online" if _machine_online(m) else "offline"
         print(
-            f"{_short(m.get('machine_id'), 10):<10}  "
             f"{_fit(m.get('display_name') or '—', 20):<20} "
             f"{_fit(m.get('hostname') or '—', 20):<20} "
             f"{_fit(str(m.get('platform') or '—'), 10):<10} "
             f"{status:<8} "
-            f"{_local_time(m.get('last_heartbeat_at')):<16}"
+            f"{_local_time(m.get('last_heartbeat_at')):<16}  "
+            f"{_or_dash(m.get('machine_id'))}"
         )
     print(f"\n{len(machines)} machine(s).")
 
 
 def _match_machine(machines: list[dict], ref: str) -> dict:
-    """Resolve an explicit ref by id (exact/prefix) or name/hostname substring."""
+    """Resolve an explicit ref by full id or a name/hostname substring."""
+    low = ref.strip().lower()
     for m in machines:
-        if str(m.get("machine_id")) == ref:
+        if str(m.get("machine_id") or "").lower() == low:
             return m
 
-    low = ref.lower()
     matches = [
         m
         for m in machines
-        if str(m.get("machine_id", "")).startswith(ref)
-        or low in (m.get("display_name") or "").lower()
+        if low in (m.get("display_name") or "").lower()
         or low in (m.get("hostname") or "").lower()
     ]
     if not matches:
@@ -1107,7 +1085,7 @@ def _match_machine(machines: list[dict], ref: str) -> dict:
         sys.exit(1)
     if len(matches) > 1:
         shown = ", ".join(
-            f"{_machine_label(m)} ({_short(m.get('machine_id'))})" for m in matches
+            f"{_machine_label(m)} ({m.get('machine_id')})" for m in matches
         )
         print(
             f"'{ref}' is ambiguous — matches {shown}. Pass the full machine id.",
@@ -1150,7 +1128,7 @@ def _select_machine(args, api_key: str, ref: Optional[str]) -> dict:
         if str(m.get("machine_id")) == local_id:
             return m
     print(
-        f"This host's daemon ({_short(local_id)}) isn't registered on this server. "
+        f"This host's daemon ({local_id}) isn't registered on this server. "
         "Run `vicoa daemon` here, or pass --machine.",
         file=sys.stderr,
     )
@@ -1483,13 +1461,13 @@ def _cmd_start(args, api_key: str) -> int:
     verb = "Started" if online else "Queued"
     print(
         f"{verb} {agent} session on {_machine_label(machine)} in {directory} "
-        f"— session {_short(instance_id)}."
+        f"— session {instance_id}."
     )
     if final_status is not None:
         print(f"Status: {final_status}.")
     print(
-        f"Track it with `vicoa session get {_short(instance_id)}` "
-        f"or send input with `vicoa session message {_short(instance_id)} '...'`."
+        f"Track it with `vicoa session get {instance_id}` "
+        f"or send input with `vicoa session message {instance_id} '...'`."
     )
     return 0
 

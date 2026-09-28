@@ -61,7 +61,8 @@ class CatalogModel {
   /// the field exists for future per-model gating.
   final List<String>? thinkingEfforts;
   /// Per-model filter over agent-level `permissionModes`. Same shape as
-  /// `thinkingEfforts` — Sonnet 4.6+ and Opus 4.7+ add `auto`; older models omit it.
+  /// `thinkingEfforts`. No Claude model sets it: `auto` is deliberately common,
+  /// not opt-in, so a model this build's catalog predates still offers it.
   final List<String>? permissionModes;
   /// Override the agent-level `thinkingEfforts is_default` for this model.
   /// Opus 4.7+ default to `xhigh` (they're the only models with the depth
@@ -449,7 +450,7 @@ String sessionConfigSummary(AgentCatalog catalog, SessionConfig config) {
 /// the flag today; this comment is the rule.
 const String _agentCatalogFallbackJson = r'''
 {
-  "version": "2026-09-25-1",
+  "version": "2026-09-26-1",
   "min_cli_version": "1.20.0",
   "min_client_version": "0.42.0",
   "agents": [
@@ -458,19 +459,19 @@ const String _agentCatalogFallbackJson = r'''
       "label": "Claude Code",
       "supports_steer": true,
       "models": [
-        {"id": "claude-fable-5", "label": "Fable 5", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
-        {"id": "claude-opus-5-5", "label": "Opus 5.5", "permission_modes": ["auto"]},
-        {"id": "claude-opus-5", "label": "Opus 5", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
-        {"id": "claude-opus-4-8", "label": "Opus 4.8", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
-        {"id": "claude-opus-4-8[1m]", "label": "Opus 4.8 1M", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
-        {"id": "claude-opus-4-7", "label": "Opus 4.7", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
-        {"id": "claude-opus-4-7[1m]", "label": "Opus 4.7 1M", "default_thinking_effort": "xhigh", "permission_modes": ["auto"]},
+        {"id": "claude-fable-5", "label": "Fable 5", "default_thinking_effort": "xhigh"},
+        {"id": "claude-opus-5-5", "label": "Opus 5.5"},
+        {"id": "claude-opus-5", "label": "Opus 5", "default_thinking_effort": "xhigh"},
+        {"id": "claude-opus-4-8", "label": "Opus 4.8", "default_thinking_effort": "xhigh"},
+        {"id": "claude-opus-4-8[1m]", "label": "Opus 4.8 1M", "default_thinking_effort": "xhigh"},
+        {"id": "claude-opus-4-7", "label": "Opus 4.7", "default_thinking_effort": "xhigh"},
+        {"id": "claude-opus-4-7[1m]", "label": "Opus 4.7 1M", "default_thinking_effort": "xhigh"},
         {"id": "claude-opus-4-6", "label": "Opus 4.6"},
         {"id": "claude-opus-4-6[1m]", "label": "Opus 4.6 1M"},
-        {"id": "claude-sonnet-5", "label": "Sonnet 5", "is_default": true, "permission_modes": ["auto"]},
-        {"id": "claude-sonnet-5[1m]", "label": "Sonnet 5 1M", "permission_modes": ["auto"]},
-        {"id": "claude-sonnet-4-6", "label": "Sonnet 4.6", "permission_modes": ["auto"]},
-        {"id": "claude-sonnet-4-6[1m]", "label": "Sonnet 4.6 1M", "permission_modes": ["auto"]},
+        {"id": "claude-sonnet-5", "label": "Sonnet 5", "is_default": true},
+        {"id": "claude-sonnet-5[1m]", "label": "Sonnet 5 1M"},
+        {"id": "claude-sonnet-4-6", "label": "Sonnet 4.6"},
+        {"id": "claude-sonnet-4-6[1m]", "label": "Sonnet 4.6 1M"},
         {"id": "claude-haiku-4-5", "label": "Haiku 4.5"}
       ],
       "thinking_efforts": [
@@ -483,7 +484,7 @@ const String _agentCatalogFallbackJson = r'''
       ],
       "permission_modes": [
         {"id": "default", "label": "Default"},
-        {"id": "auto", "label": "Auto mode", "opt_in": true, "is_default": true},
+        {"id": "auto", "label": "Auto mode", "is_default": true},
         {"id": "acceptEdits", "label": "Accept Edits"},
         {"id": "plan", "label": "Plan"},
         {"id": "bypassPermissions", "label": "Skip permissions (Yolo)"}
@@ -769,12 +770,11 @@ AgentCatalog catalogWithCachedModels(
     }
     // A machine reports only `{id, label}` — no capability metadata. Carry the
     // catalog entry's fields over for ids we already know (isDefault,
-    // permissionModes, defaultThinkingEffort, …); without this, the opt-in
-    // gates see an empty per-model array and silently drop `auto` / `xhigh`
-    // from the pickers the moment an agent starts reporting its models —
-    // which is what happened when headless Claude began PATCHing
-    // `available_models`. Unknown slugs (a user's ANTHROPIC_MODEL) keep the
-    // common set only.
+    // permissionModes, defaultThinkingEffort, …); without this, the pickers
+    // silently lose per-model behaviour (the Opus `xhigh` default) the moment
+    // an agent starts reporting its models — which is what happened when
+    // headless Claude began PATCHing `available_models`. Unknown slugs (a
+    // user's ANTHROPIC_MODEL) keep the common set only.
     final catalogById = {for (final m in a.models ?? const <CatalogModel>[]) m.id: m};
     final models = cached.map((e) {
       final id = e['id']!;

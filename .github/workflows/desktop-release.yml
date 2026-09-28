@@ -39,6 +39,9 @@ name: Desktop release
 #   APPLE_API_KEY_ID         e.g. ABC123DEF9
 #   APPLE_API_ISSUER         e.g. 00000000-0000-0000-0000-000000000000
 #   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY  (renderer build)
+# Optional:
+#   DISCORD_RELEASES_WEBHOOK  Discord channel webhook; the publish job posts the
+#                            version's changelog section there
 # Release publishing uses the built-in GITHUB_TOKEN (no PAT); the daemon pull
 # needs no auth (public npm). The repo must allow Actions read/write for the
 # workflow_run-based backend build to publish, though this push/dispatch
@@ -353,3 +356,20 @@ jobs:
 
           gh release edit "$TAG" --repo "$REPO" \
             --draft=false --latest --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+
+      - name: Post the release to Discord
+        # Posts this version's user-facing notes (the `### v<version>` section of
+        # the docs changelog, not the commit list above) to a Discord channel
+        # webhook. Optional: skipped when the secret is unset, and a Discord
+        # failure never fails the release.
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASES_WEBHOOK }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "DISCORD_RELEASES_WEBHOOK not set; skipping"
+            exit 0
+          fi
+          python3 .github/scripts/discord_release_post.py \
+            apps/web/content/docs/changelog/desktop-app.mdx \
+            "$(node -p "require('./apps/desktop/package.json').version")"
