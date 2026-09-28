@@ -44,9 +44,12 @@ function useAutoResize(value: string, enabled: boolean) {
 export function EditableTitle({
   value,
   onSave,
+  readOnly = false,
 }: {
   value: string;
   onSave: (next: string) => void;
+  /** A task on a board shared below editor: shown, never opened for editing. */
+  readOnly?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -72,6 +75,10 @@ export function EditableTitle({
 
   const shared =
     'w-full text-2xl font-semibold leading-tight tracking-[-0.01em]';
+
+  if (readOnly) {
+    return <h1 className={cn(shared, 'px-1 py-0.5 -mx-1')}>{value}</h1>;
+  }
 
   if (!editing) {
     return (
@@ -129,9 +136,12 @@ export function EditableTitle({
 export function EditableDescription({
   value,
   onSave,
+  readOnly = false,
 }: {
   value: string | null;
   onSave: (next: string | null) => void;
+  /** See EditableTitle. An empty description renders nothing at all. */
+  readOnly?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
@@ -169,7 +179,9 @@ export function EditableDescription({
     onSave(next || null);
   }, [draft, value, onSave]);
 
-  if (!editing) {
+  if (readOnly && !value) return null;
+
+  if (!editing || readOnly) {
     const clamped = overflowing && !expanded;
     return (
       // The toggle sits OUTSIDE the click-to-edit region rather than inside it
@@ -177,16 +189,23 @@ export function EditableDescription({
       // different intents, and one shouldn't have to defuse the other.
       <div className="space-y-1">
         <div
-          role="textbox"
-          tabIndex={0}
-          onClick={() => setEditing(true)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              setEditing(true);
-            }
-          }}
-          className="relative -mx-2 cursor-text overflow-hidden rounded-md px-2 py-1.5 text-sm leading-relaxed transition-colors hover:bg-accent/40"
+          role={readOnly ? undefined : 'textbox'}
+          tabIndex={readOnly ? undefined : 0}
+          onClick={readOnly ? undefined : () => setEditing(true)}
+          onKeyDown={
+            readOnly
+              ? undefined
+              : (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setEditing(true);
+                  }
+                }
+          }
+          className={cn(
+            'relative -mx-2 overflow-hidden rounded-md px-2 py-1.5 text-sm leading-relaxed transition-colors',
+            !readOnly && 'cursor-text hover:bg-accent/40',
+          )}
           style={clamped ? { maxHeight: COLLAPSED_MAX_PX } : undefined}
         >
           <div ref={bodyRef}>

@@ -55,6 +55,8 @@ type RowProps = {
   onDelete: (task: TaskResponse) => void;
   onStartSession: (task: TaskResponse) => void;
   onCreateAutomation?: (task: TaskResponse) => void;
+  /** A task on a board shared below editor: opens, but offers nothing to change. */
+  readOnly?: boolean;
 };
 
 function TaskRow({
@@ -69,6 +71,7 @@ function TaskRow({
   onStartSession,
   onCreateAutomation,
   dragOverlay = false,
+  readOnly = false,
 }: RowProps & { dragOverlay?: boolean }) {
   const project = projects.find((p) => p.id === task.project_id);
   const start = formatTaskDate(task.start_date);
@@ -119,7 +122,7 @@ function TaskRow({
           {due}
         </span>
       )}
-      {!dragOverlay && (
+      {!dragOverlay && !readOnly && (
         <span
           onClick={(e) => e.stopPropagation()}
           className="opacity-0 transition-opacity group-hover/row:opacity-100"
@@ -141,7 +144,16 @@ function TaskRow({
 
 function SortableTaskRow(props: RowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: props.task.id });
+    useSortable({ id: props.task.id, disabled: props.readOnly });
+
+  if (props.readOnly) {
+    // No drag, no context menu: the row only opens.
+    return (
+      <div ref={setNodeRef}>
+        <TaskRow {...props} />
+      </div>
+    );
+  }
 
   return (
     <TaskContextMenu
@@ -182,6 +194,7 @@ function ListSection({
   onDelete,
   onStartSession,
   onCreateAutomation,
+  canEdit,
 }: {
   status: TaskStatus;
   taskIds: string[];
@@ -198,6 +211,7 @@ function ListSection({
   onDelete: (task: TaskResponse) => void;
   onStartSession: (task: TaskResponse) => void;
   onCreateAutomation?: (task: TaskResponse) => void;
+  canEdit?: (task: TaskResponse) => boolean;
 }) {
   // The whole section is droppable so a card dropped anywhere in it — including
   // on a collapsed header — lands in this status (appended to the end).
@@ -257,6 +271,7 @@ function ListSection({
                     onDelete={onDelete}
                     onStartSession={onStartSession}
                     onCreateAutomation={onCreateAutomation}
+                    readOnly={canEdit ? !canEdit(task) : false}
                   />
                 );
               })
@@ -283,6 +298,7 @@ export function TaskList({
   onStartSession,
   onCreateAutomation,
   onCreate,
+  canEdit,
 }: {
   /** Visible tasks, already filtered + ordered by the active view. */
   tasks: TaskResponse[];
@@ -302,6 +318,8 @@ export function TaskList({
   onStartSession: (task: TaskResponse) => void;
   onCreateAutomation?: (task: TaskResponse) => void;
   onCreate?: (status: TaskStatus) => void;
+  /** See TaskBoard `canEdit`. Omitted ⇒ every task is editable. */
+  canEdit?: (task: TaskResponse) => boolean;
 }) {
   const { columns, tasksById, activeTask, sensors, collisionDetection, dndHandlers } =
     useStatusColumnsDnd(tasks, onPatch, manualOrder);
@@ -327,6 +345,7 @@ export function TaskList({
             onDelete={onDelete}
             onStartSession={onStartSession}
             onCreateAutomation={onCreateAutomation}
+            canEdit={canEdit}
           />
         ))}
       </div>

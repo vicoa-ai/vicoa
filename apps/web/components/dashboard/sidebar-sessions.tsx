@@ -90,6 +90,7 @@ import {
   WorktreeDeleteDialog,
 } from '@/components/dashboard/session-dialogs';
 import { ShareLinkDialog, type ShareTarget } from '@/components/dashboard/share-link-dialog';
+import { SidebarSharedWithMe } from '@/components/dashboard/sidebar-shared-with-me';
 import { isDesktopLocal } from '@/lib/runtime-config';
 import { projectRoleAtLeast } from '@/lib/backend-api';
 import {
@@ -1097,7 +1098,16 @@ export function SidebarSessions({
       onPin: () => void handleTogglePin(instance),
       isPinned: pinned,
       onShare: canShare
-        ? () => setShareTarget({ kind: 'session', instanceId: instance.id, title })
+        ? () =>
+            setShareTarget({
+              kind: 'session',
+              instanceId: instance.id,
+              title,
+              projectId: instance.project_id ?? null,
+              projectName: instance.project_id
+                ? (projectsById.get(instance.project_id)?.name ?? null)
+                : null,
+            })
         : undefined,
       onRename: () =>
         setRenameDialog({ open: true, sessionId: instance.id, currentName: instance.name ?? title }),
@@ -1386,8 +1396,11 @@ export function SidebarSessions({
                 // Drives the leading icon, the Archive action, and the settings
                 // link's project identity.
                 const dbProject = groupBy === 'project' ? projectsById.get(key) : undefined;
-                const canArchiveProject =
-                  dbProject !== undefined && !dbProject.is_archived;
+                // Settings and Archive are admin+ on the project; hidden, not
+                // just refused, for anyone below (the backend 403s anyway).
+                const canManageProject =
+                  dbProject !== undefined && projectRoleAtLeast(dbProject.role, 'admin');
+                const canArchiveProject = canManageProject && !dbProject.is_archived;
                 // Share links need the DB project and admin standing on it
                 // (an absent role reads as viewer — never as owner).
                 const canShareProject =
@@ -1397,7 +1410,8 @@ export function SidebarSessions({
                 // "Project settings" opens the per-project pane in Settings,
                 // routed by the DB project id (the pane resolves folders and
                 // worktree config from the project's own directory rows).
-                const projectSettingsHref = dbProject ? settingsHrefForProject(dbProject.id) : null;
+                const projectSettingsHref =
+                  dbProject && canManageProject ? settingsHrefForProject(dbProject.id) : null;
                 const projectHeader = label ? (
                   // Wrapper carries the drag handle and hover group so the
                   // collapse toggle, actions menu, and "+" can be sibling buttons
@@ -1590,6 +1604,15 @@ export function SidebarSessions({
                 </div>
               ) : null}
             </div>
+          )}
+          {/* Other people's work shared with you (P5). Cloud only: the
+              logged-out desktop has no account for anyone to share with. */}
+          {canShare && (
+            <SidebarSharedWithMe
+              api={api}
+              projectsById={projectsById}
+              onProjectsChanged={refreshProjects}
+            />
           )}
         </div>
       </div>

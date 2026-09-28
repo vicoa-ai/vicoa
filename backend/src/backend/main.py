@@ -30,6 +30,7 @@ from .api import (
     push_notifications,
     user_settings,
     teams,
+    project_grants,
     machines,
     slash_commands,
     file_mentions,
@@ -182,6 +183,7 @@ app.include_router(slash_commands.router, prefix=settings.api_v1_prefix)
 app.include_router(file_mentions.router, prefix=settings.api_v1_prefix)
 app.include_router(support.router, prefix=settings.api_v1_prefix)
 app.include_router(tasks.router, prefix=settings.api_v1_prefix)
+app.include_router(project_grants.router, prefix=settings.api_v1_prefix)
 app.include_router(automations.router, prefix=settings.api_v1_prefix)
 app.include_router(references.router, prefix=settings.api_v1_prefix)
 app.include_router(search.router, prefix=settings.api_v1_prefix)

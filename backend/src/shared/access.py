@@ -413,6 +413,71 @@ def instance_role(db: Session, user_id: UUID, instance: AgentInstance) -> Role |
     return role
 
 
+def instance_roles(
+    db: Session, user_id: UUID, instances: Iterable[AgentInstance]
+) -> dict[UUID, Role | None]:
+    """`instance_role` for many sessions in four queries, not four per row.
+
+    Same answer as calling `instance_role` on each: owner for your own, None
+    for DELETED, else the stronger of the session share (direct or via an
+    active team) and the project role with the 'sessions' scope. The shared
+    session list polls this, so it must not scale with the page size.
+    """
+    instances = list(instances)
+    out: dict[UUID, Role | None] = {}
+    foreign: list[AgentInstance] = []
+    for instance in instances:
+        if instance.user_id == user_id:
+            out[instance.id] = "owner"
+        elif instance.status == AgentStatus.DELETED:
+            out[instance.id] = None
+        else:
+            foreign.append(instance)
+    if not foreign:
+        return out
+
+    ids = [i.id for i in foreign]
+    levels: dict[UUID, list[InstanceAccessLevel]] = {}
+    for iid, level in db.execute(
+        select(UserInstanceAccess.agent_instance_id, UserInstanceAccess.access).where(
+            UserInstanceAccess.agent_instance_id.in_(ids),
+            UserInstanceAccess.user_id == user_id,
+        )
+    ).all():
+        levels.setdefault(iid, []).append(level)
+    for iid, level in db.execute(
+        select(TeamInstanceAccess.agent_instance_id, TeamInstanceAccess.access)
+        .join(TeamMember, TeamMember.team_id == TeamInstanceAccess.team_id)
+        .where(
+            TeamInstanceAccess.agent_instance_id.in_(ids),
+            TeamMember.user_id == user_id,
+            TeamMember.status == "active",
+        )
+    ).all():
+        levels.setdefault(iid, []).append(level)
+
+    project_ids = {i.project_id for i in foreign if i.project_id is not None}
+    projects = (
+        db.execute(select(Project).where(Project.id.in_(project_ids))).scalars().all()
+        if project_ids
+        else []
+    )
+    standings = project_accesses(db, user_id, projects)
+
+    for instance in foreign:
+        share_levels = [lvl for lvl in levels.get(instance.id, []) if lvl]
+        role = _level_to_role(
+            max(share_levels, key=lambda lvl: _ACCESS_PRIORITY[lvl])
+            if share_levels
+            else None
+        )
+        standing = standings.get(instance.project_id) if instance.project_id else None
+        if standing is not None and standing.covers("sessions"):
+            role = max_role(role, standing.role)
+        out[instance.id] = role
+    return out
+
+
 def instance_access(
     db: Session, user_id: UUID, instance: AgentInstance
 ) -> InstanceAccessLevel | None:

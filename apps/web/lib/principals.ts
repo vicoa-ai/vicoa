@@ -66,7 +66,7 @@ export function principalAvatarSrc(principal: Principal | null | undefined): str
  */
 export function principalFromResponse(
   response: {
-    type: 'user' | 'agent' | 'system';
+    type: 'user' | 'team' | 'agent' | 'system';
     id: string | null;
     name: string | null;
     avatar_image_uri: string | null;

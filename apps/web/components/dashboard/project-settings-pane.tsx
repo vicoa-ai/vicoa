@@ -53,6 +53,7 @@ import { ProjectIcon } from '@/components/dashboard/task-ui';
 import { WorktreeSetupSection } from '@/components/dashboard/worktree-setup-section';
 import {
   getBackendAPI,
+  projectRoleAtLeast,
   type MachineSummary,
   type ProjectResponse,
   type ProjectSummaryResponse,
@@ -444,6 +445,9 @@ function DangerZone({
             {project.is_archived ? 'Unarchive' : 'Archive'}
           </Button>
         </div>
+        {/* Deleting is the owner's alone; an admin grantee may archive and
+            configure, but never destroy (collaboration §4 role floors). */}
+        {projectRoleAtLeast(project.role, 'owner') && (
         <div className="flex items-center justify-between gap-4 px-4 py-3">
           <div className="min-w-0 space-y-0.5">
             <p className="text-sm text-foreground">Delete this project</p>
@@ -462,6 +466,7 @@ function DangerZone({
             Delete
           </Button>
         </div>
+        )}
       </SectionCard>
       {error && <p className="text-xs text-destructive">{error}</p>}
 

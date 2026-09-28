@@ -35,6 +35,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { AccountMenuInvitations, InvitationDot } from '@/components/dashboard/account-menu-invitations';
 import { AgentDashboardProvider, useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import useSWR from 'swr';
 import type { AuthUser } from '@/lib/auth/user';
@@ -568,11 +569,11 @@ function DashboardSidebar({
                   title={!showSideBar ? userDisplayName : undefined}
                 >
                   <div className="flex items-center w-full">
-                    <PrincipalAvatar
-                      principal={userPrincipal}
-                      size="md"
-                      className={cn(showSideBar && "mr-3")}
-                    />
+                    {/* Relative box for the pending-invitations dot. */}
+                    <span className={cn('relative flex shrink-0', showSideBar && 'mr-3')}>
+                      <PrincipalAvatar principal={userPrincipal} size="md" />
+                      <InvitationDot />
+                    </span>
                     <div className={cn("flex-1 min-w-0 text-left", !showSideBar && "hidden")}>
                         {user.name ? (
                         <>
@@ -604,6 +605,15 @@ function DashboardSidebar({
                     <div className="truncate text-muted-foreground">{userEmail || 'Account'}</div>
                   </div>
                 </div>
+
+                <div className="py-1">
+                  <AccountMenuInvitations
+                    itemClassName="px-4 py-2.5 text-xs text-foreground/80"
+                    rowClassName="px-4"
+                  />
+                </div>
+
+                <DropdownMenuSeparator className="mx-4" />
 
                 <div className="py-1">
                   <DropdownMenuItem

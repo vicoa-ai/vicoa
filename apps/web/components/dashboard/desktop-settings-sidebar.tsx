@@ -13,6 +13,7 @@ import {
   Puzzle,
   Settings,
   User,
+  Users,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
@@ -39,6 +40,7 @@ export const DESKTOP_SETTINGS_TABS = [
   { id: 'providers', label: 'Providers', Icon: Bot },
   { id: 'machines', label: 'Machines', Icon: Monitor },
   { id: 'tasks', label: 'Tasks', Icon: ListTodo },
+  { id: 'teams', label: 'Teams', Icon: Users },
   { id: 'plugins', label: 'Plugins', Icon: Puzzle },
   { id: 'shortcuts', label: 'Keyboard shortcuts', Icon: Keyboard },
 ] as const;

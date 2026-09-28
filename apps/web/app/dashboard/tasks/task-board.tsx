@@ -60,6 +60,7 @@ function TaskCard({
   onStartSession,
   onCreateAutomation,
   dragOverlay = false,
+  readOnly = false,
 }: {
   task: TaskResponse;
   projects: ProjectResponse[];
@@ -72,6 +73,8 @@ function TaskCard({
   onStartSession?: (task: TaskResponse) => void;
   onCreateAutomation?: (task: TaskResponse) => void;
   dragOverlay?: boolean;
+  /** A task on a board shared below editor: opens, but offers nothing to change. */
+  readOnly?: boolean;
 }) {
   const project = projects.find((p) => p.id === task.project_id);
   const start = formatTaskDate(task.start_date);
@@ -102,7 +105,7 @@ function TaskCard({
           {display.priority && <PriorityIcon priority={task.priority} />}
           <TaskIdentifier task={task} />
         </span>
-        {!dragOverlay && (
+        {!dragOverlay && !readOnly && (
           <span
             onClick={(e) => e.stopPropagation()}
             className="-my-1 opacity-0 transition-opacity group-hover/card:opacity-100"
@@ -176,9 +179,19 @@ function SortableTaskCard(props: {
   onDelete: (task: TaskResponse) => void;
   onStartSession?: (task: TaskResponse) => void;
   onCreateAutomation?: (task: TaskResponse) => void;
+  readOnly?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: props.task.id });
+    useSortable({ id: props.task.id, disabled: props.readOnly });
+
+  if (props.readOnly) {
+    // No drag, no context menu: the card only opens.
+    return (
+      <div ref={setNodeRef}>
+        <TaskCard {...props} />
+      </div>
+    );
+  }
 
   return (
     <TaskContextMenu
@@ -217,6 +230,7 @@ function BoardColumn({
   onStartSession,
   onCreateAutomation,
   onCreate,
+  canEdit,
 }: {
   status: TaskStatus;
   taskIds: string[];
@@ -231,6 +245,7 @@ function BoardColumn({
   onStartSession?: (task: TaskResponse) => void;
   onCreateAutomation?: (task: TaskResponse) => void;
   onCreate?: (status: TaskStatus) => void;
+  canEdit?: (task: TaskResponse) => boolean;
 }) {
   // The column body is droppable so cards can be dropped on empty columns.
   const { setNodeRef, isOver } = useDroppable({ id: columnDroppableId(status) });
@@ -281,6 +296,7 @@ function BoardColumn({
                 onDelete={onDelete}
                 onStartSession={onStartSession}
                 onCreateAutomation={onCreateAutomation}
+                readOnly={canEdit ? !canEdit(task) : false}
               />
             );
           })}
@@ -303,6 +319,7 @@ export function TaskBoard({
   onStartSession,
   onCreateAutomation,
   onCreate,
+  canEdit,
 }: {
   /** Visible tasks, already filtered + ordered by the active view. */
   tasks: TaskResponse[];
@@ -319,6 +336,12 @@ export function TaskBoard({
   onStartSession?: (task: TaskResponse) => void;
   onCreateAutomation?: (task: TaskResponse) => void;
   onCreate?: (status: TaskStatus) => void;
+  /**
+   * Whether the caller may change this task (editor+ on its project). A card
+   * it rejects can still be opened but not dragged, and has no actions menu.
+   * Omitted ⇒ every task is editable.
+   */
+  canEdit?: (task: TaskResponse) => boolean;
 }) {
   const { columns, tasksById, activeTask, sensors, collisionDetection, dndHandlers } =
     useStatusColumnsDnd(tasks, onPatch, manualOrder);
@@ -346,6 +369,7 @@ export function TaskBoard({
             onStartSession={onStartSession}
             onCreateAutomation={onCreateAutomation}
             onCreate={onCreate}
+            canEdit={canEdit}
           />
         ))}
       </div>

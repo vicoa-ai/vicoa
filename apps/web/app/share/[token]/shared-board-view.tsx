@@ -46,7 +46,7 @@ import {
 } from '@/lib/public-share-api';
 import { cn } from '@/lib/utils';
 import { ShareHeader } from './share-shell';
-import { POLL_IDLE_MS, useSharePoll } from './use-share-poll';
+import { POLL_IDLE_MS, useSharePoll } from '@/lib/use-share-poll';
 
 const COLUMN_WIDTH = 280;
 

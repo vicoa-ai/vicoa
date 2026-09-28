@@ -1,6 +1,8 @@
 'use client';
 
-// Polling for the public share viewer (collaboration §9, old plan D4).
+// Polling for anyone watching someone else's work: the public share viewer
+// (collaboration §9, old plan D4) and, until P6 gives them a socket, a
+// signed-in grantee's read-only session view and "Shared with me" list.
 //
 // Viewers poll rather than open a socket: polling lands on the stateless,
 // horizontally scalable `backend` app, while a WebSocket would land on the

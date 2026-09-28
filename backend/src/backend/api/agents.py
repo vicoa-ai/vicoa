@@ -44,6 +44,7 @@ from ..db import (
     get_instance_shares,
     add_instance_share,
     remove_instance_share,
+    update_instance_share,
 )
 from ..models import (
     AgentInstanceDetail,
@@ -54,6 +55,7 @@ from ..models import (
     UserMessageRequest,
     InstanceShareCreateRequest,
     InstanceShareResponse,
+    InstanceShareUpdateRequest,
 )
 from servers.shared.db import update_session_title_if_needed
 from shared.websocket import (
@@ -226,18 +228,27 @@ def get_instance_detail(
 @router.get("/agent-instances/{instance_id}/messages")
 def get_instance_messages_paginated(
     instance_id: UUID,
+    # Unbounded on purpose: installed mobile builds ask for limit=10000.
     limit: int = 50,
     before_message_id: UUID | None = None,
+    after_message_id: UUID | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Get paginated messages for an agent instance using cursor-based pagination"""
+    """Get paginated messages for an agent instance using cursor-based pagination.
+    `after_message_id` is the poll watermark (newer messages, oldest first)."""
+    if before_message_id is not None and after_message_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Pass at most one of before_message_id / after_message_id",
+        )
     messages = get_instance_messages(
         db,
         instance_id,
         current_user.id,
         limit=limit,
         before_message_id=before_message_id,
+        after_message_id=after_message_id,
     )
     if messages is None:
         raise HTTPException(status_code=404, detail="Agent instance not found")
@@ -273,14 +284,16 @@ def add_instance_access(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Grant access to an agent instance for another user. Owner or project admin."""
+    """Share a session with a person (by email) or a team. Owner or project
+    admin. WRITE to a person asks `collab.grant_write` (→ 402 on denial)."""
     try:
         share = add_instance_share(
             db,
             instance_id=instance_id,
             user_id=current_user.id,
-            email=request.email,
             access_level=request.access,
+            email=request.email,
+            team_id=request.team_id,
         )
         db.commit()
         return share
@@ -288,6 +301,30 @@ def add_instance_access(
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+
+
+@router.patch(
+    "/agent-instances/{instance_id}/access/{access_id}",
+    response_model=InstanceShareResponse,
+)
+def update_instance_access(
+    instance_id: UUID,
+    access_id: UUID,
+    request: InstanceShareUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Change a person's or a team's READ/WRITE. Owner or project admin."""
+    try:
+        share = update_instance_share(
+            db, instance_id, current_user.id, access_id, request.access
+        )
+        db.commit()
+        return share
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
 
@@ -370,7 +407,9 @@ def create_user_message_endpoint(
             requires_user_input=message.requires_user_input,
             message_metadata=message.message_metadata,
         )
-        payload = build_new_message_update(message)
+        payload = build_new_message_update(
+            message, sender_display_name=current_user.display_name
+        )
         # Rooms are keyed by the session's OWNER, not the sender: a
         # collaborator's message has to reach the owner's open clients.
         # (Fan-out to other watchers is P6.)

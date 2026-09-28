@@ -28,7 +28,10 @@
 //
 // `ShareLinkPanel` is the body without the Dialog chrome, for any other host.
 //
-// The "People" tab (per-project grants) is P5; it is not drawn until it works.
+// Beside the Link tab sits People (P5, `share-people-panel.tsx`): the same
+// subject shared with named people or teams instead of with a URL. The dialog
+// opens on Link unless a host asks for People (the Tasks header's avatar
+// stack does).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -83,9 +86,17 @@ import {
 import { useCopyToClipboard } from '@/lib/hooks/use-session-operations';
 import { DatePickerPill, STATUS_CONFIG, STATUS_ORDER } from '@/components/dashboard/task-ui';
 import { cn } from '@/lib/utils';
+import { SharePeoplePanel, type PeopleTarget } from '@/components/dashboard/share-people-panel';
 
 export type ShareTarget =
-  | { kind: 'session'; instanceId: string; title: string }
+  | {
+      kind: 'session';
+      instanceId: string;
+      title: string;
+      /** The session's project, for People's "seen through the project" block. */
+      projectId?: string | null;
+      projectName?: string | null;
+    }
   | {
       kind: 'project';
       projectId: string;
@@ -1087,8 +1098,23 @@ export function ShareLinkPanel({ api, target }: { api: BackendAPI | null; target
   );
 }
 
+export type ShareTab = 'link' | 'people';
+
 /** The dialog's title and one-line description, by what is being shared. */
-function dialogCopy(target: ShareTarget): { title: string; description: string } {
+function dialogCopy(target: ShareTarget, tab: ShareTab): { title: string; description: string } {
+  if (tab === 'people') {
+    return target.kind === 'session'
+      ? {
+          title: `Share “${target.title || 'session'}”`,
+          description:
+            'Give specific people or a team access to this one session. They find it under Shared with me.',
+        }
+      : {
+          title: `Share “${target.name}”`,
+          description:
+            'Give specific people or a team access to this project. They find it under Shared with me, with the role you pick.',
+        };
+  }
   switch (target.kind) {
     case 'session':
       return {
@@ -1105,17 +1131,48 @@ function dialogCopy(target: ShareTarget): { title: string; description: string }
   }
 }
 
+function peopleTarget(target: ShareTarget): PeopleTarget {
+  return target.kind === 'session'
+    ? {
+        kind: 'session',
+        instanceId: target.instanceId,
+        projectId: target.projectId ?? null,
+        projectName: target.projectName ?? null,
+      }
+    : { kind: 'project', projectId: target.projectId, name: target.name };
+}
+
 export function ShareLinkDialog({
   open,
   onOpenChange,
   target,
+  initialTab = 'link',
+  onPeopleChanged,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   target: ShareTarget | null;
+  initialTab?: ShareTab;
+  /** A project's grants changed (so a host's avatar stack can refresh). */
+  onPeopleChanged?: () => void;
 }) {
   const { api } = useAgentDashboard();
-  const copy = target ? dialogCopy(target) : null;
+  const [tab, setTab] = useState<ShareTab>(initialTab);
+  // "Manage" on a session's inherited-from-project block points this same
+  // dialog at the project's People tab; reopening starts from the host's
+  // target again.
+  const [retarget, setRetarget] = useState<ShareTarget | null>(null);
+  const targetKey = target ? shareTargetKey(target) : null;
+  useEffect(() => {
+    if (!open) return;
+    setTab(initialTab);
+    setRetarget(null);
+    // Keyed on the target's identity, not the object: hosts build a fresh
+    // literal every render.
+  }, [open, initialTab, targetKey]);
+
+  const shown = retarget ?? target;
+  const copy = shown ? dialogCopy(shown, tab) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1124,7 +1181,43 @@ export function ShareLinkDialog({
           <DialogTitle className="truncate">{copy?.title}</DialogTitle>
           <DialogDescription>{copy?.description}</DialogDescription>
         </DialogHeader>
-        {target && <ShareLinkPanel key={shareTargetKey(target)} api={api} target={target} />}
+        <div role="tablist" aria-label="Share with" className="-mt-2 flex gap-1 border-b border-border/60">
+          {(['link', 'people'] as const).map((id) => {
+            const active = id === tab;
+            return (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setTab(id)}
+                className={cn(
+                  '-mb-px cursor-pointer border-b-2 px-3 py-2 text-xs transition-colors',
+                  FOCUS_RING,
+                  active
+                    ? 'border-foreground text-foreground'
+                    : 'border-transparent text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {id === 'link' ? 'Link' : 'People'}
+              </button>
+            );
+          })}
+        </div>
+        {shown && tab === 'link' && (
+          <ShareLinkPanel key={shareTargetKey(shown)} api={api} target={shown} />
+        )}
+        {shown && tab === 'people' && (
+          <SharePeoplePanel
+            key={`people:${shareTargetKey(shown)}`}
+            api={api}
+            target={peopleTarget(shown)}
+            onChanged={onPeopleChanged}
+            onOpenProject={(projectId, name) =>
+              setRetarget({ kind: 'project', projectId, name, initialScope: 'sessions' })
+            }
+          />
+        )}
       </DialogContent>
     </Dialog>
   );

@@ -749,6 +749,7 @@ export default function AgentManagerPage() {
                                 kind: 'session',
                                 instanceId: target.id,
                                 title: target.name || target.agent_type_name || 'Untitled session',
+                                projectId: target.project_id ?? null,
                               })
                       }
                       onOptionClick={(instanceId, option) => postMessage(instanceId, option)}

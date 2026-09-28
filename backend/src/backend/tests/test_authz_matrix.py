@@ -115,6 +115,9 @@ class World:
     automation: Automation
     api_key: APIKey
     share: UserInstanceAccess  # an existing share row on the instance, for DELETE
+    # An existing grant to a third person, so PATCH/DELETE .../grants/{id}
+    # have a target for every subject.
+    bystander_grant: ProjectGrant
 
 
 def _user(db, email: str, name: str) -> User:
@@ -165,18 +168,18 @@ def _grant(
     role: str,
     scopes: list[str] | None = None,
     granted_by: User,
-) -> None:
-    db.add(
-        ProjectGrant(
-            project_id=project.id,
-            principal_type=principal_type,
-            principal_id=principal_id,
-            role=role,
-            scopes=scopes or ["tasks", "sessions"],
-            granted_by_user_id=granted_by.id,
-        )
+) -> ProjectGrant:
+    grant = ProjectGrant(
+        project_id=project.id,
+        principal_type=principal_type,
+        principal_id=principal_id,
+        role=role,
+        scopes=scopes or ["tasks", "sessions"],
+        granted_by_user_id=granted_by.id,
     )
+    db.add(grant)
     db.flush()
+    return grant
 
 
 @pytest.fixture
@@ -250,6 +253,14 @@ def world(test_db, test_user, request) -> World:
         granted_by_user_id=owner.id,
     )
     db.add(share)
+    bystander_grant = _grant(
+        db,
+        project,
+        principal_type="user",
+        principal_id=bystander.id,
+        role="viewer",
+        granted_by=owner,
+    )
 
     if subject_kind == "owner":
         subject = owner
@@ -327,7 +338,7 @@ def world(test_db, test_user, request) -> World:
         raise AssertionError(f"unknown subject {subject_kind}")
 
     db.commit()
-    for obj in (project, task, instance, queued, share):
+    for obj in (project, task, instance, queued, share, bystander_grant):
         db.refresh(obj)
     return World(
         owner=owner,
@@ -341,6 +352,7 @@ def world(test_db, test_user, request) -> World:
         automation=automation,
         api_key=api_key,
         share=share,
+        bystander_grant=bystander_grant,
     )
 
 
@@ -386,7 +398,7 @@ def _quiet_side_effects(monkeypatch):
 @dataclass(frozen=True)
 class Endpoint:
     name: str
-    area: str  # 'tasks' | 'sessions' | 'project' | 'owner_only'
+    area: str  # 'tasks' | 'sessions' | 'project' | 'grants' | 'owner_only'
     minimum: str
     call: Callable[[TestClient, World], httpx.Response]
     # For list endpoints: extract the ids the response exposes so "invisible"
@@ -651,6 +663,15 @@ ENDPOINTS: list[Endpoint] = [
         ),
     ),
     Endpoint(
+        "PATCH /agent-instances/{id}/access/{aid}",
+        "sessions",
+        "admin",
+        lambda c, w: c.patch(
+            f"/api/v1/agent-instances/{w.instance.id}/access/{w.share.id}",
+            json={"access": "WRITE"},
+        ),
+    ),
+    Endpoint(
         "DELETE /agent-instances/{id}/access/{aid}",
         "sessions",
         "admin",
@@ -686,6 +707,42 @@ ENDPOINTS: list[Endpoint] = [
         "owner_only",
         "owner",
         lambda c, w: c.delete(f"/api/v1/auth/api-keys/{w.api_key.id}"),
+    ),
+    # --- people (grants) -----------------------------------------------------
+    # Grant administration is admin on BOTH scopes (`area="grants"`): a
+    # tasks-only admin sees the project but must not hand out, list or
+    # revoke access to sessions it does not itself administer.
+    Endpoint(
+        "GET /projects/{id}/grants",
+        "grants",
+        "admin",
+        lambda c, w: c.get(f"/api/v1/projects/{w.project.id}/grants"),
+    ),
+    Endpoint(
+        "POST /projects/{id}/grants",
+        "grants",
+        "admin",
+        lambda c, w: c.post(
+            f"/api/v1/projects/{w.project.id}/grants",
+            json={"email": "newcomer@example.com", "role": "viewer"},
+        ),
+    ),
+    Endpoint(
+        "PATCH /projects/{id}/grants/{gid}",
+        "grants",
+        "admin",
+        lambda c, w: c.patch(
+            f"/api/v1/projects/{w.project.id}/grants/{w.bystander_grant.id}",
+            json={"role": "commenter"},
+        ),
+    ),
+    Endpoint(
+        "DELETE /projects/{id}/grants/{gid}",
+        "grants",
+        "admin",
+        lambda c, w: c.delete(
+            f"/api/v1/projects/{w.project.id}/grants/{w.bystander_grant.id}"
+        ),
     ),
     # `#` composer references. Owner-only on purpose, like the cmd+K search
     # they sit beside: "#" reaches your own workspace, not a board you were
@@ -737,6 +794,15 @@ def _standing_for(endpoint: Endpoint, standing: Standing) -> str | None:
         return sessions
     if endpoint.area == "project":
         return project
+    if endpoint.area == "grants":
+        # Visible through the project; administered only with both scopes. A
+        # scope the subject lacks counts as the bottom rung, so a one-scope
+        # admin is forbidden rather than invisible.
+        if project is None:
+            return None
+        if tasks is None or sessions is None:
+            return "viewer"
+        return tasks if RANK[tasks] <= RANK[sessions] else sessions
     # owner_only: only the literal owner ever resolves — every grant-derived
     # standing, including team-project 'owner', is invisible here.
     return None
@@ -778,10 +844,14 @@ def test_authz_matrix(
 def test_every_dashboard_route_is_in_the_matrix_or_owner_only():
     """A new route on the tasks/agents routers must be classified here. This is
     the guard against "added an endpoint, forgot the lens"."""
-    covered = {e.name.split(" ")[1].split("?")[0] for e in ENDPOINTS}
+    # (method, path): a new verb on an already-covered path needs its own row
+    # too — PATCH on a share is not the same decision as DELETE on it.
+    covered = {
+        (e.name.split(" ")[0], e.name.split(" ")[1].split("?")[0]) for e in ENDPOINTS
+    }
     # Paths on the dashboard routers that carry a project/task/session id and
     # therefore need a standing decision. Anything new lands here → fails.
-    from backend.api import agents, tasks
+    from backend.api import agents, project_grants, tasks
 
     def paths(router):
         for route in router.routes:
@@ -811,6 +881,10 @@ def test_every_dashboard_route_is_in_the_matrix_or_owner_only():
         ("GET", "/agent-summary"),
         ("GET", "/agent-instances/stream"),
         ("GET", "/agent-instances/{instance_id}/messages/stream"),
+        # Leaving is the caller dropping their own grant: 204 for a direct
+        # grantee, 409 for an owner or a team-derived standing. Not a
+        # role floor, so it is exercised in test_project_people.py.
+        ("POST", "/projects/{project_id}/leave"),
     }
     normalise = {
         "/projects/{project_id}": "/projects/{id}",
@@ -830,13 +904,15 @@ def test_every_dashboard_route_is_in_the_matrix_or_owner_only():
         "/agent-instances/{instance_id}/status": "/agent-instances/{id}/status",
         "/agent-instances/{instance_id}/access": "/agent-instances/{id}/access",
         "/agent-instances/{instance_id}/access/{access_id}": "/agent-instances/{id}/access/{aid}",
+        "/projects/{project_id}/grants": "/projects/{id}/grants",
+        "/projects/{project_id}/grants/{grant_id}": "/projects/{id}/grants/{gid}",
     }
     missing = []
-    for router in (tasks.router, agents.router):
+    for router in (tasks.router, agents.router, project_grants.router):
         for method, path in paths(router):
             if (method, path) in expected_uncovered:
                 continue
-            if normalise.get(path, path) not in covered:
+            if (method, normalise.get(path, path)) not in covered:
                 missing.append((method, path))
     assert not missing, f"routes without a matrix row: {missing}"
 

@@ -15,7 +15,7 @@ exhausted tokens.
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from shared.database import Team, TeamInvite, TeamMember, User
@@ -23,6 +23,7 @@ from shared.database.session import get_db
 
 from ..auth.dependencies import get_current_user
 from ..db import collab_queries
+from ..email_service import email_is_configured, send_team_invite_email, web_url
 from ..db.collab_queries import (
     InviteNotFoundError,
     TeamConflictError,
@@ -37,6 +38,7 @@ from ..models import (
     TeamInvitePreviewResponse,
     TeamInviteResponse,
     TeamMemberInviteRequest,
+    TeamMemberInviteResponse,
     TeamMemberResponse,
     TeamMemberRoleUpdateRequest,
     TeamSummary,
@@ -45,6 +47,11 @@ from ..models import (
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 invite_router = APIRouter(prefix="/team-invites", tags=["teams"])
+
+# Where an emailed invite lands: Settings → Teams lists pending invitations
+# with Accept / Decline. Not a capability — it only shows an invitation to the
+# account that holds the invited address.
+TEAM_INVITATIONS_PATH = "/dashboard/settings?tab=teams"
 
 
 # --- serializers --------------------------------------------------------------
@@ -150,7 +157,13 @@ def list_invitations(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[TeamInvitationResponse]:
-    """Email invites waiting on the caller."""
+    """Email invites waiting on the caller.
+
+    Also the "login" half of invite-before-signup: the account menu loads this
+    on every dashboard visit, so project grants and session shares sent to the
+    caller's address attach here even when the account was first created by a
+    path that skipped the signup hook."""
+    collab_queries.claim_pending_invites(db, current_user)
     out: list[TeamInvitationResponse] = []
     for member in collab_queries.list_pending_invitations(db, current_user):
         inviter = (
@@ -219,22 +232,43 @@ def delete_team_endpoint(
 
 @router.post(
     "/{team_id}/members",
-    response_model=TeamMemberResponse,
+    response_model=TeamMemberInviteResponse,
     status_code=status.HTTP_201_CREATED,
 )
 def invite_member_endpoint(
     team_id: UUID,
     request: TeamMemberInviteRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> TeamMemberResponse:
+) -> TeamMemberInviteResponse:
+    """Invite by email. The invite exists whether or not mail goes out: a
+    server with no mail transport answers `email_sent: false` and the inviter
+    passes `join_url` on by hand."""
     try:
         member = collab_queries.invite_member(
             db, current_user.id, team_id, email=request.email, role=request.role
         )
     except (TeamNotFoundError, TeamPermissionError, TeamConflictError) as exc:
         raise _team_error(exc) from exc
-    return _member(member, show_email=True)
+    join_url = web_url(TEAM_INVITATIONS_PATH)
+    email_sent = False
+    address = member.invited_email or (member.user.email if member.user else None)
+    if address and email_is_configured():
+        background_tasks.add_task(
+            send_team_invite_email,
+            address,
+            current_user.display_name or "",
+            member.team.name,
+            member.role,
+            join_url,
+        )
+        email_sent = True
+    return TeamMemberInviteResponse(
+        **_member(member, show_email=True).model_dump(),
+        email_sent=email_sent,
+        join_url=join_url,
+    )
 
 
 @router.post("/{team_id}/members/accept", response_model=TeamSummary)

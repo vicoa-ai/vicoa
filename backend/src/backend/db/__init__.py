@@ -28,6 +28,7 @@ from .queries import (
     get_instance_shares,
     add_instance_share,
     remove_instance_share,
+    update_instance_share,
 )
 from .user_agent_queries import (
     create_user_agent,
@@ -68,6 +69,7 @@ __all__ = [
     "get_instance_shares",
     "add_instance_share",
     "remove_instance_share",
+    "update_instance_share",
     "create_user_agent",
     "get_user_agents",
     "update_user_agent",

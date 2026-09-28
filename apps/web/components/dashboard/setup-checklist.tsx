@@ -10,7 +10,7 @@
  *
  *   • Connect a coding agent   → any registered agent instance (free, from ctx)
  *   • Send your first message  → activity.total_user_messages > 0
- *   • Create a task            → listTasks().length > 0
+ *   • Create a task            → a task on one of your own projects (or unfiled)
  *   • Create an automation     → listAutomations().length > 0
  *
  * A mobile-app step was intentionally left out: the only backend signal is an
@@ -173,11 +173,15 @@ export function SetupChecklist() {
       );
     }
     if (!c.task) {
+      // Only a task on your own board counts: the list also carries tasks on
+      // boards shared with you, and someone else's task is not a step you took.
       jobs.push(
-        api
-          .listTasks()
-          .then((t) => {
-            if ((t?.length ?? 0) > 0) setChecks((p) => ({ ...p, task: true }));
+        Promise.all([api.listTasks(), api.listProjects(true)])
+          .then(([t, projects]) => {
+            const own = new Set(projects.filter((p) => p.role === 'owner').map((p) => p.id));
+            if (t.some((task) => task.project_id === null || own.has(task.project_id))) {
+              setChecks((p) => ({ ...p, task: true }));
+            }
           })
           .catch(() => {}),
       );

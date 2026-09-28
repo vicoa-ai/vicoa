@@ -30,6 +30,7 @@ import { SidebarSessions } from '@/components/dashboard/sidebar-sessions';
 import { PluginSidebarItems } from '@/components/plugins/plugin-sidebar-items';
 import { SetupChecklist } from '@/components/dashboard/setup-checklist';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { AccountMenuInvitations, InvitationDot } from '@/components/dashboard/account-menu-invitations';
 import type { AuthUser } from '@/lib/auth/user';
 import { useTerminalSessions } from '@/components/terminal-pane/terminal-sessions';
 
@@ -472,7 +473,11 @@ function CloudAccountArea() {
           aria-label="Account menu"
           className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10"
         >
-          <PrincipalAvatar principal={principal} size="sm" className="size-4" />
+          {/* Relative box for the pending-invitations dot. */}
+          <span className="relative flex shrink-0">
+            <PrincipalAvatar principal={principal} size="sm" className="size-4" />
+            <InvitationDot className="size-1.5" />
+          </span>
           <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground" title={email ?? undefined}>
             {email ?? 'Signed in'}
           </span>
@@ -486,6 +491,8 @@ function CloudAccountArea() {
             {email ?? 'Account'}
           </span>
         </div>
+        <AccountMenuInvitations itemClassName="gap-2 text-xs text-foreground/80" />
+        <DropdownMenuSeparator />
         <DropdownMenuItem asChild className="cursor-pointer gap-2 text-xs text-foreground/80">
           <Link href="/dashboard/settings" className="flex w-full items-center gap-2">
             <Settings className="h-4 w-4" />

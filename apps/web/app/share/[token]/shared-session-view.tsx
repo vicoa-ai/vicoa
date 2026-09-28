@@ -25,24 +25,11 @@ import {
   publicAttachmentUrl,
 } from '@/lib/public-share-api';
 import { isClosedByDesign } from '@/lib/session-liveness';
+import { describeSessionConfig } from '@/lib/session-config-line';
 import { ShareHeader } from './share-shell';
-import { POLL_ACTIVE_MS, POLL_IDLE_MS, useDocumentVisible, useSharePoll } from './use-share-poll';
+import { POLL_ACTIVE_MS, POLL_IDLE_MS, useDocumentVisible, useSharePoll } from '@/lib/use-share-poll';
 
 const PAGE_SIZE = 100;
-
-/** The display subset of `session_config`, as one "agent · model · effort · mode" line. */
-export function describeSessionConfig(config: Record<string, unknown> | null): string | null {
-  if (!config) return null;
-  const parts: string[] = [];
-  const str = (key: string) => (typeof config[key] === 'string' && config[key] ? String(config[key]) : null);
-  const model = str('model');
-  const effort = str('thinking_effort') ?? str('reasoning_effort');
-  const mode = str('permission_mode') ?? str('opencode_mode');
-  if (model) parts.push(model);
-  if (effort) parts.push(`${effort} effort`);
-  if (mode) parts.push(mode);
-  return parts.length ? parts.join(' · ') : null;
-}
 
 type LoadState = 'loading' | 'ready' | 'gone' | 'error';
 

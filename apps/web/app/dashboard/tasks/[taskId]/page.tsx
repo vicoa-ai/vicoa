@@ -20,6 +20,8 @@ import {
   AgentInstanceResponse,
   AgentProfile,
   ProjectResponse,
+  ProjectRole,
+  projectRoleAtLeast,
   TaskActivityResponse,
   TaskCommentResponse,
   TaskLabelResponse,
@@ -53,6 +55,7 @@ import {
 import { ReactionRow, TaskTimeline } from './task-timeline';
 import { CommentComposer } from './comment-composer';
 import { StartSessionDialog } from '../start-session-dialog';
+import { cn } from '@/lib/utils';
 
 // Slow on purpose: this is a single-player backlog, and the point of the poll
 // is to catch an agent's comment landing while the tab sits open — not to
@@ -169,6 +172,20 @@ export default function TaskDetailPage() {
       clearInterval(timer);
     };
   }, []);
+
+  // The caller's standing on this task's board (collaboration §4), for
+  // read-side role hiding. The backend enforces the same floors; this only
+  // keeps a viewer from being offered controls that would 403. An unfiled
+  // task is visible to its owner alone. A project missing from the list reads
+  // as the least privilege, never as owner.
+  const taskRole: ProjectRole | undefined = !task
+    ? undefined
+    : task.project_id === null
+      ? 'owner'
+      : projects.find((p) => p.id === task.project_id)?.role;
+  const canEdit = projectRoleAtLeast(taskRole, 'editor');
+  const canComment = projectRoleAtLeast(taskRole, 'commenter');
+  const isOwner = taskRole === 'owner';
 
   const patchTask = useCallback(
     async (patch: UpdateTaskRequest) => {
@@ -317,16 +334,20 @@ export default function TaskDetailPage() {
             <EditableTitle
               value={task.title}
               onSave={(title) => void patchTask({ title })}
+              readOnly={!canEdit}
             />
             <EditableDescription
               value={task.description}
               onSave={(description) => void patchTask({ description })}
+              readOnly={!canEdit}
             />
             {/* The task itself is reactable, like an issue's opening post. */}
             <ReactionRow
               reactions={taskReactions}
               viewer={viewer}
-              onToggle={(emoji) => void toggleReaction('task', task.id, emoji)}
+              onToggle={
+                canComment ? (emoji) => void toggleReaction('task', task.id, emoji) : undefined
+              }
             />
           </div>
 
@@ -336,18 +357,38 @@ export default function TaskDetailPage() {
               activity={activity}
               sessions={sessions}
               viewer={viewer}
-              onToggleCommentReaction={(commentId, emoji) =>
-                void toggleReaction('comment', commentId, emoji)
+              onToggleCommentReaction={
+                canComment
+                  ? (commentId, emoji) => void toggleReaction('comment', commentId, emoji)
+                  : undefined
               }
-              onReply={(parentCommentId, body) => postComment(body, parentCommentId)}
+              onReply={
+                canComment
+                  ? (parentCommentId, body) => postComment(body, parentCommentId)
+                  : undefined
+              }
             />
             {/* The bottom composer always starts a new thread; replying is
                 the affordance inside a thread. */}
-            <CommentComposer onSubmit={(body) => postComment(body)} />
+            {canComment ? (
+              <CommentComposer onSubmit={(body) => postComment(body)} />
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                You can view this task. Commenting needs commenter access to its project.
+              </p>
+            )}
           </div>
         </div>
 
-        <aside className="w-60 shrink-0 space-y-5">
+        {/* Below editor the whole rail is inert: a disabled fieldset turns
+            every picker trigger inside it into a plain, unclickable label. */}
+        <fieldset
+          disabled={!canEdit}
+          className={cn(
+            'w-60 shrink-0 space-y-5',
+            !canEdit && '[&_button]:cursor-default',
+          )}
+        >
           {/* Grouped, not labelled per field: one heading over a column of
               icon + value rows reads as a property list, whereas an uppercase
               caption above every single pill is eight captions to skip past.
@@ -405,7 +446,7 @@ export default function TaskDetailPage() {
                 onSelect={(parentId) => void patchTask({ parent_task_id: parentId })}
               />
             )}
-            {hidden.length > 0 && (
+            {canEdit && hidden.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
@@ -463,16 +504,21 @@ export default function TaskDetailPage() {
             <span className="px-2 text-sm text-muted-foreground">
               {sessions.length === 0 ? 'None yet' : `${sessions.length} linked`}
             </span>
-            <button
-              type="button"
-              onClick={startSession}
-              className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
-            >
-              <Play className="size-3.5" />
-              Start session
-            </button>
+            {/* Only the owner starts sessions from a task: a session runs on
+                your own machine and links back to the task, and the link is
+                an owner-side write (§4's owner-only lens). */}
+            {isOwner && (
+              <button
+                type="button"
+                onClick={startSession}
+                className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+              >
+                <Play className="size-3.5" />
+                Start session
+              </button>
+            )}
           </RailGroup>
-        </aside>
+        </fieldset>
       </div>
 
       <StartSessionDialog

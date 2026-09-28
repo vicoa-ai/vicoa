@@ -518,7 +518,7 @@ class TestProjectGrants:
         assert grant.principal_id is None
         newcomer = _user(test_db, "later@example.com")
         assert access.project_role(test_db, newcomer.id, project) is None
-        assert collab_queries.attach_pending_grants(test_db, newcomer) == 1
+        assert collab_queries.claim_pending_invites(test_db, newcomer) == 1
         assert access.project_role(test_db, newcomer.id, project) == "viewer"
 
     def test_delete_grant(self, test_db, test_user, other, project):
@@ -895,7 +895,7 @@ class TestBlankEmailIsNeverAPrincipal:
             )
         )
         test_db.commit()
-        assert collab_queries.attach_pending_grants(test_db, blank) == 0
+        assert collab_queries.claim_pending_invites(test_db, blank) == 0
 
     def test_schema_refuses_a_blank_invited_email(self, test_db, test_user, project):
         from sqlalchemy.exc import IntegrityError

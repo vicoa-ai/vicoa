@@ -81,6 +81,7 @@ import { ProvidersSettingsSection } from './providers-settings-section';
 import { MachinesSettingsSection } from './machines-settings-section';
 import { PluginsSettingsSection } from './plugins-settings-section';
 import { TasksSettingsSection } from './tasks-settings-section';
+import { TeamsSettingsSection } from './teams-settings-section';
 import { ProjectSettingsPane } from './project-settings-pane';
 import { projectSettingsHref, projectSettingsSection } from '@/lib/project-settings-route';
 import { useMobileSidebarHidden, setMobileSidebarHidden } from '@/lib/mobile-sidebar-pref';
@@ -121,6 +122,8 @@ export function DesktopSettings() {
             <PluginsSettingsSection />
           ) : tab === 'tasks' ? (
             <TasksSettingsSection />
+          ) : tab === 'teams' ? (
+            <TeamsSettingsSection />
           ) : tab === 'project' ? (
             <ProjectSection
               projectId={searchParams.get('projectId') ?? ''}

@@ -24,7 +24,7 @@ import { cn } from '@/lib/utils';
 import { SHARE_ROW_SELECTED, ShareHeader, ShareShell, ShareSidebarSection, useShareChrome } from './share-shell';
 import { SharedBoardView } from './shared-board-view';
 import { SharedSessionView, isSessionLive } from './shared-session-view';
-import { POLL_IDLE_MS, useSharePoll } from './use-share-poll';
+import { POLL_IDLE_MS, useSharePoll } from '@/lib/use-share-poll';
 
 const PAGE_SIZE = 50;
 

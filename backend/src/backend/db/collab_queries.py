@@ -15,7 +15,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -23,13 +23,16 @@ from shared import access
 from shared.database import (
     GRANT_ROLES,
     GRANT_SCOPES,
+    AgentInstance,
     Project,
     ProjectGrant,
     Team,
     TeamInvite,
     TeamMember,
     User,
+    UserInstanceAccess,
 )
+from shared.database.enums import AgentStatus, InstanceAccessLevel
 from shared.hooks import (
     CAPABILITY_GRANT_WRITE,
     CAPABILITY_TEAM_SEAT,
@@ -58,6 +61,14 @@ class InviteNotFoundError(Exception):
 
 class GrantError(Exception):
     """A grant request that cannot be honoured as stated (→ 400)."""
+
+
+class GrantConflictError(GrantError):
+    """The request contradicts the grants already in place (→ 409)."""
+
+
+class GrantNotFoundError(GrantError):
+    """No such grant on this project (→ 404)."""
 
 
 class TeamStateError(Exception):
@@ -223,6 +234,114 @@ def _seat_count(db: Session, team_id: UUID) -> int:
     )
 
 
+# --- Seats (D-C) ----------------------------------------------------------------
+#
+# The open core counts, the overlay prices. Every metered action hands
+# `check_capability` the size the payer's seat set would be *after* it, and the
+# overlay compares that with the subscription. Nothing in the open core knows a
+# price or a limit; with no hook registered the count is simply never read.
+#
+# "A seat is for team members and for outside editors — never for a role by
+# itself" (§6): everyone in a team the payer owns (invited or active — an
+# invite is a promise of a seat), plus anyone holding editor/admin on the
+# payer's work as a *user* (a project grant, or a WRITE share of one session).
+# Viewers and commenters never appear. A team principal holding a grant rides
+# on that team's own seats, so it is not counted again here.
+
+_PAID_GRANT_ROLES = ("editor", "admin")
+
+
+def seat_key(user_id: UUID | None, email: str | None) -> str | None:
+    """One person, however they were reached: their account, or — for an
+    invite with no account behind it yet — the address it was sent to."""
+    if user_id is not None:
+        return f"user:{user_id}"
+    key = _email_key(email)
+    return f"email:{key}" if key is not None else None
+
+
+def _paid_team_ids(db: Session, payer_id: UUID) -> set[UUID]:
+    """Teams whose seats `payer_id` pays for: the ones they own (a team has
+    exactly one owner until transfer ships in P7)."""
+    rows = db.query(TeamMember.team_id).filter(
+        TeamMember.user_id == payer_id,
+        TeamMember.role == "owner",
+        TeamMember.status == "active",
+    )
+    return {row[0] for row in rows}
+
+
+def seat_keys(db: Session, payer_id: UUID) -> set[str]:
+    """Everyone `payer_id`'s subscription covers, the payer included."""
+    keys = {f"user:{payer_id}"}
+    team_ids = _paid_team_ids(db, payer_id)
+
+    def add(user_id: UUID | None, email: str | None) -> None:
+        key = seat_key(user_id, email)
+        if key is not None:
+            keys.add(key)
+
+    if team_ids:
+        for user_id, email in db.query(
+            TeamMember.user_id, TeamMember.invited_email
+        ).filter(TeamMember.team_id.in_(team_ids), TeamMember.status != "removed"):
+            add(user_id, email)
+
+    paid_projects = select(Project.id).where(
+        or_(
+            and_(Project.team_id.is_(None), Project.user_id == payer_id),
+            Project.team_id.in_(team_ids),
+        )
+    )
+    for principal_id, email in db.query(
+        ProjectGrant.principal_id, ProjectGrant.invited_email
+    ).filter(
+        ProjectGrant.principal_type == "user",
+        ProjectGrant.role.in_(_PAID_GRANT_ROLES),
+        ProjectGrant.project_id.in_(paid_projects),
+    ):
+        add(principal_id, email)
+
+    for user_id, email in (
+        db.query(UserInstanceAccess.user_id, UserInstanceAccess.shared_email)
+        .join(AgentInstance, AgentInstance.id == UserInstanceAccess.agent_instance_id)
+        .filter(
+            AgentInstance.user_id == payer_id,
+            AgentInstance.status != AgentStatus.DELETED,
+            UserInstanceAccess.access == InstanceAccessLevel.WRITE,
+        )
+    ):
+        add(user_id, email)
+    return keys
+
+
+def check_seat(
+    db: Session,
+    payer_id: UUID,
+    capability: str,
+    new_key: str | None,
+    context: dict,
+) -> None:
+    """Ask the capability hooks whether `payer_id` may take on `new_key`.
+
+    The context always carries `seats` (the seat set's size after the action)
+    and `new_seat` (whether this action grows it). An action that reaches
+    someone who already holds a seat reports `new_seat=False`, so a payer who
+    is over their limit — a downgrade, say — can still reshuffle the people
+    they already pay for.
+    """
+    keys = seat_keys(db, payer_id)
+    new_seat = new_key is not None and new_key not in keys
+    if new_seat and new_key is not None:
+        keys.add(new_key)
+    check_capability(
+        db,
+        payer_id,
+        capability,
+        {**context, "seats": len(keys), "new_seat": new_seat},
+    )
+
+
 def _payer_id(db: Session, team: Team) -> UUID:
     """Whose subscription covers the team's seats: the owner member (D-C,
     owner-pays), falling back to the creator if the owner row is gone."""
@@ -274,7 +393,15 @@ def list_user_teams(db: Session, user_id: UUID) -> list[tuple[Team, str, int]]:
 def create_team(db: Session, owner: User, name: str) -> Team:
     """Create a team with `owner` as its active owner. The owner is the first
     seat, so this is where the seat capability is first asked."""
-    check_capability(db, owner.id, CAPABILITY_TEAM_SEAT, {"team_id": None, "seats": 1})
+    # Creating a team adds no one — the owner is already their own seat — but
+    # it is still asked, so a plan without teams can refuse it up front.
+    check_seat(
+        db,
+        owner.id,
+        CAPABILITY_TEAM_SEAT,
+        None,
+        {"team_id": None, "acting_user_id": str(owner.id)},
+    )
     for attempt in range(SLUG_ALLOCATION_ATTEMPTS):
         nested = db.begin_nested()
         team = Team(
@@ -375,13 +502,14 @@ def invite_member(
     if existing is not None and existing.status != "removed":
         raise TeamConflictError("That person is already on the team")
 
-    check_capability(
+    check_seat(
         db,
         _payer_id(db, team),
         CAPABILITY_TEAM_SEAT,
+        seat_key(target.id if target else None, normalized),
         {
             "team_id": str(team.id),
-            "seats": _seat_count(db, team.id) + 1,
+            "team_seats": _seat_count(db, team.id) + 1,
             "acting_user_id": str(acting_user_id),
         },
     )
@@ -643,13 +771,16 @@ def accept_invite_link(db: Session, user: User, token: str) -> TeamMember:
     if member is not None and member.status == "active":
         return member
 
-    check_capability(
+    # A pending row already holds its seat (under the address it was sent
+    # to), so redeeming a link on top of one adds nobody.
+    check_seat(
         db,
         _payer_id(db, team),
         CAPABILITY_TEAM_SEAT,
+        None if member else seat_key(user.id, None),
         {
             "team_id": str(team.id),
-            "seats": _seat_count(db, team.id) + (0 if member else 1),
+            "team_seats": _seat_count(db, team.id) + (0 if member else 1),
             "acting_user_id": str(user.id),
         },
     )
@@ -678,9 +809,10 @@ def accept_invite_link(db: Session, user: User, token: str) -> TeamMember:
 
 # --- Project grants -----------------------------------------------------------
 #
-# The write endpoints ship in P5 with the share dialog; the query functions
-# live here now so the capability call site (`collab.grant_write`) is declared
-# alongside the other one and the authz matrix can exercise grants end to end.
+# The People tab (§8.4). Listing and writing both need admin on *both* scopes
+# (`_require_grant_admin`), so everyone who can see a grant's address is the
+# audience §10.4 allows. One exception: `leave_project` lets a grantee drop
+# their own direct grant, the way out of a project someone shared with them.
 
 
 def list_project_grants(
@@ -692,6 +824,36 @@ def list_project_grants(
         .filter(ProjectGrant.project_id == project.id)
         .order_by(ProjectGrant.created_at.asc())
         .all()
+    )
+
+
+def _check_grant_seat(
+    db: Session,
+    acting_user_id: UUID,
+    project: Project,
+    *,
+    role: str,
+    principal_id: UUID | None,
+    invited_email: str | None,
+) -> None:
+    """`collab.grant_write` for an editor/admin *user* grant (D-C). Viewers
+    and commenters are free (D-A) and a team principal rides on its team's
+    seats, so neither reaches here. The payer is whoever pays for the project:
+    its personal owner, or the owner of the team that owns it."""
+    team = db.get(Team, project.team_id) if project.team_id is not None else None
+    payer_id = _payer_id(db, team) if team is not None else project.user_id
+    check_seat(
+        db,
+        payer_id,
+        CAPABILITY_GRANT_WRITE,
+        seat_key(principal_id, invited_email),
+        {
+            "project_id": str(project.id),
+            "role": role,
+            "principal_type": "user",
+            "principal_id": str(principal_id) if principal_id else None,
+            "acting_user_id": str(acting_user_id),
+        },
     )
 
 
@@ -721,7 +883,7 @@ def create_project_grant(
         raise GrantError("scopes must be a non-empty subset of tasks/sessions")
     # Normalise before the emptiness check below: `not "   "` is False, so a
     # whitespace-only address used to pass the guard and then be stored as ''
-    # by `.strip()`, where `attach_pending_grants` would hand it to the next
+    # by `.strip()`, where `claim_pending_invites` would hand it to the next
     # blank-email signup.
     invited_email = _email_key(invited_email)
 
@@ -746,17 +908,13 @@ def create_project_grant(
         raise GrantError("Unknown principal type")
 
     if principal_type == "user" and access.role_at_least(role, "editor"):
-        check_capability(
+        _check_grant_seat(
             db,
-            project.user_id,
-            CAPABILITY_GRANT_WRITE,
-            {
-                "project_id": str(project.id),
-                "role": role,
-                "principal_type": principal_type,
-                "principal_id": str(principal_id) if principal_id else None,
-                "acting_user_id": str(granter_user_id),
-            },
+            granter_user_id,
+            project,
+            role=role,
+            principal_id=principal_id,
+            invited_email=invited_email,
         )
 
     grant = ProjectGrant(
@@ -773,7 +931,60 @@ def create_project_grant(
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        raise GrantError("That principal already has a grant on this project") from exc
+        raise GrantConflictError(
+            "That person or team already has access to this project"
+        ) from exc
+    return grant
+
+
+def _project_grant(db: Session, project: Project, grant_id: UUID) -> ProjectGrant:
+    grant = (
+        db.query(ProjectGrant)
+        .filter(ProjectGrant.id == grant_id, ProjectGrant.project_id == project.id)
+        .first()
+    )
+    if grant is None:
+        raise GrantNotFoundError("Grant not found")
+    return grant
+
+
+def update_project_grant(
+    db: Session,
+    user_id: UUID,
+    project: Project,
+    grant_id: UUID,
+    *,
+    role: str | None = None,
+    scopes: list[str] | None = None,
+) -> ProjectGrant:
+    """Change a grant's role and/or scopes. Admin on both scopes, like every
+    other grant write. Moving a user grant *into* editor/admin is metered the
+    same way creating one is; a change that stays inside the paid roles (or
+    only touches scopes) never is, so a payer over their limit can still
+    reshape the access they already pay for."""
+    _require_grant_admin(db, user_id, project)
+    grant = _project_grant(db, project, grant_id)
+    if role is not None:
+        if role not in GRANT_ROLES:
+            raise GrantError("Unknown role")
+        becomes_paid = access.role_at_least(role, "editor") and not (
+            access.role_at_least(grant.role, "editor")
+        )
+        if grant.principal_type == "user" and becomes_paid:
+            _check_grant_seat(
+                db,
+                user_id,
+                project,
+                role=role,
+                principal_id=grant.principal_id,
+                invited_email=grant.invited_email,
+            )
+        grant.role = role
+    if scopes is not None:
+        if not scopes or any(s not in GRANT_SCOPES for s in scopes):
+            raise GrantError("scopes must be a non-empty subset of tasks/sessions")
+        grant.scopes = [s for s in GRANT_SCOPES if s in scopes]
+    db.commit()
     return grant
 
 
@@ -793,17 +1004,51 @@ def delete_project_grant(
     return True
 
 
-def attach_pending_grants(db: Session, user: User) -> int:
-    """Turn email-addressed grants into user grants for a freshly created
-    account. Called once, from the signup path; the resolver only ever reads
-    `principal_id`, so a grant stays inert until this runs."""
+def leave_project(db: Session, user: User, project: Project) -> None:
+    """Drop the caller's own grant on a project shared with them.
+
+    Only a direct user grant can be left this way. Access that arrives through
+    a team is the team's to give up (leave the team instead), and an owner
+    cannot leave what they own — both answer `GrantError` (→ 409) rather than
+    silently succeeding and leaving the project in the sidebar.
+    """
+    if project.team_id is None and project.user_id == user.id:
+        raise GrantConflictError("You own this project")
+    deleted = (
+        db.query(ProjectGrant)
+        .filter(
+            ProjectGrant.project_id == project.id,
+            ProjectGrant.principal_type == "user",
+            ProjectGrant.principal_id == user.id,
+        )
+        .delete(synchronize_session=False)
+    )
+    if not deleted:
+        raise GrantConflictError("Your access to this project comes from a team")
+    db.commit()
+
+
+def claim_pending_invites(db: Session, user: User) -> int:
+    """Attach everything addressed to this account's email before the account
+    could hold it: project grants and per-session shares. Team invites need no
+    such step — they are matched by email when read, and joining is an
+    explicit accept.
+
+    Runs at signup and again whenever the account menu loads invitations
+    (`GET /teams/invitations`), so an account first created by another path
+    — the billing webhook's `sync_user_from_provider`, say, which discards
+    `created` — or one whose address changed still converges without a query
+    on every request. Idempotent: a second run finds nothing.
+    """
     key = _email_key(user.email)
     if key is None:
         # An account with no usable address (Apple relay withheld) can claim
         # nothing by email — and must not, or it would claim every grant left
         # blank by some other writer.
         return 0
-    rows = (
+    claimed = 0
+
+    grants = (
         db.query(ProjectGrant)
         .filter(
             ProjectGrant.principal_type == "user",
@@ -812,8 +1057,50 @@ def attach_pending_grants(db: Session, user: User) -> int:
         )
         .all()
     )
-    for grant in rows:
-        grant.principal_id = user.id
-    if rows:
+    if grants:
+        already = {
+            row[0]
+            for row in db.query(ProjectGrant.project_id).filter(
+                ProjectGrant.project_id.in_([g.project_id for g in grants]),
+                ProjectGrant.principal_type == "user",
+                ProjectGrant.principal_id == user.id,
+            )
+        }
+        for grant in grants:
+            # A grant reached this account by id since the email one was
+            # sent; the (project, principal) uniqueness allows one. Keep the
+            # explicit one and drop the stale invite.
+            if grant.project_id in already:
+                db.delete(grant)
+            else:
+                grant.principal_id = user.id
+                claimed += 1
+
+    shares = (
+        db.query(UserInstanceAccess)
+        .filter(
+            UserInstanceAccess.user_id.is_(None),
+            func.lower(UserInstanceAccess.shared_email) == key,
+        )
+        .all()
+    )
+    if shares:
+        already = {
+            row[0]
+            for row in db.query(UserInstanceAccess.agent_instance_id).filter(
+                UserInstanceAccess.agent_instance_id.in_(
+                    [s.agent_instance_id for s in shares]
+                ),
+                UserInstanceAccess.user_id == user.id,
+            )
+        }
+        for share in shares:
+            if share.agent_instance_id in already:
+                db.delete(share)
+            else:
+                share.user_id = user.id
+                claimed += 1
+
+    if grants or shares:
         db.commit()
-    return len(rows)
+    return claimed

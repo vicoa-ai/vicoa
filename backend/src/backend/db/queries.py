@@ -4,10 +4,14 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from shared import access
+
+# Imported by name: several functions below bind a local `access`.
+from shared.access import instance_role as _instance_role
 from shared.database import (
     AgentInstance,
     AgentStatus,
     UserInstanceAccess,
+    TeamInstanceAccess,
     APIKey,
     Message,
     MessageAttachment,
@@ -22,15 +26,17 @@ from shared.database import (
 )
 from shared.database.liveness import LiveState, compute_live_state, is_fresh
 from shared.database.automation_models import AutomationRun
-from shared.hooks import run_user_delete_hooks
+from shared.hooks import CAPABILITY_GRANT_WRITE, run_user_delete_hooks
 from sqlalchemy import case, cast, desc, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session, joinedload, subqueryload
 
 # Import Pydantic models for type-safe returns
+from backend.db import collab_queries
 from backend.models import (
     AgentInstanceResponse,
     AgentInstanceDetail,
+    PrincipalResponse,
     AgentTypeOverview,
     MessageResponse,
     InstanceShareResponse,
@@ -48,14 +54,18 @@ def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
-def _message_to_response(msg: Message) -> MessageResponse:
+def _message_to_response(
+    msg: Message, *, include_email: bool = True
+) -> MessageResponse:
+    """`include_email=False` for anyone but the session's owner: a shared
+    session names its writers by display name, never by address (§10.4)."""
     sender = msg.sender_user
     return MessageResponse(
         id=str(msg.id),
         content=msg.content,
         sender_type=msg.sender_type.value,
         sender_user_id=str(msg.sender_user_id) if msg.sender_user_id else None,
-        sender_user_email=sender.email if sender else None,
+        sender_user_email=sender.email if sender and include_email else None,
         sender_user_display_name=sender.display_name if sender else None,
         created_at=msg.created_at,
         requires_user_input=msg.requires_user_input,
@@ -73,6 +83,7 @@ def _instance_access_to_response(
         access=access_obj.access,
         user_id=str(access_obj.user_id) if access_obj.user_id else None,
         display_name=user.display_name if user else None,
+        avatar_image_uri=user.avatar_image_uri if user else None,
         invited=access_obj.user_id is None,
         is_owner=is_owner,
         created_at=access_obj.created_at,
@@ -82,7 +93,7 @@ def _instance_access_to_response(
 
 def _instance_owner_share_response(instance: AgentInstance) -> InstanceShareResponse:
     owner_user = instance.user
-    email = owner_user.email if owner_user else ""
+    email = (owner_user.email if owner_user else None) or None
     display_name = owner_user.display_name if owner_user else None
     created_at = (
         instance.started_at if instance.started_at else datetime.now(timezone.utc)
@@ -93,6 +104,7 @@ def _instance_owner_share_response(instance: AgentInstance) -> InstanceShareResp
         access=InstanceAccessLevel.WRITE,
         user_id=str(instance.user_id),
         display_name=display_name,
+        avatar_image_uri=owner_user.avatar_image_uri if owner_user else None,
         invited=False,
         is_owner=True,
         created_at=created_at,
@@ -194,6 +206,96 @@ def _get_instance_message_stats(db: Session, instance_ids: list[UUID]) -> dict:
         }
 
     return stats
+
+
+# The `session_config` keys anyone but the owner may see (old plan D5): what
+# ran, with which model and effort, under which permission mode. Nothing
+# operational. Shared by the public share viewer and the signed-in grantee view.
+DISPLAY_SESSION_CONFIG_KEYS = (
+    "agent",
+    "model",
+    "thinking_effort",
+    "reasoning_effort",
+    "permission_mode",
+    "opencode_mode",
+)
+
+# `instance_metadata` keys a grantee's client reads that locate nothing on the
+# owner's machine. `repo_root` and friends are absolute paths; they stay home.
+_GRANTEE_METADATA_KEYS = ("worktree_name", "source", "usage")
+
+
+def _owner_principal(user: User | None) -> PrincipalResponse:
+    if user is None:
+        return PrincipalResponse(type="user", name="Deleted user")
+    return PrincipalResponse(
+        type="user",
+        id=user.id,
+        # display_name only — never the owner's email (§10.4).
+        name=user.display_name,
+        avatar_image_uri=user.avatar_image_uri,
+        emoji=user.avatar_emoji,
+        updated_at=user.updated_at,
+    )
+
+
+def redact_for_grantee(
+    response: AgentInstanceResponse | AgentInstanceDetail,
+    owner: User | None,
+    role: str | None,
+) -> None:
+    """Turn a session row into what someone it was shared with may see.
+
+    In place. Adds who owns it and the caller's standing; strips what locates
+    the owner's machine — `home_dir`, `machine_id`, absolute paths in
+    `project` and the metadata — and narrows `session_config` to the display
+    subset, the same line the public share viewer draws. Beyond privacy this
+    is the second layer of §10.2: with no `machine_id` a client has nothing to
+    aim a terminal, file or git RPC at, so a viewer cannot reach the daemon
+    even through a UI entry point someone forgot to hide.
+    """
+    response.owner = _owner_principal(owner)
+    response.viewer_role = role  # type: ignore[assignment]
+    response.home_dir = None
+    response.machine_id = None
+    if response.project:
+        response.project = response.project.rstrip("/").rsplit("/", 1)[-1] or None
+    if isinstance(response.instance_metadata, dict):
+        response.instance_metadata = {
+            k: response.instance_metadata[k]
+            for k in _GRANTEE_METADATA_KEYS
+            if k in response.instance_metadata
+        } or None
+    if isinstance(response.session_config, dict):
+        response.session_config = {
+            k: response.session_config[k]
+            for k in DISPLAY_SESSION_CONFIG_KEYS
+            if response.session_config.get(k) is not None
+        } or None
+
+
+def _apply_grantee_view(
+    db: Session,
+    user_id: UUID,
+    instances: list[AgentInstance],
+    responses: list[AgentInstanceResponse],
+) -> None:
+    """`redact_for_grantee` over every row of a list the caller does not own,
+    with the owners and roles fetched in a handful of queries."""
+    foreign = [
+        (instance, response)
+        for instance, response in zip(instances, responses)
+        if instance.user_id != user_id
+    ]
+    if not foreign:
+        return
+    owner_ids = {instance.user_id for instance, _ in foreign}
+    owners = {u.id: u for u in db.query(User).filter(User.id.in_(owner_ids))}
+    roles = access.instance_roles(db, user_id, [instance for instance, _ in foreign])
+    for instance, response in foreign:
+        redact_for_grantee(
+            response, owners.get(instance.user_id), roles.get(instance.id)
+        )
 
 
 def format_agent_instance(
@@ -621,9 +723,12 @@ def get_all_agent_instances(
     message_stats = _get_instance_message_stats(db, instance_ids)
 
     # Format instances using helper function with pre-computed stats
-    return [
+    responses = [
         format_agent_instance(instance, message_stats) for instance in instances
-    ], total
+    ]
+    if scope != "me":
+        _apply_grantee_view(db, user_id, instances, responses)
+    return responses, total
 
 
 def get_user_activity(
@@ -882,8 +987,11 @@ def get_agent_instance_detail(
     # Reverse to get chronological order (oldest first) for display
     messages = list(reversed(messages))
 
+    is_owner = instance.user_id == user_id
     # Format messages for chat display
-    formatted_messages = [_message_to_response(msg) for msg in messages]
+    formatted_messages = [
+        _message_to_response(msg, include_email=is_owner) for msg in messages
+    ]
 
     metadata = (
         instance.instance_metadata
@@ -897,7 +1005,7 @@ def get_agent_instance_detail(
         else None
     )
 
-    return AgentInstanceDetail(
+    detail = AgentInstanceDetail(
         id=str(instance.id),
         agent_type_id=str(instance.agent_type_id) if instance.agent_type_id else "",
         agent_type_name=instance.agent_type.name if instance.agent_type else "Unknown",
@@ -912,7 +1020,7 @@ def get_agent_instance_detail(
         else None,
         last_heartbeat_at=instance.last_heartbeat_at,
         access_level=access,
-        is_owner=str(instance.user_id) == str(user_id),
+        is_owner=is_owner,
         instance_metadata=metadata,
         session_config=session_config,
         project=instance.project,
@@ -924,6 +1032,13 @@ def get_agent_instance_detail(
         rate_limited=instance.rate_limited_until is not None,
         rate_limit_resets_at=instance.rate_limited_until,
     )
+    if not is_owner:
+        redact_for_grantee(
+            detail,
+            db.get(User, instance.user_id),
+            _instance_role(db, user_id, instance),
+        )
+    return detail
 
 
 _TERMINAL_STATUSES = frozenset(
@@ -1411,7 +1526,11 @@ def get_message_by_id(db: Session, message_id: UUID, user_id: UUID) -> dict | No
     if message.sender_user_id:
         sender_user = db.query(User).filter(User.id == message.sender_user_id).first()
 
-    return _message_to_dict(message, sender_user)
+    data = _message_to_dict(message, sender_user)
+    if instance.user_id != user_id:
+        # Display names only on a shared session (§10.4).
+        data["sender_user_email"] = None
+    return data
 
 
 def get_instance_messages(
@@ -1420,10 +1539,16 @@ def get_instance_messages(
     user_id: UUID,
     limit: int = 50,
     before_message_id: UUID | None = None,
+    after_message_id: UUID | None = None,
 ) -> list[MessageResponse] | None:
     """
     Get paginated messages for an agent instance using cursor-based pagination.
     Returns list of messages if authorized, None if not found or unauthorized.
+
+    `after_message_id` is the poll watermark for someone watching a session
+    shared with them (they get no WebSocket until P6): the `limit` messages
+    newer than that one, oldest first, so a steady-state poll is an empty
+    list. Same (created_at, id) cursor as the public share viewer.
     """
     # Verify instance belongs to user
     instance, access = _require_instance_access(
@@ -1432,6 +1557,7 @@ def get_instance_messages(
 
     if not instance or not access:
         return None
+    include_email = instance.user_id == user_id
 
     # Build message query
     messages_query = (
@@ -1439,6 +1565,31 @@ def get_instance_messages(
         .options(joinedload(Message.sender_user))
         .filter(Message.agent_instance_id == instance_id)
     )
+
+    if after_message_id is not None:
+        cursor = (
+            db.query(Message.created_at, Message.id)
+            .filter(
+                Message.id == after_message_id,
+                Message.agent_instance_id == instance_id,
+            )
+            .first()
+        )
+        if cursor is None:
+            return []
+        newer = (
+            messages_query.filter(
+                or_(
+                    Message.created_at > cursor.created_at,
+                    (Message.created_at == cursor.created_at)
+                    & (Message.id > cursor.id),
+                )
+            )
+            .order_by(Message.created_at.asc(), Message.id.asc())
+            .limit(limit)
+            .all()
+        )
+        return [_message_to_response(m, include_email=include_email) for m in newer]
 
     # If cursor provided, get messages before that message
     if before_message_id:
@@ -1457,7 +1608,7 @@ def get_instance_messages(
     messages = list(reversed(messages))
 
     # Convert to MessageResponse objects
-    return [_message_to_response(msg) for msg in messages]
+    return [_message_to_response(msg, include_email=include_email) for msg in messages]
 
 
 CATCHUP_MAX_MESSAGES = 500
@@ -1914,9 +2065,69 @@ def _require_share_manager(
     return instance
 
 
+class ShareNotFoundError(LookupError):
+    """No such share on this session (→ 404)."""
+
+
+def _share_seat_check(
+    db: Session,
+    instance: AgentInstance,
+    acting_user_id: UUID,
+    *,
+    user_id: UUID | None,
+    email: str | None,
+) -> None:
+    """A WRITE share of one session is an outside editor on that session, so
+    it takes a seat exactly like an editor project grant (§6, D-C). The payer
+    is the session's owner. READ shares are free, and a team share rides on
+    the team's own seats — neither reaches here."""
+    collab_queries.check_seat(
+        db,
+        instance.user_id,
+        CAPABILITY_GRANT_WRITE,
+        collab_queries.seat_key(user_id, email),
+        {
+            "agent_instance_id": str(instance.id),
+            "role": "editor",
+            "principal_type": "user",
+            "principal_id": str(user_id) if user_id else None,
+            "acting_user_id": str(acting_user_id),
+        },
+    )
+
+
+def _team_share_response(
+    share: TeamInstanceAccess, member_count: int
+) -> InstanceShareResponse:
+    team = share.team
+    return InstanceShareResponse(
+        id=str(share.id),
+        principal_type="team",
+        access=share.access,
+        team_id=str(share.team_id),
+        display_name=team.name if team else None,
+        avatar_image_uri=team.avatar_image_uri if team else None,
+        member_count=member_count,
+        created_at=share.created_at,
+        updated_at=share.updated_at,
+    )
+
+
+def _team_member_counts(db: Session, team_ids: list[UUID]) -> dict[UUID, int]:
+    if not team_ids:
+        return {}
+    return {
+        team_id: int(n)
+        for team_id, n in db.query(TeamMember.team_id, func.count(TeamMember.id))
+        .filter(TeamMember.team_id.in_(team_ids), TeamMember.status != "removed")
+        .group_by(TeamMember.team_id)
+    }
+
+
 def get_instance_shares(
     db: Session, instance_id: UUID, user_id: UUID
 ) -> list[InstanceShareResponse]:
+    """The owner row, then per-person shares, then team shares."""
     instance = _require_share_manager(db, instance_id, user_id)
 
     shares = (
@@ -1926,13 +2137,21 @@ def get_instance_shares(
         .order_by(UserInstanceAccess.created_at.asc())
         .all()
     )
+    team_shares = (
+        db.query(TeamInstanceAccess)
+        .options(joinedload(TeamInstanceAccess.team))
+        .filter(TeamInstanceAccess.agent_instance_id == instance_id)
+        .order_by(TeamInstanceAccess.created_at.asc())
+        .all()
+    )
+    counts = _team_member_counts(db, [s.team_id for s in team_shares])
 
-    results: list[InstanceShareResponse] = []
-    results.append(_instance_owner_share_response(instance))
-
-    for share in shares:
-        results.append(_instance_access_to_response(share))
-
+    results: list[InstanceShareResponse] = [_instance_owner_share_response(instance)]
+    results.extend(_instance_access_to_response(share) for share in shares)
+    results.extend(
+        _team_share_response(share, counts.get(share.team_id, 0))
+        for share in team_shares
+    )
     return results
 
 
@@ -1940,12 +2159,49 @@ def add_instance_share(
     db: Session,
     instance_id: UUID,
     user_id: UUID,
-    email: str,
     access_level: InstanceAccessLevel,
+    *,
+    email: str | None = None,
+    team_id: UUID | None = None,
 ) -> InstanceShareResponse:
+    """Share one session with a person (by address) or with a team.
+
+    A team must be one the caller is an active member of — the same rule as a
+    project grant to a team, so nobody can point a session at a team they
+    cannot see. WRITE to a *person* is metered (`_share_seat_check`).
+    """
     instance = _require_share_manager(db, instance_id, user_id)
 
-    normalized_email = _normalize_email(email)
+    if team_id is not None:
+        if access.team_role(db, user_id, team_id) is None:
+            raise LookupError("Team not found")
+        existing_team = (
+            db.query(TeamInstanceAccess)
+            .filter(
+                TeamInstanceAccess.agent_instance_id == instance_id,
+                TeamInstanceAccess.team_id == team_id,
+            )
+            .first()
+        )
+        if existing_team:
+            raise ValueError("This team already has access to the session")
+        team_share = TeamInstanceAccess(
+            agent_instance_id=instance_id,
+            team_id=team_id,
+            access=access_level,
+            granted_by_user_id=user_id,
+        )
+        db.add(team_share)
+        db.flush()
+        db.refresh(team_share)
+        counts = _team_member_counts(db, [team_id])
+        return _team_share_response(team_share, counts.get(team_id, 0))
+
+    normalized_email = _normalize_email(email or "")
+    if not normalized_email:
+        # Never match on a blank address: some accounts have `email = ''`
+        # (Apple relay withheld), and '' would resolve to one of them.
+        raise ValueError("Email is required")
     owner_email = instance.user.email if instance.user else None
     if owner_email and _normalize_email(owner_email) == normalized_email:
         raise ValueError("Owner already has full access")
@@ -1962,11 +2218,19 @@ def add_instance_share(
     if existing:
         raise ValueError("This email already has access to the session")
 
-    target_user = _get_user_by_email(db, email)
+    target_user = _get_user_by_email(db, normalized_email)
+    if access_level == InstanceAccessLevel.WRITE:
+        _share_seat_check(
+            db,
+            instance,
+            user_id,
+            user_id=target_user.id if target_user else None,
+            email=normalized_email,
+        )
 
     share = UserInstanceAccess(
         agent_instance_id=instance_id,
-        shared_email=email.strip(),
+        shared_email=(email or "").strip(),
         user_id=target_user.id if target_user else None,
         access=access_level,
         granted_by_user_id=user_id,
@@ -1979,9 +2243,63 @@ def add_instance_share(
     return _instance_access_to_response(share)
 
 
+def update_instance_share(
+    db: Session,
+    instance_id: UUID,
+    user_id: UUID,
+    access_id: UUID,
+    access_level: InstanceAccessLevel,
+) -> InstanceShareResponse:
+    """Change a person's or a team's READ/WRITE on one session. Moving a
+    person to WRITE is metered like creating a WRITE share."""
+    instance = _require_share_manager(db, instance_id, user_id)
+
+    share = (
+        db.query(UserInstanceAccess)
+        .options(joinedload(UserInstanceAccess.user))
+        .filter(
+            UserInstanceAccess.id == access_id,
+            UserInstanceAccess.agent_instance_id == instance_id,
+        )
+        .first()
+    )
+    if share is not None:
+        if (
+            access_level == InstanceAccessLevel.WRITE
+            and share.access != InstanceAccessLevel.WRITE
+        ):
+            _share_seat_check(
+                db,
+                instance,
+                user_id,
+                user_id=share.user_id,
+                email=share.shared_email,
+            )
+        share.access = access_level
+        db.flush()
+        return _instance_access_to_response(share)
+
+    team_share = (
+        db.query(TeamInstanceAccess)
+        .options(joinedload(TeamInstanceAccess.team))
+        .filter(
+            TeamInstanceAccess.id == access_id,
+            TeamInstanceAccess.agent_instance_id == instance_id,
+        )
+        .first()
+    )
+    if team_share is None:
+        raise ShareNotFoundError("Share not found")
+    team_share.access = access_level
+    db.flush()
+    counts = _team_member_counts(db, [team_share.team_id])
+    return _team_share_response(team_share, counts.get(team_share.team_id, 0))
+
+
 def remove_instance_share(
     db: Session, instance_id: UUID, user_id: UUID, access_id: UUID
 ) -> None:
+    """Revoke a person's or a team's share of one session."""
     _require_share_manager(db, instance_id, user_id)
 
     share = (
@@ -1992,8 +2310,18 @@ def remove_instance_share(
         )
         .first()
     )
+    if share is not None:
+        db.delete(share)
+        return
 
-    if not share:
-        raise ValueError("Share not found")
-
-    db.delete(share)
+    team_share = (
+        db.query(TeamInstanceAccess)
+        .filter(
+            TeamInstanceAccess.id == access_id,
+            TeamInstanceAccess.agent_instance_id == instance_id,
+        )
+        .first()
+    )
+    if team_share is None:
+        raise ShareNotFoundError("Share not found")
+    db.delete(team_share)

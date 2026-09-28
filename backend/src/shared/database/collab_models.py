@@ -289,7 +289,7 @@ class ProjectGrant(Base):
             unique=True,
             postgresql_where=text("invited_email IS NOT NULL"),
         ),
-        # Email-only lookup for attach_pending_grants at signup.
+        # Email-only lookup for claim_pending_invites at signup.
         Index(
             "ix_project_grants_invited_email",
             func.lower(text("invited_email")),

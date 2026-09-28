@@ -88,6 +88,30 @@ class UserNotificationSettingsResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PrincipalResponse(BaseModel):
+    """A user, a team or an agent, in the one shape every surface renders (§2
+    layer 1).
+
+    Never carries an email: a principal may show a display name and a picture on
+    a shared or public surface, and nothing else (§10.4). Surfaces that may show
+    an address (the People list, to a project admin) carry it beside the
+    principal, never inside it.
+    """
+
+    type: Literal["user", "team", "agent", "system"]
+    id: UUID | None = None
+    name: str | None = None
+    avatar_image_uri: str | None = None
+    emoji: str | None = None
+    # Cache-buster for the avatar proxy; the URL itself is stable.
+    updated_at: datetime | None = None
+
+
+ProjectRoleLiteral = Literal["viewer", "commenter", "editor", "admin", "owner"]
+GrantRoleLiteral = Literal["viewer", "commenter", "editor", "admin"]
+GrantScopeLiteral = Literal["tasks", "sessions"]
+
+
 # ============================================================================
 # Agent Models
 # ============================================================================
@@ -142,6 +166,12 @@ class AgentInstanceResponse(BaseModel):
     # automation. Never stored on this DTO.
     rate_limited: bool = False
     rate_limit_resets_at: datetime | None = None
+    # Set only on a session someone else owns (scope=shared|all): who owns it
+    # and the caller's standing on it. Own sessions leave both None, so the
+    # solo payload is unchanged. Such a row is also stripped of everything that
+    # locates the owner's machine (see `queries.redact_for_grantee`).
+    owner: PrincipalResponse | None = None
+    viewer_role: ProjectRoleLiteral | None = None
 
     @model_validator(mode="after")
     def _extract_from_metadata(self) -> "AgentInstanceResponse":
@@ -284,6 +314,9 @@ class AgentInstanceDetail(BaseModel):
     # Derived; see AgentInstanceResponse.rate_limited.
     rate_limited: bool = False
     rate_limit_resets_at: datetime | None = None
+    # See AgentInstanceResponse.owner / viewer_role.
+    owner: PrincipalResponse | None = None
+    viewer_role: ProjectRoleLiteral | None = None
 
     @model_validator(mode="after")
     def _extract_worktree_name(self) -> "AgentInstanceDetail":
@@ -450,19 +483,47 @@ class SpawnRequestSummary(BaseModel):
 
 
 class InstanceShareCreateRequest(BaseModel):
-    email: str = Field(..., description="Email address to grant access")
+    """Share one session with a person (by email) or with a team.
+
+    Exactly one of `email` / `team_id`. A team share rides on the team's seats
+    (`team_instance_access`); an email share is `user_instance_access`, which
+    attaches to the account on signup if there is none yet.
+    """
+
+    email: str | None = Field(
+        default=None, max_length=255, description="Email address to grant access"
+    )
+    team_id: UUID | None = Field(default=None, description="Team to grant access")
     access: InstanceAccessLevel = Field(
         default=InstanceAccessLevel.READ,
         description="Access level to grant",
     )
 
+    @model_validator(mode="after")
+    def _one_principal(self) -> "InstanceShareCreateRequest":
+        has_email = bool(self.email and self.email.strip())
+        if has_email == (self.team_id is not None):
+            raise ValueError("Pass exactly one of email or team_id")
+        return self
+
+
+class InstanceShareUpdateRequest(BaseModel):
+    access: InstanceAccessLevel
+
 
 class InstanceShareResponse(BaseModel):
     id: str
-    email: str
+    principal_type: Literal["user", "team"] = "user"
+    # The address the share was sent to. Only a session admin can list shares,
+    # so everyone who receives this row may see it (§10.4). None on team rows.
+    email: str | None = None
     access: InstanceAccessLevel
     user_id: str | None = None
+    team_id: str | None = None
     display_name: str | None = None
+    avatar_image_uri: str | None = None
+    # Team rows: active + invited members, i.e. who the share reaches.
+    member_count: int | None = None
     invited: bool = False
     is_owner: bool = False
     created_at: datetime
@@ -569,6 +630,75 @@ class TeamInvitationResponse(BaseModel):
     role: TeamRoleLiteral
     invited_by_display_name: str | None = None
     created_at: datetime
+
+
+class TeamMemberInviteResponse(TeamMemberResponse):
+    """An email invite, plus how it reaches the invitee.
+
+    `email_sent` is False when this server has no mail transport (a self-host
+    with no provider). The invite is still real: the invitee finds it under
+    Settings → Teams once they sign in with that address, and `join_url` is
+    that page, for the inviter to pass on by hand. It is not a capability; it
+    only works for the invited address.
+    """
+
+    email_sent: bool
+    join_url: str
+
+
+# --- Project grants (collaboration §3.3, §8.4 "People") -----------------------
+
+
+class ProjectGrantCreateRequest(BaseModel):
+    """Grant a role on a project to a person (by email) or to a team."""
+
+    email: str | None = Field(default=None, max_length=255)
+    team_id: UUID | None = None
+    role: GrantRoleLiteral = "viewer"
+    scopes: list[GrantScopeLiteral] = Field(
+        default_factory=lambda: ["tasks", "sessions"], min_length=1
+    )
+
+    @model_validator(mode="after")
+    def _one_principal(self) -> "ProjectGrantCreateRequest":
+        has_email = bool(self.email and self.email.strip())
+        if has_email == (self.team_id is not None):
+            raise ValueError("Pass exactly one of email or team_id")
+        return self
+
+
+class ProjectGrantUpdateRequest(BaseModel):
+    role: GrantRoleLiteral | None = None
+    scopes: list[GrantScopeLiteral] | None = Field(default=None, min_length=1)
+
+
+class ProjectPersonResponse(BaseModel):
+    """One row of a project's People list: the owner, or a grant.
+
+    `principal` never carries an email (§10.4). `email` sits beside it: only
+    someone who administers the project's grants can list them at all, which
+    is exactly the audience §10.4 allows an address to reach.
+    """
+
+    # None on the owner row: ownership is a column, not a grant.
+    id: UUID | None = None
+    principal: PrincipalResponse
+    email: str | None = None
+    # An email grant waiting for that address to sign up.
+    pending: bool = False
+    role: ProjectRoleLiteral
+    scopes: list[GrantScopeLiteral]
+    # Team rows: active + invited members, i.e. who the grant reaches.
+    member_count: int | None = None
+    is_owner: bool = False
+    # The row is the caller — "You" in the UI.
+    is_self: bool = False
+    created_at: datetime | None = None
+
+
+class ProjectGrantCreateResponse(ProjectPersonResponse):
+    # See TeamMemberInviteResponse.email_sent. Always False for a team grant.
+    email_sent: bool = False
 
 
 # ============================================================================
@@ -679,10 +809,6 @@ class ProjectDirectoryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-ProjectRoleLiteral = Literal["viewer", "commenter", "editor", "admin", "owner"]
-GrantScopeLiteral = Literal["tasks", "sessions"]
-
-
 class ProjectResponse(BaseModel):
     id: UUID
     name: str
@@ -702,6 +828,10 @@ class ProjectResponse(BaseModel):
     # `api.tasks._project_response`, which always sets both.
     role: ProjectRoleLiteral = "viewer"
     scopes: list[GrantScopeLiteral] = Field(default_factory=list)
+    # Who owns a project the caller does not: the owning user, or the team for
+    # a team-owned one. None when the caller is the owner, so the solo payload
+    # is unchanged. The sidebar's "Shared with me" group draws it over the icon.
+    owner: PrincipalResponse | None = None
     # Task-identifier prefix; None until the project's first task allocates one.
     key: str | None = None
     git_remote_url: str | None = None
@@ -795,22 +925,6 @@ class UpdateProjectRequest(BaseModel):
                 "key must be 2-8 characters, letters and digits, starting with a letter"
             )
         return upper
-
-
-class PrincipalResponse(BaseModel):
-    """A user or an agent, in the one shape every surface renders (§2 layer 1).
-
-    Never carries an email: a principal may show a display name and a picture on
-    a shared or public surface, and nothing else (§10.4).
-    """
-
-    type: Literal["user", "agent", "system"]
-    id: UUID | None = None
-    name: str | None = None
-    avatar_image_uri: str | None = None
-    emoji: str | None = None
-    # Cache-buster for the avatar proxy; the URL itself is stable.
-    updated_at: datetime | None = None
 
 
 class TaskResponse(BaseModel):

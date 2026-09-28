@@ -73,6 +73,26 @@ def test_build_new_message_update_produces_a_messages_payload() -> None:
     json.dumps(payload)  # §2.7: JSON-serializable, no lazy ORM attributes
 
 
+def test_new_message_carries_the_sender_name_only_when_given() -> None:
+    writer = uuid4()
+    msg = Message(
+        id=uuid4(),
+        agent_instance_id=uuid4(),
+        sender_type=SenderType.USER,
+        sender_user_id=writer,
+        content="go on",
+        created_at=_TS,
+        requires_user_input=False,
+        message_metadata=None,
+    )
+
+    named = build_new_message_update(msg, sender_display_name="Bo")["body"]
+    assert named["sender_user_id"] == str(writer)
+    assert named["sender_user_display_name"] == "Bo"
+    # Never looked up: without the kwarg the payload carries no name.
+    assert build_new_message_update(msg)["body"]["sender_user_display_name"] is None
+
+
 def test_build_message_update_produces_a_queue_patch_payload() -> None:
     msg = Message(
         id=uuid4(),

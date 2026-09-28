@@ -49,7 +49,12 @@ import { TaskList } from './task-list';
 import { StartSessionDialog } from './start-session-dialog';
 import { CreateProjectDialog, TaskDialog, TaskFormValues } from './task-dialog';
 import { TaskViewsBar } from './task-views-bar';
-import { ShareLinkDialog, type ShareTarget } from '@/components/dashboard/share-link-dialog';
+import {
+  ShareLinkDialog,
+  type ShareTab,
+  type ShareTarget,
+} from '@/components/dashboard/share-link-dialog';
+import { ProjectPeopleStack } from '@/components/dashboard/project-people-stack';
 import { isDesktopLocal } from '@/lib/runtime-config';
 import { projectRoleAtLeast } from '@/lib/backend-api';
 import { TaskDisplayMenu } from './task-display-menu';
@@ -220,6 +225,17 @@ function TasksPageInner() {
     },
     [activeViewId],
   );
+
+  // `?project={id}` opens the board filtered to one project — the way in from
+  // a "Shared with me" project in the sidebar. Waits for the saved views to
+  // load (the filter lives on the active view), then drops the param so a
+  // later filter change is not undone by it.
+  useEffect(() => {
+    const projectId = searchParams?.get('project');
+    if (!projectId || !activeViewId) return;
+    updateActiveView({ projectFilter: projectId });
+    router.replace('/dashboard/tasks', { scroll: false });
+  }, [searchParams, activeViewId, updateActiveView, router]);
 
   const selectView = useCallback((id: string) => {
     setActiveViewId(id);
@@ -531,10 +547,45 @@ function TasksPageInner() {
   // Share the board (collaboration P4): one project at a time, admin standing,
   // cloud backend only. "All projects" has nothing to point a link at.
   const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
+  const [shareTab, setShareTab] = useState<ShareTab>('link');
+  // Bumped when the dialog changes a grant, so the avatar stack refetches.
+  const [peopleVersion, setPeopleVersion] = useState(0);
   const canShareBoard =
     !isDesktopLocal() &&
     filterProject !== undefined &&
     projectRoleAtLeast(filterProject.role, 'admin');
+  const openShareBoard = (tab: ShareTab) => {
+    if (!filterProject) return;
+    setShareTab(tab);
+    setShareTarget({
+      kind: 'project',
+      projectId: filterProject.id,
+      name: filterProject.name,
+      initialScope: 'tasks',
+    });
+  };
+
+  // Read-side role hiding (defence in depth; the backend 403s regardless): a
+  // board shared below editor shows its tasks, but nothing that changes them.
+  // Such a task still opens (its page is where comments live); it just has no
+  // drag, no actions menu, and no "New task" on its board.
+  const projectById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
+  const canEditTask = useCallback(
+    (task: TaskResponse) =>
+      // An unfiled task is its owner's alone, and only its owner sees it.
+      task.project_id === null ||
+      projectRoleAtLeast(projectById.get(task.project_id)?.role, 'editor'),
+    [projectById],
+  );
+  const canCreateHere =
+    projectFilter === 'all' ||
+    projectFilter === NO_PROJECT_FILTER ||
+    projectRoleAtLeast(filterProject?.role, 'editor');
+  // The create dialog only offers projects a task can actually be filed into.
+  const writableProjects = useMemo(
+    () => projects.filter((p) => projectRoleAtLeast(p.role, 'editor')),
+    [projects],
+  );
 
   return (
     <main className="flex h-full flex-col overflow-hidden">
@@ -664,29 +715,32 @@ function TasksPageInner() {
         />
 
         {canShareBoard && filterProject && (
+          <ProjectPeopleStack
+            api={api}
+            projectId={filterProject.id}
+            version={peopleVersion}
+            onOpen={() => openShareBoard('people')}
+          />
+        )}
+        {canShareBoard && filterProject && (
           <Button
             size="sm"
             variant="outline"
             className="h-7 gap-1 text-xs"
-            title="Share this project with a link"
-            onClick={() =>
-              setShareTarget({
-                kind: 'project',
-                projectId: filterProject.id,
-                name: filterProject.name,
-                initialScope: 'tasks',
-              })
-            }
+            title="Share this project"
+            onClick={() => openShareBoard('link')}
           >
             <Share className="size-3.5" />
             <span className="hidden md:inline">Share</span>
           </Button>
         )}
 
-        <Button size="sm" className="h-7 gap-1 text-xs" onClick={() => openCreateDialog()} disabled={!api}>
-          <Plus className="size-3.5" />
-          New task
-        </Button>
+        {canCreateHere && (
+          <Button size="sm" className="h-7 gap-1 text-xs" onClick={() => openCreateDialog()} disabled={!api}>
+            <Plus className="size-3.5" />
+            New task
+          </Button>
+        )}
         </div>
       </div>
       <ShareLinkDialog
@@ -695,6 +749,8 @@ function TasksPageInner() {
           if (!open) setShareTarget(null);
         }}
         target={shareTarget}
+        initialTab={shareTab}
+        onPeopleChanged={() => setPeopleVersion((v) => v + 1)}
       />
 
       {/* Body */}
@@ -713,11 +769,15 @@ function TasksPageInner() {
           <p className="text-sm">
             {projectFilter === 'all' ? 'No tasks yet' : 'No tasks in this project'}
           </p>
-          <p className="text-xs">Capture what needs doing, then start a session from a task.</p>
-          <Button size="sm" className="mt-2 gap-1 text-xs" onClick={() => openCreateDialog()}>
-            <Plus className="size-3.5" />
-            New task
-          </Button>
+          {canCreateHere && (
+            <>
+              <p className="text-xs">Capture what needs doing, then start a session from a task.</p>
+              <Button size="sm" className="mt-2 gap-1 text-xs" onClick={() => openCreateDialog()}>
+                <Plus className="size-3.5" />
+                New task
+              </Button>
+            </>
+          )}
         </div>
       ) : view === 'board' ? (
         <div className="custom-scrollbar min-h-0 flex-1 overflow-x-auto p-3">
@@ -733,7 +793,8 @@ function TasksPageInner() {
             onDelete={deleteTask}
             onStartSession={startSession}
             onCreateAutomation={createAutomationFromTask}
-            onCreate={(status) => openCreateDialog({ status })}
+            onCreate={canCreateHere ? (status) => openCreateDialog({ status }) : undefined}
+            canEdit={canEditTask}
           />
         </div>
       ) : (
@@ -752,7 +813,8 @@ function TasksPageInner() {
             onDelete={deleteTask}
             onStartSession={startSession}
             onCreateAutomation={createAutomationFromTask}
-            onCreate={(status) => openCreateDialog({ status })}
+            onCreate={canCreateHere ? (status) => openCreateDialog({ status }) : undefined}
+            canEdit={canEditTask}
           />
         </div>
       )}
@@ -761,7 +823,7 @@ function TasksPageInner() {
         open={dialog.open}
         task={dialog.task}
         defaults={dialog.defaults}
-        projects={projects}
+        projects={writableProjects}
         labels={labels}
         allTasks={tasks}
         childTasks={dialogChildren}

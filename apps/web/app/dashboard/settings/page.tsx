@@ -31,6 +31,7 @@ import { DesktopSettings } from '@/components/dashboard/desktop-settings';
 import { ProvidersSettingsSection } from '@/components/dashboard/providers-settings-section';
 import { MachinesSettingsSection } from '@/components/dashboard/machines-settings-section';
 import { TasksSettingsSection } from '@/components/dashboard/tasks-settings-section';
+import { TeamsSettingsSection } from '@/components/dashboard/teams-settings-section';
 import { ThemeSelect } from '@/components/plugins/theme-select';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -74,6 +75,7 @@ const tabs = [
   { id: 'providers', label: 'Providers' },
   { id: 'machines', label: 'Machines' },
   { id: 'tasks', label: 'Tasks' },
+  { id: 'teams', label: 'Teams' },
   { id: 'billing', label: 'Billing' },
   { id: 'account', label: 'Account' }
 ] as const;
@@ -168,10 +170,11 @@ function SettingsContent() {
 
   const getNavHref = (tabId: string) => {
     const params = new URLSearchParams(searchParams.toString());
-    // Drop the per-project params so a static tab never carries a stale
-    // project id / section over from a project pane.
+    // Drop the per-pane params so a static tab never carries a stale
+    // project id / section / team id over from another pane.
     params.delete('projectId');
     params.delete('section');
+    params.delete('teamId');
     if (tabId === defaultTab) {
       params.delete('tab');
       const qs = params.toString();
@@ -435,6 +438,8 @@ function SettingsContent() {
               ))}
 
             {activeTab === 'tasks' && <TasksSettingsSection />}
+
+            {activeTab === 'teams' && <TeamsSettingsSection />}
 
             {activeTab === 'providers' && <ProvidersSettingsSection />}
 

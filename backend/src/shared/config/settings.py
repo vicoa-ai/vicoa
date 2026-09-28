@@ -86,6 +86,11 @@ class Settings(BaseSettings):
         "http://localhost:3000",
     ]
 
+    # The dashboard's public origin, for links this server writes into emails
+    # and hands back to clients (team invites, "shared with you"). Empty ⇒ the
+    # first of `frontend_urls`. A self-host sets it to wherever its web app is.
+    web_app_url: str = ""
+
     # API Versioning
     api_v1_prefix: str = "/api/v1"
 

@@ -65,7 +65,11 @@ from ..models import (
     UpdateShareLinkRequest,
     normalise_share_selection,
 )
-from .queries import _get_instance_message_stats, _live_state_for
+from .queries import (
+    DISPLAY_SESSION_CONFIG_KEYS,
+    _get_instance_message_stats,
+    _live_state_for,
+)
 from .task_queries import _project_vocabulary_filter
 from .task_serializers import serialize_tasks
 
@@ -79,17 +83,6 @@ class ShareTargetNotFoundError(LookupError):
 class ShareShapeError(ValueError):
     """A patch would leave the link in a shape create would refuse (→ 422)."""
 
-
-# The `session_config` keys a viewer may see (old plan D5): what ran, with
-# which model and effort, under which permission mode. Nothing operational.
-_PUBLIC_SESSION_CONFIG_KEYS = (
-    "agent",
-    "model",
-    "thinking_effort",
-    "reasoning_effort",
-    "permission_mode",
-    "opencode_mode",
-)
 
 MAX_PUBLIC_MESSAGE_PAGE = 200
 MAX_PUBLIC_SESSION_PAGE = 100
@@ -588,7 +581,7 @@ def _public_session_config(instance: AgentInstance) -> dict | None:
     cfg = instance.session_config
     if not isinstance(cfg, dict):
         return None
-    out = {k: cfg[k] for k in _PUBLIC_SESSION_CONFIG_KEYS if cfg.get(k) is not None}
+    out = {k: cfg[k] for k in DISPLAY_SESSION_CONFIG_KEYS if cfg.get(k) is not None}
     return out or None
 
 

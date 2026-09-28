@@ -18,7 +18,7 @@ from shared.auth import Principal, verify_user_token
 from shared.avatars import seed_user_avatar
 from shared.hooks import run_user_created_hooks
 
-from ..db.collab_queries import attach_pending_grants
+from ..db.collab_queries import claim_pending_invites
 
 logger = logging.getLogger(__name__)
 
@@ -182,10 +182,12 @@ async def get_current_user(
         raise AuthError("User not found")
     if created:
         _schedule_signup_side_effects(background_tasks, user)
-        # A project grant addressed to this email before the account existed
-        # (invite-before-signup) becomes a real grant now. Team invites need
-        # no such step — they are matched by email at read time.
-        attach_pending_grants(db, user)
+        # Project grants and session shares addressed to this email before
+        # the account existed (invite-before-signup) become real now. Team
+        # invites need no such step — they are matched by email at read time.
+        # `GET /teams/invitations` runs the same claim for accounts that were
+        # created by some other path.
+        claim_pending_invites(db, user)
     _maybe_seed_avatar(background_tasks, user, claims.avatar_url)
     _maybe_backfill_display_name(background_tasks, user, claims.display_name)
     # Attribution for anything this request's session flushes (collaboration

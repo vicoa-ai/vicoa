@@ -157,6 +157,13 @@ export interface AgentInstanceResponse {
    * transported value goes stale.
    */
   live_state?: LiveState;
+  /**
+   * Set only on a session someone else owns (scope=shared|all): its owner and
+   * the caller's standing. Such a row also arrives with no `machine_id`,
+   * `home_dir` or absolute paths, so nothing can aim a daemon RPC at it.
+   */
+  owner?: PrincipalResponse | null;
+  viewer_role?: ProjectRole | null;
 }
 
 export type AgentInstanceScope = 'me' | 'shared' | 'all';
@@ -218,6 +225,10 @@ export interface MessageResponse {
   created_at: string;
   requires_user_input: boolean;
   message_metadata?: Record<string, unknown> | null;
+  /** Who wrote a user message (null for the agent, or a CLI-typed prompt). */
+  sender_user_id?: string | null;
+  /** Their display name. Never an email on anyone else's session (§10.4). */
+  sender_user_display_name?: string | null;
 }
 
 /** One session/weekly rate-limit window in the usage blob. */
@@ -307,6 +318,9 @@ export interface AgentInstanceDetail {
   /** Whether the caller owns the session (vs. reaching it through a share). */
   is_owner?: boolean;
   access_level?: 'READ' | 'WRITE';
+  /** See AgentInstanceResponse.owner / viewer_role. */
+  owner?: PrincipalResponse | null;
+  viewer_role?: ProjectRole | null;
 }
 
 export interface UserAgentResponse {
@@ -499,6 +513,12 @@ export interface ProjectResponse {
    */
   role?: ProjectRole;
   scopes?: GrantScope[];
+  /**
+   * Who owns a project the caller does not (the user, or the team for a
+   * team-owned one). Null/absent on the caller's own projects. Never carries
+   * an email.
+   */
+  owner?: PrincipalResponse | null;
 }
 
 /** Echo of `setProjectOrder`: the ids actually stored, in order. */
@@ -536,15 +556,131 @@ export interface TaskLabelResponse {
   color: string;
 }
 
-/** A user or an agent, in the one shape `<PrincipalAvatar>` renders. */
+/** A user, a team or an agent, in the one shape `<PrincipalAvatar>` renders. */
 export interface PrincipalResponse {
-  type: 'user' | 'agent' | 'system';
+  type: 'user' | 'team' | 'agent' | 'system';
   id: string | null;
   name: string | null;
   avatar_image_uri: string | null;
   emoji: string | null;
   updated_at: string | null;
 }
+
+// --- Teams & people (collaboration §3.2, §3.3, §8.4) -------------------------
+
+export type TeamRole = 'owner' | 'admin' | 'member';
+export type GrantRole = Exclude<ProjectRole, 'owner'>;
+
+export interface TeamSummary {
+  id: string;
+  name: string;
+  /** Reserved, not routable (D-D): shown read-only, never an input. */
+  slug: string;
+  avatar_image_uri: string | null;
+  role: TeamRole;
+  /** Active + invited: everyone holding a seat. */
+  member_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TeamMember {
+  id: string;
+  user_id: string | null;
+  /** Only owners/admins receive addresses; plain members see names only. */
+  email: string | null;
+  display_name: string | null;
+  avatar_image_uri: string | null;
+  role: TeamRole;
+  status: 'invited' | 'active';
+  joined_at: string | null;
+  created_at: string;
+}
+
+export interface TeamDetail extends TeamSummary {
+  members: TeamMember[];
+}
+
+export interface TeamMemberInvite extends TeamMember {
+  /** False when this server has no mail transport; pass `join_url` on by hand. */
+  email_sent: boolean;
+  join_url: string;
+}
+
+export interface TeamInviteLink {
+  id: string;
+  token: string;
+  role: TeamRole;
+  expires_at: string | null;
+  max_uses: number | null;
+  uses: number;
+  created_at: string;
+}
+
+export interface TeamInvitePreview {
+  team_id: string;
+  name: string;
+  avatar_image_uri: string | null;
+  role: TeamRole;
+  member_count: number;
+}
+
+/** A pending email invite addressed to the signed-in user. */
+export interface TeamInvitation {
+  team_id: string;
+  name: string;
+  slug: string;
+  avatar_image_uri: string | null;
+  role: TeamRole;
+  invited_by_display_name: string | null;
+  created_at: string;
+}
+
+/** One row of a project's People list: the owner, or a grant. */
+export interface ProjectPerson {
+  /** null on the owner row — ownership is a column, not a grant. */
+  id: string | null;
+  principal: PrincipalResponse;
+  /** Beside the principal, never inside it; only project admins can list. */
+  email: string | null;
+  /** An email grant waiting for that address to sign up. */
+  pending: boolean;
+  role: ProjectRole;
+  scopes: GrantScope[];
+  member_count: number | null;
+  is_owner: boolean;
+  is_self: boolean;
+  created_at: string | null;
+}
+
+export interface ProjectGrantCreated extends ProjectPerson {
+  email_sent: boolean;
+}
+
+export type CreateProjectGrantRequest =
+  | { email: string; team_id?: never; role: GrantRole; scopes: GrantScope[] }
+  | { team_id: string; email?: never; role: GrantRole; scopes: GrantScope[] };
+
+/** One row of a session's own shares (the owner, a person, or a team). */
+export interface SessionShare {
+  id: string;
+  principal_type: 'user' | 'team';
+  email: string | null;
+  access: 'READ' | 'WRITE';
+  user_id: string | null;
+  team_id: string | null;
+  display_name: string | null;
+  avatar_image_uri: string | null;
+  member_count: number | null;
+  invited: boolean;
+  is_owner: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CreateSessionShareRequest =
+  | { email: string; team_id?: never; access: 'READ' | 'WRITE' }
+  | { team_id: string; email?: never; access: 'READ' | 'WRITE' };
 
 export interface TaskResponse {
   id: string;
@@ -1066,6 +1202,55 @@ export interface BillingPortalSessionResponse {
   url: string;
 }
 
+/**
+ * A failed backend call. `message` is the backend's `detail` when it sent a
+ * string one, so existing callers that only read `.message` are unaffected.
+ *
+ * `status` lets a caller tell "you are signed out" (401) from "it broke, retry"
+ * — telling someone to try again after a 401 sends them chasing the wrong
+ * problem, since retrying can never fix it. `capability` is set on a 402: the
+ * action exists and the caller may ask for it, but it is metered
+ * (`collab.team_seat` | `collab.grant_write`); see `seatLimitFromError`.
+ */
+export interface BackendApiError extends Error {
+  status: number;
+  capability?: string;
+  requiredRole?: string;
+}
+
+async function backendApiError(response: Response): Promise<BackendApiError> {
+  let errorMessage = `Backend API error: ${response.status} ${response.statusText}`;
+  let capability: string | undefined;
+  let requiredRole: string | undefined;
+  try {
+    const errorBody = await response.json();
+    if (typeof errorBody?.detail === 'string' && errorBody.detail.trim()) {
+      errorMessage = errorBody.detail;
+    }
+    if (typeof errorBody?.capability === 'string') capability = errorBody.capability;
+    if (typeof errorBody?.required_role === 'string') requiredRole = errorBody.required_role;
+  } catch {
+    // Ignore JSON parse failures and fall back to the generic HTTP error.
+  }
+  return Object.assign(new Error(errorMessage), {
+    status: response.status,
+    capability,
+    requiredRole,
+  });
+}
+
+/**
+ * The capability a 402 names, or null for any other error. The open /
+ * self-hosted build never answers 402 (its capability registry is empty), so
+ * a caller can branch on this unconditionally.
+ */
+export function seatLimitFromError(err: unknown): { capability: string; detail: string } | null {
+  if (!(err instanceof Error)) return null;
+  const { status, capability } = err as Partial<BackendApiError>;
+  if (status !== 402) return null;
+  return { capability: capability ?? '', detail: err.message };
+}
+
 class BackendAPI {
   private config: BackendConfig;
 
@@ -1118,22 +1303,7 @@ class BackendAPI {
     });
 
     if (!response.ok) {
-      let errorMessage = `Backend API error: ${response.status} ${response.statusText}`;
-
-      try {
-        const errorBody = await response.json();
-        if (typeof errorBody?.detail === 'string' && errorBody.detail.trim()) {
-          errorMessage = errorBody.detail;
-        }
-      } catch {
-        // Ignore JSON parse failures and fall back to the generic HTTP error.
-      }
-
-      // Carry the HTTP status so callers can tell "you are signed out" (401)
-      // from "it broke, retry" — telling someone to try again after a 401 sends
-      // them chasing the wrong problem, since retrying can never fix it.
-      // `message` is unchanged, so existing callers are unaffected.
-      throw Object.assign(new Error(errorMessage), { status: response.status });
+      throw await backendApiError(response);
     }
 
     return response.json();
@@ -1153,16 +1323,7 @@ class BackendAPI {
     });
 
     if (!response.ok) {
-      let errorMessage = `Backend API error: ${response.status} ${response.statusText}`;
-      try {
-        const errorBody = await response.json();
-        if (typeof errorBody?.detail === 'string' && errorBody.detail.trim()) {
-          errorMessage = errorBody.detail;
-        }
-      } catch {
-        // Ignore JSON parse failures and fall back to the generic HTTP error.
-      }
-      throw Object.assign(new Error(errorMessage), { status: response.status });
+      throw await backendApiError(response);
     }
   }
 
@@ -1411,11 +1572,14 @@ class BackendAPI {
   async getInstanceMessagesPaginated(
     instanceId: string,
     limit?: number,
-    beforeMessageId?: string
+    beforeMessageId?: string,
+    afterMessageId?: string,
   ) {
     const params = new URLSearchParams();
     if (limit) params.append('limit', limit.toString());
     if (beforeMessageId) params.append('before_message_id', beforeMessageId);
+    // The poll watermark: messages newer than this one, oldest first.
+    if (afterMessageId) params.append('after_message_id', afterMessageId);
     const endpoint = `/api/v1/agent-instances/${instanceId}/messages${params.toString() ? `?${params.toString()}` : ''}`;
     return this.request(endpoint);
   }
@@ -2004,6 +2168,189 @@ class BackendAPI {
 
   async revokeShareLink(linkId: string): Promise<void> {
     return this.requestVoid(`/api/v1/shares/${linkId}`, { method: 'DELETE' });
+  }
+
+  // --- People: project grants and per-session shares (P5) -------------------
+
+  /** Owner row + every grant. Admin on both scopes; 403 otherwise. */
+  async listProjectPeople(projectId: string): Promise<ProjectPerson[]> {
+    return this.request<ProjectPerson[]>(`/api/v1/projects/${projectId}/grants`);
+  }
+
+  async createProjectGrant(
+    projectId: string,
+    data: CreateProjectGrantRequest,
+  ): Promise<ProjectGrantCreated> {
+    return this.request<ProjectGrantCreated>(`/api/v1/projects/${projectId}/grants`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateProjectGrant(
+    projectId: string,
+    grantId: string,
+    data: { role?: GrantRole; scopes?: GrantScope[] },
+  ): Promise<ProjectPerson> {
+    return this.request<ProjectPerson>(`/api/v1/projects/${projectId}/grants/${grantId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteProjectGrant(projectId: string, grantId: string): Promise<void> {
+    return this.requestVoid(`/api/v1/projects/${projectId}/grants/${grantId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  /** Drop your own grant on a project shared with you. 409 when the access
+   *  comes from a team, or you own it. */
+  async leaveProject(projectId: string): Promise<void> {
+    return this.requestVoid(`/api/v1/projects/${projectId}/leave`, { method: 'POST' });
+  }
+
+  /** The owner row, per-person shares, then team shares of one session. */
+  async listSessionShares(instanceId: string): Promise<SessionShare[]> {
+    return this.request<SessionShare[]>(`/api/v1/agent-instances/${instanceId}/access`);
+  }
+
+  async createSessionShare(
+    instanceId: string,
+    data: CreateSessionShareRequest,
+  ): Promise<SessionShare> {
+    return this.request<SessionShare>(`/api/v1/agent-instances/${instanceId}/access`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateSessionShare(
+    instanceId: string,
+    shareId: string,
+    access: 'READ' | 'WRITE',
+  ): Promise<SessionShare> {
+    return this.request<SessionShare>(
+      `/api/v1/agent-instances/${instanceId}/access/${shareId}`,
+      { method: 'PATCH', body: JSON.stringify({ access }) },
+    );
+  }
+
+  async deleteSessionShare(instanceId: string, shareId: string): Promise<void> {
+    await this.request<{ status: string }>(
+      `/api/v1/agent-instances/${instanceId}/access/${shareId}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  // --- Teams (collaboration §3.2) -------------------------------------------
+
+  async listTeams(): Promise<TeamSummary[]> {
+    return this.request<TeamSummary[]>('/api/v1/teams');
+  }
+
+  async createTeam(name: string): Promise<TeamDetail> {
+    return this.request<TeamDetail>('/api/v1/teams', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  async getTeam(teamId: string): Promise<TeamDetail> {
+    return this.request<TeamDetail>(`/api/v1/teams/${teamId}`);
+  }
+
+  async renameTeam(teamId: string, name: string): Promise<TeamSummary> {
+    return this.request<TeamSummary>(`/api/v1/teams/${teamId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  async deleteTeam(teamId: string): Promise<void> {
+    return this.requestVoid(`/api/v1/teams/${teamId}`, { method: 'DELETE' });
+  }
+
+  /** Email invites waiting on the caller. Also attaches any project grants
+   *  and session shares sent to the caller's address before they signed up. */
+  async listTeamInvitations(): Promise<TeamInvitation[]> {
+    return this.request<TeamInvitation[]>('/api/v1/teams/invitations');
+  }
+
+  async acceptTeamInvitation(teamId: string): Promise<TeamSummary> {
+    return this.request<TeamSummary>(`/api/v1/teams/${teamId}/members/accept`, {
+      method: 'POST',
+    });
+  }
+
+  async declineTeamInvitation(teamId: string): Promise<void> {
+    return this.requestVoid(`/api/v1/teams/${teamId}/members/decline`, { method: 'POST' });
+  }
+
+  async inviteTeamMember(
+    teamId: string,
+    email: string,
+    role: Exclude<TeamRole, 'owner'>,
+  ): Promise<TeamMemberInvite> {
+    return this.request<TeamMemberInvite>(`/api/v1/teams/${teamId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ email, role }),
+    });
+  }
+
+  async updateTeamMemberRole(
+    teamId: string,
+    memberId: string,
+    role: Exclude<TeamRole, 'owner'>,
+  ): Promise<TeamMember> {
+    return this.request<TeamMember>(`/api/v1/teams/${teamId}/members/${memberId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    });
+  }
+
+  /** Remove a member, or yourself (leaving the team). */
+  async removeTeamMember(teamId: string, memberId: string): Promise<void> {
+    return this.requestVoid(`/api/v1/teams/${teamId}/members/${memberId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async listTeamInviteLinks(teamId: string): Promise<TeamInviteLink[]> {
+    return this.request<TeamInviteLink[]>(`/api/v1/teams/${teamId}/invites`);
+  }
+
+  async createTeamInviteLink(
+    teamId: string,
+    data: {
+      role: Exclude<TeamRole, 'owner'>;
+      expires_in_days: number | null;
+      max_uses: number | null;
+    },
+  ): Promise<TeamInviteLink> {
+    return this.request<TeamInviteLink>(`/api/v1/teams/${teamId}/invites`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async revokeTeamInviteLink(teamId: string, inviteId: string): Promise<void> {
+    return this.requestVoid(`/api/v1/teams/${teamId}/invites/${inviteId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  /** What the join page shows. Uniform 404 for unknown / revoked / expired /
+   *  used-up tokens — callers must not try to tell them apart. */
+  async previewTeamInviteLink(token: string): Promise<TeamInvitePreview> {
+    return this.request<TeamInvitePreview>(`/api/v1/team-invites/${encodeURIComponent(token)}`);
+  }
+
+  async acceptTeamInviteLink(token: string): Promise<TeamSummary> {
+    return this.request<TeamSummary>(
+      `/api/v1/team-invites/${encodeURIComponent(token)}/accept`,
+      { method: 'POST' },
+    );
   }
 
   // --- Workspace search (cmd+K palette) -----------------------------------

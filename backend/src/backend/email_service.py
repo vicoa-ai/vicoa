@@ -12,9 +12,11 @@ unconfigured. Production runs on Mailgun.
 
 from __future__ import annotations
 
+import html
 import logging
 
 from backend import mailgun_service, resend_service
+from shared.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -83,3 +85,69 @@ async def send_auth_code_email(to_email: str, code: str, purpose: str) -> bool:
         "</div>"
     )
     return await _send(to_email, subject, body_html)
+
+
+def web_url(path: str) -> str:
+    """An absolute link into the dashboard, for emails and for clients that
+    show a link to copy. `WEB_APP_URL`, else the first configured frontend."""
+    base = (settings.web_app_url or (settings.frontend_urls or [""])[0]).rstrip("/")
+    return f"{base}{path}"
+
+
+def _invite_body(headline: str, detail: str, cta_label: str, cta_url: str) -> str:
+    """The one layout both invite emails share. Unbranded, like the auth-code
+    email: a self-hosted deployment sends this from its own domain. Every
+    interpolated value is escaped — names are user-controlled."""
+    return (
+        "<div style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;\">"
+        f'<p style="font-size: 16px;">{html.escape(headline)}</p>'
+        f"<p>{html.escape(detail)}</p>"
+        f'<p><a href="{html.escape(cta_url, quote=True)}" '
+        'style="display: inline-block; padding: 10px 16px; border-radius: 6px; '
+        'background: #111; color: #fff; text-decoration: none;">'
+        f"{html.escape(cta_label)}</a></p>"
+        f'<p style="color: #666; font-size: 12px;">Or open {html.escape(cta_url)}</p>'
+        '<p style="color: #666; font-size: 12px;">If you weren\'t expecting this, you can ignore this email.</p>'
+        "</div>"
+    )
+
+
+def _one_line(value: str) -> str:
+    """Names go into a subject header; a newline there is header injection."""
+    return " ".join((value or "").split())
+
+
+async def send_team_invite_email(
+    to_email: str, inviter_name: str, team_name: str, role: str, join_url: str
+) -> bool:
+    """Tell someone they were invited to a team. Joining is still an explicit
+    accept on the page the link opens (Settings → Teams, once signed in with
+    this address)."""
+    inviter = _one_line(inviter_name) or "Someone"
+    team = _one_line(team_name)
+    subject = f"{inviter} invited you to join {team}"
+    body = _invite_body(
+        f"{inviter} invited you to join the team {team} as {role}.",
+        "Sign in with this email address to accept or decline the invitation.",
+        "View invitation",
+        join_url,
+    )
+    return await _send(to_email, subject, body)
+
+
+async def send_project_invite_email(
+    to_email: str, inviter_name: str, project_name: str, role: str, open_url: str
+) -> bool:
+    """Tell someone a project was shared with them. Unlike a team there is no
+    accept step: the project is already in their "Shared with me" list, or
+    will be the moment they sign up with this address."""
+    inviter = _one_line(inviter_name) or "Someone"
+    project = _one_line(project_name)
+    subject = f"{inviter} shared {project} with you"
+    body = _invite_body(
+        f"{inviter} shared the project {project} with you as {role}.",
+        "Sign in with this email address to open it. It is listed under Shared with me.",
+        "Open project",
+        open_url,
+    )
+    return await _send(to_email, subject, body)

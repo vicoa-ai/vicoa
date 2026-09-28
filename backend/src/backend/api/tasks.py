@@ -32,6 +32,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from shared import access, project_icons, storage
+from shared.database.collab_models import Team
 from shared.database.models import User
 from shared.database.session import get_db
 from shared.database.task_models import Project, Task
@@ -60,6 +61,7 @@ from ..models import (
     CreateTaskLabelRequest,
     CreateTaskRequest,
     ProjectOrderResponse,
+    PrincipalResponse,
     ProjectResponse,
     ProjectSummaryResponse,
     SetProjectDirectoryRequest,
@@ -113,9 +115,15 @@ def list_projects_endpoint(
             and not project.icon
         ):
             background_tasks.add_task(project_icons.seed_project_icon, project.id)
+    owners = _project_owners(db, current_user.id, projects)
     return [
         _project_response(
-            p, accesses.get(p.id), last_activity_at=last_at, position=position
+            p,
+            accesses.get(p.id),
+            viewer_id=current_user.id,
+            owner=owners.get(p.id),
+            last_activity_at=last_at,
+            position=position,
         )
         for p, last_at, position in rows
     ]
@@ -144,6 +152,8 @@ def _project_response(
     project: Project,
     project_access: access.ProjectAccess | None,
     *,
+    viewer_id: UUID,
+    owner: PrincipalResponse | None = None,
     last_activity_at: datetime | None = None,
     position: int | None = None,
 ) -> ProjectResponse:
@@ -155,14 +165,73 @@ def _project_response(
     hidden button rather than a phantom one. `last_activity_at` and `position`
     are only known to the list query; single-project responses leave them
     unset.
+
+    `directories` keeps only the caller's own rows. A directory is "where MY
+    copy of this project lives" (any contributor may link their own machine),
+    so on a shared project the other rows are someone else's machine names
+    and absolute paths — nothing the caller can use, and nothing they should
+    read.
     """
     response = ProjectResponse.model_validate(project)
     if project_access is not None:
         response.role = project_access.role
         response.scopes = list(project_access.scopes)  # type: ignore[assignment]
+    mine = {d.machine_id for d in project.directories if d.user_id == viewer_id}
+    response.directories = [d for d in response.directories if d.machine_id in mine]
+    response.owner = owner
     response.last_activity_at = last_activity_at
     response.position = position
     return response
+
+
+def _project_owners(
+    db: Session, viewer_id: UUID, projects: list[Project]
+) -> dict[UUID, PrincipalResponse]:
+    """Who owns each project the caller does not: the team for a team-owned
+    one, else the owning user. Two queries for the whole list; the caller's
+    own personal projects are skipped, so a solo sidebar costs nothing."""
+    foreign = [
+        p for p in projects if not (p.team_id is None and p.user_id == viewer_id)
+    ]
+    if not foreign:
+        return {}
+    user_ids = {p.user_id for p in foreign if p.team_id is None}
+    team_ids = {p.team_id for p in foreign if p.team_id is not None}
+    users = (
+        {u.id: u for u in db.query(User).filter(User.id.in_(user_ids))}
+        if user_ids
+        else {}
+    )
+    teams = (
+        {t.id: t for t in db.query(Team).filter(Team.id.in_(team_ids))}
+        if team_ids
+        else {}
+    )
+    out: dict[UUID, PrincipalResponse] = {}
+    for project in foreign:
+        if project.team_id is not None:
+            team = teams.get(project.team_id)
+            if team is not None:
+                out[project.id] = PrincipalResponse(
+                    type="team",
+                    id=team.id,
+                    name=team.name,
+                    avatar_image_uri=team.avatar_image_uri,
+                    updated_at=team.updated_at,
+                )
+            continue
+        user = users.get(project.user_id)
+        if user is not None:
+            out[project.id] = PrincipalResponse(
+                type="user",
+                id=user.id,
+                # display_name only — never the owner's email (§10.4).
+                name=user.display_name,
+                avatar_image_uri=user.avatar_image_uri,
+                emoji=user.avatar_emoji,
+                updated_at=user.updated_at,
+            )
+    return out
 
 
 def _project_response_for(
@@ -173,7 +242,12 @@ def _project_response_for(
     The list endpoint batches this with `access.project_accesses`; everything
     that returns one project uses this.
     """
-    return _project_response(project, access.project_access(db, user_id, project))
+    return _project_response(
+        project,
+        access.project_access(db, user_id, project),
+        viewer_id=user_id,
+        owner=_project_owners(db, user_id, [project]).get(project.id),
+    )
 
 
 @router.post(
