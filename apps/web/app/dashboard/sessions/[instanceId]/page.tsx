@@ -32,6 +32,7 @@ import { FileLinkProvider } from '@/components/dashboard/file-link-context';
 import type { WorkspaceFileLink } from '@/lib/message-links';
 import {
   buildTranscriptItems,
+  computeTranscriptSpacing,
   computeTranscriptTurns,
   hasTranscriptMessages,
   orderTranscriptMessages,
@@ -1460,6 +1461,7 @@ function AgentInstanceContent() {
   // messages so it sees exactly what renders — anything folded into a
   // tool-group or a thinking card is inside the turn but never anchors it.
   const turnCopyText = useMemo(() => computeTranscriptTurns(chatItems), [chatItems]);
+  const rowSpacing = useMemo(() => computeTranscriptSpacing(chatItems), [chatItems]);
 
   // Whether the list has any real message rows. We render the SessionEmptyState
   // (not the virtual list) until a real message arrives, so the Virtuoso-tied
@@ -2563,6 +2565,7 @@ function AgentInstanceContent() {
                 onFork={handleForkMessage}
                 forkingMessageId={forkingMessageId}
                 turnCopyText={turnCopyText}
+                spacing={rowSpacing.get(item.key)}
               />
             )}
             context={virtuosoContext}

@@ -88,9 +88,9 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
   /** Project root, so tool-use file paths render relative to it. */
   projectPath?: string | null;
   // Sub-agent children render inside SubagentGroup's already-indented,
-  // space-y-1 container. Drop the top-level chat-bubble chrome (outer margins,
-  // bubble padding/shadow) so the rows sit as tight as a tool-group's lines
-  // instead of stacking mb-2 + py-2 into a big gap between each.
+  // space-y-1 container. Drop the top-level chat-bubble chrome (bubble
+  // padding/shadow) so the rows sit as tight as a tool-group's lines instead
+  // of stacking py-2 into a big gap between each.
   compact?: boolean;
 }) {
   // More robust user detection - check for various possible user sender types
@@ -125,7 +125,7 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
   const thinking = !isUser ? parseThinkingPayload(message) : null;
   if (thinking) {
     return (
-      <div className={compact ? 'flex justify-start' : 'flex justify-start mb-1'}>
+      <div className="flex justify-start">
         <div
           className={`rounded-xl px-4 py-0.5 flex-1 min-w-0 text-sm leading-relaxed font-mono ${
             isFindActive ? 'find-active-message ring-2 ring-amber-400 dark:ring-amber-500' : ''
@@ -159,11 +159,7 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
 
   return (
     <div
-      className={`group/message flex gap-3 ${
-        isUser
-          ? compact ? 'justify-end' : 'justify-end mt-6 mb-6'
-          : compact ? 'justify-start' : 'justify-start mb-1'
-      }`}
+      className={`group/message flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}
     >
       <div className={`flex gap-3 ${isUser ? 'max-w-[85%] flex-row-reverse' : 'flex-row w-full'}`}>
         {/* <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
@@ -264,7 +260,7 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
 // Date separator component
 export const DateSeparator = memo(function DateSeparator({ date }: { date: string }) {
   return (
-    <div className="flex items-center justify-center my-6">
+    <div className="flex items-center justify-center">
       <div className="text-xs font-medium text-muted-foreground px-3 py-1 bg-muted rounded-full">
         {date}
       </div>
@@ -304,7 +300,7 @@ export const VibingText = memo(function VibingText({ text }: { text: string }) {
 // slot instead, so the list doesn't shift when the indicator comes and goes.
 export const ThinkingIndicator = memo(function ThinkingIndicator({ vibingMessage }: { vibingMessage: string }) {
   return (
-    <div className="flex gap-3 justify-start mt-3 mb-3">
+    <div className="flex gap-3 justify-start">
       <div className="flex gap-3 w-full">
         <div className="rounded-xl px-4 py-3 text-foreground rounded-tl-sm">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">

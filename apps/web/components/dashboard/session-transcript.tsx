@@ -159,6 +159,47 @@ export function hasTranscriptMessages(items: TranscriptItem[]): boolean {
   );
 }
 
+/** Vertical padding on one transcript row's shell, in px. */
+export interface RowSpacing {
+  top: number;
+  bottom: number;
+}
+
+// The outer margins each row kind used to carry.
+function rowMargins(item: TranscriptItem): RowSpacing {
+  switch (item.type) {
+    case 'separator':
+      return { top: 24, bottom: 24 };
+    case 'thinking':
+      return { top: 12, bottom: 12 };
+    case 'message':
+      return isUserMessage(item.message) ? { top: 24, bottom: 24 } : { top: 0, bottom: 4 };
+    default:
+      return { top: 0, bottom: 4 };
+  }
+}
+
+/**
+ * Row spacing as shell padding, keyed by item key. A margin collapses outside
+ * the box Virtuoso measures, so a row mounting or unmounting at the render
+ * band's edge changed the scroll height unseen; at the bottom of the list that
+ * looped into a bounce. Each gap is the larger of the two rows' margins, as
+ * collapsing gave, on the lower row; the last row keeps its bottom margin.
+ */
+export function computeTranscriptSpacing(items: TranscriptItem[]): Map<string, RowSpacing> {
+  const spacing = new Map<string, RowSpacing>();
+  let previous: RowSpacing | null = null;
+  for (let index = 0; index < items.length; index++) {
+    const own = rowMargins(items[index]);
+    spacing.set(items[index].key, {
+      top: previous ? Math.max(previous.bottom, own.top) : own.top,
+      bottom: index === items.length - 1 ? own.bottom : 0,
+    });
+    previous = own;
+  }
+  return spacing;
+}
+
 export interface TranscriptRowProps {
   item: TranscriptItem;
   agentTypeName?: string | null;
@@ -179,9 +220,12 @@ export interface TranscriptRowProps {
   forkingMessageId?: string | null;
   /** Turn-end copy text by message id (see `computeTranscriptTurns`). */
   turnCopyText?: ReadonlyMap<string, string>;
+  /** This row's padding, from `computeTranscriptSpacing`. */
+  spacing: RowSpacing | undefined;
 }
 
-const ROW_SHELL = 'max-w-4xl mx-auto px-6';
+// flow-root keeps any margin inside the row's measured box (see computeTranscriptSpacing).
+const ROW_SHELL = 'max-w-4xl mx-auto px-6 flow-root';
 
 /** One Virtuoso row: separator, thinking, a tool run, a sub-agent group, or a message. */
 export function TranscriptRow({
@@ -198,18 +242,20 @@ export function TranscriptRow({
   onFork,
   forkingMessageId = null,
   turnCopyText,
+  spacing,
 }: TranscriptRowProps) {
   const agentType = resolveAgentType(agentTypeName || undefined);
+  const shellStyle = { paddingTop: spacing?.top, paddingBottom: spacing?.bottom };
   if (item.type === 'separator') {
     return (
-      <div className={ROW_SHELL}>
+      <div className={ROW_SHELL} style={shellStyle}>
         <DateSeparator date={item.date} />
       </div>
     );
   }
   if (item.type === 'thinking') {
     return (
-      <div className={ROW_SHELL}>
+      <div className={ROW_SHELL} style={shellStyle}>
         <ThinkingIndicator vibingMessage={vibingMessage} />
       </div>
     );
@@ -219,8 +265,8 @@ export function TranscriptRow({
   }`;
   if (item.type === 'tool-group') {
     return (
-      <div className={ROW_SHELL}>
-        <div className="flex justify-start mb-1">
+      <div className={ROW_SHELL} style={shellStyle}>
+        <div className="flex justify-start">
           <div className={groupShell}>
             <ToolUseGroup
               messages={item.messages}
@@ -236,8 +282,8 @@ export function TranscriptRow({
   }
   if (item.type === 'subagent-group') {
     return (
-      <div className={ROW_SHELL}>
-        <div className="flex justify-start mb-1">
+      <div className={ROW_SHELL} style={shellStyle}>
+        <div className="flex justify-start">
           <div className={groupShell}>
             <SubagentGroup
               messages={item.messages}
@@ -265,7 +311,7 @@ export function TranscriptRow({
     );
   }
   return (
-    <div className={ROW_SHELL}>
+    <div className={ROW_SHELL} style={shellStyle}>
       <MessageItem
         message={item.message}
         onOptionClick={onOptionClick}
@@ -405,6 +451,7 @@ export function SessionTranscript({
     [grouped, agentTypeName, thinking],
   );
   const turnCopyText = useMemo(() => computeTranscriptTurns(items), [items]);
+  const rowSpacing = useMemo(() => computeTranscriptSpacing(items), [items]);
   const [expandedKeys, toggleExpanded] = useExpandedTranscriptKeys();
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [atBottom, setAtBottom] = useState(startAt === 'bottom');
@@ -466,6 +513,7 @@ export function SessionTranscript({
                 expandedKeys={expandedKeys}
                 onToggleExpanded={toggleExpanded}
                 turnCopyText={turnCopyText}
+                spacing={rowSpacing.get(item.key)}
               />
             )}
             context={context}
