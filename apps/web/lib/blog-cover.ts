@@ -25,7 +25,7 @@ export interface BlogCoverLayout {
   logo: { x: number; y: number; width: number; height: number };
 }
 
-export function wrapTitle(text: string, maxCharsPerLine = 26, maxLines = MAX_LINES): string[] {
+function wrapTitle(text: string, maxCharsPerLine = 26, maxLines = MAX_LINES): string[] {
   const words = text.replace(/\s+/g, ' ').trim().split(' ');
   const lines: string[] = [];
   let currentLine = '';
@@ -64,7 +64,7 @@ export function wrapTitle(text: string, maxCharsPerLine = 26, maxLines = MAX_LIN
   return lines;
 }
 
-export function fontSizeForTitle(lines: string[]): number {
+function fontSizeForTitle(lines: string[]): number {
   const longestLine = Math.max(...lines.map((line) => line.length));
   if (longestLine <= 18) return 62;
   if (longestLine <= 24) return 56;
