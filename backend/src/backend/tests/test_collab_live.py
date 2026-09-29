@@ -6,7 +6,7 @@
 * The session detail names its participants (owner + everyone who wrote), the
   input to the avatar stack and "Prompted by".
 * A grantee's detail carries no `git_diff`: the Files/Git panel is owner-only.
-* A shared project can be added to the grantee's own sidebar list.
+* A grantee can follow a shared project into their own project list.
 
 Role floors live in `test_authz_matrix.py`.
 """
@@ -437,10 +437,10 @@ class TestCollaboratorsInYourProject:
         }
 
 
-# --- the grantee's own sidebar ---------------------------------------------------
+# --- following a shared project ------------------------------------------------
 
 
-class TestSidebar:
+class TestFollow:
     def _share(self, test_db, project: Project, user: User, scopes: list[str]) -> None:
         test_db.add(
             ProjectGrant(
@@ -462,37 +462,35 @@ class TestSidebar:
         ]
         return row
 
-    def test_add_and_remove(self, test_db, as_user, other, project):
+    def test_follow_and_unfollow(self, test_db, as_user, other, project):
         self._share(test_db, project, other, ["sessions"])
         client = as_user(other)
-        assert self._listed(client, project.id)["in_sidebar"] is False
+        assert self._listed(client, project.id)["followed"] is False
 
-        added = client.put(f"/api/v1/projects/{project.id}/sidebar")
-        assert added.status_code == 200, added.text
-        assert added.json()["in_sidebar"] is True
-        assert self._listed(client, project.id)["in_sidebar"] is True
+        followed = client.put(f"/api/v1/projects/{project.id}/follow")
+        assert followed.status_code == 200, followed.text
+        assert followed.json()["followed"] is True
+        assert self._listed(client, project.id)["followed"] is True
         # Idempotent.
-        assert client.put(f"/api/v1/projects/{project.id}/sidebar").status_code == 200
+        assert client.put(f"/api/v1/projects/{project.id}/follow").status_code == 200
 
-        removed = client.delete(f"/api/v1/projects/{project.id}/sidebar")
-        assert removed.json()["in_sidebar"] is False
-        assert self._listed(client, project.id)["in_sidebar"] is False
+        unfollowed = client.delete(f"/api/v1/projects/{project.id}/follow")
+        assert unfollowed.json()["followed"] is False
+        assert self._listed(client, project.id)["followed"] is False
 
     def test_the_owners_view_is_untouched(
         self, test_db, as_user, owner, other, project
     ):
         self._share(test_db, project, other, ["sessions"])
-        as_user(other).put(f"/api/v1/projects/{project.id}/sidebar")
+        as_user(other).put(f"/api/v1/projects/{project.id}/follow")
         mine = as_user(owner)
-        assert self._listed(mine, project.id)["in_sidebar"] is True
-        # An owner's own project is always listed; removing is a no-op.
-        assert mine.delete(f"/api/v1/projects/{project.id}/sidebar").json()[
-            "in_sidebar"
-        ]
+        assert self._listed(mine, project.id)["followed"] is True
+        # An owner's own project is always listed; unfollowing is a no-op.
+        assert mine.delete(f"/api/v1/projects/{project.id}/follow").json()["followed"]
 
     def test_a_stranger_gets_404(self, test_db, as_user, project):
         stranger = _user(test_db, "stranger@example.com", "Stranger")
         assert (
-            as_user(stranger).put(f"/api/v1/projects/{project.id}/sidebar").status_code
+            as_user(stranger).put(f"/api/v1/projects/{project.id}/follow").status_code
             == 404
         )

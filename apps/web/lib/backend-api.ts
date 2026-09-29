@@ -534,11 +534,11 @@ export interface ProjectResponse {
    */
   owner?: PrincipalResponse | null;
   /**
-   * Whether it is in the caller's own sidebar list: always for one they own;
-   * for one shared with them, once they added it — until then it sits under
-   * "Shared with me" only. Absent from an older backend: read as not added.
+   * Whether it is in the caller's own project list: always for one they own;
+   * for one shared with them, once they follow it — until then it sits under
+   * "Shared with me" only. Absent from an older backend: read as not followed.
    */
-  in_sidebar?: boolean;
+  followed?: boolean;
 }
 
 /** Echo of `setProjectOrder`: the ids actually stored, in order. */
@@ -2231,12 +2231,12 @@ class BackendAPI {
   }
 
   /**
-   * List a project shared with you among your own in the sidebar (or take it
-   * out again). Your view only — the project and your access are unchanged.
+   * Follow a project shared with you into your own list (or unfollow it). Your
+   * view only — the project and your access are unchanged.
    */
-  async setProjectInSidebar(projectId: string, added: boolean): Promise<ProjectResponse> {
-    return this.request<ProjectResponse>(`/api/v1/projects/${projectId}/sidebar`, {
-      method: added ? 'PUT' : 'DELETE',
+  async setProjectFollowed(projectId: string, followed: boolean): Promise<ProjectResponse> {
+    return this.request<ProjectResponse>(`/api/v1/projects/${projectId}/follow`, {
+      method: followed ? 'PUT' : 'DELETE',
     });
   }
 

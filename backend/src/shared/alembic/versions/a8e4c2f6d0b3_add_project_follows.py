@@ -1,11 +1,11 @@
-"""add sidebar_projects (shared projects a viewer added to their own list)
+"""add project_follows (shared projects a user follows into their own list)
 
-A project shared with you can be added to your sidebar's
-project list, where it and its sessions show the way your own projects do,
-instead of only under "Shared with me". One row per (viewer, project) added.
-Its own table rather than a flag on ``project_positions``: that table is
-rewritten whole on every drag, and being in the list has to survive a
-reorder. Rows cascade with both the user and the project. Additive only.
+A project shared with you can be followed: it moves from "Shared with me" into
+your own project list, other people's sessions in it under its Team row. One
+row per (user, project) followed; your own projects never need one. Its own
+table rather than a flag on ``project_positions``: that table is rewritten
+whole on every drag, and following has to survive a reorder. Rows cascade
+with both the user and the project. Additive only.
 
 Revision ID: a8e4c2f6d0b3
 Revises: c3d9e5a7b1f4
@@ -27,7 +27,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     op.create_table(
-        "sidebar_projects",
+        "project_follows",
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("project_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
@@ -35,9 +35,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("user_id", "project_id"),
     )
-    op.create_index("ix_sidebar_projects_project", "sidebar_projects", ["project_id"])
+    op.create_index("ix_project_follows_project", "project_follows", ["project_id"])
 
 
 def downgrade() -> None:
-    op.drop_index("ix_sidebar_projects_project", table_name="sidebar_projects")
-    op.drop_table("sidebar_projects")
+    op.drop_index("ix_project_follows_project", table_name="project_follows")
+    op.drop_table("project_follows")

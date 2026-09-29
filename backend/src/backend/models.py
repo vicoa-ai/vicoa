@@ -841,10 +841,10 @@ class ProjectResponse(BaseModel):
     # a team-owned one. None when the caller is the owner, so the solo payload
     # is unchanged. The sidebar's "Shared with me" group draws it over the icon.
     owner: PrincipalResponse | None = None
-    # Whether the project is in the caller's own sidebar list: always for one
-    # they own; for one shared with them, once they added it — until
-    # then it sits under "Shared with me" only.
-    in_sidebar: bool = True
+    # Whether the project is in the caller's own project list: always for one
+    # they own; for one shared with them, once they follow it — until then it
+    # sits under "Shared with me" only.
+    followed: bool = True
     # Task-identifier prefix; None until the project's first task allocates one.
     key: str | None = None
     git_remote_url: str | None = None

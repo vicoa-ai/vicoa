@@ -102,7 +102,7 @@ import {
   SidebarSharedWithMe,
 } from '@/components/dashboard/sidebar-shared-with-me';
 import { useSharedSessions, useWatchInstances } from '@/lib/hooks/use-shared-sessions';
-import { isAddedSharedProject } from '@/lib/shared-with-me';
+import { isFollowedSharedProject } from '@/lib/shared-with-me';
 import {
   TEAM_EXPANDED_STORAGE_KEY,
   teamRowLabel,
@@ -573,17 +573,17 @@ export function SidebarSessions({
   );
   useWatchInstances(watchedSharedIds);
 
-  const handleSetInSidebar = useCallback(
-    async (project: ProjectResponse, added: boolean) => {
+  const handleSetFollowed = useCallback(
+    async (project: ProjectResponse, followed: boolean) => {
       if (!api) return;
       setProjectsById((prev) => {
         const next = new Map(prev);
         const current = next.get(project.id);
-        if (current) next.set(project.id, { ...current, in_sidebar: added });
+        if (current) next.set(project.id, { ...current, followed });
         return next;
       });
       try {
-        await api.setProjectInSidebar(project.id, added);
+        await api.setProjectFollowed(project.id, followed);
       } catch (err) {
         console.error('Failed to update the sidebar:', err);
       } finally {
@@ -1540,12 +1540,12 @@ export function SidebarSessions({
                 // worktree config from the project's own directory rows).
                 const projectSettingsHref =
                   dbProject && canManageProject ? settingsHrefForProject(dbProject.id) : null;
-                // A project someone shared with us that we added to this list:
+                // A project someone shared with us that we follow into this list:
                 // it can be taken out again, left, and — with the tasks
                 // scope — its board opened, like under "Shared with me".
-                const addedShared =
-                  dbProject !== undefined && isAddedSharedProject(dbProject) ? dbProject : null;
-                const sharedBoard = addedShared?.scopes?.includes('tasks') ?? false;
+                const followedShared =
+                  dbProject !== undefined && isFollowedSharedProject(dbProject) ? dbProject : null;
+                const sharedBoard = followedShared?.scopes?.includes('tasks') ?? false;
                 const projectHeader = label ? (
                   // Wrapper carries the drag handle and hover group so the
                   // collapse toggle, actions menu, and "+" can be sibling buttons
@@ -1595,7 +1595,7 @@ export function SidebarSessions({
                         )}
                       />
                     </button>
-                    {(projectSettingsHref || canArchiveProject || canShareProject || addedShared) && (
+                    {(projectSettingsHref || canArchiveProject || canShareProject || followedShared) && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button
@@ -1642,30 +1642,30 @@ export function SidebarSessions({
                               Archive project
                             </DropdownMenuItem>
                           )}
-                          {addedShared && sharedBoard && (
+                          {followedShared && sharedBoard && (
                             <DropdownMenuItem
                               className="cursor-pointer gap-2 text-xs"
                               onSelect={() =>
-                                router.push(`/dashboard/tasks?project=${encodeURIComponent(addedShared.id)}`)
+                                router.push(`/dashboard/tasks?project=${encodeURIComponent(followedShared.id)}`)
                               }
                             >
                               <ListTodo className="h-3.5 w-3.5" />
                               Open task board
                             </DropdownMenuItem>
                           )}
-                          {addedShared && (
+                          {followedShared && (
                             <DropdownMenuItem
                               className="cursor-pointer gap-2 text-xs"
-                              onSelect={() => void handleSetInSidebar(addedShared, false)}
+                              onSelect={() => void handleSetFollowed(followedShared, false)}
                             >
                               <PanelLeftClose className="h-3.5 w-3.5" />
                               Remove from sidebar
                             </DropdownMenuItem>
                           )}
-                          {addedShared && (
+                          {followedShared && (
                             <DropdownMenuItem
                               className="cursor-pointer gap-2 text-xs"
-                              onSelect={() => setLeavingProject(addedShared)}
+                              onSelect={() => setLeavingProject(followedShared)}
                             >
                               <LogOut className="h-3.5 w-3.5" />
                               Leave project…
@@ -1798,7 +1798,7 @@ export function SidebarSessions({
                 refreshProjects();
                 refreshShared();
               }}
-              onSetInSidebar={(project, added) => void handleSetInSidebar(project, added)}
+              onSetFollowed={(project, followed) => void handleSetFollowed(project, followed)}
             />
           )}
         </div>

@@ -276,21 +276,20 @@ class ProjectPosition(Base):
     position: Mapped[int] = mapped_column(Integer)
 
 
-class SidebarProject(Base):
-    """A project someone shared with the viewer, added to their own project list.
+class ProjectFollow(Base):
+    """A user following a project someone else shared with them.
 
-    Shared projects start out under the sidebar's "Shared with me"; adding one
-    lists it among the viewer's own projects, other people's sessions in it
-    under its Team row. Per viewer, like `ProjectPosition`, and separate from
-    it: the order table is rewritten whole on every drag, and
-    "is this project in my list" must survive a reorder. A viewer's own
-    projects never need a row. Rows cascade with the user and the project; one
+    Shared projects start out under the sidebar's "Shared with me"; following
+    one lists it among the user's own projects, other people's sessions in it
+    under its Team row. Per user, like `ProjectPosition`, and separate from
+    it: the order table is rewritten whole on every drag, and following must
+    survive a reorder. A user's own projects never need a row. Rows cascade with the user and the project; one
     left behind after access ends is inert, because the list only honours it
     for a project the viewer can still see.
     """
 
-    __tablename__ = "sidebar_projects"
-    __table_args__ = (Index("ix_sidebar_projects_project", "project_id"),)
+    __tablename__ = "project_follows"
+    __table_args__ = (Index("ix_project_follows_project", "project_id"),)
 
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),

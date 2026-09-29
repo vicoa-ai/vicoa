@@ -46,8 +46,8 @@ const projects = (...ps: ProjectResponse[]) => new Map(ps.map((p) => [p.id, p]))
 
 describe('teamSessionsByProject', () => {
   const mine = project({ id: 'mine' });
-  const added = project({ id: 'added', owner: nick, in_sidebar: true });
-  const notAdded = project({ id: 'not-added', owner: nick, in_sidebar: false });
+  const added = project({ id: 'added', owner: nick, followed: true });
+  const notAdded = project({ id: 'not-added', owner: nick, followed: false });
   const archived = project({ id: 'archived', is_archived: true });
   const all = projects(mine, added, notAdded, archived);
 

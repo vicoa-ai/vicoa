@@ -47,7 +47,7 @@ from shared.database import (
     Project,
     ProjectDirectory,
     ProjectPosition,
-    SidebarProject,
+    ProjectFollow,
     Task,
     TaskActivity,
     TaskComment,
@@ -322,35 +322,35 @@ def set_project_order(
     return kept
 
 
-def sidebar_project_ids(
+def followed_project_ids(
     db: Session, user_id: UUID, project_ids: Sequence[UUID]
 ) -> set[UUID]:
-    """Which of these projects the viewer has added to their own list."""
+    """Which of these projects the user follows into their own list."""
     if not project_ids:
         return set()
     return {
         row[0]
         for row in db.execute(
-            select(SidebarProject.project_id).where(
-                SidebarProject.user_id == user_id,
-                SidebarProject.project_id.in_(list(project_ids)),
+            select(ProjectFollow.project_id).where(
+                ProjectFollow.user_id == user_id,
+                ProjectFollow.project_id.in_(list(project_ids)),
             )
         )
     }
 
 
-def set_project_in_sidebar(
-    db: Session, user_id: UUID, project_id: UUID, *, added: bool
+def set_project_followed(
+    db: Session, user_id: UUID, project_id: UUID, *, followed: bool
 ) -> None:
-    """Add a shared project to the viewer's own list, or take it out again.
+    """Follow a shared project into the user's own list, or unfollow it.
 
     Idempotent both ways. The caller has already resolved the project as
-    visible; this only records the viewer's choice, never touches the project.
+    visible; this only records the user's choice, never touches the project.
     """
-    existing = db.get(SidebarProject, (user_id, project_id))
-    if added and existing is None:
-        db.add(SidebarProject(user_id=user_id, project_id=project_id))
-    elif not added and existing is not None:
+    existing = db.get(ProjectFollow, (user_id, project_id))
+    if followed and existing is None:
+        db.add(ProjectFollow(user_id=user_id, project_id=project_id))
+    elif not followed and existing is not None:
         db.delete(existing)
     db.commit()
 

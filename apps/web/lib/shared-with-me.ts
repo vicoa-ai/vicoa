@@ -13,7 +13,7 @@
  * A session shared on its own (no grant on its project) has no visible
  * project to sit under, so those gather under their owner instead.
  *
- * A shared project the user added to their sidebar leaves this group,
+ * A shared project the user follows ("Add to sidebar") leaves this group,
  * sessions and all: it is listed among their own projects instead, its
  * sessions under the project's Team row. So do other people's sessions in a
  * project the user owns (a collaborator's, filed there by its remote).
@@ -35,16 +35,17 @@ export function isSharedProject(project: ProjectResponse): boolean {
   return project.owner != null && !project.is_archived;
 }
 
-/** A shared project the user listed among their own (`in_sidebar`). */
-export function isAddedSharedProject(project: ProjectResponse): boolean {
-  return isSharedProject(project) && project.in_sidebar === true;
+/** A shared project the user follows into their own list (`followed`). */
+export function isFollowedSharedProject(project: ProjectResponse): boolean {
+  return isSharedProject(project) && project.followed === true;
 }
 
 /**
- * Whether "Add to sidebar" means anything for this project: the sidebar lists
- * a project by its sessions, so a board-only grant has nothing to show there.
+ * Whether following means anything for this project ("Add to sidebar"): the
+ * sidebar lists a project by its sessions, so a board-only grant has nothing
+ * to show there.
  */
-export function canAddToSidebar(project: ProjectResponse): boolean {
+export function canFollowProject(project: ProjectResponse): boolean {
   return isSharedProject(project) && (project.scopes?.includes('sessions') ?? false);
 }
 
@@ -62,7 +63,7 @@ export function groupSharedWithMe(
       continue;
     }
     if (!isSharedProject(project)) continue;
-    if (isAddedSharedProject(project)) {
+    if (isFollowedSharedProject(project)) {
       listed.add(project.id);
       continue;
     }

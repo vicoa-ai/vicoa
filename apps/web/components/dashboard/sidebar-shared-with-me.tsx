@@ -36,7 +36,7 @@ import type BackendAPI from '@/lib/backend-api';
 import type { AgentInstanceResponse, PrincipalResponse, ProjectResponse } from '@/lib/backend-api';
 import { CLOSED_STATUSES } from '@/components/dashboard/session-grouping';
 import { principalFromResponse } from '@/lib/principals';
-import { canAddToSidebar, groupSharedWithMe } from '@/lib/shared-with-me';
+import { canFollowProject, groupSharedWithMe } from '@/lib/shared-with-me';
 import { sessionRowPeople } from '@/lib/session-people';
 import { SessionRowAvatars } from '@/components/dashboard/session-participants';
 import { cn } from '@/lib/utils';
@@ -159,7 +159,7 @@ export function SidebarSharedWithMe({
   instances,
   projectsById,
   onProjectsChanged,
-  onSetInSidebar,
+  onSetFollowed,
 }: {
   api: BackendAPI | null;
   /** `useSharedSessions` — every session shared with the user. */
@@ -169,7 +169,7 @@ export function SidebarSharedWithMe({
   /** Refetch the project list and the shared sessions, after leaving one. */
   onProjectsChanged: () => void;
   /** List a shared project among the user's own (or take it out again). */
-  onSetInSidebar: (project: ProjectResponse, added: boolean) => void;
+  onSetFollowed: (project: ProjectResponse, followed: boolean) => void;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -257,10 +257,10 @@ export function SidebarSharedWithMe({
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="font-mono">
-                      {canAddToSidebar(project) && (
+                      {canFollowProject(project) && (
                         <DropdownMenuItem
                           className="cursor-pointer gap-2 text-xs"
-                          onSelect={() => onSetInSidebar(project, true)}
+                          onSelect={() => onSetFollowed(project, true)}
                         >
                           <PanelLeftOpen className="h-3.5 w-3.5" />
                           Add to sidebar

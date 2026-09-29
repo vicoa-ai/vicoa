@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentInstanceResponse, PrincipalResponse, ProjectResponse } from './backend-api';
-import { canAddToSidebar, groupSharedWithMe, isAddedSharedProject } from './shared-with-me';
+import { canFollowProject, groupSharedWithMe, isFollowedSharedProject } from './shared-with-me';
 
 const ada: PrincipalResponse = {
   type: 'user',
@@ -91,7 +91,7 @@ describe('groupSharedWithMe', () => {
   it('leaves out a project added to the sidebar, sessions and all', () => {
     const groups = groupSharedWithMe(
       [session('s1', 'added'), session('s2', 'alpha')],
-      [project('added', { in_sidebar: true }), project('alpha')],
+      [project('added', { followed: true }), project('alpha')],
     );
     expect(groups.map((g) => [g.key, g.instances.map((i) => i.id)])).toEqual([
       ['alpha', ['s2']],
@@ -112,15 +112,15 @@ describe('groupSharedWithMe', () => {
 
 describe('sidebar membership of shared projects', () => {
   it('is added only when the server says so', () => {
-    expect(isAddedSharedProject(project('p', { in_sidebar: true }))).toBe(true);
-    expect(isAddedSharedProject(project('p'))).toBe(false);
+    expect(isFollowedSharedProject(project('p', { followed: true }))).toBe(true);
+    expect(isFollowedSharedProject(project('p'))).toBe(false);
     // Your own project is not "added" — it is simply yours.
-    expect(isAddedSharedProject(project('p', { owner: null, in_sidebar: true }))).toBe(false);
+    expect(isFollowedSharedProject(project('p', { owner: null, followed: true }))).toBe(false);
   });
 
   it('can be added only with the sessions scope', () => {
-    expect(canAddToSidebar(project('p'))).toBe(true);
-    expect(canAddToSidebar(project('p', { scopes: ['tasks'] }))).toBe(false);
-    expect(canAddToSidebar(project('p', { owner: null }))).toBe(false);
+    expect(canFollowProject(project('p'))).toBe(true);
+    expect(canFollowProject(project('p', { scopes: ['tasks'] }))).toBe(false);
+    expect(canFollowProject(project('p', { owner: null }))).toBe(false);
   });
 });

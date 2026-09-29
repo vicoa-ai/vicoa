@@ -18,10 +18,10 @@ export const TEAM_ROWS_SHOWN = 8;
 /** Projects whose Team row is open (a string[]); every other one is collapsed. */
 export const TEAM_EXPANDED_STORAGE_KEY = 'sidebar-team-expanded';
 
-/** A project listed among the user's own: theirs, or someone else's they added. */
+/** A project listed among the user's own: theirs, or someone else's they follow. */
 function listedInSidebar(project: ProjectResponse | undefined): boolean {
   if (!project || project.is_archived) return false;
-  return !project.owner || project.in_sidebar === true;
+  return !project.owner || project.followed === true;
 }
 
 function activityTime(instance: AgentInstanceResponse): number {
