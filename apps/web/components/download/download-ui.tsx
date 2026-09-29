@@ -22,7 +22,8 @@ export type IconName =
   | 'monitor'
   | 'phone';
 
-function Icon({ name, className }: { name: IconName; className?: string }) {
+/** Also used by the /social link page for its app-store rows. */
+export function Icon({ name, className }: { name: IconName; className?: string }) {
   const cls = cn('h-5 w-5', className);
   switch (name) {
     case 'apple':

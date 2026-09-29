@@ -14,3 +14,9 @@ export const GITHUB_ISSUES_URL = `${GITHUB_REPO_URL}/issues`;
  */
 export const DISCORD_INVITE_URL = 'https://discord.gg/mqz4qRPV4j'; // site footer, docs, README
 export const DISCORD_APP_INVITE_URL = 'https://discord.gg/yB9J75bxwy'; // web + desktop account menu
+
+/** Official accounts, shared by the site footer and the /social link page. */
+export const X_URL = 'https://x.com/vicoaai';
+export const LINKEDIN_URL = 'https://www.linkedin.com/company/vicoa';
+export const NEWSLETTER_URL = 'https://updates.vicoa.ai/';
+export const CONTACT_EMAIL = 'hi@vicoa.ai';

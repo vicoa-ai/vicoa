@@ -3,14 +3,16 @@ import { Shield, Linkedin, Bell, Mail, Star } from 'lucide-react';
 
 import { DiscordIcon } from '@/components/discord-icon';
 import { GithubIcon } from '@/components/github-icon';
-import { DISCORD_INVITE_URL, GITHUB_ISSUES_URL, GITHUB_REPO_URL } from '@/lib/constants/links';
-
-// X (Twitter) Icon Component
-const XIcon = ({ className }: { className?: string }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-  </svg>
-);
+import { XIcon } from '@/components/x-icon';
+import {
+  CONTACT_EMAIL,
+  DISCORD_INVITE_URL,
+  GITHUB_ISSUES_URL,
+  GITHUB_REPO_URL,
+  LINKEDIN_URL,
+  NEWSLETTER_URL,
+  X_URL,
+} from '@/lib/constants/links';
 
 export function Footer() {
   return (
@@ -122,7 +124,7 @@ export function Footer() {
                 <DiscordIcon className="h-5 w-5" />
               </a>
               <a
-                href="https://updates.vicoa.ai/"
+                href={NEWSLETTER_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hover:text-blue-400 transition-colors"
@@ -131,7 +133,7 @@ export function Footer() {
                 <Bell className="h-5 w-5" />
               </a>
               <a
-                href="mailto:hi@vicoa.ai"
+                href={`mailto:${CONTACT_EMAIL}`}
                 className="hover:text-blue-400 transition-colors"
                 aria-label="Contact us via email"
               >
@@ -147,7 +149,7 @@ export function Footer() {
                 <GithubIcon className="h-5 w-5" />
               </a>
               <a
-                href="https://www.linkedin.com/company/vicoa"
+                href={LINKEDIN_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hover:text-blue-400 transition-colors"
@@ -156,7 +158,7 @@ export function Footer() {
                 <Linkedin className="h-5 w-5" />
               </a>
               <a
-                href="https://x.com/vicoaai"
+                href={X_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="hover:text-blue-400 transition-colors"
