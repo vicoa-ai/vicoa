@@ -21,7 +21,8 @@ projects don't cross-contaminate (different module systems, different
 3. Spawns and supervises the daemon:
    `vicoa daemon --local-listener --local-port <P> [--local-only]`
    with env `VICOA_LOCAL_NONCE=<nonce>`, `VICOA_LOCAL_ORIGIN=<renderer origin>`.
-   `--local-only` is passed when `~/.vicoa/credentials.json` has no `write_key`.
+   `--local-only` is passed when `~/.vicoa/credentials.json` has no key for the
+   daemon's server.
 4. Waits for `http://127.0.0.1:<P>/healthz` → 200 (30s deadline) before
    creating the window. Unexpected daemon exits restart with jittered
    exponential backoff (1s→30s); 5 consecutive rapid failures → "Daemon:
@@ -156,11 +157,13 @@ stays off the process table.
 **Login handoff:** the renderer signs into Supabase in-window, mints an API
 key via `/api/cli-auth/generate-key`, then calls
 `vicoaDesktopAuth.setApiKey(key)`. Main writes the key into
-`~/.vicoa/credentials.json` (`{"write_key": ...}`, merged, mode 600), restarts
-the daemon **without** `--local-only` (same nonce + port), waits for healthz,
-then reloads the window — the injected config now reports `mode: 'cloud'`.
-`signOut()` is the inverse: remove `write_key`, restart **with**
-`--local-only`, reload.
+`~/.vicoa/credentials.json` under the daemon's server
+(`{"keys": {"<base url>": {"write_key": ...}}}`, the shape the CLI uses, mode
+600; see `src/credentials.ts`), restarts the daemon **without** `--local-only`
+(same nonce + port), waits for healthz, then reloads the window — the injected
+config now reports `mode: 'cloud'`. `signOut()` removes that entry (other
+deployments' keys stay) and reloads; the daemon keeps running until the next
+sign-in replaces it.
 
 ## Behavior notes
 

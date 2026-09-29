@@ -4,8 +4,9 @@
  * The daemon wire contract (plans/todos/desktop-app-v1-implementation.md):
  * - Electron generates a per-launch 32-byte hex nonce and picks a free
  *   localhost port itself, then passes both to the daemon via env + flags.
- * - Authenticated = ~/.vicoa/credentials.json exists with a non-empty
- *   `write_key` string (same shape the `vicoa` CLI reads/writes).
+ * - Authenticated = ~/.vicoa/credentials.json holds a key for the daemon's
+ *   server (same per-deployment shape the `vicoa` CLI reads/writes; see
+ *   credentials.ts).
  */
 import { app } from 'electron';
 import { randomBytes } from 'node:crypto';
@@ -13,6 +14,7 @@ import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { getWriteKey, withoutWriteKey, withWriteKey } from './credentials';
 import { readShellState, updateShellState } from './shell-state';
 
 /** Runtime config injected into the renderer as `window.__VICOA_DESKTOP__`. */
@@ -179,11 +181,9 @@ export function readCredentials(): Record<string, unknown> | null {
   }
 }
 
-/** Authenticated = credentials.json has a non-empty string `write_key`. */
-export function hasWriteKey(): boolean {
-  const creds = readCredentials();
-  const key = creds?.['write_key'];
-  return typeof key === 'string' && key.trim().length > 0;
+/** Authenticated = credentials.json holds a key for `baseUrl`, the daemon's server. */
+export function hasWriteKey(baseUrl: string): boolean {
+  return getWriteKey(readCredentials() ?? {}, baseUrl) !== null;
 }
 
 function writeCredentialsFile(data: Record<string, unknown>): void {
@@ -195,20 +195,21 @@ function writeCredentialsFile(data: Record<string, unknown>): void {
   fs.chmodSync(file, 0o600);
 }
 
-/** Merge `write_key` into credentials.json (preserving unknown fields), mode 600. */
-export function saveWriteKey(key: string): void {
-  const existing = readCredentials() ?? {};
-  writeCredentialsFile({ ...existing, write_key: key });
+/** Store `key` as the credential for `baseUrl` (preserving other deployments' keys), mode 600. */
+export function saveWriteKey(baseUrl: string, key: string): void {
+  writeCredentialsFile(withWriteKey(readCredentials() ?? {}, baseUrl, key));
 }
 
-/** Remove `write_key` from credentials.json, preserving any other fields. No-op when file is absent. */
-export function removeWriteKey(): void {
+/** Drop the credential for `baseUrl`, keeping other deployments' keys. No-op when there is none. */
+export function removeWriteKey(baseUrl: string): void {
   const existing = readCredentials();
   if (existing === null) {
     return;
   }
-  delete existing['write_key'];
-  writeCredentialsFile(existing);
+  const next = withoutWriteKey(existing, baseUrl);
+  if (next !== null) {
+    writeCredentialsFile(next);
+  }
 }
 
 /**
@@ -274,4 +275,21 @@ export function readSelfHostEndpoints(): SelfHostEndpoints {
   if (wsUrl !== undefined) endpoints.wsUrl = wsUrl;
   if (authUrl !== undefined) endpoints.authUrl = authUrl;
   return endpoints;
+}
+
+/** Vicoa's hosted agent server, the daemon's default (`DEFAULT_API_URL` in backend/src/vicoa/constants.py). */
+export const DEFAULT_DAEMON_BASE_URL = 'https://agents.vicoa.ai';
+
+/**
+ * The agent server the supervised daemon talks to, which is also the
+ * credentials.json entry its key is filed under. Must match what the daemon
+ * resolves on its own: it gets no `--base-url`, so it reads `VICOA_API_URL`
+ * (set from `apiUrl` by main) or falls back to its default.
+ *
+ * Deliberately NOT pinned into `VICOA_API_URL` on the hosted service: a
+ * relaunch inherits this process's env, and `readSelfHostEndpoints` would then
+ * mistake the agent server for a self-hosted REST base.
+ */
+export function resolveDaemonBaseUrl(endpoints: SelfHostEndpoints): string {
+  return endpoints.apiUrl ?? DEFAULT_DAEMON_BASE_URL;
 }

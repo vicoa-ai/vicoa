@@ -40,6 +40,7 @@ import {
   removeWriteKey,
   rendererServerPath,
   rendererUrl,
+  resolveDaemonBaseUrl,
   saveWriteKey,
   type DesktopConfig,
 } from './config';
@@ -184,6 +185,12 @@ function registerProtocolClient(): void {
 const selfHostEndpoints = readSelfHostEndpoints();
 
 /**
+ * The server the daemon authenticates against. Every credentials.json read and
+ * write goes through this URL, so the shell sees exactly the key the daemon uses.
+ */
+const daemonBaseUrl = resolveDaemonBaseUrl(selfHostEndpoints);
+
+/**
  * Push the self-hosted endpoints into this process's env BEFORE anything is
  * spawned, so the children inherit them:
  *  - the daemon (`vicoa` CLI) reads `VICOA_API_URL` / `VICOA_AUTH_URL`;
@@ -207,12 +214,13 @@ function applySelfHostEnv(): void {
 
 function desktopConfig(): DesktopConfig {
   return {
-    // Authenticated ⇔ credentials.json has a write_key. Deriving mode from the
-    // key (rather than the daemon's --local-only flag) means sign-out — which
-    // removes the key without restarting the daemon local-only — immediately
-    // reads as `local`, so the reload lands on the login screen instead of a
-    // keyless `cloud` state the gate would try to sign out of on a loop.
-    mode: hasWriteKey() ? 'cloud' : 'local',
+    // Authenticated ⇔ credentials.json has a key for the daemon's server.
+    // Deriving mode from the key (rather than the daemon's --local-only flag)
+    // means sign-out — which removes the key without restarting the daemon
+    // local-only — immediately reads as `local`, so the reload lands on the
+    // login screen instead of a keyless `cloud` state the gate would try to
+    // sign out of on a loop.
+    mode: hasWriteKey(daemonBaseUrl) ? 'cloud' : 'local',
     wsUrl: `ws://127.0.0.1:${localPort}/ws`,
     apiBase: `http://127.0.0.1:${localPort}`,
     token: localNonce,
@@ -872,7 +880,7 @@ function registerIpcHandlers(): void {
       return { ok: false, error: 'Daemon manager not initialized' };
     }
     try {
-      saveWriteKey(key.trim());
+      saveWriteKey(daemonBaseUrl, key.trim());
     } catch (err) {
       logDeepLinkEvent(`setApiKey: failed to write credentials: ${String(err)}`);
       return { ok: false, error: `Failed to write credentials: ${String(err)}` };
@@ -908,7 +916,7 @@ function registerIpcHandlers(): void {
       return { ok: false, error: 'Daemon manager not initialized' };
     }
     try {
-      removeWriteKey();
+      removeWriteKey(daemonBaseUrl);
     } catch (err) {
       return { ok: false, error: `Failed to update credentials: ${String(err)}` };
     }
@@ -1102,7 +1110,7 @@ async function bootstrap(): Promise<void> {
   // awaits this same in-flight download and shows a splash only for the remainder.
   // Logged-out users deliberately DON'T pre-fetch — they download at sign-in
   // (setApiKey), so a tire-kicker never pulls ~150 MB they may never use.
-  if (hasWriteKey()) {
+  if (hasWriteKey(daemonBaseUrl)) {
     warmManagedDaemon();
   }
 
@@ -1170,7 +1178,7 @@ async function bootstrap(): Promise<void> {
   // ever created in the local store, and sign-in restarts the daemon in
   // cloud mode via the setApiKey handler.
   // (Previously: const localOnly = !hasWriteKey(); daemonManager.start(localOnly);)
-  if (!hasWriteKey()) {
+  if (!hasWriteKey(daemonBaseUrl)) {
     ensureMainWindow();
     // No daemon is spawned while logged out; the managed daemon (de-bundled
     // builds) is fetched at sign-in — see the setApiKey handler.

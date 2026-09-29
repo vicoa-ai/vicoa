@@ -6,6 +6,7 @@ import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { getWriteKey, normalizeBaseUrl, withoutWriteKey, withWriteKey } from './credentials';
 import {
   backoffDelayMs,
   buildDaemonArgs,
@@ -198,6 +199,50 @@ assert.equal(
     HOME: '/nonexistent-home',
   });
   assert.equal(noShell.path, null, 'nothing new over the inherited PATH -> leave PATH alone');
+}
+
+// --- credentials.json (mirror of backend/src/vicoa/credentials_state.py) ------
+{
+  const hosted = 'https://agents.vicoa.ai';
+  const selfHost = 'http://vicoa.example.com:8080';
+  const perDeployment = { keys: { [hosted]: { write_key: 'cli' } } };
+  const mixed = { ...perDeployment, write_key: 'desktop' };
+
+  assert.equal(normalizeBaseUrl(' https://Agents.Vicoa.AI// '), hosted, 'normalize: trim, trailing /, lowercase');
+
+  assert.equal(getWriteKey({}, hosted), null, 'no file -> no key');
+  assert.equal(getWriteKey({ write_key: '' }, hosted), null, 'empty key -> no key');
+  assert.equal(getWriteKey({ write_key: 'flat' }, hosted), 'flat', 'legacy flat key belongs to the reader');
+  assert.equal(getWriteKey(perDeployment, `${hosted}/`), 'cli', 'per-deployment lookup is normalized');
+  assert.equal(getWriteKey(perDeployment, selfHost), null, 'another deployment has no key');
+  assert.equal(getWriteKey(mixed, hosted), 'cli', 'keys map wins over a stray flat key');
+  assert.equal(getWriteKey(mixed, selfHost), null, 'stray flat key is ignored once keys exist');
+
+  assert.deepEqual(
+    withWriteKey({ write_key: 'old', other: 1 }, hosted, 'new'),
+    { other: 1, keys: { [hosted]: { write_key: 'new' } } },
+    'save migrates a legacy file, keeps unknown fields, strips the flat key',
+  );
+  assert.deepEqual(
+    withWriteKey({ keys: { [selfHost]: { write_key: 's' } } }, `${hosted}/`, 'h'),
+    { keys: { [selfHost]: { write_key: 's' }, [hosted]: { write_key: 'h' } } },
+    'save keeps other deployments and files under the normalized URL',
+  );
+  assert.deepEqual(
+    withWriteKey(mixed, hosted, 'new'),
+    { keys: { [hosted]: { write_key: 'new' } } },
+    'save over a mixed file replaces the entry and strips the flat key',
+  );
+  assert.deepEqual(mixed, { keys: { [hosted]: { write_key: 'cli' } }, write_key: 'desktop' }, 'input not mutated');
+
+  assert.deepEqual(
+    withoutWriteKey({ keys: { [selfHost]: { write_key: 's' }, [hosted]: { write_key: 'h' } } }, hosted),
+    { keys: { [selfHost]: { write_key: 's' } } },
+    'remove drops only this deployment',
+  );
+  assert.deepEqual(withoutWriteKey({ write_key: 'flat' }, hosted), { keys: {} }, 'remove clears a legacy file');
+  assert.deepEqual(withoutWriteKey(mixed, hosted), { keys: {} }, 'remove clears the entry and the flat key');
+  assert.equal(withoutWriteKey(perDeployment, selfHost), null, 'nothing to remove -> null (no write)');
 }
 
 // --- readLoginShellPath (async; the probe must never block or reject) ------------
