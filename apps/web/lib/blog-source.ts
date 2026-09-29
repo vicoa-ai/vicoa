@@ -18,6 +18,7 @@ export interface BlogFrontmatter {
   tags?: string[];
   image?: string;
   imageAlt?: string;
+  coverText?: string;
 }
 
 const blogPostsBySlug = new Map(

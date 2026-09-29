@@ -1,6 +1,15 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
+import {
+  BLOG_COVER_FONT_FAMILY,
+  BLOG_COVER_GRADIENT_FROM,
+  BLOG_COVER_GRADIENT_TO,
+  BLOG_COVER_HEIGHT,
+  BLOG_COVER_TEXT_COLOR,
+  BLOG_COVER_WIDTH,
+  blogCoverLayout,
+} from '../lib/blog-cover';
 
 const VALID_FORMATS = ['webp', 'jpg', 'jpeg', 'png', 'svg'] as const;
 type Format = (typeof VALID_FORMATS)[number];
@@ -14,16 +23,13 @@ type CliOptions = {
   format: Format;
 };
 
-const DEFAULT_WIDTH = 800;
-const DEFAULT_HEIGHT = 450;
+const DEFAULT_WIDTH = BLOG_COVER_WIDTH;
+const DEFAULT_HEIGHT = BLOG_COVER_HEIGHT;
 const DEFAULT_OUTPUT_DIR = 'public/images/blog';
 const DEFAULT_LOGO_PATH = 'public/images/vicoa-logo-text-white.png';
 const DEFAULT_FORMAT: Format = 'webp';
 // Rasterize at 2x the SVG's logical size for crisp retina output.
 const RASTER_SCALE = 2;
-const MAX_LINES = 3;
-const TOP_PADDING_RATIO = 0.24;
-const BOTTOM_PADDING_RATIO = 0.06;
 
 function printUsageAndExit(message?: string): never {
   if (message) {
@@ -141,54 +147,6 @@ function escapeXml(value: string): string {
     .replace(/'/g, '&apos;');
 }
 
-function wrapTitle(text: string, maxCharsPerLine = 26, maxLines = MAX_LINES): string[] {
-  const words = text.replace(/\s+/g, ' ').trim().split(' ');
-  const lines: string[] = [];
-  let currentLine = '';
-
-  for (const word of words) {
-    const proposed = currentLine ? `${currentLine} ${word}` : word;
-    if (proposed.length <= maxCharsPerLine) {
-      currentLine = proposed;
-      continue;
-    }
-
-    if (currentLine) {
-      lines.push(currentLine);
-      currentLine = word;
-    } else {
-      lines.push(word.slice(0, maxCharsPerLine));
-      currentLine = word.slice(maxCharsPerLine);
-    }
-
-    if (lines.length >= maxLines) break;
-  }
-
-  if (lines.length < maxLines && currentLine) {
-    lines.push(currentLine);
-  }
-
-  if (lines.length > maxLines) {
-    lines.length = maxLines;
-  }
-
-  if (lines.length === maxLines && words.join(' ').length > lines.join(' ').length) {
-    const lastLine = lines[maxLines - 1];
-    lines[maxLines - 1] = `${lastLine.slice(0, Math.max(0, maxCharsPerLine - 1)).trimEnd()}…`;
-  }
-
-  return lines;
-}
-
-function fontSizeForTitle(lines: string[]): number {
-  const longestLine = Math.max(...lines.map((line) => line.length));
-  if (longestLine <= 18) return 62;
-  if (longestLine <= 24) return 56;
-  if (longestLine <= 30) return 50;
-  if (longestLine <= 36) return 45;
-  return 42;
-}
-
 function getMimeType(filepath: string): string {
   const ext = path.extname(filepath).toLowerCase();
   if (ext === '.png') return 'image/png';
@@ -199,20 +157,11 @@ function getMimeType(filepath: string): string {
 }
 
 function buildSvg(text: string, width: number, height: number, logoDataUri: string): string {
-  const lines = wrapTitle(text);
-  const fontSize = fontSizeForTitle(lines);
-  const lineHeight = Math.round(fontSize * 1.6);
-  const titleBlockHeight = lineHeight * lines.length;
-  const topY = Math.round(height * TOP_PADDING_RATIO) + fontSize;
-  const logoWidth = Math.round(width * 0.17);
-  const logoHeight = logoWidth;
-  const logoX = Math.round((width - logoWidth) / 2);
-  const logoY = height - logoHeight - Math.round(height * BOTTOM_PADDING_RATIO);
+  const { lines, fontSize, baselines, logo } = blogCoverLayout(text, width, height);
 
   const titleLines = lines
     .map((line, index) => {
-      const y = topY + index * lineHeight;
-      return `<text x="${width / 2}" y="${y}" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="${fontSize}" font-weight="700" fill="#05070A">${escapeXml(line)}</text>`;
+      return `<text x="${width / 2}" y="${baselines[index]}" text-anchor="middle" font-family="${BLOG_COVER_FONT_FAMILY}" font-size="${fontSize}" font-weight="700" fill="${BLOG_COVER_TEXT_COLOR}">${escapeXml(line)}</text>`;
     })
     .join('\n');
 
@@ -220,15 +169,15 @@ function buildSvg(text: string, width: number, height: number, logoDataUri: stri
 <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="${width}" y2="${height}" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#C9DEFF"/>
-      <stop offset="1" stop-color="#FFEDE2"/>
+      <stop stop-color="${BLOG_COVER_GRADIENT_FROM}"/>
+      <stop offset="1" stop-color="${BLOG_COVER_GRADIENT_TO}"/>
     </linearGradient>
   </defs>
 
   <rect width="${width}" height="${height}" fill="url(#bg)"/>
   ${titleLines}
 
-  <image href="${logoDataUri}" x="${logoX}" y="${logoY}" width="${logoWidth}" height="${logoHeight}" preserveAspectRatio="xMidYMid meet"/>
+  <image href="${logoDataUri}" x="${logo.x}" y="${logo.y}" width="${logo.width}" height="${logo.height}" preserveAspectRatio="xMidYMid meet"/>
 </svg>`;
 }
 

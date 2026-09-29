@@ -1,0 +1,14 @@
+# Build settings (command, publish dir) stay in the Netlify UI; the Next.js
+# runtime adds its own `/_next/static/*` immutable header on top of these.
+
+# Netlify serves public files with `max-age=0, must-revalidate`, which makes
+# Cloudflare (proxying vicoa.ai) revalidate every hit against Netlify, costing
+# 0.3-0.9s per image. A day of edge/browser caching lets Cloudflare answer
+# from its POP; the paths
+# are not content-hashed, so keep this short enough that a replaced image
+# goes live within a day (stale-while-revalidate refreshes it in the
+# background meanwhile).
+[[headers]]
+  for = "/images/*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400, stale-while-revalidate=604800"

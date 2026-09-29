@@ -16,6 +16,7 @@ import { RelatedPosts } from '@/components/blog/related-posts';
 import { BlogTableOfContents } from '@/components/blog/table-of-contents';
 import { MdxPre } from '@/components/blog/mdx-pre';
 import { BlogImage } from '@/components/blog/blog-image';
+import { BlogCover } from '@/components/blog/blog-cover';
 import { pageMetadata } from '@/lib/seo';
 import type { TableOfContents } from 'fumadocs-core/server';
 
@@ -94,6 +95,7 @@ export default async function BlogPostPage(props: BlogPostPageProps) {
     // tags,
     image,
     imageAlt,
+    coverText,
   } = postData;
 
   const MDXContent = post.body as React.ComponentType<any>;
@@ -189,18 +191,15 @@ export default async function BlogPostPage(props: BlogPostPageProps) {
                 </div>
               </div>
 
+              {/* `image` (a `pnpm blog:cover` webp) stays the og:image; on the
+                  page the same cover is drawn inline so the hero no longer
+                  waits on an image request (it was the mobile LCP element). */}
               {image && (
-                <div className="hidden lg:block lg:mt-6 relative w-full" style={{ paddingBottom: '56.25%' }}>
-                  <Image
-                    src={image}
-                    alt={imageAlt || title}
-                    fill
-                    sizes="(min-width: 1024px) 40vw, 0vw"
-                    className="object-cover rounded-xl border border-border shadow-sm"
-                    priority
-                    fetchPriority="high"
-                  />
-                </div>
+                <BlogCover
+                  text={coverText || title}
+                  label={imageAlt || title}
+                  className="hidden lg:block lg:mt-6 rounded-xl border border-border shadow-sm"
+                />
               )}
             </div>
           </div>
@@ -209,17 +208,11 @@ export default async function BlogPostPage(props: BlogPostPageProps) {
         {/* Featured Image */}
         {image && (
           <div className="container mx-auto px-4 pt-0 pb-8 max-w-6xl lg:hidden">
-            <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
-              <Image
-                src={image}
-                alt={imageAlt || title}
-                fill
-                sizes="(max-width: 1024px) 100vw, 0vw"
-                className="object-cover rounded-xl border border-border shadow-sm"
-                priority
-                fetchPriority="high"
-              />
-            </div>
+            <BlogCover
+              text={coverText || title}
+              label={imageAlt || title}
+              className="rounded-xl border border-border shadow-sm"
+            />
           </div>
         )}
 

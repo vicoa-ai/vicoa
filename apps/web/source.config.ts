@@ -20,6 +20,10 @@ export const { docs: blog, meta: blogMeta } = defineDocs({
       tags: z.array(z.string()).optional(),
       image: z.string().optional(),
       imageAlt: z.string().optional(),
+      // Title drawn on the cover (the inline hero, and the `pnpm blog:cover
+      // --text` used for `image`); falls back to `title`. Usually a shorter
+      // hook than the SEO title.
+      coverText: z.string().optional(),
     }),
   },
 });

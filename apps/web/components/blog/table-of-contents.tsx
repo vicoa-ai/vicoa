@@ -1,5 +1,20 @@
+import { Children, cloneElement, isValidElement, type ReactNode } from 'react';
 import { TableOfContents } from 'fumadocs-core/server';
 import { Facebook, Linkedin, Twitter } from 'lucide-react';
+
+// A heading like "Method 2: [ngrok](…)" carries its link into `item.title`.
+// Rendered inside the TOC's own <a>, the HTML parser splits the nested anchors
+// apart, the server DOM stops matching React's tree, and hydration fails
+// (#418): React throws away the SSR markup and re-renders the whole page, which
+// also re-paints (and delays) the LCP. Keep the link text, drop the inner <a>.
+function stripLinks(node: ReactNode): ReactNode {
+  return Children.map(node, (child) => {
+    if (!isValidElement<{ children?: ReactNode }>(child)) return child;
+    if (child.type === 'a') return stripLinks(child.props.children);
+    if (child.props.children === undefined) return child;
+    return cloneElement(child, undefined, stripLinks(child.props.children));
+  });
+}
 
 interface BlogTableOfContentsProps {
   toc?: TableOfContents;
@@ -28,7 +43,7 @@ export function BlogTableOfContents({ toc, shareUrl, shareTitle }: BlogTableOfCo
                 className="block text-foreground/80 hover:text-primary transition-colors"
                 style={{ paddingLeft: `${Math.max(0, (item.depth - 1) * 12)}px` }}
               >
-                {item.title}
+                {stripLinks(item.title)}
               </a>
             ))}
           </nav>
