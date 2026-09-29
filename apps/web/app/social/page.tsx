@@ -1,11 +1,26 @@
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
-import { Bell, BookOpen, Bot, Download, Globe, Linkedin, Mail, Newspaper, Sparkles } from 'lucide-react';
+import {
+  BookOpen,
+  Bot,
+  Download,
+  Globe,
+  Linkedin,
+  Mail,
+  Newspaper,
+  ScrollText,
+  Sparkles,
+} from 'lucide-react';
 
 import { DiscordIcon } from '@/components/discord-icon';
 import { Icon as PlatformIcon } from '@/components/download/download-ui';
-import { ANDROID_APP_URL, IOS_APP_URL, WEB_APP_URL } from '@/components/download/download-catalog';
+import {
+  ANDROID_APP_URL,
+  CHANGELOG_URL,
+  IOS_APP_URL,
+  WEB_APP_URL,
+} from '@/components/download/download-catalog';
 import { GithubIcon } from '@/components/github-icon';
 import { SocialLink, type SocialLinkProps } from '@/components/social/social-link';
 import { XIcon } from '@/components/x-icon';
@@ -14,14 +29,13 @@ import {
   DISCORD_INVITE_URL,
   GITHUB_REPO_URL,
   LINKEDIN_URL,
-  NEWSLETTER_URL,
   X_URL,
 } from '@/lib/constants/links';
 import { pageMetadata } from '@/lib/seo';
 
 const PAGE_TITLE = 'Vicoa Links: Apps, Community, and Socials';
 const PAGE_DESCRIPTION =
-  'Every Vicoa link in one place: the desktop, iOS, and Android apps, plus our Discord, X, GitHub, LinkedIn, newsletter, docs, and blog.';
+  'Every Vicoa link in one place: the desktop, iOS, and Android apps, plus our Discord, X, GitHub, LinkedIn, docs, blog, and changelog.';
 
 export const metadata: Metadata = pageMetadata('/social', {
   title: PAGE_TITLE,
@@ -114,14 +128,6 @@ const GROUPS: { id: string; title: string; links: SocialLinkProps[] }[] = [
         external: true,
       },
       {
-        id: 'newsletter',
-        href: NEWSLETTER_URL,
-        label: 'Newsletter',
-        detail: 'Product updates',
-        icon: <Bell className={ICON} />,
-        external: true,
-      },
-      {
         id: 'email',
         href: `mailto:${CONTACT_EMAIL}`,
         label: 'Email us',
@@ -159,6 +165,13 @@ const GROUPS: { id: string; title: string; links: SocialLinkProps[] }[] = [
         label: "What's new",
         icon: <Sparkles className={ICON} />,
       },
+      {
+        id: 'changelog',
+        href: CHANGELOG_URL,
+        label: 'Changelog',
+        detail: 'Desktop, mobile, CLI',
+        icon: <ScrollText className={ICON} />,
+      },
     ],
   },
 ];
@@ -175,14 +188,15 @@ export default function SocialPage() {
           <Image
             src="/favicon-512x512.png"
             alt="Vicoa logo"
-            width={80}
-            height={80}
+            width={56}
+            height={56}
             priority
-            className="h-20 w-20 rounded-[22%]"
+            className="h-14 w-14 rounded-[22%]"
           />
-          <h1 className="mt-5 text-2xl font-semibold tracking-tight text-foreground">Vicoa</h1>
-          <p className="mt-2 max-w-xs text-sm leading-relaxed text-muted-foreground">
-            Run Claude Code, Codex, and 40+ coding agents from your phone, desktop, or browser.
+          <h1 className="mt-4 text-2xl font-semibold tracking-tight text-foreground">Vicoa</h1>
+          <p className="mt-2 max-w-sm text-balance text-sm leading-relaxed text-muted-foreground">
+            Run a team of coding agents in parallel, from your phone, desktop, or browser. Claude
+            Code, Codex, and 40+ more.
           </p>
         </header>
 
