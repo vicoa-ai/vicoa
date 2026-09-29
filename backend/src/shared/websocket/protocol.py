@@ -17,6 +17,27 @@ class WsProtocolError(Exception):
     """The hello frame is malformed or not allowed for its credentials."""
 
 
+WATCHER_ROOM_PREFIX = "instance:"
+
+
+def watcher_room(instance_id: str) -> str:
+    """Room carrying one session's live updates to people it is shared with.
+
+    The first room not keyed by a `user:` prefix (collaboration §9), so the
+    invariant is "rooms are either owner-keyed or grant-gated": nothing joins
+    this one at hello time — a user-scoped connection asks with a
+    `watch_instance` frame and the relay checks the grant first. What a
+    watcher receives is narrowed to the grantee view on the way out
+    (`shared.websocket.watchers`), so a broadcast site only has to name the
+    room.
+    """
+    return f"{WATCHER_ROOM_PREFIX}{instance_id}:watchers"
+
+
+def is_watcher_room(room: str) -> bool:
+    return room.startswith(WATCHER_ROOM_PREFIX)
+
+
 def terminal_room(user_id: str, machine_id: str) -> str:
     """Room carrying a machine's streamed terminal output to viewing clients.
 

@@ -25,6 +25,9 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from .protocol import is_watcher_room, watcher_room
+from .watchers import watcher_view
+
 logger = logging.getLogger(__name__)
 
 # How long a reported "desktop foreground" presence stays authoritative without
@@ -41,6 +44,11 @@ _FOREGROUND_TTL_SECONDS = 75.0
 # tuned against the Phase 4a load test's slow-consumer scenario; 256 is the
 # starting point.
 _OUTBOX_MAXSIZE = 256
+
+# How many sessions one connection may watch at once. A client watches the
+# session it has open plus the live rows of shared projects in its sidebar —
+# tens at most — so this only bounds a misbehaving client's room fan-out.
+MAX_WATCHES_PER_CONNECTION = 200
 
 # Cumulative shed count since process start. Read via
 # `connections_closed_slow_count()`. 0 in normal operation; sustained
@@ -94,6 +102,14 @@ class Connection:
     # broadcasts to it are silent no-ops until the socket closes and
     # ConnectionManager.unregister drops it from the room index.
     overflowed: bool = False
+    # Sessions this (user-scoped) connection watches as a grantee — the
+    # instance ids behind its `instance:{id}:watchers` room memberships.
+    # Joined and left at runtime by `watch_instance` / `unwatch_instance`,
+    # unlike `rooms`, which is fixed at hello.
+    watching: set[str] = field(default_factory=set)
+    # Per-connection access cache for grant-gated reads: instance id →
+    # (monotonic time checked, role or None). Owned by `servers.watchers`.
+    access_cache: dict[str, tuple[float, str | None]] = field(default_factory=dict)
     # Whether the client behind this connection last reported its window in the
     # foreground. Only the desktop app emits `presence` frames (and only when the
     # user has opted in), so a True here means "a desktop app the user is looking
@@ -199,13 +215,14 @@ class ConnectionManager:
             peers.remove(conn)
             if not peers:
                 del self._connections[conn.user_id]
-        for room in conn.rooms:
+        for room in (*conn.rooms, *(watcher_room(i) for i in conn.watching)):
             members = self._rooms.get(room)
             if members is None:
                 continue
             members.discard(conn)
             if not members:
                 del self._rooms[room]
+        conn.watching.clear()
         for key, index in (
             (conn.instance_id, self._sessions),
             (conn.machine_id, self._machines),
@@ -218,6 +235,61 @@ class ConnectionManager:
             members.discard(conn)
             if not members:
                 del index[key]
+
+    # ----- watcher rooms (collaboration §9) -----
+
+    def watch(self, conn: Connection, instance_id: str) -> bool:
+        """Put a connection in a session's watcher room.
+
+        The caller has already checked the grant — this is membership only.
+        False when the connection is at `MAX_WATCHES_PER_CONNECTION`.
+        """
+        if instance_id in conn.watching:
+            return True
+        if len(conn.watching) >= MAX_WATCHES_PER_CONNECTION:
+            return False
+        conn.watching.add(instance_id)
+        self._rooms[watcher_room(instance_id)].add(conn)
+        return True
+
+    def unwatch(self, conn: Connection, instance_id: str) -> bool:
+        """Take a connection out of a session's watcher room, if it was in."""
+        if instance_id not in conn.watching:
+            return False
+        conn.watching.discard(instance_id)
+        room = watcher_room(instance_id)
+        members = self._rooms.get(room)
+        if members is not None:
+            members.discard(conn)
+            if not members:
+                del self._rooms[room]
+        return True
+
+    def revoke_watch(
+        self, conn: Connection, instance_id: str, reason: str = "access_revoked"
+    ) -> None:
+        """Evict a watcher whose access is gone, and tell its client so the
+        page can stop presenting the session as live."""
+        conn.access_cache.pop(instance_id, None)
+        if self.unwatch(conn, instance_id):
+            conn.enqueue(
+                {"type": "watch_revoked", "instance_id": instance_id, "reason": reason}
+            )
+
+    def has_watchers(self, instance_id: str) -> bool:
+        return bool(self._rooms.get(watcher_room(instance_id)))
+
+    def watchers(self) -> dict[str, list[Connection]]:
+        """{instance_id: [watching connections]} for every non-empty room."""
+        out: dict[str, list[Connection]] = defaultdict(list)
+        for conns in self._connections.values():
+            for conn in conns:
+                for instance_id in conn.watching:
+                    out[instance_id].append(conn)
+        return dict(out)
+
+    def connections_of(self, user_id: str) -> list[Connection]:
+        return list(self._connections.get(user_id, ()))
 
     # ----- presence (servers/presence.py reads these) -----
 
@@ -254,17 +326,48 @@ class ConnectionManager:
         ]
 
     def broadcast_update(self, user_id: str, payload: dict, rooms: list[str]) -> None:
-        """Fan an `update` frame out to every connection in the target rooms."""
-        self._fan_out(rooms, {"type": "update", "payload": payload})
+        """Fan an `update` frame out to every connection in the target rooms.
+
+        Watcher rooms get the grantee view of the payload (`watcher_view`),
+        built once and only when a watcher is actually there — an empty
+        watcher room costs a dict lookup. A connection reached through an
+        owner room is never sent the narrowed copy as well.
+        """
+        seen = self._fan_out(
+            [r for r in rooms if not is_watcher_room(r)],
+            {"type": "update", "payload": payload},
+        )
+        pending = [
+            conn
+            for room in rooms
+            if is_watcher_room(room)
+            for conn in self._rooms.get(room, ())
+            if conn.connection_id not in seen
+        ]
+        if not pending:
+            return
+        narrowed = watcher_view(
+            payload,
+            session_connected=self.is_session_connected,
+            machine_connected=self.is_machine_connected,
+        )
+        if narrowed is None:
+            return
+        frame = {"type": "update", "payload": narrowed}
+        for conn in pending:
+            if conn.connection_id not in seen:
+                seen.add(conn.connection_id)
+                conn.enqueue(frame)
 
     def broadcast_frame(self, rooms: list[str], frame: dict) -> None:
         """Fan an already-shaped frame (verbatim) out to the target rooms.
 
         Unlike `broadcast_update`, the frame is NOT wrapped in an `update`
         envelope — used for top-level push frames the client dispatches
-        directly, e.g. streamed `pty-output`/`pty-exit`.
+        directly, e.g. streamed `pty-output`/`pty-exit`. Never to a watcher
+        room: a verbatim frame has no grantee view.
         """
-        self._fan_out(rooms, frame)
+        self._fan_out([r for r in rooms if not is_watcher_room(r)], frame)
 
     def broadcast_ephemeral(self, user_id: str, body: dict) -> None:
         """Send a not-stored `ephemeral` frame to every connection of the user."""
@@ -331,13 +434,14 @@ class ConnectionManager:
                 )
         return count
 
-    def _fan_out(self, rooms: list[str], frame: dict) -> None:
+    def _fan_out(self, rooms: list[str], frame: dict) -> set[str]:
         seen: set[str] = set()
         for room in rooms:
             for conn in self._rooms.get(room, ()):
                 if conn.connection_id not in seen:
                     seen.add(conn.connection_id)
                     conn.enqueue(frame)
+        return seen
 
 
 # Process-wide singleton. The `/ws` endpoint and the `_internal/broadcast`

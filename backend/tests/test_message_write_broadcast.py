@@ -75,6 +75,8 @@ def test_message_write_broadcasts_new_message_over_the_bridge(
     assert rooms == [
         f"user:{user.id}:session:{instance_id}",
         f"user:{user.id}:user-scoped",
+        # Everyone the session is shared with (collaboration §9).
+        f"instance:{instance_id}:watchers",
     ]
 
     with SessionLocal() as db:

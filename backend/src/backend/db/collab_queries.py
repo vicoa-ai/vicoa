@@ -20,6 +20,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from shared import access
+
+from .access_events import notify_access_changed, principal_user_ids, team_member_ids
 from shared.database import (
     GRANT_ROLES,
     GRANT_SCOPES,
@@ -449,6 +451,7 @@ def delete_team(db: Session, user_id: UUID, team_id: UUID) -> None:
     owned demote to personal (SET NULL); grants *to* the team are swept here
     because `principal_id` is polymorphic and has no FK."""
     team, _ = require_team(db, user_id, team_id, minimum="owner")
+    notify_access_changed(db, team_member_ids(db, team.id))
     db.query(ProjectGrant).filter(
         ProjectGrant.principal_type == "team", ProjectGrant.principal_id == team.id
     ).delete(synchronize_session=False)
@@ -575,6 +578,7 @@ def accept_invitation(db: Session, user: User, team_id: UUID) -> TeamMember:
     member.user_id = user.id
     member.status = "active"
     member.joined_at = _utcnow()
+    notify_access_changed(db, [user.id])
     db.commit()
     db.refresh(member)
     return member
@@ -616,6 +620,7 @@ def update_member_role(
     if member.role == "owner" or role == "owner":
         raise TeamConflictError("Ownership cannot be changed here")
     member.role = role
+    notify_access_changed(db, [member.user_id])
     db.commit()
     db.refresh(member)
     return member
@@ -647,6 +652,7 @@ def remove_member(
         if acting.role == "admin" and member.role == "admin":
             raise TeamPermissionError("Admins can only remove members or themselves")
     member.status = "removed"
+    notify_access_changed(db, [member.user_id])
     db.commit()
 
 
@@ -802,6 +808,7 @@ def accept_invite_link(db: Session, user: User, token: str) -> TeamMember:
     # from the value we happened to read, which loses a concurrent increment
     # even when the lock above serialises the decision.
     invite.uses = TeamInvite.uses + 1
+    notify_access_changed(db, [user.id])
     db.commit()
     db.refresh(member)
     return member
@@ -927,6 +934,9 @@ def create_project_grant(
         granted_by_user_id=granter_user_id,
     )
     db.add(grant)
+    notify_access_changed(
+        db, principal_user_ids(db, principal_type, principal_id), project_id=project.id
+    )
     try:
         db.commit()
     except IntegrityError as exc:
@@ -984,6 +994,11 @@ def update_project_grant(
         if not scopes or any(s not in GRANT_SCOPES for s in scopes):
             raise GrantError("scopes must be a non-empty subset of tasks/sessions")
         grant.scopes = [s for s in GRANT_SCOPES if s in scopes]
+    notify_access_changed(
+        db,
+        principal_user_ids(db, grant.principal_type, grant.principal_id),
+        project_id=project.id,
+    )
     db.commit()
     return grant
 
@@ -999,6 +1014,11 @@ def delete_project_grant(
     )
     if grant is None:
         return False
+    notify_access_changed(
+        db,
+        principal_user_ids(db, grant.principal_type, grant.principal_id),
+        project_id=project.id,
+    )
     db.delete(grant)
     db.commit()
     return True
@@ -1025,6 +1045,7 @@ def leave_project(db: Session, user: User, project: Project) -> None:
     )
     if not deleted:
         raise GrantConflictError("Your access to this project comes from a team")
+    notify_access_changed(db, [user.id], project_id=project.id)
     db.commit()
 
 
@@ -1102,5 +1123,7 @@ def claim_pending_invites(db: Session, user: User) -> int:
                 claimed += 1
 
     if grants or shares:
+        if claimed:
+            notify_access_changed(db, [user.id])
         db.commit()
     return claimed

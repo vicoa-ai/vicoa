@@ -9,8 +9,11 @@ import {
   Archive,
   ChevronRight,
   Kanban,
+  ListTodo,
+  LogOut,
   MessageCircleMore,
   MoreHorizontal,
+  PanelLeftClose,
   Plus,
   Settings,
   Share,
@@ -38,6 +41,7 @@ import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { useSessionOperations, useCopyToClipboard } from '@/lib/hooks/use-session-operations';
 import { AgentTypeIcon } from '@/components/dashboard/agent-type-icon';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { SessionRowAvatars } from '@/components/dashboard/session-participants';
 import { agentPrincipal, useAgentProfiles } from '@/lib/use-agent-profiles';
 import { SnakeLoader } from '@/components/dashboard/snake-loader';
 import {
@@ -92,7 +96,21 @@ import {
   WorktreeDeleteDialog,
 } from '@/components/dashboard/session-dialogs';
 import { ShareLinkDialog, type ShareTarget } from '@/components/dashboard/share-link-dialog';
-import { SidebarSharedWithMe } from '@/components/dashboard/sidebar-shared-with-me';
+import {
+  LeaveProjectDialog,
+  ProjectIconWithOwner,
+  SidebarSharedWithMe,
+} from '@/components/dashboard/sidebar-shared-with-me';
+import { useSharedSessions, useWatchInstances } from '@/lib/hooks/use-shared-sessions';
+import { isAddedSharedProject } from '@/lib/shared-with-me';
+import {
+  TEAM_EXPANDED_STORAGE_KEY,
+  teamRowLabel,
+  teamSessionsByProject,
+  withTeamOnlyGroups,
+} from '@/components/dashboard/team-sessions';
+import { TeamSubGroup } from '@/components/dashboard/team-sub-group';
+import { sessionRowPeople } from '@/lib/session-people';
 import { isDesktopLocal } from '@/lib/runtime-config';
 import { projectRoleAtLeast } from '@/lib/backend-api';
 import {
@@ -529,6 +547,53 @@ export function SidebarSessions({
     return () => window.removeEventListener('focus', onFocus);
   }, [refreshProjects]);
 
+  // Other people's sessions this user can see. One fetch feeds both
+  // "Shared with me" and the Team rows of the projects listed as their own;
+  // a grant change on the relay refetches the projects too, so a project
+  // shared a moment ago shows up without a reload. Cloud only — the logged-out
+  // desktop has no account for anyone to share with.
+  const shared = useSharedSessions({ api: canShare ? api : null, onAccessChanged: refreshProjects });
+  const refreshShared = shared.refresh;
+  // Other people's open sessions in the projects listed here — your own, or
+  // shared ones you added — shown under each project's collapsed Team row,
+  // never mixed in with yours (see team-sessions.ts for why). Project view
+  // only: the time and status views are a list of your own work.
+  const teamByProject = useMemo(
+    () =>
+      groupBy === 'project'
+        ? teamSessionsByProject(shared.instances, projectsById)
+        : new Map<string, AgentInstanceResponse[]>(),
+    [groupBy, shared.instances, projectsById],
+  );
+  // Follow them live: their frames reach this socket only through the relay's
+  // watcher rooms. Bounded — the relay caps watches per connection.
+  const watchedSharedIds = useMemo(
+    () => [...teamByProject.values()].flat().slice(0, 50).map((i) => i.id),
+    [teamByProject],
+  );
+  useWatchInstances(watchedSharedIds);
+
+  const handleSetInSidebar = useCallback(
+    async (project: ProjectResponse, added: boolean) => {
+      if (!api) return;
+      setProjectsById((prev) => {
+        const next = new Map(prev);
+        const current = next.get(project.id);
+        if (current) next.set(project.id, { ...current, in_sidebar: added });
+        return next;
+      });
+      try {
+        await api.setProjectInSidebar(project.id, added);
+      } catch (err) {
+        console.error('Failed to update the sidebar:', err);
+      } finally {
+        refreshProjects();
+      }
+    },
+    [api, refreshProjects],
+  );
+  const [leavingProject, setLeavingProject] = useState<ProjectResponse | null>(null);
+
   // Archive a project → it (and its sessions) leave every device's sidebar
   // (§5b). Optimistically drop it locally, then reconcile from the server.
   const handleArchiveProject = useCallback(
@@ -554,8 +619,14 @@ export function SidebarSessions({
   // Worktree display is applied in a second pass (renderLayout) with live git
   // data, so grouping itself stays a pure function of the sessions.
   const sidebarGroups = useMemo(
-    () => groupSessions(recentInstances, statusFilter, groupBy, agentFilter, projectOrder, projectsById),
-    [recentInstances, statusFilter, groupBy, agentFilter, projectOrder, projectsById],
+    () =>
+      withTeamOnlyGroups(
+        groupSessions(recentInstances, statusFilter, groupBy, agentFilter, projectOrder, projectsById),
+        teamByProject,
+        projectOrder,
+        projectsById,
+      ),
+    [recentInstances, statusFilter, groupBy, agentFilter, projectOrder, projectsById, teamByProject],
   );
 
   // Bumped after a worktree is removed so the per-project git views refetch
@@ -822,6 +893,23 @@ export function SidebarSessions({
     });
   }, []);
 
+  // Team rows start collapsed; the ones opened are remembered per project.
+  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => {
+    const saved = getPref<unknown>(TEAM_EXPANDED_STORAGE_KEY);
+    return new Set(Array.isArray(saved) ? saved.filter((k): k is string => typeof k === 'string') : []);
+  });
+  const toggleTeamExpanded = useCallback((projectId: string) => {
+    setExpandedTeams((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    setPref(TEAM_EXPANDED_STORAGE_KEY, [...expandedTeams]);
+  }, [expandedTeams]);
+
   // Scroll persistence across session navigations (restored after data loads).
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [navigatingId, setNavigatingId] = useState<string | null>(null);
@@ -841,8 +929,9 @@ export function SidebarSessions({
       router.push(`/dashboard/sessions/${instance.id}`);
     });
     // Platform side effect (mark reviewed / auto-review) runs after navigation
-    // is scheduled; order doesn't matter for the optimistic status flip.
-    onSessionOpened?.(instance);
+    // is scheduled; order doesn't matter for the optimistic status flip. Not
+    // for a session someone shared with us: its review state is the owner's.
+    if (!instance.owner) onSessionOpened?.(instance);
   }, [navigatingId, router, onSessionOpened]);
 
   // Clear the navigation spinner once the route lands on the opened session.
@@ -882,7 +971,11 @@ export function SidebarSessions({
         const { key, label, instances } = group;
         const isDraggableProject =
           groupBy === 'project' && key !== 'PINNED' && label !== null;
-        const flatDirectory = isDraggableProject ? instances[0]?.project ?? null : null;
+        // Someone else's project: its folder is on their machine, so there is
+        // nowhere here to start a session in.
+        const foreignProject = groupBy === 'project' && !!projectsById.get(key)?.owner;
+        const flatDirectory =
+          isDraggableProject && !foreignProject ? instances[0]?.project ?? null : null;
         const notSplit = {
           group,
           isDraggableProject,
@@ -932,7 +1025,7 @@ export function SidebarSessions({
             key: `${key}::__main__`,
             label: view?.branch ?? 'main',
             instances: mainInstances,
-            directory: mainDirectory,
+            directory: foreignProject ? null : mainDirectory,
             missing: false,
             remove: null,
             // The default branch rarely has a PR of its own; when it does
@@ -951,7 +1044,7 @@ export function SidebarSessions({
             // preselected; the new-session page derives the cwd. No "+" on a
             // folder that is gone — there is nowhere to start in — and none
             // without a known main checkout to anchor the project chip on.
-            directory: w.missing ? null : repoDirectory,
+            directory: w.missing || foreignProject ? null : repoDirectory,
             worktreePath: w.missing ? undefined : w.path,
             worktreeBranch: w.branch || undefined,
             missing: w.missing,
@@ -975,10 +1068,10 @@ export function SidebarSessions({
         if (subs.length === 0) return notSplit;
         // Even when split, keep a "+" on the project label; it starts a session
         // in the repo's main checkout (falling back to any session's cwd).
-        const splitDirectory = mainDirectory ?? instances[0]?.project ?? null;
+        const splitDirectory = foreignProject ? null : mainDirectory ?? instances[0]?.project ?? null;
         return { group, isDraggableProject, split: true, newSessionDirectory: splitDirectory, subs };
       }),
-    [sidebarGroups, worktreesOn, groupBy, projectGitViews, removingWorktrees],
+    [sidebarGroups, worktreesOn, groupBy, projectGitViews, removingWorktrees, projectsById],
   );
 
   // Session-switching shortcuts: ⌘1–⌘9 jump to the nth session in the list
@@ -1070,7 +1163,12 @@ export function SidebarSessions({
       : resolveLiveState(instance, undefined, livenessNow);
     const active = instance.status === 'ACTIVE' && isReachable(liveState);
     const stopped = !isReachable(liveState) && liveState !== 'unknown';
-    const unread = instance.status === 'AWAITING_INPUT';
+    // Someone else's session (shared with us): the same row, but every action
+    // that manages the session — resume, pin, share, rename, archive, unread,
+    // delete — is the owner's, so the menus keep only what is ours to do. Its
+    // "awaiting input" is the owner's to-do too, so it gets no blue dot here.
+    const foreign = !!instance.owner;
+    const unread = instance.status === 'AWAITING_INPUT' && !foreign;
     const pinned = Boolean(instance.pinned_at);
     const title = getSessionTitle(instance);
     const time = formatSidebarTime(instance);
@@ -1079,49 +1177,60 @@ export function SidebarSessions({
       ? (agentProfilesById.get(instance.agent_profile_id) ?? null)
       : null;
 
+    // Everyone who wrote in it, once that is more than one person (§8.2). A
+    // session only its owner wrote in shows no face, so a teammate's names its
+    // owner on hover instead.
+    const people = sessionRowPeople(instance);
+    const ownerName = foreign ? instance.owner?.name?.trim() || null : null;
+
     // One config drives both the hover three-dot (SessionActionsMenu) and the
     // right-click context menu below, so the two menus can never list different
     // actions.
-    const sessionActionsConfig: SessionActionsConfig = {
-      onResume: () => void handleResumeInstance(instance),
-      showResume: canResumeSession(instance, liveState),
-      resumeDisabledReason:
-        resumingId === instance.id
-          ? 'Resuming…'
-          : resumeReason
-            ? resumeBlockedMessage(resumeReason)
-            : null,
-      resumeBlockedLabel:
-        resumingId === instance.id
-          ? 'Resuming…'
-          : resumeReason
-            ? resumeBlockedShortLabel(resumeReason)
-            : null,
-      onPin: () => void handleTogglePin(instance),
-      isPinned: pinned,
-      onShare: canShare
-        ? () =>
-            setShareTarget({
-              kind: 'session',
-              instanceId: instance.id,
-              title,
-              projectId: instance.project_id ?? null,
-              projectName: instance.project_id
-                ? (projectsById.get(instance.project_id)?.name ?? null)
+    const sessionActionsConfig: SessionActionsConfig = foreign
+      ? {
+          onCopyId: () => void copySessionId(instance.id, instance.id),
+          copied: copiedSessionId === instance.id,
+        }
+      : {
+          onResume: () => void handleResumeInstance(instance),
+          showResume: canResumeSession(instance, liveState),
+          resumeDisabledReason:
+            resumingId === instance.id
+              ? 'Resuming…'
+              : resumeReason
+                ? resumeBlockedMessage(resumeReason)
                 : null,
-            })
-        : undefined,
-      onRename: () =>
-        setRenameDialog({ open: true, sessionId: instance.id, currentName: instance.name ?? title }),
-      onCopyId: () => void copySessionId(instance.id, instance.id),
-      copied: copiedSessionId === instance.id,
-      onMarkDone: instance.status !== 'COMPLETED' ? () => void handleArchive(instance) : undefined,
-      showMarkDone: instance.status !== 'COMPLETED',
-      onUnread: instance.status === 'REVIEWED' ? () => void handleUnread(instance) : undefined,
-      showUnread: instance.status === 'REVIEWED',
-      onDelete: () =>
-        setDeleteDialog({ open: true, sessionId: instance.id, sessionName: title }),
-    };
+          resumeBlockedLabel:
+            resumingId === instance.id
+              ? 'Resuming…'
+              : resumeReason
+                ? resumeBlockedShortLabel(resumeReason)
+                : null,
+          onPin: () => void handleTogglePin(instance),
+          isPinned: pinned,
+          onShare: canShare
+            ? () =>
+                setShareTarget({
+                  kind: 'session',
+                  instanceId: instance.id,
+                  title,
+                  projectId: instance.project_id ?? null,
+                  projectName: instance.project_id
+                    ? (projectsById.get(instance.project_id)?.name ?? null)
+                    : null,
+                })
+            : undefined,
+          onRename: () =>
+            setRenameDialog({ open: true, sessionId: instance.id, currentName: instance.name ?? title }),
+          onCopyId: () => void copySessionId(instance.id, instance.id),
+          copied: copiedSessionId === instance.id,
+          onMarkDone: instance.status !== 'COMPLETED' ? () => void handleArchive(instance) : undefined,
+          showMarkDone: instance.status !== 'COMPLETED',
+          onUnread: instance.status === 'REVIEWED' ? () => void handleUnread(instance) : undefined,
+          showUnread: instance.status === 'REVIEWED',
+          onDelete: () =>
+            setDeleteDialog({ open: true, sessionId: instance.id, sessionName: title }),
+        };
     const contextMenuActions = buildSessionActions(sessionActionsConfig);
 
     return (
@@ -1139,6 +1248,7 @@ export function SidebarSessions({
             done && 'opacity-50',
           )}
           onClick={() => openSession(instance)}
+          title={ownerName ? `${ownerName}'s session` : undefined}
           disabled={isNavigating}
         >
           <div className="flex items-center justify-between gap-1 w-full min-w-0">
@@ -1186,7 +1296,8 @@ export function SidebarSessions({
             {/* Right slot: awaiting-input blue dot, else the time. Reserves room
                 for the two hover actions and fades out on hover so they take
                 over the same space without covering the title. */}
-            <span className="flex-shrink-0 pl-2 min-w-[3rem] flex items-center justify-end transition-opacity group-hover/session:opacity-0">
+            <span className="flex-shrink-0 pl-2 min-w-[3rem] flex items-center justify-end gap-1.5 transition-opacity group-hover/session:opacity-0">
+              <SessionRowAvatars people={people} />
               {unread ? (
                 <span
                   className="h-2 w-2 rounded-full bg-sky-400"
@@ -1204,7 +1315,7 @@ export function SidebarSessions({
             (same actions as the right-click menu). stopPropagation/preventDefault
             keep the clicks from navigating into the session. */}
         <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/session:opacity-100">
-          {instance.status !== 'COMPLETED' ? (
+          {foreign ? null : instance.status !== 'COMPLETED' ? (
             <button
               type="button"
               title="Archive"
@@ -1391,7 +1502,7 @@ export function SidebarSessions({
                 </div>
               ))}
             </div>
-          ) : recentInstances.length === 0 ? (
+          ) : recentInstances.length === 0 && teamByProject.size === 0 ? (
             <div className="flex flex-col items-center px-4 pt-10 pb-4 text-center">
               <MessageCircleMore className="h-8 w-8 text-muted-foreground" strokeWidth={1.5} />
               <p className="mt-3 text-xs font-medium text-foreground">No sessions yet</p>
@@ -1404,7 +1515,9 @@ export function SidebarSessions({
               {renderLayout.map((entry) => {
                 const { key, label, instances } = entry.group;
                 const { isDraggableProject, split, newSessionDirectory, subs } = entry;
-                if (!split && instances.length === 0) return null;
+                // Other people's open sessions here, under the Team row.
+                const team = teamByProject.get(key) ?? [];
+                if (!split && instances.length === 0 && team.length === 0) return null;
                 const isGroupCollapsed = label !== null && collapsedGroups.has(key);
                 // The DB project this group maps to (only meaningful when
                 // grouping by project — time/status keys aren't project ids).
@@ -1427,6 +1540,12 @@ export function SidebarSessions({
                 // worktree config from the project's own directory rows).
                 const projectSettingsHref =
                   dbProject && canManageProject ? settingsHrefForProject(dbProject.id) : null;
+                // A project someone shared with us that we added to this list:
+                // it can be taken out again, left, and — with the tasks
+                // scope — its board opened, like under "Shared with me".
+                const addedShared =
+                  dbProject !== undefined && isAddedSharedProject(dbProject) ? dbProject : null;
+                const sharedBoard = addedShared?.scopes?.includes('tasks') ?? false;
                 const projectHeader = label ? (
                   // Wrapper carries the drag handle and hover group so the
                   // collapse toggle, actions menu, and "+" can be sibling buttons
@@ -1457,12 +1576,15 @@ export function SidebarSessions({
                       {/* Project groups show the DB project's icon/image/emoji
                           (or a generated square from the name); time/status
                           groups have no project identity, so no icon (§5a). */}
-                      {groupBy === 'project' && (
-                        <ProjectIcon
-                          project={dbProject ?? { id: key, name: label }}
-                          className="size-4"
-                        />
-                      )}
+                      {groupBy === 'project' &&
+                        (dbProject?.owner ? (
+                          <ProjectIconWithOwner project={dbProject} owner={dbProject.owner} />
+                        ) : (
+                          <ProjectIcon
+                            project={dbProject ?? { id: key, name: label }}
+                            className="size-4"
+                          />
+                        ))}
                       <span className="truncate text-[0.8rem] font-normal text-muted-foreground">
                         {label}
                       </span>
@@ -1473,7 +1595,7 @@ export function SidebarSessions({
                         )}
                       />
                     </button>
-                    {(projectSettingsHref || canArchiveProject || canShareProject) && (
+                    {(projectSettingsHref || canArchiveProject || canShareProject || addedShared) && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button
@@ -1518,6 +1640,35 @@ export function SidebarSessions({
                             >
                               <Archive className="h-3.5 w-3.5" />
                               Archive project
+                            </DropdownMenuItem>
+                          )}
+                          {addedShared && sharedBoard && (
+                            <DropdownMenuItem
+                              className="cursor-pointer gap-2 text-xs"
+                              onSelect={() =>
+                                router.push(`/dashboard/tasks?project=${encodeURIComponent(addedShared.id)}`)
+                              }
+                            >
+                              <ListTodo className="h-3.5 w-3.5" />
+                              Open task board
+                            </DropdownMenuItem>
+                          )}
+                          {addedShared && (
+                            <DropdownMenuItem
+                              className="cursor-pointer gap-2 text-xs"
+                              onSelect={() => void handleSetInSidebar(addedShared, false)}
+                            >
+                              <PanelLeftClose className="h-3.5 w-3.5" />
+                              Remove from sidebar
+                            </DropdownMenuItem>
+                          )}
+                          {addedShared && (
+                            <DropdownMenuItem
+                              className="cursor-pointer gap-2 text-xs"
+                              onSelect={() => setLeavingProject(addedShared)}
+                            >
+                              <LogOut className="h-3.5 w-3.5" />
+                              Leave project…
                             </DropdownMenuItem>
                           )}
                         </DropdownMenuContent>
@@ -1610,6 +1761,22 @@ export function SidebarSessions({
                             })}
                       </div>
                     )}
+                    {/* Other people's sessions in this project, after your own
+                        and apart from them — a sibling of the branch rows. */}
+                    {!isGroupCollapsed && team.length > 0 && (
+                      <TeamSubGroup
+                        label={teamRowLabel(team, dbProject)}
+                        sessions={team}
+                        expanded={expandedTeams.has(key)}
+                        onToggle={() => toggleTeamExpanded(key)}
+                        working={team.some(
+                          (i) =>
+                            i.status === 'ACTIVE' &&
+                            isReachable(resolveLiveState(i, undefined, livenessNow)),
+                        )}
+                        renderSession={renderSession}
+                      />
+                    )}
                   </div>
                 );
               })}
@@ -1625,8 +1792,13 @@ export function SidebarSessions({
           {canShare && (
             <SidebarSharedWithMe
               api={api}
+              instances={shared.instances}
               projectsById={projectsById}
-              onProjectsChanged={refreshProjects}
+              onProjectsChanged={() => {
+                refreshProjects();
+                refreshShared();
+              }}
+              onSetInSidebar={(project, added) => void handleSetInSidebar(project, added)}
             />
           )}
         </div>
@@ -1653,6 +1825,15 @@ export function SidebarSessions({
           if (!open) setShareTarget(null);
         }}
         target={shareTarget}
+      />
+      <LeaveProjectDialog
+        api={api}
+        project={leavingProject}
+        onClose={() => setLeavingProject(null)}
+        onLeft={() => {
+          refreshProjects();
+          refreshShared();
+        }}
       />
       {enableWorktrees && (
         <WorktreeDeleteDialog

@@ -116,12 +116,14 @@ def list_projects_endpoint(
         ):
             background_tasks.add_task(project_icons.seed_project_icon, project.id)
     owners = _project_owners(db, current_user.id, projects)
+    added = task_queries.sidebar_project_ids(db, current_user.id, list(owners))
     return [
         _project_response(
             p,
             accesses.get(p.id),
             viewer_id=current_user.id,
             owner=owners.get(p.id),
+            in_sidebar=p.id not in owners or p.id in added,
             last_activity_at=last_at,
             position=position,
         )
@@ -154,6 +156,7 @@ def _project_response(
     *,
     viewer_id: UUID,
     owner: PrincipalResponse | None = None,
+    in_sidebar: bool | None = None,
     last_activity_at: datetime | None = None,
     position: int | None = None,
 ) -> ProjectResponse:
@@ -179,6 +182,9 @@ def _project_response(
     mine = {d.machine_id for d in project.directories if d.user_id == viewer_id}
     response.directories = [d for d in response.directories if d.machine_id in mine]
     response.owner = owner
+    # Unknown to a caller that did not look it up: an owned project is always
+    # listed, a shared one only when the list query says it was added.
+    response.in_sidebar = owner is None if in_sidebar is None else in_sidebar
     response.last_activity_at = last_activity_at
     response.position = position
     return response
@@ -242,12 +248,55 @@ def _project_response_for(
     The list endpoint batches this with `access.project_accesses`; everything
     that returns one project uses this.
     """
+    owner = _project_owners(db, user_id, [project]).get(project.id)
     return _project_response(
         project,
         access.project_access(db, user_id, project),
         viewer_id=user_id,
-        owner=_project_owners(db, user_id, [project]).get(project.id),
+        owner=owner,
+        in_sidebar=owner is None
+        or bool(task_queries.sidebar_project_ids(db, user_id, [project.id])),
     )
+
+
+def _set_in_sidebar(
+    db: Session, user_id: UUID, project_id: UUID, *, added: bool
+) -> ProjectResponse:
+    # Any standing that can see the project: this is the caller's own view,
+    # like the project order. (A board-only grantee has no sessions to show
+    # there, so the client only offers it with the sessions scope.)
+    project = task_queries.get_accessible_project(db, user_id, project_id, sharing=True)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+    owned = project.team_id is None and project.user_id == user_id
+    if not owned:
+        task_queries.set_project_in_sidebar(db, user_id, project.id, added=added)
+    return _project_response_for(db, user_id, project)
+
+
+@router.put("/projects/{project_id}/sidebar", response_model=ProjectResponse)
+def add_project_to_sidebar_endpoint(
+    project_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProjectResponse:
+    """List a project shared with the caller among their own: it
+    leaves "Shared with me" for their project list, its sessions under the
+    project's Team row. The caller's view only — the project itself is untouched, so any
+    role that can see its sessions may do it. A no-op for one they own."""
+    return _set_in_sidebar(db, current_user.id, project_id, added=True)
+
+
+@router.delete("/projects/{project_id}/sidebar", response_model=ProjectResponse)
+def remove_project_from_sidebar_endpoint(
+    project_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProjectResponse:
+    """Undo `PUT …/sidebar`: back under "Shared with me". Access unchanged."""
+    return _set_in_sidebar(db, current_user.id, project_id, added=False)
 
 
 @router.post(

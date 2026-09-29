@@ -435,6 +435,20 @@ ENDPOINTS: list[Endpoint] = [
         ),
         listed_ids=lambda r: {str(i) for i in r.json()["project_ids"]},
     ),
+    # Adding a shared project to the caller's own sidebar list: their
+    # view only, never the project — any visible standing, like the order.
+    Endpoint(
+        "PUT /projects/{id}/sidebar",
+        "project",
+        "viewer",
+        lambda c, w: c.put(f"/api/v1/projects/{w.project.id}/sidebar"),
+    ),
+    Endpoint(
+        "DELETE /projects/{id}/sidebar",
+        "project",
+        "viewer",
+        lambda c, w: c.delete(f"/api/v1/projects/{w.project.id}/sidebar"),
+    ),
     Endpoint(
         "PATCH /projects/{id}",
         "project",
@@ -892,6 +906,7 @@ def test_every_dashboard_route_is_in_the_matrix_or_owner_only():
         "/projects/{project_id}/directories/{machine_id}": "/projects/{id}/directories/{machine}",
         "/projects/{project_id}/icon": "/projects/{id}/icon",
         "/projects/{project_id}/summary": "/projects/{id}/summary",
+        "/projects/{project_id}/sidebar": "/projects/{id}/sidebar",
         "/tasks/{task_id}": "/tasks/{id}",
         "/tasks/{task_id}/sessions": "/tasks/{id}/sessions",
         "/tasks/{task_id}/timeline": "/tasks/{id}/timeline",

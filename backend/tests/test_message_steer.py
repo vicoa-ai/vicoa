@@ -205,6 +205,7 @@ def test_steer_endpoint_flips_and_broadcasts_when_queued(
     assert rooms == [
         f"user:{user.id}:user-scoped",
         f"user:{user.id}:session:{instance_id}",
+        f"instance:{instance_id}:watchers",
     ]
     assert _stored_queue(message_id)["status"] == "steer"
 

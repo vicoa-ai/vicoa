@@ -57,6 +57,7 @@ from shared.websocket.envelope import (
     build_spawn_request_update,
 )
 from shared.websocket.in_tx import after_commit
+from shared.websocket.protocol import watcher_room
 from shared.websocket.rpc import RpcError, rpc_router
 from servers.shared.db import (
     send_agent_message,
@@ -231,6 +232,8 @@ def _broadcast_instance_update(
         rooms = [
             f"user:{user_id}:user-scoped",
             f"user:{user_id}:session:{instance.id}",
+            # People it is shared with; the manager narrows the row for them.
+            watcher_room(str(instance.id)),
         ]
     after_commit(
         db, lambda: connection_manager.broadcast_update(user_id, payload, rooms)
@@ -252,7 +255,10 @@ def _broadcast_new_message(db: Session, message: Message, user_id: str) -> None:
     Call before `db.commit()` — the envelope is snapshotted now.
     """
     payload = build_new_message_update(message)
-    rooms = [f"user:{user_id}:user-scoped"]
+    rooms = [
+        f"user:{user_id}:user-scoped",
+        watcher_room(str(message.agent_instance_id)),
+    ]
     if message.sender_type == SenderType.USER:
         rooms.append(f"user:{user_id}:session:{message.agent_instance_id}")
     after_commit(
@@ -271,7 +277,10 @@ def _broadcast_message_update(db: Session, message: Message, user_id: str) -> No
     Call before committing — the envelope is snapshotted now.
     """
     payload = build_message_update(message)
-    rooms = [f"user:{user_id}:user-scoped"]
+    rooms = [
+        f"user:{user_id}:user-scoped",
+        watcher_room(str(message.agent_instance_id)),
+    ]
     after_commit(
         db, lambda: connection_manager.broadcast_update(user_id, payload, rooms)
     )
@@ -1723,7 +1732,9 @@ def heartbeat_instance(
             )
     seen_at = presence.touch_instance(agent_instance_id, owner)
 
-    if connection_manager.has_user_scoped(user_id):
+    if connection_manager.has_user_scoped(user_id) or connection_manager.has_watchers(
+        str(agent_instance_id)
+    ):
         instance = (
             db.query(AgentInstance)
             .filter(
@@ -1740,7 +1751,10 @@ def heartbeat_instance(
             connection_manager.broadcast_update(
                 user_id,
                 build_instance_update(instance),
-                [f"user:{user_id}:user-scoped"],
+                [
+                    f"user:{user_id}:user-scoped",
+                    watcher_room(str(agent_instance_id)),
+                ],
             )
 
     return {

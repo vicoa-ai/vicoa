@@ -60,6 +60,29 @@ export type InstanceBody = {
   instance_metadata: Record<string, unknown> | null;
   has_git_changes: boolean;
   updated_at: string;
+  machine_id?: string | null;
+  session_config?: Record<string, unknown> | null;
+  pinned_at?: string | null;
+  /**
+   * The server's liveness verdict. Set by the relay on its own frames, and
+   * always on a watcher's copy of someone else's session: that copy has no
+   * `machine_id`, so the client cannot derive liveness itself (collaboration
+   * §9).
+   */
+  live_state?: string;
+  /** Set on a row narrowed for someone the session is shared with. */
+  grantee_view?: boolean;
+};
+
+/**
+ * `update` body telling this user their access to a project or a session
+ * changed — a grant or share added, changed or removed (collaboration §9).
+ * Carries no row: refetch whatever is shown from it.
+ */
+export type AccessChangedBody = {
+  t: 'access-changed';
+  project_id: string | null;
+  instance_id: string | null;
 };
 
 /** `update` body for a machine — the complete canonical row (§2.4). */
@@ -76,7 +99,12 @@ export type MachineBody = {
   updated_at: string;
 };
 
-export type UpdateBody = NewMessageBody | InstanceBody | MachineBody | MessageUpdateBody;
+export type UpdateBody =
+  | NewMessageBody
+  | InstanceBody
+  | MachineBody
+  | MessageUpdateBody
+  | AccessChangedBody;
 
 /** The `payload` of a server→client `update` frame (§2.4). */
 export interface UpdatePayload {
@@ -172,6 +200,8 @@ type ConnectionListener = (connected: boolean) => void;
 /** `data` is the base64-encoded output chunk exactly as it arrived on the wire. */
 type PtyOutputListener = (ptyId: string, data: string) => void;
 type PtyExitListener = (ptyId: string, exitCode: number | null) => void;
+/** A session this client watched was taken away (access revoked). */
+type WatchRevokedListener = (instanceId: string) => void;
 type ConnectedWaiter = {
   resolve: () => void;
   reject: (err: Error) => void;
@@ -215,6 +245,13 @@ class WsClient {
   private readonly connectionListeners = new Set<ConnectionListener>();
   private readonly ptyOutputListeners = new Set<PtyOutputListener>();
   private readonly ptyExitListeners = new Set<PtyExitListener>();
+  private readonly watchRevokedListeners = new Set<WatchRevokedListener>();
+  /**
+   * Sessions shared with this user that something on screen is following, by
+   * holder count. Like `lastPresence`, re-asserted after every reconnect: a
+   * fresh server-side connection is in no watcher room.
+   */
+  private readonly watchCounts = new Map<string, number>();
 
   constructor(options: WsClientOptions) {
     this.url = options.url;
@@ -298,12 +335,63 @@ class WsClient {
     };
   }
 
-  /** Catch-up fetch for the user's agent instances (§2.6). */
-  async fetchInstances(updatedAfter: string | null): Promise<InstanceBody[]> {
+  /**
+   * Catch-up fetch for the user's agent instances (§2.6). `scope: 'all'` adds
+   * the sessions shared with the user, in the grantee view; a relay that
+   * predates the param answers with the user's own either way.
+   */
+  async fetchInstances(
+    updatedAfter: string | null,
+    scope: 'me' | 'all' = 'me',
+  ): Promise<InstanceBody[]> {
     const frame = await this.sendFetch('fetch_instances_request', {
       updated_after: updatedAfter,
+      ...(scope === 'all' ? { scope } : {}),
     });
     return (frame.rows as InstanceBody[]) ?? [];
+  }
+
+  /**
+   * Follow a session someone shared with this user: its messages and status
+   * reach this socket through the relay's watcher room, which it joins only
+   * after checking the grant (collaboration §9). Refcounted, so several
+   * surfaces can hold the same session; the room is left when the last
+   * releases. Holding a watch retains the connection. Harmless for a session
+   * the user owns (the relay answers without joining — their own room already
+   * carries it) and against a relay that predates watching (it ignores the
+   * frame, and the session simply isn't live). Returns an idempotent release.
+   */
+  watchInstance(instanceId: string): () => void {
+    const holders = (this.watchCounts.get(instanceId) ?? 0) + 1;
+    this.watchCounts.set(instanceId, holders);
+    const releaseConnection = this.retainConnection();
+    if (holders === 1) this.sendWatchFrame('watch_instance', instanceId);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (this.watchCounts.get(instanceId) ?? 1) - 1;
+      if (left <= 0) {
+        this.watchCounts.delete(instanceId);
+        this.sendWatchFrame('unwatch_instance', instanceId);
+      } else {
+        this.watchCounts.set(instanceId, left);
+      }
+      releaseConnection();
+    };
+  }
+
+  /** Whether something on screen is following this (shared) session. */
+  isWatching(instanceId: string): boolean {
+    return this.watchCounts.has(instanceId);
+  }
+
+  /** Observe watched sessions whose access was revoked. */
+  onWatchRevoked(listener: WatchRevokedListener): () => void {
+    this.watchRevokedListeners.add(listener);
+    return () => {
+      this.watchRevokedListeners.delete(listener);
+    };
   }
 
   /** Catch-up fetch for the user's machines (§2.6). */
@@ -426,6 +514,12 @@ class WsClient {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ type: 'presence', foreground }));
+  }
+
+  private sendWatchFrame(type: 'watch_instance' | 'unwatch_instance', instanceId: string): void {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !this.connected) return;
+    socket.send(JSON.stringify({ type, instance_id: instanceId }));
   }
 
   /**
@@ -561,7 +655,20 @@ class WsClient {
         this.dispatchUpdate(frame.payload as UpdatePayload);
         return;
       case 'ephemeral':
+      case 'watch_instance_response':
         return;
+      case 'watch_revoked': {
+        const instanceId = typeof frame.instance_id === 'string' ? frame.instance_id : null;
+        if (instanceId === null) return;
+        for (const listener of this.watchRevokedListeners) {
+          try {
+            listener(instanceId);
+          } catch (err) {
+            console.error('[ws] watch-revoked listener threw:', err);
+          }
+        }
+        return;
+      }
       case 'pty-output': {
         // Local-only push frame: {pty_id, data(base64)} (desktop-app v1 wire
         // contract). Delivered as-is; the terminal transport decodes.
@@ -655,6 +762,10 @@ class WsClient {
         this.socket.send(
           JSON.stringify({ type: 'presence', foreground: this.lastPresence }),
         );
+      }
+      // Rejoin every watcher room this client holds: rooms are per connection.
+      for (const instanceId of this.watchCounts.keys()) {
+        this.sendWatchFrame('watch_instance', instanceId);
       }
     }
     for (const listener of this.connectionListeners) {

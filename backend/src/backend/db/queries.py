@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from shared import access
+from shared import access, grantee_view
 
 # Imported by name: several functions below bind a local `access`.
 from shared.access import instance_role as _instance_role
@@ -27,12 +27,13 @@ from shared.database import (
 from shared.database.liveness import LiveState, compute_live_state, is_fresh
 from shared.database.automation_models import AutomationRun
 from shared.hooks import CAPABILITY_GRANT_WRITE, run_user_delete_hooks
-from sqlalchemy import case, cast, desc, exists, func, or_, select, text, update
+from sqlalchemy import and_, case, cast, desc, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session, joinedload, subqueryload
 
 # Import Pydantic models for type-safe returns
 from backend.db import collab_queries
+from backend.db.access_events import notify_access_changed, team_member_ids
 from backend.models import (
     AgentInstanceResponse,
     AgentInstanceDetail,
@@ -159,7 +160,8 @@ def _require_instance_access(
 def _get_instance_message_stats(db: Session, instance_ids: list[UUID]) -> dict:
     """
     Efficiently get message statistics for multiple instances.
-    Returns a dict mapping instance_id to (latest_message, latest_message_at, message_count)
+    Returns a dict mapping instance_id to (latest_message, latest_message_at,
+    message_count, foreign_message_count)
     """
     if not instance_ids:
         return {}
@@ -179,7 +181,20 @@ def _get_instance_message_stats(db: Session, instance_ids: list[UUID]) -> dict:
             func.count(Message.id)
             .over(partition_by=Message.agent_instance_id)
             .label("msg_count"),
+            # Messages someone other than the owner sent (a shared session's
+            # other writers), counted in the same pass so a list learns which
+            # rows have more than one participant without scanning again.
+            func.count(Message.id)
+            .filter(
+                and_(
+                    Message.sender_user_id.isnot(None),
+                    Message.sender_user_id != AgentInstance.user_id,
+                )
+            )
+            .over(partition_by=Message.agent_instance_id)
+            .label("foreign_count"),
         )
+        .join(AgentInstance, AgentInstance.id == Message.agent_instance_id)
         .filter(Message.agent_instance_id.in_(instance_ids))
         .subquery()
     )
@@ -191,6 +206,7 @@ def _get_instance_message_stats(db: Session, instance_ids: list[UUID]) -> dict:
             subquery.c.content,
             subquery.c.created_at,
             subquery.c.msg_count,
+            subquery.c.foreign_count,
         )
         .filter(subquery.c.rn == 1)
         .all()
@@ -203,29 +219,19 @@ def _get_instance_message_stats(db: Session, instance_ids: list[UUID]) -> dict:
             "latest_message": row.content,
             "latest_message_at": row.created_at,
             "message_count": row.msg_count,
+            "foreign_message_count": row.foreign_count,
         }
 
     return stats
 
 
-# The `session_config` keys anyone but the owner may see (old plan D5): what
-# ran, with which model and effort, under which permission mode. Nothing
-# operational. Shared by the public share viewer and the signed-in grantee view.
-DISPLAY_SESSION_CONFIG_KEYS = (
-    "agent",
-    "model",
-    "thinking_effort",
-    "reasoning_effort",
-    "permission_mode",
-    "opencode_mode",
-)
-
-# `instance_metadata` keys a grantee's client reads that locate nothing on the
-# owner's machine. `repo_root` and friends are absolute paths; they stay home.
-_GRANTEE_METADATA_KEYS = ("worktree_name", "source", "usage")
+# Re-exported for the public share viewer (`share_queries`), which draws the
+# same line; the definition lives in `shared.grantee_view` so the relay's
+# watcher frames cannot drift from these rows.
+DISPLAY_SESSION_CONFIG_KEYS = grantee_view.DISPLAY_SESSION_CONFIG_KEYS
 
 
-def _owner_principal(user: User | None) -> PrincipalResponse:
+def _user_principal(user: User | None) -> PrincipalResponse:
     if user is None:
         return PrincipalResponse(type="user", name="Deleted user")
     return PrincipalResponse(
@@ -254,24 +260,21 @@ def redact_for_grantee(
     aim a terminal, file or git RPC at, so a viewer cannot reach the daemon
     even through a UI entry point someone forgot to hide.
     """
-    response.owner = _owner_principal(owner)
+    response.owner = _user_principal(owner)
     response.viewer_role = role  # type: ignore[assignment]
     response.home_dir = None
     response.machine_id = None
-    if response.project:
-        response.project = response.project.rstrip("/").rsplit("/", 1)[-1] or None
-    if isinstance(response.instance_metadata, dict):
-        response.instance_metadata = {
-            k: response.instance_metadata[k]
-            for k in _GRANTEE_METADATA_KEYS
-            if k in response.instance_metadata
-        } or None
-    if isinstance(response.session_config, dict):
-        response.session_config = {
-            k: response.session_config[k]
-            for k in DISPLAY_SESSION_CONFIG_KEYS
-            if response.session_config.get(k) is not None
-        } or None
+    response.project = grantee_view.project_label(response.project)
+    response.instance_metadata = grantee_view.grantee_metadata(
+        response.instance_metadata
+    )
+    response.session_config = grantee_view.display_session_config(
+        response.session_config
+    )
+    if isinstance(response, AgentInstanceDetail):
+        # The owner's uncommitted working tree. The Files/Git panel is
+        # owner-only (§8.2), so nothing on a grantee's page reads it.
+        response.git_diff = None
 
 
 def _apply_grantee_view(
@@ -726,6 +729,7 @@ def get_all_agent_instances(
     responses = [
         format_agent_instance(instance, message_stats) for instance in instances
     ]
+    _attach_list_participants(db, instances, responses, message_stats)
     if scope != "me":
         _apply_grantee_view(db, user_id, instances, responses)
     return responses, total
@@ -1032,6 +1036,7 @@ def get_agent_instance_detail(
         rate_limited=instance.rate_limited_until is not None,
         rate_limit_resets_at=instance.rate_limited_until,
     )
+    detail.participants = _participants_by_instance(db, [instance])[instance.id]
     if not is_owner:
         redact_for_grantee(
             detail,
@@ -1039,6 +1044,69 @@ def get_agent_instance_detail(
             _instance_role(db, user_id, instance),
         )
     return detail
+
+
+def _participants_by_instance(
+    db: Session, instances: list[AgentInstance]
+) -> dict[UUID, list[PrincipalResponse]]:
+    """Who has written in each session: the owner, then every other account
+    that sent a message there, in the order they first did. A message with no
+    sender (typed into the owner's terminal) is the owner's. Display names only
+    — never an address. One query for the senders and one for the accounts,
+    however many sessions."""
+    if not instances:
+        return {}
+    senders: dict[UUID, list[UUID]] = {instance.id: [] for instance in instances}
+    rows = (
+        db.query(Message.agent_instance_id, Message.sender_user_id)
+        .join(AgentInstance, AgentInstance.id == Message.agent_instance_id)
+        .filter(
+            Message.agent_instance_id.in_(list(senders)),
+            Message.sender_user_id.isnot(None),
+            Message.sender_user_id != AgentInstance.user_id,
+        )
+        .group_by(Message.agent_instance_id, Message.sender_user_id)
+        .order_by(Message.agent_instance_id, func.min(Message.created_at))
+    )
+    for instance_id, sender_id in rows:
+        senders[instance_id].append(sender_id)
+    user_ids = {instance.user_id for instance in instances}
+    user_ids.update(uid for ids in senders.values() for uid in ids)
+    users = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids))}
+    return {
+        instance.id: [
+            _user_principal(users.get(instance.user_id)),
+            *(
+                _user_principal(users[uid])
+                for uid in senders[instance.id]
+                if uid in users
+            ),
+        ]
+        for instance in instances
+    }
+
+
+def _attach_list_participants(
+    db: Session,
+    instances: list[AgentInstance],
+    responses: list[AgentInstanceResponse],
+    message_stats: dict,
+) -> None:
+    """Fill `participants` on the rows of a list that someone besides the
+    owner has written in, and only those — a solo row keeps an empty list, so
+    the common case costs nothing beyond the stats pass that flagged it."""
+    multi = [
+        instance
+        for instance in instances
+        if message_stats.get(instance.id, {}).get("foreign_message_count")
+    ]
+    if not multi:
+        return
+    by_instance = _participants_by_instance(db, multi)
+    for instance, response in zip(instances, responses):
+        people = by_instance.get(instance.id)
+        if people and len(people) > 1:
+            response.participants = people
 
 
 _TERMINAL_STATUSES = frozenset(
@@ -2193,6 +2261,7 @@ def add_instance_share(
         )
         db.add(team_share)
         db.flush()
+        notify_access_changed(db, team_member_ids(db, team_id), instance_id=instance_id)
         db.refresh(team_share)
         counts = _team_member_counts(db, [team_id])
         return _team_share_response(team_share, counts.get(team_id, 0))
@@ -2239,6 +2308,7 @@ def add_instance_share(
     db.flush()
     if target_user:
         share.user = target_user
+        notify_access_changed(db, [target_user.id], instance_id=instance_id)
 
     return _instance_access_to_response(share)
 
@@ -2277,6 +2347,7 @@ def update_instance_share(
             )
         share.access = access_level
         db.flush()
+        notify_access_changed(db, [share.user_id], instance_id=instance_id)
         return _instance_access_to_response(share)
 
     team_share = (
@@ -2292,6 +2363,9 @@ def update_instance_share(
         raise ShareNotFoundError("Share not found")
     team_share.access = access_level
     db.flush()
+    notify_access_changed(
+        db, team_member_ids(db, team_share.team_id), instance_id=instance_id
+    )
     counts = _team_member_counts(db, [team_share.team_id])
     return _team_share_response(team_share, counts.get(team_share.team_id, 0))
 
@@ -2311,6 +2385,7 @@ def remove_instance_share(
         .first()
     )
     if share is not None:
+        notify_access_changed(db, [share.user_id], instance_id=instance_id)
         db.delete(share)
         return
 
@@ -2324,4 +2399,7 @@ def remove_instance_share(
     )
     if team_share is None:
         raise ShareNotFoundError("Share not found")
+    notify_access_changed(
+        db, team_member_ids(db, team_share.team_id), instance_id=instance_id
+    )
     db.delete(team_share)

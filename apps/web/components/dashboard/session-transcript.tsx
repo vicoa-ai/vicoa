@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { ArrowDown, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import type { MessageResponse } from '@/lib/backend-api';
+import type { MessageResponse, PrincipalResponse } from '@/lib/backend-api';
 import { groupMessagesByDate, messageSortKey } from '@/lib/message-grouping';
 import { computeTurnEnds, type TurnMessageEntry } from '@/lib/agent-turns';
 import { shouldHideControlMessage } from '@/lib/session-control-messages';
@@ -222,6 +222,11 @@ export interface TranscriptRowProps {
   turnCopyText?: ReadonlyMap<string, string>;
   /** This row's padding, from `computeTranscriptSpacing`. */
   spacing: RowSpacing | undefined;
+  /**
+   * Who opens each run of prompts, by message id (see `transcriptBylines`).
+   * Only a session with more than one writer has any (collaboration §8.2).
+   */
+  bylines?: ReadonlyMap<string, PrincipalResponse>;
 }
 
 // flow-root keeps any margin inside the row's measured box (see computeTranscriptSpacing).
@@ -243,6 +248,7 @@ export function TranscriptRow({
   forkingMessageId = null,
   turnCopyText,
   spacing,
+  bylines,
 }: TranscriptRowProps) {
   const agentType = resolveAgentType(agentTypeName || undefined);
   const shellStyle = { paddingTop: spacing?.top, paddingBottom: spacing?.bottom };
@@ -322,6 +328,7 @@ export function TranscriptRow({
         turnCopyText={turnCopyText?.get(item.message.id)}
         agentTypeName={agentTypeName ?? undefined}
         projectPath={projectPath}
+        byline={bylines?.get(item.message.id) ?? null}
       />
     </div>
   );

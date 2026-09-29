@@ -90,6 +90,11 @@ interface ChatInputProps {
   pendingPermissionMode?: PermissionModeValue | null;
   onPermissionModeChange?: (mode: PermissionModeValue) => void;
   showControlSettings?: boolean;
+  /**
+   * Show the session config chips without letting them change anything —
+   * someone else's session (collaboration §8.2). Pair with no change handlers.
+   */
+  controlSettingsReadOnly?: boolean;
   thinkingEnabled?: boolean | null;
   onThinkingToggle?: (enabled: boolean) => void;
   onInterrupt?: () => void;
@@ -177,6 +182,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
   pendingPermissionMode,
   onPermissionModeChange,
   showControlSettings = true,
+  controlSettingsReadOnly = false,
   thinkingEnabled = null,
   onThinkingToggle,
   onInterrupt,
@@ -999,6 +1005,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
           {showControlSettings && (
             <SessionConfigChips
               disabled={disabled}
+              readOnly={controlSettingsReadOnly}
               agentTypeName={agentLogoName ?? agentType}
               models={sessionModels}
               currentModel={currentModel}

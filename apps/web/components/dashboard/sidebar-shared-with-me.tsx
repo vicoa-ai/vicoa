@@ -7,16 +7,19 @@
 // a session on someone else's machine), no drag (the order is theirs to keep
 // in their own sidebar) and no Archive; the owner's picture sits on the
 // project icon so it never reads as one of your own. A session opens in the
-// read-only viewer at /dashboard/shared/sessions/<id>, never the full session
-// page, which assumes a daemon the viewer cannot reach (that degraded page is
-// P6). Until P6 there is no socket for any of this either, so the list polls.
+// normal session page, which degrades itself to the viewer's role.
+//
+// "Add to sidebar" moves a shared project out of here and into the
+// user's own project list, its sessions under the project's Team row. The list
+// itself is `useSharedSessions`, owned by `SidebarSessions` so both places
+// read one fetch.
 //
 // Mounted by `SidebarSessions`, which web and desktop both render, so this is
 // the one implementation for both.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { ChevronRight, ListTodo, LogOut, MoreHorizontal } from 'lucide-react';
+import { ChevronRight, ListTodo, LogOut, MoreHorizontal, PanelLeftOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -30,18 +33,18 @@ import { ProjectIcon } from '@/components/dashboard/task-ui';
 import { ConfirmDeleteDialog } from '@/components/dashboard/session-dialogs';
 import { formatSidebarTime, getSessionTitle } from '@/components/dashboard/session-display';
 import type BackendAPI from '@/lib/backend-api';
-import type { AgentInstanceResponse, ProjectResponse } from '@/lib/backend-api';
+import type { AgentInstanceResponse, PrincipalResponse, ProjectResponse } from '@/lib/backend-api';
 import { CLOSED_STATUSES } from '@/components/dashboard/session-grouping';
 import { principalFromResponse } from '@/lib/principals';
-import { groupSharedWithMe, type SharedGroup } from '@/lib/shared-with-me';
-import { POLL_IDLE_MS, useSharePoll } from '@/lib/use-share-poll';
+import { canAddToSidebar, groupSharedWithMe } from '@/lib/shared-with-me';
+import { sessionRowPeople } from '@/lib/session-people';
+import { SessionRowAvatars } from '@/components/dashboard/session-participants';
 import { cn } from '@/lib/utils';
 
 const ITEM_SELECTED = 'bg-foreground/[0.08] dark:bg-foreground/10 text-foreground';
-const SHARED_PAGE_SIZE = 50;
 
-export function sharedSessionHref(instanceId: string): string {
-  return `/dashboard/shared/sessions/${instanceId}`;
+function sessionHref(instanceId: string): string {
+  return `/dashboard/sessions/${instanceId}`;
 }
 
 function SharedSessionRow({
@@ -76,7 +79,8 @@ function SharedSessionRow({
             {getSessionTitle(instance)}
           </span>
         </span>
-        <span className="flex min-w-[3rem] shrink-0 items-center justify-end pl-2 text-[10px] text-muted-foreground">
+        <span className="flex min-w-[3rem] shrink-0 items-center justify-end gap-1.5 pl-2 text-[10px] text-muted-foreground">
+          <SessionRowAvatars people={sessionRowPeople(instance)} />
           {formatSidebarTime(instance)}
         </span>
       </span>
@@ -84,18 +88,24 @@ function SharedSessionRow({
   );
 }
 
-/** The project icon with its owner's picture tucked into the corner. */
-function SharedProjectIcon({ group }: { group: SharedGroup }) {
-  const owner = principalFromResponse(group.owner);
-  if (group.kind === 'owner') {
-    return <PrincipalAvatar principal={owner ?? { type: 'user' }} size="xs" />;
-  }
+/**
+ * A project icon with its owner's picture tucked into the corner, so someone
+ * else's project never reads as one of your own — wherever it is listed.
+ */
+export function ProjectIconWithOwner({
+  project,
+  owner,
+}: {
+  project: Pick<ProjectResponse, 'id' | 'name'> & Partial<ProjectResponse>;
+  owner: PrincipalResponse | null | undefined;
+}) {
+  const principal = principalFromResponse(owner ?? null);
   return (
     <span className="relative inline-flex shrink-0">
-      <ProjectIcon project={group.project ?? { id: group.key, name: group.label }} className="size-4" />
-      {owner && (
+      <ProjectIcon project={project} className="size-4" />
+      {principal && (
         <PrincipalAvatar
-          principal={owner}
+          principal={principal}
           size="xs"
           className="absolute -bottom-1 -right-1 size-2.5 ring-1 ring-background"
         />
@@ -104,41 +114,68 @@ function SharedProjectIcon({ group }: { group: SharedGroup }) {
   );
 }
 
-export function SidebarSharedWithMe({
+/** "Leave <project>?" — drops the caller's own grant on a shared project. */
+export function LeaveProjectDialog({
   api,
-  projectsById,
-  onProjectsChanged,
+  project,
+  onClose,
+  onLeft,
 }: {
   api: BackendAPI | null;
+  project: ProjectResponse | null;
+  onClose: () => void;
+  onLeft: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const leave = async () => {
+    if (!api || !project) return;
+    setError(null);
+    try {
+      await api.leaveProject(project.id);
+      onLeft();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to leave the project.');
+    }
+  };
+  return (
+    <>
+      {error && <p className="px-2 text-[11px] text-destructive">{error}</p>}
+      <ConfirmDeleteDialog
+        open={project !== null}
+        onOpenChange={(open) => {
+          if (!open) onClose();
+        }}
+        title={`Leave ${project?.name ?? 'project'}?`}
+        description="You lose access until someone shares it with you again."
+        confirmLabel="Leave"
+        onConfirm={leave}
+      />
+    </>
+  );
+}
+
+export function SidebarSharedWithMe({
+  api,
+  instances,
+  projectsById,
+  onProjectsChanged,
+  onSetInSidebar,
+}: {
+  api: BackendAPI | null;
+  /** `useSharedSessions` — every session shared with the user. */
+  instances: AgentInstanceResponse[];
   /** The sidebar's own `listProjects(true)` result; shared ones carry `owner`. */
   projectsById: Map<string, ProjectResponse>;
-  /** Refetch the project list, after leaving one. */
+  /** Refetch the project list and the shared sessions, after leaving one. */
   onProjectsChanged: () => void;
+  /** List a shared project among the user's own (or take it out again). */
+  onSetInSidebar: (project: ProjectResponse, added: boolean) => void;
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [instances, setInstances] = useState<AgentInstanceResponse[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [sectionCollapsed, setSectionCollapsed] = useState(false);
   const [leaving, setLeaving] = useState<ProjectResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    if (!api) return;
-    const page = await api.listAllAgentInstancesPage({
-      scope: 'shared',
-      limit: SHARED_PAGE_SIZE,
-    });
-    setInstances(page.items);
-  }, [api]);
-
-  const { refresh } = useSharePoll(load, { intervalMs: POLL_IDLE_MS, enabled: api !== null });
-  // First load: the poll itself only ticks after an interval or on focus.
-  const refreshRef = useRef(refresh);
-  refreshRef.current = refresh;
-  useEffect(() => {
-    if (api) refreshRef.current();
-  }, [api]);
 
   const groups = useMemo(
     () => groupSharedWithMe(instances, projectsById.values()),
@@ -153,18 +190,6 @@ export function SidebarSharedWithMe({
       else next.add(key);
       return next;
     });
-
-  const leave = async () => {
-    if (!api || !leaving) return;
-    setError(null);
-    try {
-      await api.leaveProject(leaving.id);
-      onProjectsChanged();
-      refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to leave the project.');
-    }
-  };
 
   return (
     <div className="mt-3 border-t border-border/40 pt-2">
@@ -182,7 +207,6 @@ export function SidebarSharedWithMe({
           )}
         />
       </button>
-      {error && <p className="px-2 text-[11px] text-destructive">{error}</p>}
       {!sectionCollapsed &&
         groups.map((group) => {
           const isCollapsed = collapsed.has(group.key);
@@ -199,7 +223,17 @@ export function SidebarSharedWithMe({
                   title={ownerName ? `Shared by ${ownerName}` : undefined}
                   className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
                 >
-                  <SharedProjectIcon group={group} />
+                  {group.kind === 'owner' ? (
+                    <PrincipalAvatar
+                      principal={principalFromResponse(group.owner) ?? { type: 'user' }}
+                      size="xs"
+                    />
+                  ) : (
+                    <ProjectIconWithOwner
+                      project={project ?? { id: group.key, name: group.label }}
+                      owner={group.owner}
+                    />
+                  )}
                   <span className="truncate text-[0.8rem] font-normal text-muted-foreground">
                     {group.label}
                   </span>
@@ -223,6 +257,15 @@ export function SidebarSharedWithMe({
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="font-mono">
+                      {canAddToSidebar(project) && (
+                        <DropdownMenuItem
+                          className="cursor-pointer gap-2 text-xs"
+                          onSelect={() => onSetInSidebar(project, true)}
+                        >
+                          <PanelLeftOpen className="h-3.5 w-3.5" />
+                          Add to sidebar
+                        </DropdownMenuItem>
+                      )}
                       {hasBoard && (
                         <DropdownMenuItem
                           className="cursor-pointer gap-2 text-xs"
@@ -248,7 +291,7 @@ export function SidebarSharedWithMe({
               {!isCollapsed && (
                 <div className="space-y-0.5 pl-2">
                   {group.instances.map((instance) => {
-                    const href = sharedSessionHref(instance.id);
+                    const href = sessionHref(instance.id);
                     return (
                       <SharedSessionRow
                         key={instance.id}
@@ -275,15 +318,11 @@ export function SidebarSharedWithMe({
             </div>
           );
         })}
-      <ConfirmDeleteDialog
-        open={leaving !== null}
-        onOpenChange={(open) => {
-          if (!open) setLeaving(null);
-        }}
-        title={`Leave ${leaving?.name ?? 'project'}?`}
-        description="You lose access until someone shares it with you again."
-        confirmLabel="Leave"
-        onConfirm={leave}
+      <LeaveProjectDialog
+        api={api}
+        project={leaving}
+        onClose={() => setLeaving(null)}
+        onLeft={onProjectsChanged}
       />
     </div>
   );

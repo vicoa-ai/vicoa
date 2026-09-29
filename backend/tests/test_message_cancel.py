@@ -238,6 +238,7 @@ def test_cancel_endpoint_succeeds_when_queued(
     assert rooms == [
         f"user:{user.id}:user-scoped",
         f"user:{user.id}:session:{instance_id}",
+        f"instance:{instance_id}:watchers",
     ]
 
     with SessionLocal() as db:

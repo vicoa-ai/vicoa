@@ -1,7 +1,8 @@
 'use client';
 
 import { memo, useState } from 'react';
-import { MessageResponse } from '@/lib/backend-api';
+import type { MessageResponse, PrincipalResponse } from '@/lib/backend-api';
+import { MessageByline } from '@/components/dashboard/session-participants';
 import { MessageMarkdown } from '@/components/ui/message-markdown';
 import { extractMessageOptions, formatTaskNotifications } from '@/components/ui/message-markdown-utils';
 import { hasAnsiCodes, parseAnsiToHtml } from '@/components/ui/ansi-render';
@@ -69,7 +70,7 @@ export function resolveAgentType(agentTypeName?: string): UiAgentType {
   return 'claude';
 }
 
-export const MessageItem = memo(function MessageItem({ message, onOptionClick, onAskUserQuestionSubmit, onAskUserQuestionCancel, onFork, forkBusy = false, turnCopyText, agentTypeName, projectPath, compact = false }: {
+export const MessageItem = memo(function MessageItem({ message, onOptionClick, onAskUserQuestionSubmit, onAskUserQuestionCancel, onFork, forkBusy = false, turnCopyText, agentTypeName, projectPath, compact = false, byline = null }: {
   message: MessageResponse;
   onOptionClick?: (option: string) => void;
   onAskUserQuestionSubmit?: (payload: AskUserQuestionSubmitPayload) => void;
@@ -92,6 +93,10 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
   // padding/shadow) so the rows sit as tight as a tool-group's lines instead
   // of stacking py-2 into a big gap between each.
   compact?: boolean;
+  // Who wrote this user message, when it opens a run of prompts by one
+  // person in a session more than one person writes in (collaboration §8.2).
+  // Null everywhere else, so a solo session renders exactly as it always has.
+  byline?: PrincipalResponse | null;
 }) {
   // More robust user detection - check for various possible user sender types
   const isUser = message.sender_type === 'user' ||
@@ -174,6 +179,7 @@ export const MessageItem = memo(function MessageItem({ message, onOptionClick, o
           )}
         </div> */}
         <div className={`flex min-w-0 flex-1 flex-col gap-1.5 ${isUser ? 'items-end' : 'items-stretch'}`}>
+          {isUser && byline && <MessageByline person={byline} />}
           {/* Images get their OWN bubble stacked above the text bubble, so an
               image + caption reads as two user messages rather than one. */}
           {attachments.length > 0 && (

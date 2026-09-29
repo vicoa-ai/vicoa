@@ -5,6 +5,9 @@ import { useParams, useRouter } from 'next/navigation';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { AgentTypeIcon } from '@/components/dashboard/agent-type-icon';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { SessionParticipants } from '@/components/dashboard/session-participants';
+import { messageAuthorResolver, transcriptBylines } from '@/lib/session-people';
+import { useCurrentUserId } from '@/lib/hooks/use-current-user-id';
 import { agentPrincipal, useAgentProfiles } from '@/lib/use-agent-profiles';
 import { Button } from '@/components/ui/button';
 import { X, ArrowDown, Pin, Loader2, Menu, PanelLeft, Folder, FolderPlus, MessageCircle, FileCode, Share } from 'lucide-react';
@@ -22,6 +25,7 @@ import { AgentInstanceDetail, MessageResponse, SessionInstanceMetadata } from '@
 import { getInstanceDetail, postInstanceMessage } from '@/lib/agent-instance-api';
 import { getMessageStore } from '@/lib/message-store';
 import { useMessageStream } from '@/lib/hooks/use-ws-stream';
+import { getWsClient, type InstanceBody, type UpdatePayload } from '@/lib/ws-client';
 import { extractMessageOptions, formatTaskNotifications } from '@/components/ui/message-markdown-utils';
 import { GitBranchBadge } from '@/components/dashboard/git-branch-badge';
 import { WorktreeSetupBadge } from '@/components/dashboard/worktree-setup-badge';
@@ -211,13 +215,27 @@ function AgentInstanceContent() {
     () => (storeEntry?.instance ? { ...storeEntry.instance, messages: storeEntry.messages } : null),
     [storeEntry],
   );
-  // Someone else's session opens in the read-only viewer, not here: this page
-  // drives the owner's daemon (terminal, files, git, resume) and has a
-  // composer. The capability-degraded version of it is P6 (§8.2).
-  const openedAsGrantee = instance?.is_owner === false;
-  useEffect(() => {
-    if (openedAsGrantee) router.replace(`/dashboard/shared/sessions/${instanceId}`);
-  }, [openedAsGrantee, instanceId, router]);
+  // Someone else's session, shared with us, opens here too (collaboration
+  // §8.2), with the chrome cut down to what the viewer's role allows. What
+  // drives the owner's daemon — terminal, Files/Git, the file finder, resume —
+  // and every action that manages the session (rename, pin, archive, delete,
+  // share) is the owner's alone, so it is not offered at all; the row the
+  // backend sends has no machine to aim it at anyway (§10.2, the second
+  // layer). An editor gets the same composer as the owner, with the config
+  // chips showing but not changing anything; a viewer gets no composer. An
+  // absent `is_owner` (an older backend) reads as the owner, as it always did.
+  const isOwner = instance?.is_owner !== false;
+  const canPrompt = isOwner || instance?.access_level === 'WRITE';
+  // Who "me" is, to tell my own messages from other writers'. The owner is
+  // the session's first participant; anyone else asks the profile once.
+  const signedInUserId = useCurrentUserId(isOwner ? null : dashboardContext.api);
+  const viewerId = isOwner ? (instance?.participants?.[0]?.id ?? null) : signedInUserId;
+  const viewerIdRef = useRef<string | null>(null);
+  viewerIdRef.current = viewerId;
+  // The session stopped being shared with us (or was deleted) while cached or
+  // open: say so instead of painting a conversation we can no longer reach.
+  const [accessLost, setAccessLost] = useState(false);
+  useEffect(() => setAccessLost(false), [instanceId]);
   const sessionAgentProfile = instance?.agent_profile_id
     ? (agentProfilesById.get(instance.agent_profile_id) ?? null)
     : null;
@@ -422,6 +440,15 @@ function AgentInstanceContent() {
     if (hideThinkingTimerRef.current !== null) window.clearTimeout(hideThinkingTimerRef.current);
   }, []);
 
+  // Everyone who has written here, by id — a message from anyone else means a
+  // new participant, so the header and attributions need the detail again.
+  const participantIdsRef = useRef<Set<string>>(new Set());
+  participantIdsRef.current = new Set(
+    (instance?.participants ?? []).map((p) => p.id).filter((id): id is string => !!id),
+  );
+  // `fetchInstanceDetail` is declared further down; read through a ref.
+  const refetchDetailRef = useRef<(() => Promise<void>) | null>(null);
+
   // Handle new messages from stream
   const handleNewMessage = useCallback((newMessage: MessageResponse) => {
     const store = getMessageStore();
@@ -445,9 +472,21 @@ function AgentInstanceContent() {
       setIsAgentThinking(false);
     }
 
+    // Someone else's message in a session several people write in: never the
+    // echo of one of ours, so it must not take the place of our pending row.
+    // (`USER_SENDER_TYPES`, not `isAgentMessage`: a live frame spells it
+    // `USER`, which the lowercase test above does not recognise.)
+    const sender = USER_SENDER_TYPES.has(newMessage.sender_type)
+      ? (newMessage.sender_user_id ?? null)
+      : null;
+    const fromSomeoneElse = !!sender && !!viewerIdRef.current && sender !== viewerIdRef.current;
+    if (sender && participantIdsRef.current.size > 0 && !participantIdsRef.current.has(sender)) {
+      void refetchDetailRef.current?.();
+    }
+
     // When real user message arrives, swap out the oldest pending optimistic message
     let optimisticIdToRemove: string | null = null;
-    if (!isAgentMessage && optimisticIdsRef.current.length > 0) {
+    if (!isAgentMessage && !fromSomeoneElse && optimisticIdsRef.current.length > 0) {
       optimisticIdToRemove = optimisticIdsRef.current[0];
       optimisticIdsRef.current = optimisticIdsRef.current.slice(1);
     }
@@ -528,6 +567,9 @@ function AgentInstanceContent() {
   const markReviewedOnLeave = useCallback((leavingId: string) => {
     const snapshot = getMessageStore().getSnapshot(leavingId);
     if (snapshot?.instance?.status !== 'AWAITING_INPUT') return;
+    // Review state is the owner's: someone the session is shared with only
+    // looked, and must not clear the owner's dot for them.
+    if (snapshot.instance.is_owner === false) return;
     const messages = snapshot?.messages ?? [];
     const lastMessage = messages[messages.length - 1];
     if (lastMessage) {
@@ -560,6 +602,16 @@ function AgentInstanceContent() {
     getMessageStore().patchInstance(instanceId, {
       instance_metadata: metadata as AgentInstanceDetail['instance_metadata'],
     });
+  }, [instanceId]);
+
+  // Liveness inputs from the same frame. For someone else's session they are
+  // the only liveness there is: its row has no machine to derive it from, so
+  // the relay's `live_state` verdict stands in (lib/session-liveness.ts).
+  const handleInstanceUpdate = useCallback((body: InstanceBody) => {
+    const patch: Partial<AgentInstanceDetail> = {};
+    if (body.last_heartbeat_at) patch.last_heartbeat_at = body.last_heartbeat_at;
+    if (body.live_state) patch.live_state = body.live_state as AgentInstanceDetail['live_state'];
+    if (Object.keys(patch).length > 0) getMessageStore().patchInstance(instanceId, patch);
   }, [instanceId]);
 
   // A `#` reference to a task files this session under it (tasks plan §8b —
@@ -598,13 +650,17 @@ function AgentInstanceContent() {
     error: streamError,
   } = useMessageStream({
     instanceId,
-    enabled: streamEnabled && !!instance,
+    enabled: streamEnabled && !!instance && !accessLost,
+    // A shared session's frames reach this socket only through the relay's
+    // watcher room; the owner's own rooms already carry theirs.
+    watch: !isOwner,
     // Catch-up starts after the store's newest non-optimistic message, so
     // revisiting a cached session fetches a delta rather than the full page.
     initialWatermark: storeEntry?.watermark ?? null,
     onMessage: handleNewMessage,
     onStatusUpdate: handleStatusUpdate,
     onInstanceMetadata: handleInstanceMetadata,
+    onInstanceUpdate: handleInstanceUpdate,
     onError: (err) => {
       console.error('Stream error:', err);
     },
@@ -792,10 +848,34 @@ function AgentInstanceContent() {
       }
     } catch (err) {
       if (currentInstanceIdRef.current !== targetId) return;
+      if ((err as { status?: number }).status === 404) {
+        // Not ours to see (any more): unshared, or deleted meanwhile.
+        setAccessLost(true);
+        return;
+      }
       console.error('Failed to fetch instance:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch instance');
     }
   }, [instanceId]);
+  refetchDetailRef.current = fetchInstanceDetail;
+
+  // Someone else's session: a change to our access (a grant or share edited
+  // or removed) or the relay evicting us from its watcher room means the role
+  // on screen may be stale — re-read it, which also finds out if it is gone.
+  useEffect(() => {
+    if (isOwner) return;
+    const client = getWsClient();
+    const offUpdates = client.subscribe((payload: UpdatePayload) => {
+      if (payload.body.t === 'access-changed') void fetchInstanceDetail();
+    });
+    const offRevoked = client.onWatchRevoked((revokedId) => {
+      if (revokedId === instanceId) void fetchInstanceDetail();
+    });
+    return () => {
+      offUpdates();
+      offRevoked();
+    };
+  }, [isOwner, instanceId, fetchInstanceDetail]);
 
   const loadOlderMessages = useCallback(async () => {
     if (isLoadingOlderRef.current) return;
@@ -1261,6 +1341,14 @@ function AgentInstanceContent() {
     [queueProgressAt],
   );
 
+  // Who wrote a user message — only once more than one person has written
+  // here (§8.2), so a solo session renders exactly as before (null).
+  const participants = instance?.participants;
+  const authorOf = useMemo(
+    () => messageAuthorResolver(participants, viewerId),
+    [participants, viewerId],
+  );
+
   // Queued (not-yet-sent) user messages are lifted out of the transcript and
   // shown in a stack attached to the top of the chat input, oldest → newest.
   // Any message sent mid-turn is stamped `queued`, including control/artifact
@@ -1295,9 +1383,12 @@ function AgentInstanceContent() {
           text,
           pending: m.id.startsWith('optimistic-'),
           steering: parseQueuePayload(m)?.status === 'steer',
+          // Whose it is, once several people write here (a queued message
+          // never reaches the transcript's bylines until consumed).
+          author: authorOf?.(m) ?? null,
         };
       });
-  }, [allMessages, isDrainedQueued]);
+  }, [allMessages, isDrainedQueued, authorOf]);
 
   // The transcript hides messages still living in the queue: genuinely pending
   // `queued` ones (shown in the stack above) and `cancelled` ones (removing
@@ -1433,7 +1524,8 @@ function AgentInstanceContent() {
   // Focus mode: the files/git panel covers the transcript as a full-width layer
   // between the header and composer (see the render below). Derived from the
   // shared panel state, so it's stable regardless of which session is on screen.
-  const fileOverlay = panel.open && panel.maximized && !panel.isOverlay;
+  // Never for someone else's session: the panel reads the owner's machine.
+  const fileOverlay = isOwner && panel.open && panel.maximized && !panel.isOverlay;
   // Peek reveals the chat beneath the file layer (sticky button or held key).
   const peeking = peekSticky || peekHold;
 
@@ -1454,6 +1546,10 @@ function AgentInstanceContent() {
     () => buildTranscriptItems(groupedMessages, { agentTypeName: instance?.agent_type_name }),
     [groupedMessages, instance?.agent_type_name],
   );
+
+  // Avatar + name over the first prompt of each run by one person, in a
+  // session several people write in (empty for a solo session).
+  const bylines = useMemo(() => transcriptBylines(chatItems, authorOf), [chatItems, authorOf]);
 
   // Turn-end lookup for the hover footer: only the last agent message of each
   // run since the previous user message carries copy/fork, and copying it
@@ -1623,7 +1719,8 @@ function AgentInstanceContent() {
   // and clears any reopened file so the terminal shows). Desktop-only, matching
   // FilesGitPanel — ⌘T collides with the browser's own new-tab in plain web.
   useEffect(() => {
-    if (getDesktopConfig() === null || isWindows) return;
+    // The terminal runs on the owner's machine: nothing to open for anyone else.
+    if (getDesktopConfig() === null || isWindows || !isOwner) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat || panel.open) return; // panel open → FilesGitPanel handles it
       if (!matchesShortcut(e, 'terminal-new') && !matchesShortcut(e, 'terminal-new-focused')) {
@@ -1635,7 +1732,7 @@ function AgentInstanceContent() {
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [isWindows, panel.open, panel.setOpen]);
+  }, [isWindows, isOwner, panel.open, panel.setOpen]);
 
   // Open a file picked in the ⌘P finder: reveal the panel and hand it the path.
   // The bumped nonce makes the panel open it whether it was closed (opens on
@@ -1667,12 +1764,12 @@ function AgentInstanceContent() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat || !matchesShortcut(e, 'open-file-search')) return;
       e.preventDefault();
-      if (!instance?.machine_id || chatLiveState === 'machine_offline') return;
+      if (!isOwner || !instance?.machine_id || chatLiveState === 'machine_offline') return;
       setFileSearchOpen((v) => !v);
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [instance?.machine_id, chatLiveState]);
+  }, [isOwner, instance?.machine_id, chatLiveState]);
 
   // Shift+⌘A archives the session in view — the same action (and confirm
   // dialog) as the header's Archive control, so a stray keystroke can't discard
@@ -1680,7 +1777,7 @@ function AgentInstanceContent() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat || !matchesShortcut(e, 'session-archive')) return;
-      if (!instance || instance.status === 'COMPLETED') return;
+      if (!instance || instance.status === 'COMPLETED' || instance.is_owner === false) return;
       e.preventDefault();
       handleMarkSessionComplete(instanceId, instance.name || '');
     };
@@ -1955,7 +2052,7 @@ function AgentInstanceContent() {
   // the key first otherwise. No typing guard — dropping out of focus mode with
   // the caret in the file is the main thing this is for, and ⌘E is unambiguous.
   useEffect(() => {
-    if (panel.isOverlay) return;
+    if (panel.isOverlay || !isOwner) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat || !matchesShortcut(e, 'focus-mode')) return;
       e.preventDefault();
@@ -1968,7 +2065,7 @@ function AgentInstanceContent() {
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [panel.isOverlay, fileOverlay, setPanelOpen, setPanelMaximized]);
+  }, [panel.isOverlay, isOwner, fileOverlay, setPanelOpen, setPanelMaximized]);
 
   if (isLoading) {
     return (
@@ -1987,6 +2084,19 @@ function AgentInstanceContent() {
             );
           })}
         </div>
+      </div>
+    );
+  }
+
+  // Unshared (or deleted) under us. Beats the cached conversation: it is no
+  // longer the viewer's to read, and nothing on it would work.
+  if (accessLost) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-1 text-center">
+        <p className="text-sm text-foreground">This session is no longer available to you.</p>
+        <p className="text-xs text-muted-foreground">
+          It was deleted, or it is no longer shared with you.
+        </p>
       </div>
     );
   }
@@ -2140,7 +2250,7 @@ function AgentInstanceContent() {
 
   // Drag-drop is offered only while the composer can actually take input; a
   // closed session shows no overlay and ignores drops.
-  const dropEnabled = instance.status !== 'COMPLETED' && canSendMessage;
+  const dropEnabled = instance.status !== 'COMPLETED' && canSendMessage && canPrompt;
   const isFileDrag = (e: React.DragEvent) =>
     Array.from(e.dataTransfer?.types ?? []).includes('Files');
   const handleDropDragEnter = (e: React.DragEvent) => {
@@ -2281,6 +2391,12 @@ function AgentInstanceContent() {
                 );
               })()}
             </h1>
+            <SessionParticipants
+              participants={instance.participants ?? []}
+              owner={isOwner ? null : instance.owner}
+              viewerRole={isOwner ? null : instance.viewer_role}
+              canPrompt={canPrompt}
+            />
             {instance.project && (
               <>
                 <span className="text-muted-foreground flex-shrink-0">·</span>
@@ -2298,7 +2414,9 @@ function AgentInstanceContent() {
                     <p>{instance.project}</p>
                   </TooltipContent>
                 </Tooltip>
-                <GitBranchBadge machineId={instance.machine_id ?? null} cwd={instance.project} />
+                {isOwner && (
+                  <GitBranchBadge machineId={instance.machine_id ?? null} cwd={instance.project} />
+                )}
                 {/* Focus-mode peek toggle: sits right after the branch (or after
                     the project path when there's no branch, since the badge
                     renders nothing then). Only shown while focused; hold ` for a
@@ -2334,64 +2452,76 @@ function AgentInstanceContent() {
                   session's other actions rather than in its own control. The
                   files panel keeps a top-level "Open in" because there the
                   target is the file on screen. */}
-              <SessionActionsMenu
-                trailingItems={
-                  <OpenInSubMenu
-                    machineId={instance.machine_id ?? null}
-                    cwd={instance.project ?? null}
-                  />
-                }
-                onResume={() => void handleResumeSession()}
-                showResume={canResume}
-                resumeDisabledReason={
-                  isResuming
-                    ? 'Resuming…'
-                    : resumeBlocked
-                      ? resumeBlockedMessage(resumeBlocked)
-                      : null
-                }
-                resumeBlockedLabel={
-                  isResuming
-                    ? 'Resuming…'
-                    : resumeBlocked
-                      ? resumeBlockedShortLabel(resumeBlocked)
-                      : null
-                }
-                onPin={handleTogglePin}
-                isPinned={!!instance.pinned_at}
-                onShare={
-                  !isDesktopLocal() && instance.is_owner !== false ? () => setShareOpen(true) : undefined
-                }
-                onRename={handleOpenRenameDialog}
-                onCopyId={() => {
-                  void handleCopySessionId();
-                }}
-                copied={copiedSessionId === (instance?.id || instanceId)}
-                onMarkDone={
-                  instance.status !== 'COMPLETED'
-                    ? () => {
-                        const sessionName = instance.name || '';
-                        handleMarkSessionComplete(instanceId, sessionName);
-                      }
-                    : undefined
-                }
-                showMarkDone={instance.status !== 'COMPLETED'}
-                onUnread={
-                  instance.status === 'REVIEWED'
-                    ? () => {
-                        void handleMarkSessionUnread(instanceId);
-                      }
-                    : undefined
-                }
-                showUnread={instance.status === 'REVIEWED'}
-                onDelete={() => {
-                  const sessionName = instance.name || '';
-                  handleDeleteSession(instanceId, sessionName);
-                }}
-                className="h-8 w-8 p-0 hover:bg-muted"
-                iconClassName="h-4 w-4"
-                contentClassName="font-mono"
-              />
+              {!isOwner ? (
+                <SessionActionsMenu
+                  onCopyId={() => {
+                    void handleCopySessionId();
+                  }}
+                  copied={copiedSessionId === (instance?.id || instanceId)}
+                  className="h-8 w-8 p-0 hover:bg-muted"
+                  iconClassName="h-4 w-4"
+                  contentClassName="font-mono"
+                />
+              ) : (
+                <SessionActionsMenu
+                  trailingItems={
+                    <OpenInSubMenu
+                      machineId={instance.machine_id ?? null}
+                      cwd={instance.project ?? null}
+                    />
+                  }
+                  onResume={() => void handleResumeSession()}
+                  showResume={canResume}
+                  resumeDisabledReason={
+                    isResuming
+                      ? 'Resuming…'
+                      : resumeBlocked
+                        ? resumeBlockedMessage(resumeBlocked)
+                        : null
+                  }
+                  resumeBlockedLabel={
+                    isResuming
+                      ? 'Resuming…'
+                      : resumeBlocked
+                        ? resumeBlockedShortLabel(resumeBlocked)
+                        : null
+                  }
+                  onPin={handleTogglePin}
+                  isPinned={!!instance.pinned_at}
+                  onShare={
+                    !isDesktopLocal() && instance.is_owner !== false ? () => setShareOpen(true) : undefined
+                  }
+                  onRename={handleOpenRenameDialog}
+                  onCopyId={() => {
+                    void handleCopySessionId();
+                  }}
+                  copied={copiedSessionId === (instance?.id || instanceId)}
+                  onMarkDone={
+                    instance.status !== 'COMPLETED'
+                      ? () => {
+                          const sessionName = instance.name || '';
+                          handleMarkSessionComplete(instanceId, sessionName);
+                        }
+                      : undefined
+                  }
+                  showMarkDone={instance.status !== 'COMPLETED'}
+                  onUnread={
+                    instance.status === 'REVIEWED'
+                      ? () => {
+                          void handleMarkSessionUnread(instanceId);
+                        }
+                      : undefined
+                  }
+                  showUnread={instance.status === 'REVIEWED'}
+                  onDelete={() => {
+                    const sessionName = instance.name || '';
+                    handleDeleteSession(instanceId, sessionName);
+                  }}
+                  className="h-8 w-8 p-0 hover:bg-muted"
+                  iconClassName="h-4 w-4"
+                  contentClassName="font-mono"
+                />
+              )}
             </div>
           </div>
         </TooltipProvider>
@@ -2401,7 +2531,9 @@ function AgentInstanceContent() {
               goes, and this cluster is right-anchored, so its appearance never
               shifts the ⋯ menu or the edge buttons (and this div is already
               NO_DRAG for its click). */}
-          <WorktreeSetupBadge machineId={instance.machine_id ?? null} cwd={instance.project ?? null} />
+          {isOwner && (
+            <WorktreeSetupBadge machineId={instance.machine_id ?? null} cwd={instance.project ?? null} />
+          )}
           {/* Share sits next to the panel toggle (same visual weight); the
               ⋯ menu keeps its entry too. Same gate as the menu entry. */}
           {!isDesktopLocal() && instance.is_owner !== false && (
@@ -2415,7 +2547,7 @@ function AgentInstanceContent() {
               <Share className="h-4 w-4" />
             </button>
           )}
-          <FilesGitPanelToggle open={panel.open} onToggle={panel.toggleOpen} />
+          {isOwner && <FilesGitPanelToggle open={panel.open} onToggle={panel.toggleOpen} />}
           {/* The files/git panel takes the window's right edge only as the right
               rail; reserve here when it's closed OR maximized into the center
               overlay (which no longer sits at the top-right edge). */}
@@ -2559,13 +2691,15 @@ function AgentInstanceContent() {
                 expandedKeys={expandedToolItems}
                 onToggleExpanded={toggleToolItem}
                 findActiveKey={findActiveKey}
-                onOptionClick={handleOptionClick}
-                onAskUserQuestionSubmit={handleAskUserQuestionSubmit}
-                onAskUserQuestionCancel={handleAskUserQuestionCancel}
-                onFork={handleForkMessage}
+                onOptionClick={canPrompt ? handleOptionClick : undefined}
+                onAskUserQuestionSubmit={canPrompt ? handleAskUserQuestionSubmit : undefined}
+                onAskUserQuestionCancel={canPrompt ? handleAskUserQuestionCancel : undefined}
+                // A fork starts on the source's machine and folder — the owner's.
+                onFork={isOwner ? handleForkMessage : undefined}
                 forkingMessageId={forkingMessageId}
                 turnCopyText={turnCopyText}
                 spacing={rowSpacing.get(item.key)}
+                bylines={bylines}
               />
             )}
             context={virtuosoContext}
@@ -2711,54 +2845,71 @@ function AgentInstanceContent() {
                 Streaming connection error - messages will refresh manually
               </div>
             )}
-            <ChatInput
-              ref={chatInputRef}
-              canSendMessage={canSendMessage}
-              requiresUserAction={requiresUserAction}
-              onSendMessage={sendMessage}
-              isSending={isSending}
-              permissionMode={gearCurrentPermissionMode}
-              pendingPermissionMode={gearPendingPermissionMode}
-              onPermissionModeChange={gearOnPermissionModeChange}
-              sessionPermissionModes={gearPermissionModes}
-              showControlSettings={showGear}
-              thinkingEnabled={isClaudeCodeAgent ? thinkingSettingEnabled : null}
-              onThinkingToggle={isClaudeCodeAgent ? handleThinkingToggle : undefined}
-              onInterrupt={handleInterrupt}
-              agentActive={agentIsWorking}
-              instanceId={instanceId}
-              agentType={agentType}
-              agentLogoName={instance.agent_type_name}
-              usageProviderId={rawAgentId}
-              projectPath={toAbsolutePath(instance.project, instance.home_dir)}
-              machineId={instance.machine_id ?? null}
-              sessionOpencodeModes={isOpencodeAgent ? sessionOpencodeModes : undefined}
-              opencodeAgentMode={isOpencodeAgent ? opencodeAgentMode : null}
-              pendingOpencodeAgentMode={isOpencodeAgent ? pendingOpencodeAgentMode : null}
-              onOpencodeAgentModeChange={isOpencodeAgent ? handleOpencodeAgentModeSelect : undefined}
-              disabled={instance.status === 'COMPLETED'}
-              placeholder={
-                instance.status === 'COMPLETED'
-                  ? 'Session closed. This chat is no longer available for new messages.'
-                  : (chatLiveStateHint ?? undefined)
-              }
-              sessionModels={gearModels}
-              currentModel={gearCurrentModel}
-              pendingModel={gearPendingModel}
-              onModelChange={gearOnModelChange}
-              sessionEfforts={canShowSessionConfig ? sessionEfforts : undefined}
-              sessionEffortLabel={sessionEffortLabel}
-              currentEffort={confirmedEffort ?? sessionConfigSnapshot.effort}
-              pendingEffort={pendingEffort}
-              onEffortChange={canShowSessionConfig ? handleEffortChange : undefined}
-              singleColumnModels={singleColumnModels}
-              usage={instance.instance_metadata?.usage ?? null}
-              queuedItems={queuedItems}
-              canSteer={canSteer}
-              referencesEnabled
-              sessionTaskId={instance.task_id ?? null}
-              onLinkTask={handleLinkTask}
-            />
+            {canPrompt ? (
+              <ChatInput
+                ref={chatInputRef}
+                canSendMessage={canSendMessage}
+                requiresUserAction={requiresUserAction}
+                onSendMessage={sendMessage}
+                isSending={isSending}
+                permissionMode={gearCurrentPermissionMode}
+                pendingPermissionMode={gearPendingPermissionMode}
+                onPermissionModeChange={isOwner ? gearOnPermissionModeChange : undefined}
+                sessionPermissionModes={gearPermissionModes}
+                showControlSettings={showGear}
+                // Someone else's session: what it runs shows, only the owner
+                // changes it.
+                controlSettingsReadOnly={!isOwner}
+                thinkingEnabled={isOwner && isClaudeCodeAgent ? thinkingSettingEnabled : null}
+                onThinkingToggle={isOwner && isClaudeCodeAgent ? handleThinkingToggle : undefined}
+                onInterrupt={handleInterrupt}
+                agentActive={agentIsWorking}
+                instanceId={instanceId}
+                agentType={agentType}
+                agentLogoName={instance.agent_type_name}
+                usageProviderId={rawAgentId}
+                // `@` mentions list files on the session's machine — the owner's.
+                projectPath={isOwner ? toAbsolutePath(instance.project, instance.home_dir) : undefined}
+                machineId={instance.machine_id ?? null}
+                sessionOpencodeModes={isOpencodeAgent ? sessionOpencodeModes : undefined}
+                opencodeAgentMode={isOpencodeAgent ? opencodeAgentMode : null}
+                pendingOpencodeAgentMode={isOpencodeAgent ? pendingOpencodeAgentMode : null}
+                onOpencodeAgentModeChange={
+                  isOwner && isOpencodeAgent ? handleOpencodeAgentModeSelect : undefined
+                }
+                disabled={instance.status === 'COMPLETED'}
+                placeholder={
+                  instance.status === 'COMPLETED'
+                    ? 'Session closed. This chat is no longer available for new messages.'
+                    : !isOwner && livenessBlocksSending
+                      ? "This session's agent isn't running. Only its owner can resume it."
+                      : (chatLiveStateHint ?? undefined)
+                }
+                sessionModels={gearModels}
+                currentModel={gearCurrentModel}
+                pendingModel={gearPendingModel}
+                onModelChange={isOwner ? gearOnModelChange : undefined}
+                sessionEfforts={canShowSessionConfig ? sessionEfforts : undefined}
+                sessionEffortLabel={sessionEffortLabel}
+                currentEffort={confirmedEffort ?? sessionConfigSnapshot.effort}
+                pendingEffort={pendingEffort}
+                onEffortChange={isOwner && canShowSessionConfig ? handleEffortChange : undefined}
+                singleColumnModels={singleColumnModels}
+                usage={instance.instance_metadata?.usage ?? null}
+                queuedItems={queuedItems}
+                canSteer={canSteer}
+                // `#` references list the viewer's own sessions and tasks, and a
+                // task link files the owner's session: both the owner's alone.
+                referencesEnabled={isOwner}
+                sessionTaskId={instance.task_id ?? null}
+                onLinkTask={isOwner ? handleLinkTask : undefined}
+              />
+            ) : (
+              // A viewer reads along; sending is for the owner and editors.
+              <p className="py-2 text-center text-xs text-muted-foreground">
+                You can view this session. Only its owner and editors can send messages.
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -2768,7 +2919,7 @@ function AgentInstanceContent() {
 
       {/* Right rail. When maximized the panel renders as the center overlay
           above instead, so skip the rail to avoid a second instance. */}
-      {panel.open && !fileOverlay && (
+      {isOwner && panel.open && !fileOverlay && (
         <FilesGitPanel
           machineId={instance?.machine_id ?? null}
           cwd={instance?.project ?? null}
@@ -2822,13 +2973,15 @@ function AgentInstanceContent() {
       />
 
       {/* ⌘P file finder (opened by the keydown effect above). */}
-      <FileSearchPalette
-        open={fileSearchOpen}
-        onOpenChange={setFileSearchOpen}
-        machineId={instance.machine_id ?? null}
-        projectPath={projectRootPath}
-        onOpenFile={handleOpenSearchedFile}
-      />
+      {isOwner && (
+        <FileSearchPalette
+          open={fileSearchOpen}
+          onOpenChange={setFileSearchOpen}
+          machineId={instance.machine_id ?? null}
+          projectPath={projectRootPath}
+          onOpenFile={handleOpenSearchedFile}
+        />
+      )}
     </div>
   );
 }

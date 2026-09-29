@@ -12,6 +12,7 @@ is safe; joined/derived fields are never included (builders stay pure).
 """
 
 from datetime import datetime
+from uuid import uuid4
 
 from ..database.models import (
     AgentInstance,
@@ -195,6 +196,29 @@ def build_spawn_request_update(req: MachineSpawnRequest) -> dict:
             ),
             "created_at": _iso(req.created_at),
             "request_metadata": req.request_metadata,
+        },
+    }
+
+
+def build_access_changed_update(
+    *, project_id: str | None = None, instance_id: str | None = None
+) -> dict:
+    """`update` payload telling a user their access to something changed.
+
+    Sent to the *grantee's* user-scoped room when a project grant, a session
+    share or a team membership that confers access is added, changed or
+    removed (collaboration §9). It carries no row — access is not an entity
+    a client can merge — only what changed, so the client refetches what it
+    shows from it. Clients that predate it ignore an unknown `t`.
+    """
+    return {
+        "entity": "access",
+        "entity_id": project_id or instance_id or "",
+        "event_id": f"access:{uuid4()}",
+        "body": {
+            "t": "access-changed",
+            "project_id": project_id,
+            "instance_id": instance_id,
         },
     }
 

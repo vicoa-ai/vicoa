@@ -54,11 +54,13 @@ from sqlalchemy import tuple_, update
 from sqlalchemy.orm import Session
 
 from shared.config import settings
+from shared.database.enums import AgentStatus
 from shared.database.liveness import LiveState, compute_live_state, is_fresh
 from shared.database.models import AgentInstance, Machine
 from shared.database.session import SessionLocal
 from shared.websocket.connection_manager import Connection, connection_manager
 from shared.websocket.envelope import build_instance_update, build_machine_update
+from shared.websocket.protocol import watcher_room
 
 logger = logging.getLogger(__name__)
 
@@ -433,9 +435,98 @@ def refresh_dashboards(db: Session, registry: PresenceRegistry) -> int:
     return frames
 
 
+# Sessions with no agent by design — nothing about their liveness can change,
+# so a watcher needs no refresh of them.
+_CLOSED_STATUSES = (
+    AgentStatus.COMPLETED,
+    AgentStatus.FAILED,
+    AgentStatus.KILLED,
+    AgentStatus.DISCONNECTED,
+    AgentStatus.DELETED,
+)
+
+
+def refresh_watchers(db: Session, registry: PresenceRegistry) -> int:
+    """Push a fresh row, with the server's `live_state`, for every watched
+    session that is not closed — to its watcher room only.
+
+    A watcher's copy has no `machine_id` (the grantee view), so their client
+    cannot derive liveness from the machine heartbeat the way the owner's
+    does; the verdict has to come from here, on the same cadence as the owner
+    refresh. Every watched open session rather than only the live ones: a
+    session that just went quiet must reach its watchers as no longer live,
+    or the last "live" they were sent would stand. The set is small — the
+    sessions someone has open or in a shared sidebar group.
+    """
+    watched = connection_manager.watchers()
+    if not watched:
+        return 0
+    ids: list[UUID] = []
+    for raw in watched:
+        try:
+            ids.append(UUID(raw))
+        except ValueError:
+            continue
+    instances = (
+        db.query(AgentInstance)
+        .filter(
+            AgentInstance.id.in_(ids),
+            AgentInstance.status.notin_(_CLOSED_STATUSES),
+        )
+        .all()
+    )
+    machine_ids = {i.machine_id for i in instances if i.machine_id is not None}
+    machine_heartbeats: dict[UUID, datetime | None] = (
+        {
+            mid: hb
+            for mid, hb in db.query(Machine.id, Machine.last_heartbeat_at).filter(
+                Machine.id.in_(machine_ids)
+            )
+        }
+        if machine_ids
+        else {}
+    )
+    frames = 0
+    for inst in instances:
+        db.expunge(inst)
+        state = registry.live_state_for(
+            inst,
+            machine_heartbeats.get(inst.machine_id)
+            if inst.machine_id is not None
+            else None,
+        )
+        inst.last_heartbeat_at = registry.effective_instance_heartbeat(
+            inst.id, inst.last_heartbeat_at
+        )
+        connection_manager.broadcast_update(
+            str(inst.user_id),
+            build_instance_update(inst, live_state=state.value),
+            [watcher_room(str(inst.id))],
+        )
+        frames += 1
+    return frames
+
+
 def _refresh_blocking(registry: PresenceRegistry) -> int:
     with SessionLocal() as db:
         return refresh_dashboards(db, registry)
+
+
+def _refresh_watchers_blocking(registry: PresenceRegistry) -> int:
+    """Revalidate every watcher's access, then refresh what they watch.
+
+    The revalidation is what makes a watcher room's grant check a ~30 s TTL
+    rather than a one-time gate: every way access can end that the backend
+    does not report (a session moved out of a shared project, a team
+    membership gone, a session deleted) is caught here within a round.
+    """
+    # Imported here: servers.watchers imports the connection manager and the
+    # resolver, and nothing on the presence hot path needs either.
+    from servers.watchers import revalidate_watchers
+
+    with SessionLocal() as db:
+        revalidate_watchers(db)
+        return refresh_watchers(db, registry)
 
 
 def broadcast_session_connected(conn: Connection) -> None:
@@ -450,7 +541,9 @@ def broadcast_session_connected(conn: Connection) -> None:
     """
     if conn.scope != "session-scoped" or not conn.instance_id:
         return
-    if not connection_manager.has_user_scoped(conn.user_id):
+    if not connection_manager.has_user_scoped(
+        conn.user_id
+    ) and not connection_manager.has_watchers(conn.instance_id):
         return
     try:
         instance_id, user_id = UUID(conn.instance_id), UUID(conn.user_id)
@@ -483,7 +576,7 @@ def broadcast_session_connected(conn: Connection) -> None:
         connection_manager.broadcast_update(
             conn.user_id,
             build_instance_update(inst, live_state=state.value),
-            _user_room(user_id),
+            [*_user_room(user_id), watcher_room(conn.instance_id)],
         )
     except Exception:  # noqa: BLE001 — a missed frame is the next sweep's problem
         logger.exception("broadcast_session_connected failed for %s", conn.instance_id)
@@ -554,6 +647,12 @@ class LeaseFlusher:
                 raise
             except Exception:  # noqa: BLE001 — retried next round
                 logger.exception("presence dashboard refresh failed")
+            try:
+                await asyncio.to_thread(_refresh_watchers_blocking, self._registry)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — retried next round
+                logger.exception("presence watcher refresh failed")
 
 
 # Process-wide singleton, shared by the heartbeat endpoints and the flusher.

@@ -55,6 +55,12 @@ export interface SessionConfigChipsProps {
   onOpencodeMode?: (mode: string) => void;
   /** Kept for API compatibility; chips always render single-column lists. */
   singleColumnModels?: boolean;
+  /**
+   * Show what the session runs without offering to change it — someone
+   * else's session, shared with the viewer (collaboration §8.2). The chips
+   * render for any list that has entries, handler or not, and never open.
+   */
+  readOnly?: boolean;
 }
 
 /** Leading icon for a permission / opencode mode value. */
@@ -73,6 +79,8 @@ export function ModeIcon({ value, className }: { value: string; className?: stri
 
 const CHIP_CLASS =
   'flex h-6 max-w-44 min-w-0 shrink items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50';
+const STATIC_CHIP_CLASS =
+  'flex h-6 max-w-44 min-w-0 shrink cursor-default items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground';
 
 export function TickItem({
   label,
@@ -181,6 +189,7 @@ export function ChipDropdown({
   children,
   contentClassName,
   side = 'top',
+  readOnly = false,
 }: {
   chip: React.ReactNode;
   title: string;
@@ -190,8 +199,17 @@ export function ChipDropdown({
   /** Which side to prefer; Radix flips on collision. New-session opens up
    *  (chips sit at the screen bottom); the automation panel opens down. */
   side?: 'top' | 'bottom';
+  /** A plain label: no list, no chevron. */
+  readOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  if (readOnly) {
+    return (
+      <span title={`${title} (set by the session's owner)`} className={STATIC_CHIP_CLASS}>
+        {chip}
+      </span>
+    );
+  }
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
@@ -240,11 +258,13 @@ export function SessionConfigChips({
   currentOpencodeMode,
   pendingOpencodeMode,
   onOpencodeMode,
+  readOnly = false,
 }: SessionConfigChipsProps) {
-  const hasModels = models && models.length > 0 && !!onModelChange;
-  const hasEfforts = efforts && efforts.length > 0 && !!onEffortChange;
-  const hasPermissions = permissionModes && permissionModes.length > 0 && !!onPermissionModeChange;
-  const hasOpencode = opencodeModes && opencodeModes.length > 0 && !!onOpencodeMode;
+  const hasModels = models && models.length > 0 && (readOnly || !!onModelChange);
+  const hasEfforts = efforts && efforts.length > 0 && (readOnly || !!onEffortChange);
+  const hasPermissions =
+    permissionModes && permissionModes.length > 0 && (readOnly || !!onPermissionModeChange);
+  const hasOpencode = opencodeModes && opencodeModes.length > 0 && (readOnly || !!onOpencodeMode);
 
   if (!hasModels && !hasEfforts && !hasPermissions && !hasOpencode) return null;
 
@@ -270,6 +290,7 @@ export function SessionConfigChips({
         <ChipDropdown
           title="Model"
           disabled={disabled}
+          readOnly={readOnly}
           contentClassName={modelListWidthClass(models)}
           chip={
             <>
@@ -302,6 +323,7 @@ export function SessionConfigChips({
         <ChipDropdown
           title={effortLabel}
           disabled={disabled}
+          readOnly={readOnly}
           contentClassName="w-44"
           chip={
             <>
@@ -329,6 +351,7 @@ export function SessionConfigChips({
         <ChipDropdown
           title="Mode"
           disabled={disabled}
+          readOnly={readOnly}
           contentClassName={PERMISSION_LIST_WIDTH_CLASS}
           chip={
             <>
@@ -361,6 +384,7 @@ export function SessionConfigChips({
         <ChipDropdown
           title="Mode"
           disabled={disabled}
+          readOnly={readOnly}
           contentClassName="w-44"
           chip={
             <>

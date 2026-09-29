@@ -47,6 +47,7 @@ from shared.database import (
     Project,
     ProjectDirectory,
     ProjectPosition,
+    SidebarProject,
     Task,
     TaskActivity,
     TaskComment,
@@ -319,6 +320,39 @@ def set_project_order(
     )
     db.commit()
     return kept
+
+
+def sidebar_project_ids(
+    db: Session, user_id: UUID, project_ids: Sequence[UUID]
+) -> set[UUID]:
+    """Which of these projects the viewer has added to their own list."""
+    if not project_ids:
+        return set()
+    return {
+        row[0]
+        for row in db.execute(
+            select(SidebarProject.project_id).where(
+                SidebarProject.user_id == user_id,
+                SidebarProject.project_id.in_(list(project_ids)),
+            )
+        )
+    }
+
+
+def set_project_in_sidebar(
+    db: Session, user_id: UUID, project_id: UUID, *, added: bool
+) -> None:
+    """Add a shared project to the viewer's own list, or take it out again.
+
+    Idempotent both ways. The caller has already resolved the project as
+    visible; this only records the viewer's choice, never touches the project.
+    """
+    existing = db.get(SidebarProject, (user_id, project_id))
+    if added and existing is None:
+        db.add(SidebarProject(user_id=user_id, project_id=project_id))
+    elif not added and existing is not None:
+        db.delete(existing)
+    db.commit()
 
 
 def create_project(

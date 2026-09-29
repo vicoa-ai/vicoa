@@ -231,6 +231,52 @@ describe('resolveLiveState', () => {
     expect(resolveLiveState(null, undefined, NOW)).toBe('unknown');
   });
 
+  // A session shared with the viewer arrives without its machine (the grantee
+  // view), so the server's verdict is the only one there is.
+
+  const OWNER = { type: 'user', id: 'ada', name: 'Ada' };
+
+  it("takes the server's verdict for someone else's machine-less session", () => {
+    expect(
+      resolveLiveState(
+        { last_heartbeat_at: ago(600), machine_id: null, owner: OWNER, live_state: 'agent_stopped' },
+        undefined,
+        NOW
+      )
+    ).toBe('agent_stopped');
+  });
+
+  it('proves a shared session live from its heartbeat alone', () => {
+    expect(
+      resolveLiveState(
+        { last_heartbeat_at: ago(5), machine_id: null, owner: OWNER, live_state: 'machine_offline' },
+        undefined,
+        NOW
+      )
+    ).toBe('live');
+  });
+
+  it("does not trust a 'live' verdict the heartbeat no longer backs", () => {
+    expect(
+      resolveLiveState(
+        { last_heartbeat_at: ago(600), machine_id: null, owner: OWNER, live_state: 'live' },
+        undefined,
+        NOW
+      )
+    ).toBe('unknown');
+  });
+
+  it('keeps one\'s own machine-less rows neutral', () => {
+    // Legacy TUI sessions: no linkage, never shown as an error.
+    expect(
+      resolveLiveState(
+        { last_heartbeat_at: ago(600), machine_id: null, live_state: 'agent_stopped' },
+        undefined,
+        NOW
+      )
+    ).toBe('unknown');
+  });
+
   // resolveLiveState is what the composer and both sidebars call, usually
   // WITHOUT a machine. These three are the cases it must settle on its own.
 

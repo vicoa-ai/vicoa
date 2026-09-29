@@ -5,6 +5,7 @@ Public re-exports for the realtime transport.
 
 from .connection_manager import Connection, ConnectionManager
 from .envelope import (
+    build_access_changed_update,
     build_ephemeral,
     build_instance_created_update,
     build_instance_update,
@@ -25,6 +26,7 @@ __all__ = [
     "RpcRouter",
     "WsProtocolError",
     "after_commit",
+    "build_access_changed_update",
     "build_ephemeral",
     "build_instance_created_update",
     "build_instance_update",

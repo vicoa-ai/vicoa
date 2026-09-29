@@ -187,6 +187,8 @@ export interface LivenessInstanceFields {
   started_at?: string | null;
   /** Server-derived snapshot, used only when the caller lacks the machine. */
   live_state?: LiveState;
+  /** Set only on a session someone else owns (the grantee view). */
+  owner?: unknown;
 }
 
 /**
@@ -229,7 +231,17 @@ export function resolveLiveState(
     return 'live';
   }
   if (isHeartbeatFresh(instance.last_heartbeat_at, now)) return 'live';
-  if (!instance.machine_id) return 'unknown';
+  if (!instance.machine_id) {
+    // A session shared with the viewer arrives without its machine (the
+    // grantee view strips it), so the host can't be consulted here and the
+    // server's verdict — refreshed over the watcher room — is the only one.
+    // Except "live": a live session's heartbeat is fresh (checked above), so a
+    // "live" the heartbeat no longer backs is a snapshot that went stale.
+    // One's own machine-less rows are legacy TUI sessions: neutral, always.
+    if (!instance.owner) return 'unknown';
+    const verdict = instance.live_state;
+    return verdict && verdict !== 'live' ? verdict : 'unknown';
+  }
 
   // Host unknown to this view: defer to the server's snapshot rather than
   // inventing a verdict. Falls back to `unknown` on a backend that predates

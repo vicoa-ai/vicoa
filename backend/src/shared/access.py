@@ -395,11 +395,20 @@ def _level_to_role(level: InstanceAccessLevel | None) -> Role | None:
     return "editor" if level == InstanceAccessLevel.WRITE else "viewer"
 
 
+def _foreign_session_role(role: Role | None) -> Role | None:
+    """A project role as it applies to a session someone else started there.
+
+    'owner' on a session means it is yours — the relay keys "already in your
+    own rooms, never a watcher" on it — so owning the *project* makes you an
+    admin of a collaborator's session in it, not its owner."""
+    return "admin" if role == "owner" else role
+
+
 def instance_role(db: Session, user_id: UUID, instance: AgentInstance) -> Role | None:
     """The caller's role on a session: 'owner' for the owner; otherwise the
     stronger of the session share (READ ⇒ viewer, WRITE ⇒ editor) and the
-    project role with the 'sessions' scope. A DELETED session is invisible to
-    everyone but its owner (§10.9)."""
+    project role with the 'sessions' scope, capped at 'admin'. A DELETED
+    session is invisible to everyone but its owner (§10.9)."""
     if instance.user_id == user_id:
         return "owner"
     if instance.status == AgentStatus.DELETED:
@@ -408,7 +417,9 @@ def instance_role(db: Session, user_id: UUID, instance: AgentInstance) -> Role |
     if instance.project_id is not None:
         role = max_role(
             role,
-            project_role(db, user_id, instance.project_id, grant_scope="sessions"),
+            _foreign_session_role(
+                project_role(db, user_id, instance.project_id, grant_scope="sessions")
+            ),
         )
     return role
 
@@ -473,7 +484,7 @@ def instance_roles(
         )
         standing = standings.get(instance.project_id) if instance.project_id else None
         if standing is not None and standing.covers("sessions"):
-            role = max_role(role, standing.role)
+            role = max_role(role, _foreign_session_role(standing.role))
         out[instance.id] = role
     return out
 
@@ -495,9 +506,12 @@ def instance_access(
 
 
 def shared_instance_select(user_id: UUID) -> Select[tuple[UUID]]:
-    """Ids of sessions shared *to* `user_id` by any path — direct share, team
-    session share, or a project grant covering sessions. Excludes the caller's
-    own sessions (those are the 'me' scope) and DELETED ones."""
+    """Ids of other people's sessions `user_id` can see, by any path — direct
+    share, team session share, or a project they can see the sessions of:
+    shared to them, team-owned, or their own (a collaborator's session filed
+    into a project you own is visible to you, as `instance_role` says).
+    Excludes the caller's own sessions (those are the 'me' scope) and DELETED
+    ones."""
     direct = select(UserInstanceAccess.agent_instance_id).where(
         UserInstanceAccess.user_id == user_id
     )
@@ -509,7 +523,7 @@ def shared_instance_select(user_id: UUID) -> Select[tuple[UUID]]:
     )
     via_project = select(AgentInstance.id).where(
         AgentInstance.project_id.in_(
-            visible_project_select(user_id, scope="shared", grant_scope="sessions")
+            visible_project_select(user_id, scope="all", grant_scope="sessions")
         )
     )
     ids = union(direct, via_team, via_project).subquery()

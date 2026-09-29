@@ -2,7 +2,9 @@
 
 import { useState } from 'react';
 import { X, Loader2, Undo2, Zap } from 'lucide-react';
-import { MessageResponse } from '@/lib/backend-api';
+import type { MessageResponse, PrincipalResponse } from '@/lib/backend-api';
+import { principalDisplayName, principalFromResponse } from '@/lib/principals';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import { cancelQueuedMessage, steerQueuedMessage } from '@/lib/agent-instance-api';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -56,6 +58,19 @@ export interface QueuedMessageItem {
   /** `queue.status === 'steer'`: the daemon is delivering this message into
    *  the running turn. Rendered with a steering indicator; actions disabled. */
   steering?: boolean;
+  /** Who queued it — set only in a session more than one person writes in. */
+  author?: PrincipalResponse | null;
+}
+
+/** Face and name ahead of a queued message's text, inline so it wraps with it. */
+function QueuedAuthor({ person }: { person: PrincipalResponse }) {
+  const principal = principalFromResponse(person) ?? { type: 'user' as const };
+  return (
+    <>
+      <PrincipalAvatar principal={principal} size="xs" className="mr-1 inline-flex align-middle" />
+      <span className="text-muted-foreground">{principalDisplayName(principal)}: </span>
+    </>
+  );
 }
 
 /**
@@ -70,6 +85,7 @@ function QueuedMessageRow({
   text,
   pending,
   steering,
+  author,
   canSteer,
   onRetrieve,
 }: {
@@ -78,6 +94,7 @@ function QueuedMessageRow({
   text: string;
   pending?: boolean;
   steering?: boolean;
+  author?: PrincipalResponse | null;
   canSteer?: boolean;
   onRetrieve?: (text: string) => void;
 }) {
@@ -140,6 +157,7 @@ function QueuedMessageRow({
   return (
     <div className="group flex items-start gap-2 px-1 py-1">
       <span className="flex-1 min-w-0 text-xs leading-5 text-muted-foreground/80 whitespace-pre-wrap break-words line-clamp-2">
+        {author && <QueuedAuthor person={author} />}
         {text}
       </span>
       {showSteering && (
@@ -251,6 +269,7 @@ export function QueuedMessagesBar({
               text={item.text}
               pending={item.pending}
               steering={item.steering}
+              author={item.author}
               canSteer={canSteer}
               onRetrieve={onRetrieve}
             />

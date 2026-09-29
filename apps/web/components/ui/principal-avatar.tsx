@@ -8,7 +8,7 @@
  * share dialog and on a public share page:
  *
  *   1. the stored image, served from our own storage through the authed proxy;
- *   2. a picked emoji, on the same hash-palette color;
+ *   2. a picked emoji, bare — no disc behind it;
  *   3. initials on the deterministic paseo hash-palette color (`lib/principals`);
  *   4. a generic per-type glyph, when there is no name to make initials from.
  *
@@ -46,18 +46,19 @@ export type PrincipalAvatarSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 // The letter runs ~0.25-0.30 of the box (it climbs at the small end only
 // because 16px has a legibility floor): a monogram wants to read as a mark
 // inside the circle, not fill it. Keep the Flutter twin's table in step.
-// An emoji is a picture, not a letter: it reads at roughly twice the type size a
-// monogram wants, so it gets its own column rather than reusing `text`.
+// An emoji is a picture, not a letter, and it sits bare in the circle's slot
+// (see below): sized to fill most of the box (~0.8), so it reads the same size
+// as a photo or monogram beside it. Its own column rather than reusing `text`.
 const SIZES: Record<
   PrincipalAvatarSize,
   { box: string; text: string; emoji: string; glyph: string }
 > = {
-  xs: { box: 'size-4', text: 'text-[8px]', emoji: 'text-[10px]', glyph: 'size-2.5' },
-  sm: { box: 'size-6', text: 'text-[9px]', emoji: 'text-sm', glyph: 'size-3.5' },
-  md: { box: 'size-8', text: 'text-[11px]', emoji: 'text-lg', glyph: 'size-4' },
-  lg: { box: 'size-14', text: 'text-base', emoji: 'text-3xl', glyph: 'size-7' },
+  xs: { box: 'size-4', text: 'text-[8px]', emoji: 'text-[13px]', glyph: 'size-2.5' },
+  sm: { box: 'size-6', text: 'text-[9px]', emoji: 'text-[19px]', glyph: 'size-3.5' },
+  md: { box: 'size-8', text: 'text-[11px]', emoji: 'text-[26px]', glyph: 'size-4' },
+  lg: { box: 'size-14', text: 'text-base', emoji: 'text-[44px]', glyph: 'size-7' },
   // Profile pages, where the avatar is the page's subject rather than a label.
-  xl: { box: 'size-20', text: 'text-xl', emoji: 'text-5xl', glyph: 'size-9' },
+  xl: { box: 'size-20', text: 'text-xl', emoji: 'text-[64px]', glyph: 'size-9' },
 };
 
 // `plain` marks are sized like the icons they sit beside — at `xs`, a 12px
@@ -164,9 +165,15 @@ export function PrincipalAvatar({
     );
   }
 
-  // On `bg-muted`, not the hash-palette colour the initial uses: an emoji already
-  // carries its own colour, and a saturated disc behind it puts two hues in the
-  // same 24px circle. Same neutral the glyph fallback sits on.
+  // No disc: an emoji already carries its own colour and shape, and any fill
+  // behind it (the hash-palette colour, or the muted neutral it used to sit on)
+  // reads as a second badge around the first. The round slot stays — same box,
+  // same `rounded-full` — so every overlay drawn on an avatar still fits it;
+  // only its clipping goes, or the circle would shave the corners off a square
+  // emoji. A caller's separating ring (`ring-1 ring-background` in an avatar
+  // stack, on an owner badge) is dropped too: around a bare emoji it draws the
+  // very circle this removes, most visibly on the sidebar, whose surface is
+  // not the `background` colour the ring is painted in.
   // Plain: flush left, not centred. An emoji glyph's advance box is wider than
   // its ink (Apple Color Emoji carries a right-side bearing) and wider than
   // the slot, so centring it hangs the ink over the column's left edge by a
@@ -179,8 +186,8 @@ export function PrincipalAvatar({
         className={cn(
           'inline-flex items-center',
           plain
-            ? cn('justify-start', flat.line, box)
-            : cn('justify-center bg-muted leading-none', dims.emoji, disc),
+            ? cn('justify-start', flat.line, box, 'ring-0')
+            : cn('justify-center leading-none', dims.emoji, disc, 'overflow-visible ring-0'),
         )}
       >
         {principal.emoji}

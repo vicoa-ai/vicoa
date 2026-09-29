@@ -164,6 +164,12 @@ export interface AgentInstanceResponse {
    */
   owner?: PrincipalResponse | null;
   viewer_role?: ProjectRole | null;
+  /**
+   * See AgentInstanceDetail.participants. On a list row it is set only once
+   * someone besides the owner has written in the session; a solo row carries
+   * an empty list, so it renders exactly as it always has.
+   */
+  participants?: PrincipalResponse[];
 }
 
 export type AgentInstanceScope = 'me' | 'shared' | 'all';
@@ -222,6 +228,12 @@ export interface MessageResponse {
   id: string;
   content: string;
   sender_type: string;
+  /**
+   * Who wrote a user message; null for one typed into the owner's terminal.
+   * Read against the session's `participants` to name its author.
+   */
+  sender_user_id?: string | null;
+  sender_user_display_name?: string | null;
   created_at: string;
   requires_user_input: boolean;
   message_metadata?: Record<string, unknown> | null;
@@ -317,6 +329,12 @@ export interface AgentInstanceDetail {
   /** See AgentInstanceResponse.owner / viewer_role. */
   owner?: PrincipalResponse | null;
   viewer_role?: ProjectRole | null;
+  /**
+   * Everyone who has written in the session: the owner first, then each
+   * other sender in order of their first message. The avatar stack and the
+   * author headers show only when there is more than one (collaboration §8.2).
+   */
+  participants?: PrincipalResponse[];
 }
 
 export interface UserAgentResponse {
@@ -515,6 +533,12 @@ export interface ProjectResponse {
    * an email.
    */
   owner?: PrincipalResponse | null;
+  /**
+   * Whether it is in the caller's own sidebar list: always for one they own;
+   * for one shared with them, once they added it — until then it sits under
+   * "Shared with me" only. Absent from an older backend: read as not added.
+   */
+  in_sidebar?: boolean;
 }
 
 /** Echo of `setProjectOrder`: the ids actually stored, in order. */
@@ -2204,6 +2228,16 @@ class BackendAPI {
    *  comes from a team, or you own it. */
   async leaveProject(projectId: string): Promise<void> {
     return this.requestVoid(`/api/v1/projects/${projectId}/leave`, { method: 'POST' });
+  }
+
+  /**
+   * List a project shared with you among your own in the sidebar (or take it
+   * out again). Your view only — the project and your access are unchanged.
+   */
+  async setProjectInSidebar(projectId: string, added: boolean): Promise<ProjectResponse> {
+    return this.request<ProjectResponse>(`/api/v1/projects/${projectId}/sidebar`, {
+      method: added ? 'PUT' : 'DELETE',
+    });
   }
 
   /** The owner row, per-person shares, then team shares of one session. */

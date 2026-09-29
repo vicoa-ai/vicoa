@@ -3,11 +3,13 @@ import hashlib
 import json
 import time
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import httpx
+from shared import access
 from shared.database import (
     AgentInstance,
     AgentStatus,
@@ -301,7 +303,12 @@ def fetch_session_messages(
 
 
 def fetch_user_instances(
-    db: Session, user_id: UUID, updated_after: str | None
+    db: Session,
+    user_id: UUID,
+    updated_after: str | None,
+    *,
+    scope: str = "me",
+    narrow_foreign: Callable[[dict], dict] | None = None,
 ) -> list[dict]:
     """Catch-up fetch of a user's agent instances (websocket-migration §2.6).
 
@@ -309,13 +316,37 @@ def fetch_user_instances(
     by the safety window because `updated_at` is set at flush time and commit
     order can lag it. The mutable-entity merge (replace-if-newer) makes the
     re-fetched overlap harmless. `None` = full fetch. Rows are envelope bodies.
+
+    `scope="all"` adds the sessions shared *to* the user (collaboration §9) —
+    by the one resolver the REST list uses, so never a DELETED one — each
+    passed through `narrow_foreign` (the grantee view). "me", the default, is
+    the owner-only answer every client that predates the param expects.
     """
-    query = db.query(AgentInstance).filter(AgentInstance.user_id == user_id)
+    query = db.query(AgentInstance)
+    if scope == "all":
+        query = query.filter(
+            or_(
+                AgentInstance.user_id == user_id,
+                AgentInstance.id.in_(access.shared_instance_select(user_id)),
+            )
+        )
+    else:
+        query = query.filter(AgentInstance.user_id == user_id)
     if updated_after is not None:
         floor = datetime.fromisoformat(updated_after) - WS_FETCH_SAFETY_WINDOW
         query = query.filter(AgentInstance.updated_at >= floor)
     instances = query.order_by(AgentInstance.updated_at.asc()).all()
-    return [build_instance_update(inst)["body"] for inst in instances]
+    rows: list[dict] = []
+    for inst in instances:
+        body = build_instance_update(inst)["body"]
+        if inst.user_id != user_id:
+            # Never hand out a foreign row un-narrowed, even to a caller that
+            # forgot the narrowing function.
+            if narrow_foreign is None:
+                continue
+            body = narrow_foreign(body)
+        rows.append(body)
+    return rows
 
 
 def fetch_user_machines(

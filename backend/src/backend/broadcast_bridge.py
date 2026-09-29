@@ -78,3 +78,47 @@ def post_close_user(user_id: str) -> None:
     except httpx.HTTPError as exc:
         # `close_user_bridge_failure` is the stable marker an alert keys on.
         logger.warning("close_user_bridge_failure user=%s err=%s", user_id, exc)
+
+
+def post_access_changed(
+    user_ids: list[str],
+    *,
+    project_id: str | None = None,
+    instance_id: str | None = None,
+) -> None:
+    """POST a grant change to the server process (collaboration §9).
+
+    The relay forgets these users' cached access, evicts them from any
+    watcher room they can no longer see, and tells their dashboards to
+    refetch. Fire-and-forget like `post_broadcast`: the grant is already
+    committed, so a bridge failure costs liveness (the relay's own sweep still
+    catches a revocation within ~30 s), never correctness.
+    """
+    if not settings.internal_broadcast_url or not settings.internal_broadcast_token:
+        logger.warning(
+            "access_changed_bridge_skip users=%d reason=missing_config",
+            len(user_ids),
+        )
+        return
+    url = settings.internal_broadcast_url.replace(
+        "/_internal/broadcast", "/_internal/access_changed"
+    )
+    try:
+        response = httpx.post(
+            url,
+            json={
+                "user_ids": user_ids,
+                "project_id": project_id,
+                "instance_id": instance_id,
+            },
+            headers={"Authorization": f"Bearer {settings.internal_broadcast_token}"},
+            timeout=_BRIDGE_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        # `access_changed_bridge_failure` is the stable marker an alert keys on.
+        # A 404 here means the relay predates `/_internal/access_changed` — deploy
+        # `server` first.
+        logger.warning(
+            "access_changed_bridge_failure users=%d err=%s", len(user_ids), exc
+        )

@@ -64,6 +64,7 @@ from shared.websocket import (
     build_message_update,
     build_new_message_update,
 )
+from shared.websocket.protocol import watcher_room
 from ..broadcast_bridge import post_broadcast
 from ..db.queries import (
     bind_attachments_to_message,
@@ -409,8 +410,8 @@ def create_user_message_endpoint(
         )
         payload = build_new_message_update(message)
         # Rooms are keyed by the session's OWNER, not the sender: a
-        # collaborator's message has to reach the owner's open clients.
-        # (Fan-out to other watchers is P6.)
+        # collaborator's message has to reach the owner's open clients, and
+        # everyone else it is shared with through the watcher room.
         owner_id = (
             db.query(AgentInstance.user_id)
             .filter(AgentInstance.id == instance_id)
@@ -420,6 +421,7 @@ def create_user_message_endpoint(
         rooms = [
             f"user:{owner_id}:session:{instance_id}",
             f"user:{owner_id}:user-scoped",
+            watcher_room(str(instance_id)),
         ]
         after_commit(db, lambda: post_broadcast(str(owner_id), payload, rooms))
         db.commit()
@@ -494,6 +496,7 @@ def cancel_queued_message_endpoint(
         rooms = [
             f"user:{owner_id}:user-scoped",
             f"user:{owner_id}:session:{instance_id}",
+            watcher_room(str(instance_id)),
         ]
         after_commit(db, lambda: post_broadcast(str(owner_id), payload, rooms))
     db.commit()
@@ -547,6 +550,7 @@ def steer_queued_message_endpoint(
         rooms = [
             f"user:{owner_id}:user-scoped",
             f"user:{owner_id}:session:{instance_id}",
+            watcher_room(str(instance_id)),
         ]
         after_commit(db, lambda: post_broadcast(str(owner_id), payload, rooms))
     db.commit()
@@ -734,6 +738,8 @@ def _bridge_instance_update(db: Session, instance_id: UUID, user_id: UUID) -> No
     rooms = [
         f"user:{owner_id}:user-scoped",
         f"user:{owner_id}:session:{instance_id}",
+        # The relay narrows the row for people it is shared with.
+        watcher_room(str(instance_id)),
     ]
     post_broadcast(str(owner_id), payload, rooms)
 

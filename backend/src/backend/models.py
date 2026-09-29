@@ -172,6 +172,10 @@ class AgentInstanceResponse(BaseModel):
     # locates the owner's machine (see `queries.redact_for_grantee`).
     owner: PrincipalResponse | None = None
     viewer_role: ProjectRoleLiteral | None = None
+    # See AgentInstanceDetail.participants — but on a list row it is set only
+    # when someone besides the owner has written in the session, so a solo
+    # row (nearly every row) stays empty and the sidebar draws nothing new.
+    participants: list[PrincipalResponse] = []
 
     @model_validator(mode="after")
     def _extract_from_metadata(self) -> "AgentInstanceResponse":
@@ -317,6 +321,11 @@ class AgentInstanceDetail(BaseModel):
     # See AgentInstanceResponse.owner / viewer_role.
     owner: PrincipalResponse | None = None
     viewer_role: ProjectRoleLiteral | None = None
+    # Who has written in this session: the owner first, then everyone else
+    # who sent a message, in order of their first one (collaboration §8.2).
+    # Clients draw the avatar stack and "Prompted by" only when there is more
+    # than one, so a solo session renders exactly as before.
+    participants: list[PrincipalResponse] = []
 
     @model_validator(mode="after")
     def _extract_worktree_name(self) -> "AgentInstanceDetail":
@@ -832,6 +841,10 @@ class ProjectResponse(BaseModel):
     # a team-owned one. None when the caller is the owner, so the solo payload
     # is unchanged. The sidebar's "Shared with me" group draws it over the icon.
     owner: PrincipalResponse | None = None
+    # Whether the project is in the caller's own sidebar list: always for one
+    # they own; for one shared with them, once they added it — until
+    # then it sits under "Shared with me" only.
+    in_sidebar: bool = True
     # Task-identifier prefix; None until the project's first task allocates one.
     key: str | None = None
     git_remote_url: str | None = None

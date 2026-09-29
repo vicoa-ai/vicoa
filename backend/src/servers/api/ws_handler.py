@@ -43,6 +43,7 @@ from shared.config import settings
 from shared.database.models import AgentInstance, Machine, User
 from shared.database.session import SessionLocal
 from shared.websocket.connection_manager import Connection, connection_manager
+from shared.websocket.envelope import build_access_changed_update
 from shared.websocket.protocol import (
     ResolvedHello,
     WsProtocolError,
@@ -50,7 +51,15 @@ from shared.websocket.protocol import (
     terminal_room,
 )
 from shared.websocket.rpc import RpcError, rpc_router
+from shared.websocket.watchers import narrow_instance_body
 from servers.presence import broadcast_session_connected, presence
+from servers.watchers import (
+    cached_role,
+    forget_cached_access,
+    handle_unwatch_instance,
+    handle_watch_instance,
+    revalidate_watchers_blocking,
+)
 from servers.shared.db.queries import (
     FetchMessagesResult,
     fetch_session_messages,
@@ -200,9 +209,16 @@ def _fetch_messages_blocking(
     instance_id_raw: object,
     after: dict | None,
     scope: str,
+    *,
+    grant_checked: bool = False,
 ) -> FetchMessagesResult | None:
     """Ownership check + catch-up SELECT. Returns None if the connection's user
     does not own the instance — the routing key is the verified token's user.
+
+    `grant_checked` is the one way past the owner filter: the caller already
+    resolved the user's access through `servers.watchers.cached_role`, which
+    only a user-scoped (dashboard) connection does. Session-scoped agent
+    connections stay owner-only, permanently.
 
     `scope` selects the AGENT-message policy: user-scoped (web / mobile chat)
     needs the full conversation; session-scoped (CLI wrapper) keeps USER-only
@@ -214,16 +230,17 @@ def _fetch_messages_blocking(
     except (ValueError, TypeError):
         return None
     with SessionLocal() as db:
-        owned = (
-            db.query(AgentInstance.id)
-            .filter(
-                AgentInstance.id == instance_id,
-                AgentInstance.user_id == owner_id,
+        if not grant_checked:
+            owned = (
+                db.query(AgentInstance.id)
+                .filter(
+                    AgentInstance.id == instance_id,
+                    AgentInstance.user_id == owner_id,
+                )
+                .first()
             )
-            .first()
-        )
-        if owned is None:
-            return None
+            if owned is None:
+                return None
         return fetch_session_messages(
             db,
             instance_id,
@@ -240,12 +257,22 @@ async def handle_fetch_messages_request(conn: Connection, frame: dict) -> dict:
     """
     request_id = frame.get("request_id")
     instance_id = frame.get("instance_id")
-    result = await asyncio.to_thread(
-        _fetch_messages_blocking,
-        conn.user_id,
-        instance_id,
-        frame.get("after"),
-        conn.scope,
+    # A dashboard may read a session shared with it; the grant is resolved
+    # (and cached ~30 s) per connection. Everything else stays owner-only.
+    grant_checked = False
+    if conn.scope == "user-scoped" and instance_id is not None:
+        grant_checked = await cached_role(conn, str(instance_id)) is not None
+    result = (
+        await asyncio.to_thread(
+            _fetch_messages_blocking,
+            conn.user_id,
+            instance_id,
+            frame.get("after"),
+            conn.scope,
+            grant_checked=grant_checked,
+        )
+        if grant_checked or conn.scope != "user-scoped"
+        else None
     )
     if result is None:
         # Return empty rows rather than an error to avoid leaking ownership
@@ -298,13 +325,46 @@ def _fetch_user_entities_blocking(
         return fetch_fn(db, owner, updated_after)
 
 
+def _narrow_for_grantee(body: dict) -> dict:
+    return narrow_instance_body(
+        body,
+        session_connected=connection_manager.is_session_connected,
+        machine_connected=connection_manager.is_machine_connected,
+    )
+
+
+def _fetch_instances_blocking(
+    user_id: str, updated_after: str | None, scope: str
+) -> list[dict]:
+    try:
+        owner = UUID(user_id)
+    except (ValueError, TypeError):
+        return []
+    with SessionLocal() as db:
+        return fetch_user_instances(
+            db,
+            owner,
+            updated_after,
+            scope=scope,
+            narrow_foreign=_narrow_for_grantee,
+        )
+
+
 async def handle_fetch_instances_request(conn: Connection, frame: dict) -> dict:
-    """Answer a `fetch_instances_request` with the user's agent instances."""
+    """Answer a `fetch_instances_request` with the user's agent instances.
+
+    `scope: "all"` also returns the sessions shared with the user, narrowed
+    to the grantee view (collaboration §9). Absent or anything else is "me" —
+    the answer clients that predate the param expect.
+    """
+    scope = "all" if frame.get("scope") == "all" else "me"
+    if conn.scope != "user-scoped":
+        scope = "me"
     rows = await asyncio.to_thread(
-        _fetch_user_entities_blocking,
-        fetch_user_instances,
+        _fetch_instances_blocking,
         conn.user_id,
         frame.get("updated_after"),
+        scope,
     )
     return {
         "type": "fetch_instances_response",
@@ -503,6 +563,13 @@ async def _serve_connection(websocket: WebSocket, conn: Connection) -> None:
                 conn.enqueue(await handle_fetch_instances_request(conn, message))
             elif msg_type == "fetch_machines_request":
                 conn.enqueue(await handle_fetch_machines_request(conn, message))
+            elif msg_type == "watch_instance":
+                # Follow a session shared with this user (collaboration §9).
+                # Grant-checked in `servers.watchers`; the owner is answered
+                # without joining, their own rooms already carry it.
+                conn.enqueue(await handle_watch_instance(conn, message))
+            elif msg_type == "unwatch_instance":
+                handle_unwatch_instance(conn, message)
             elif msg_type == "presence":
                 # Desktop app reporting its window foreground/blur. Recorded on
                 # the connection and read at push time by
@@ -787,3 +854,48 @@ async def internal_close_user(body: _InternalCloseUserBody, request: Request) ->
 
     closed = connection_manager.close_user(body.user_id)
     return {"ok": True, "closed": closed}
+
+
+class _InternalAccessChangedBody(BaseModel):
+    """Body shape for the grant-change bridge (collaboration §9).
+
+    `user_ids` are the people whose access changed — the grantee, or every
+    active member of a grantee team. `project_id` / `instance_id` say what it
+    changed on, for the client's refetch; either may be absent.
+    """
+
+    user_ids: list[str]
+    project_id: str | None = None
+    instance_id: str | None = None
+
+
+@ws_router.post("/_internal/access_changed", include_in_schema=False)
+async def internal_access_changed(
+    body: _InternalAccessChangedBody, request: Request
+) -> dict:
+    """Grant-change receiver: `backend` POSTs here after a project grant, a
+    session share or a team membership that confers access commits.
+
+    For each affected user: forget their connections' cached access (a new
+    grant works at once, not after the TTL of a cached "no"), evict them from
+    any watcher room they can no longer see, then tell their dashboards so
+    they refetch what they show. Evict first, so a refetch triggered by the
+    signal can never race a watcher room that is still open. Token-gated for
+    the same reason `/_internal/broadcast` is.
+    """
+    expected = settings.internal_broadcast_token
+    provided = request.headers.get("authorization", "")
+    if not expected or not hmac.compare_digest(provided, f"Bearer {expected}"):
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    users = {u for u in body.user_ids if u}
+    forget_cached_access(users)
+    evicted = await asyncio.to_thread(revalidate_watchers_blocking, users)
+    payload = build_access_changed_update(
+        project_id=body.project_id, instance_id=body.instance_id
+    )
+    for user_id in users:
+        connection_manager.broadcast_update(
+            user_id, payload, [f"user:{user_id}:user-scoped"]
+        )
+    return {"ok": True, "evicted": evicted}

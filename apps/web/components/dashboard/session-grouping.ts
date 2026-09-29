@@ -322,6 +322,23 @@ export function splitProjectByWorktree(
 }
 
 /**
+ * Order of project groups: `projectOrder` first (by index), then keys it
+ * doesn't know sorted by key, the no-project group always last.
+ */
+export function compareProjectKeys(projectOrder: string[]): (a: string, b: string) => number {
+  return (a, b) => {
+    if (a === NO_PROJECT_KEY) return 1;
+    if (b === NO_PROJECT_KEY) return -1;
+    const rankA = projectOrder.indexOf(a);
+    const rankB = projectOrder.indexOf(b);
+    if (rankA !== -1 && rankB !== -1) return rankA - rankB;
+    if (rankA !== -1) return -1;
+    if (rankB !== -1) return 1;
+    return a.localeCompare(b);
+  };
+}
+
+/**
  * Sort (newest first, pinned pulled to the top), filter by status and agent,
  * then group by the chosen dimension. Pinned sessions always form the first
  * "Pinned" group, are excluded from the other groups, and (like the status
@@ -388,17 +405,9 @@ export function groupSessions(
     // with no project, or before the list loads) sorted by key, no-project
     // always last. `key` is the project_id (or basename fallback); the display
     // label is derived separately so a linked project never shows its raw id.
+    const compareKeys = compareProjectKeys(projectOrder);
     groups = Array.from(projectMap.entries())
-      .sort(([a], [b]) => {
-        if (a === NO_PROJECT_KEY) return 1;
-        if (b === NO_PROJECT_KEY) return -1;
-        const rankA = projectOrder.indexOf(a);
-        const rankB = projectOrder.indexOf(b);
-        if (rankA !== -1 && rankB !== -1) return rankA - rankB;
-        if (rankA !== -1) return -1;
-        if (rankB !== -1) return 1;
-        return a.localeCompare(b);
-      })
+      .sort(([a], [b]) => compareKeys(a, b))
       .map(([key, groupInstances]) => ({
         key,
         label:

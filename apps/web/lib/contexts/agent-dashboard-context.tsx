@@ -8,6 +8,8 @@ import { useInstanceStream } from '@/lib/hooks/use-ws-stream';
 import { useDesktopSessionNotifications } from '@/lib/hooks/use-desktop-session-notifications';
 import { useDesktopForegroundPresence } from '@/lib/hooks/use-desktop-foreground-presence';
 import type { NewMessageBody } from '@/lib/ws-client';
+import { useCurrentUserId } from '@/lib/hooks/use-current-user-id';
+import { addsSomeoneToRow } from '@/lib/session-people';
 
 const AGENT_INSTANCE_PAGE_SIZE = 50;
 
@@ -312,6 +314,22 @@ export function AgentDashboardProvider({ children }: AgentDashboardProviderProps
   const orphanRefreshScheduled = useRef(false);
   const orphanRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // One debounced list refetch, however many frames ask for it in a burst.
+  const scheduleListRefresh = useCallback(() => {
+    if (orphanRefreshScheduled.current) return;
+    orphanRefreshScheduled.current = true;
+    orphanRefreshTimer.current = setTimeout(() => {
+      orphanRefreshTimer.current = null;
+      orphanRefreshScheduled.current = false;
+      void refreshDataRef.current?.();
+    }, 500);
+  }, []);
+
+  // Who "me" is, to tell a collaborator's message from our own.
+  const viewerId = useCurrentUserId(api);
+  const viewerIdRef = useRef(viewerId);
+  viewerIdRef.current = viewerId;
+
   const flushMessagePatches = useCallback(() => {
     messagePatchFlushTimer.current = null;
     const patches = pendingMessagePatches.current;
@@ -380,20 +398,21 @@ export function AgentDashboardProvider({ children }: AgentDashboardProviderProps
       // auto-loadMore effect into a setState loop. Mirror vicoa-app's
       // home_model.dart fallback instead: trigger one debounced refreshData()
       // so all orphans backfill in a single REST list call.
-      if (orphanRefreshScheduled.current) return;
-      orphanRefreshScheduled.current = true;
-      orphanRefreshTimer.current = setTimeout(() => {
-        orphanRefreshTimer.current = null;
-        orphanRefreshScheduled.current = false;
-        void refreshDataRef.current?.();
-      }, 500);
-    }, []),
+      scheduleListRefresh();
+    }, [scheduleListRefresh]),
     // The WS `instance-update` body doesn't carry message metadata, so without
     // this the sidebar's "Xm ago" goes stale until the next REST refresh. Use
     // the message's own `created_at` so we stay aligned with what REST would
     // compute (REST returns max(messages.created_at)). Patches are buffered
     // and flushed via the debounce above — see `flushMessagePatches`.
     onNewMessage: useCallback((msg: NewMessageBody) => {
+      // Someone new wrote in one of our sessions (a collaborator's first
+      // message): it now has more than one person, and the row's
+      // `participants` only come with the list, so fetch it again.
+      const row = recentInstancesRef.current.find((i) => i.id === msg.instance_id);
+      if (row && addsSomeoneToRow(row, msg.sender_user_id, viewerIdRef.current)) {
+        scheduleListRefresh();
+      }
       if (!msg.created_at) return;
       const created = msg.created_at;
       const existing = pendingMessagePatches.current.get(msg.instance_id);
@@ -405,7 +424,7 @@ export function AgentDashboardProvider({ children }: AgentDashboardProviderProps
       if (!messagePatchFlushTimer.current) {
         messagePatchFlushTimer.current = setTimeout(flushMessagePatches, 2000);
       }
-    }, [flushMessagePatches]),
+    }, [flushMessagePatches, scheduleListRefresh]),
   });
 
 

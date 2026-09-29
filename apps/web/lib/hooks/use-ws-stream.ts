@@ -40,13 +40,15 @@ function bodyToMessage(body: NewMessageBody): MessageResponse {
     id: body.id,
     content: body.content,
     sender_type: body.sender_type,
+    // Who wrote it — the byline in a session with several writers.
+    sender_user_id: body.sender_user_id,
     created_at: body.created_at ?? '',
     requires_user_input: body.requires_user_input,
     message_metadata: body.message_metadata,
   };
 }
 
-function bodyToInstancePatch(
+export function bodyToInstancePatch(
   body: InstanceBody,
 ): Partial<AgentInstanceResponse> & { id: string } {
   const metadata = (body.instance_metadata ?? null) as SessionInstanceMetadata | null;
@@ -67,6 +69,10 @@ function bodyToInstancePatch(
     // next list load. `instance_metadata` rides along for `repo_root`.
     instance_metadata: metadata,
     worktree_name: typeof worktreeName === 'string' && worktreeName ? worktreeName : null,
+    // The relay's liveness verdict when it sent one — the only liveness a
+    // shared session's row has, since its copy carries no machine_id.
+    ...(body.live_state ? { live_state: body.live_state as AgentInstanceResponse['live_state'] } : {}),
+    ...(body.last_heartbeat_at ? { last_heartbeat_at: body.last_heartbeat_at } : {}),
   };
 }
 
@@ -110,12 +116,20 @@ function detailToInstanceResponse(detail: AgentInstanceDetail): AgentInstanceRes
 interface UseMessageStreamOptions {
   instanceId: string;
   enabled?: boolean;
+  /**
+   * Join the session's watcher room (collaboration §9) — for a session shared
+   * with the viewer, whose frames otherwise never reach their socket. The
+   * owner's own rooms already carry theirs, so leave this off for them.
+   */
+  watch?: boolean;
   /** `created_at` of the newest message already rendered (from the REST load). */
   initialWatermark?: string | null;
   onMessage?: (message: MessageResponse) => void;
   onStatusUpdate?: (status: string) => void;
   /** Full `instance_metadata` from an instance-update — carries the usage blob. */
   onInstanceMetadata?: (metadata: Record<string, unknown> | null) => void;
+  /** The whole accepted instance-update body (liveness, heartbeat, …). */
+  onInstanceUpdate?: (body: InstanceBody) => void;
   onError?: (error: Error) => void;
   onConnectionStateChange?: (connected: boolean) => void;
 }
@@ -129,18 +143,34 @@ interface UseMessageStreamOptions {
 export function useMessageStream({
   instanceId,
   enabled = true,
+  watch = false,
   initialWatermark = null,
   onMessage,
   onStatusUpdate,
   onInstanceMetadata,
+  onInstanceUpdate,
   onError,
   onConnectionStateChange,
 }: UseMessageStreamOptions) {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
-  const cb = useRef({ onMessage, onStatusUpdate, onInstanceMetadata, onError, onConnectionStateChange });
-  cb.current = { onMessage, onStatusUpdate, onInstanceMetadata, onError, onConnectionStateChange };
+  const cb = useRef({
+    onMessage,
+    onStatusUpdate,
+    onInstanceMetadata,
+    onInstanceUpdate,
+    onError,
+    onConnectionStateChange,
+  });
+  cb.current = {
+    onMessage,
+    onStatusUpdate,
+    onInstanceMetadata,
+    onInstanceUpdate,
+    onError,
+    onConnectionStateChange,
+  };
 
   // Read by value at effect setup only — never an effect dep, or the stream
   // would re-subscribe on every new message (the watermark advances per message).
@@ -151,6 +181,10 @@ export function useMessageStream({
     if (!enabled || !instanceId) return;
 
     const client = getWsClient();
+    // Before the connection listener below: the watch is (re)sent as the
+    // socket comes up, ahead of the catch-up fetch on the same socket, so no
+    // live frame falls between the two.
+    const releaseWatch = watch ? client.watchInstance(instanceId) : null;
     const buffer = new CatchUpBuffer<NewMessageBody>(createAppendTracker());
     const statusTracker = createMutableTracker();
     // Bumped on every (re)connect; a stale paginating catch-up checks it and bails.
@@ -218,6 +252,7 @@ export function useMessageStream({
         if (statusTracker.accept(body)) {
           cb.current.onStatusUpdate?.(body.status);
           cb.current.onInstanceMetadata?.(body.instance_metadata);
+          cb.current.onInstanceUpdate?.(body);
         }
       }
     });
@@ -241,8 +276,9 @@ export function useMessageStream({
       cycle += 1;
       unsubscribeUpdates();
       unsubscribeConnection();
+      releaseWatch?.();
     };
-  }, [enabled, instanceId]);
+  }, [enabled, instanceId, watch]);
 
   return { isConnected, error };
 }
@@ -319,8 +355,13 @@ export function useInstanceStream({
     const unsubscribeUpdates = client.subscribe((payload: UpdatePayload) => {
       const body = payload.body;
       if (body.t === 'instance-created' || body.t === 'instance-update') {
+        // A session shared with this user, reaching the socket through a
+        // watcher room, is not one of theirs: feeding it to the own-session
+        // list would read as a row it missed and trigger a full refetch.
+        if (body.grantee_view) return;
         for (const ready of buffer.bufferLive(body)) deliver(ready);
       } else if (body.t === 'new-message') {
+        if (client.isWatching(body.instance_id)) return;
         cb.current.onNewMessage?.(body);
       }
     });
