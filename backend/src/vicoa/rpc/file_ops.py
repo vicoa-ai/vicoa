@@ -1,4 +1,4 @@
-"""Daemon RPC handlers for `list-files` and `read-file`.
+"""Daemon RPC handlers for `list-files`, `read-file`, and `read-file-range`.
 
 See `plans/todos/vicoa-app-files-tab.md` §Phase B for the full spec.
 """
@@ -9,6 +9,7 @@ import base64
 import fnmatch
 import hashlib
 import os
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -23,6 +24,20 @@ _EXCLUDED_FILE_GLOBS = tuple(p for p in DEFAULT_EXCLUDE_PATTERNS if "*" in p)
 _TEXT_CAP = 1 * 1024 * 1024
 _IMAGE_CAP = 5 * 1024 * 1024
 _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
+# Largest slice one `read-file-range` call returns. Base64 inflates it by a
+# third, and each slice is a single relay frame, so this stays well under the
+# server's WebSocket frame limit and a slow uplink's 30s RPC timeout.
+_RANGE_CAP = 1 * 1024 * 1024
+# Videos a client can stream through `read-file-range`. `read-file` tags them
+# with `mime_type` instead of sniffing them as opaque binary, which is also how
+# a client learns this daemon can serve the range reads.
+_VIDEO_MIME_TYPES = {
+    ".mp4": "video/mp4",
+    ".m4v": "video/x-m4v",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+    ".mkv": "video/x-matroska",
+}
 
 
 def _sha256(data: bytes) -> str:
@@ -154,6 +169,17 @@ def read_file(cwd: str, path: str) -> dict[str, Any]:
             "truncated": size > _IMAGE_CAP,
             "content_hash": None,
         }
+    video_mime = _VIDEO_MIME_TYPES.get(abs_file.suffix.lower())
+    if video_mime is not None:
+        return {
+            "content": "",
+            "encoding": "utf-8",
+            "is_binary": True,
+            "size": size,
+            "truncated": False,
+            "content_hash": None,
+            "mime_type": video_mime,
+        }
     with open(abs_file, "rb") as fh:
         head = fh.read(_TEXT_CAP)
     if b"\x00" in head[:8192]:
@@ -175,6 +201,50 @@ def read_file(cwd: str, path: str) -> dict[str, Any]:
         # None when truncated: editing is disabled there, and saving a partial
         # buffer must never be allowed (it would drop the tail).
         "content_hash": None if truncated else _sha256(head),
+    }
+
+
+def read_file_range(cwd: str, path: str, offset: int, length: int) -> dict[str, Any]:
+    """Return up to `length` bytes of `path` from `offset`, base64-encoded.
+
+    For files too big for one `read-file` frame (videos): the client pulls
+    consecutive slices and reassembles them. `length` is clamped to
+    `_RANGE_CAP`; a slice at or past the end is empty. Every slice carries the
+    file's current `size` and `mtime`, so a client can tell the file changed
+    between slices and restart instead of stitching two versions together.
+    """
+    if (
+        isinstance(offset, bool)
+        or isinstance(length, bool)
+        or not isinstance(offset, int)
+        or not isinstance(length, int)
+        or offset < 0
+        or length <= 0
+    ):
+        return {"error": "invalid_range"}
+    project_root = Path(os.path.expanduser(cwd))
+    try:
+        abs_file = resolve_inside_project(project_root, path)
+    except OutsideProject:
+        return {"error": "outside_project"}
+    # Checked before open(): opening a FIFO would block the RPC worker.
+    try:
+        if not stat.S_ISREG(abs_file.stat().st_mode):
+            return {"error": "not_a_file"}
+        with open(abs_file, "rb") as fh:
+            st = os.fstat(fh.fileno())
+            fh.seek(offset)
+            data = fh.read(min(length, _RANGE_CAP))
+    except FileNotFoundError:
+        return {"error": "path_not_found"}
+    except PermissionError:
+        return {"error": "permission_denied"}
+    return {
+        "content": base64.b64encode(data).decode("ascii"),
+        "encoding": "base64",
+        "offset": offset,
+        "size": st.st_size,
+        "mtime": st.st_mtime,
     }
 
 

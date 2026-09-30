@@ -54,6 +54,20 @@ def test_read_file_dispatched_to_handler(daemon: MachineDaemon, git_repo: Path):
     assert result["is_binary"] is False
 
 
+def test_read_file_range_dispatched_and_advertised(
+    daemon: MachineDaemon, git_repo: Path
+):
+    (git_repo / "clip.mp4").write_bytes(b"0123456789")
+    frame = {
+        "method": "read-file-range",
+        "params": {"cwd": str(git_repo), "path": "clip.mp4", "offset": 2, "length": 3},
+    }
+    result = daemon._handle_rpc_request(frame)
+    assert result["content"] == "MjM0"  # base64 of b"234"
+    assert result["size"] == 10
+    assert "read-file-range" in daemon._supported_rpc_methods()
+
+
 def test_git_status_dispatched_to_handler(daemon: MachineDaemon, git_repo: Path):
     # Empty git repo dispatch sanity check — handler returns the branch field
     # without error.

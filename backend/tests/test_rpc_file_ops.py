@@ -273,6 +273,93 @@ def test_read_file_traversal_returns_outside_project(git_repo: Path):
     assert result == {"error": "outside_project"}
 
 
+def test_read_file_video_is_tagged_with_mime_type_and_no_content(git_repo: Path):
+    # Videos stream through `read-file-range`; `read-file` only names the type,
+    # which is also how a client learns this daemon serves the range reads.
+    from vicoa.rpc.file_ops import read_file
+
+    payload = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64
+    (git_repo / "Demo.MP4").write_bytes(payload)
+    result = read_file(cwd=str(git_repo), path="Demo.MP4")
+    assert result == {
+        "content": "",
+        "encoding": "utf-8",
+        "is_binary": True,
+        "size": len(payload),
+        "truncated": False,
+        "content_hash": None,
+        "mime_type": "video/mp4",
+    }
+
+
+# --- read_file_range -----------------------------------------------------------
+
+
+def test_read_file_range_returns_slice_with_size_and_mtime(git_repo: Path):
+    from vicoa.rpc.file_ops import read_file_range
+
+    payload = bytes(range(256)) * 4
+    target = git_repo / "clip.mov"
+    target.write_bytes(payload)
+    result = read_file_range(cwd=str(git_repo), path="clip.mov", offset=100, length=50)
+    assert base64.b64decode(result["content"]) == payload[100:150]
+    assert result["encoding"] == "base64"
+    assert result["offset"] == 100
+    assert result["size"] == len(payload)
+    assert result["mtime"] == target.stat().st_mtime
+
+
+def test_read_file_range_short_read_at_end_and_empty_past_end(git_repo: Path):
+    from vicoa.rpc.file_ops import read_file_range
+
+    (git_repo / "clip.mp4").write_bytes(b"0123456789")
+    tail = read_file_range(cwd=str(git_repo), path="clip.mp4", offset=8, length=100)
+    assert base64.b64decode(tail["content"]) == b"89"
+    past = read_file_range(cwd=str(git_repo), path="clip.mp4", offset=50, length=10)
+    assert past["content"] == ""
+    assert past["size"] == 10
+
+
+def test_read_file_range_clamps_length_to_cap(git_repo: Path):
+    from vicoa.rpc.file_ops import _RANGE_CAP, read_file_range
+
+    (git_repo / "big.mp4").write_bytes(b"\x01" * (_RANGE_CAP + 10))
+    result = read_file_range(
+        cwd=str(git_repo), path="big.mp4", offset=0, length=_RANGE_CAP * 4
+    )
+    assert len(base64.b64decode(result["content"])) == _RANGE_CAP
+
+
+@pytest.mark.parametrize(
+    ("offset", "length"),
+    [(-1, 10), (0, 0), (0, -5), ("0", 10), (0, 1.5), (True, 10)],
+)
+def test_read_file_range_rejects_invalid_range(git_repo: Path, offset, length):
+    from vicoa.rpc.file_ops import read_file_range
+
+    (git_repo / "clip.mp4").write_bytes(b"data")
+    result = read_file_range(
+        cwd=str(git_repo), path="clip.mp4", offset=offset, length=length
+    )
+    assert result == {"error": "invalid_range"}
+
+
+def test_read_file_range_path_errors(git_repo: Path):
+    from vicoa.rpc.file_ops import read_file_range
+
+    (git_repo / "src").mkdir()
+    cwd = str(git_repo)
+    assert read_file_range(cwd=cwd, path="missing.mp4", offset=0, length=1) == {
+        "error": "path_not_found"
+    }
+    assert read_file_range(cwd=cwd, path="src", offset=0, length=1) == {
+        "error": "not_a_file"
+    }
+    assert read_file_range(cwd=cwd, path="../escape", offset=0, length=1) == {
+        "error": "outside_project"
+    }
+
+
 # --- stat_file -----------------------------------------------------------------
 
 

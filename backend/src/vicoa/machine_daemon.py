@@ -2175,6 +2175,10 @@ class MachineDaemon:
             from vicoa.rpc import file_ops
 
             return file_ops.read_file(**(frame.get("params") or {}))
+        if method == "read-file-range":
+            from vicoa.rpc import file_ops
+
+            return file_ops.read_file_range(**(frame.get("params") or {}))
         if method == "stat-file":
             from vicoa.rpc import file_ops
 
@@ -2380,6 +2384,7 @@ class MachineDaemon:
             "spawn-session",
             "list-files",
             "read-file",
+            "read-file-range",
             "stat-file",
             "write-file",
             "scan-files",
