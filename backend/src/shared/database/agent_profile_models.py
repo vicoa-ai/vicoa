@@ -21,8 +21,9 @@ Two invariants worth stating because code elsewhere leans on them:
   (it is indexable and validated against the catalog server-side); the API forces
   ``config['agent']`` to match it on every write.
 
-``team_id`` follows the same NULL-means-personal pattern as ``projects.team_id`` and is
-unused until P7 — it is here so a profile can move to a team without a second migration.
+``team_id`` follows the same NULL-means-personal pattern as ``projects.team_id``: set, the
+profile is the team's — every active member can run it, its owner and admins edit it —
+and ``user_id`` degrades to "created by".
 """
 
 from datetime import datetime, timezone
@@ -59,15 +60,24 @@ class AgentProfile(Base):
             postgresql_where=text("team_id IS NOT NULL"),
         ),
         # Names are how the CLI (`--agent-profile <name>`) and the picker address a
-        # profile, so they must be unique per user — case-insensitively, since
+        # profile, so they must be unique per owner — case-insensitively, since
         # "Reviewer" and "reviewer" would be indistinguishable in the UI. Archived
-        # rows are excluded so archiving frees the name for reuse.
+        # rows are excluded so archiving frees the name for reuse. The owner is
+        # the user for a personal profile and the team for a team's, so a
+        # team's "Reviewer" never collides with its creator's own.
         Index(
             "uq_agent_profiles_user_name",
             "user_id",
             func.lower(text("name")),
             unique=True,
-            postgresql_where=text("NOT is_archived"),
+            postgresql_where=text("NOT is_archived AND team_id IS NULL"),
+        ),
+        Index(
+            "uq_agent_profiles_team_name",
+            "team_id",
+            func.lower(text("name")),
+            unique=True,
+            postgresql_where=text("NOT is_archived AND team_id IS NOT NULL"),
         ),
     )
 

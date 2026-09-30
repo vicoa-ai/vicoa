@@ -12,10 +12,11 @@ in the open build the registry is empty and every check passes.
 import logging
 import re
 import secrets
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, delete, func, insert, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -28,13 +29,18 @@ from shared.database import (
     AgentInstance,
     Project,
     ProjectGrant,
+    Task,
+    TaskLabel,
     Team,
     TeamInvite,
     TeamMember,
     User,
     UserInstanceAccess,
 )
+from shared.database.agent_profile_models import AgentProfile
 from shared.database.enums import AgentStatus, InstanceAccessLevel
+from shared.database.task_identity import key_is_taken, suggest_free_key
+from shared.database.task_models import task_label_links
 from shared.hooks import (
     CAPABILITY_GRANT_WRITE,
     CAPABILITY_TEAM_SEAT,
@@ -332,16 +338,53 @@ def check_seat(
     is over their limit — a downgrade, say — can still reshuffle the people
     they already pay for.
     """
+    check_seats(db, payer_id, capability, [new_key], context)
+
+
+def check_seats(
+    db: Session,
+    payer_id: UUID,
+    capability: str,
+    new_keys: Iterable[str | None],
+    context: dict,
+) -> None:
+    """`check_seat` for an action that can bring several people at once —
+    moving a project (its outside editors come with it) or handing a team to
+    a new owner (the whole team comes with it). Same context contract."""
     keys = seat_keys(db, payer_id)
-    new_seat = new_key is not None and new_key not in keys
-    if new_seat and new_key is not None:
-        keys.add(new_key)
+    added = {key for key in new_keys if key is not None} - keys
     check_capability(
         db,
         payer_id,
         capability,
-        {**context, "seats": len(keys), "new_seat": new_seat},
+        {**context, "seats": len(keys | added), "new_seat": bool(added)},
     )
+
+
+def _paid_grant_keys(db: Session, project_ids: Iterable[UUID]) -> set[str]:
+    """Seat keys of the outside editors/admins on these projects — who comes
+    along, seat-wise, when the projects change payer."""
+    ids = list(project_ids)
+    if not ids:
+        return set()
+    keys: set[str] = set()
+    for principal_id, email in db.query(
+        ProjectGrant.principal_id, ProjectGrant.invited_email
+    ).filter(
+        ProjectGrant.principal_type == "user",
+        ProjectGrant.role.in_(_PAID_GRANT_ROLES),
+        ProjectGrant.project_id.in_(ids),
+    ):
+        key = seat_key(principal_id, email)
+        if key is not None:
+            keys.add(key)
+    return keys
+
+
+def seat_usage(db: Session, payer_id: UUID) -> int:
+    """How many seats `payer_id` currently pays for, themselves included —
+    the number the billing page shows next to what their plan includes."""
+    return len(seat_keys(db, payer_id))
 
 
 def _payer_id(db: Session, team: Team) -> UUID:
@@ -446,6 +489,80 @@ def update_team(db: Session, user_id: UUID, team_id: UUID, *, name: str) -> Team
     return team
 
 
+def set_team_avatar(
+    db: Session, user_id: UUID, team_id: UUID, *, avatar_image_uri: str | None
+) -> Team:
+    """Point the team at its uploaded picture, or clear it (admin+).
+
+    Mirrors the agent-profile avatar rather than the user one: a team has no
+    IdP to re-seed it from, so clearing goes back to NULL instead of pinning
+    `avatar_source='user'`. `updated_at` moves either way — clients
+    cache-bust the stable served URL on it."""
+    team, _ = require_team(db, user_id, team_id, minimum="admin")
+    team.avatar_image_uri = avatar_image_uri
+    team.avatar_source = "user" if avatar_image_uri else None
+    team.updated_at = _utcnow()
+    db.commit()
+    db.refresh(team)
+    return team
+
+
+def transfer_team_ownership(
+    db: Session, acting_user_id: UUID, team_id: UUID, member_id: UUID
+) -> TeamMember:
+    """Hand the team to another active member; the old owner stays on as admin.
+
+    The owner is the payer (D-C, owner-pays), so the new owner's plan has to
+    cover what the team brings: its members and the outside editors on its
+    projects. Asked as `collab.team_seat` against the new owner before anything
+    changes, so a denial leaves the team exactly as it was."""
+    team, acting = require_team(db, acting_user_id, team_id, minimum="owner")
+    member = (
+        db.query(TeamMember)
+        .options(joinedload(TeamMember.user))
+        .filter(
+            TeamMember.id == member_id,
+            TeamMember.team_id == team.id,
+            TeamMember.status != "removed",
+        )
+        .first()
+    )
+    if member is None:
+        raise TeamNotFoundError("Member not found")
+    if member.id == acting.id:
+        return member
+    if member.status != "active" or member.user_id is None:
+        raise TeamConflictError("Only someone who has joined can own the team")
+
+    brought = {
+        seat_key(user_id, email)
+        for user_id, email in db.query(
+            TeamMember.user_id, TeamMember.invited_email
+        ).filter(TeamMember.team_id == team.id, TeamMember.status != "removed")
+    }
+    team_projects = [
+        row[0] for row in db.query(Project.id).filter(Project.team_id == team.id)
+    ]
+    brought |= _paid_grant_keys(db, team_projects)
+    check_seats(
+        db,
+        member.user_id,
+        CAPABILITY_TEAM_SEAT,
+        brought,
+        {
+            "team_id": str(team.id),
+            "action": "transfer_ownership",
+            "acting_user_id": str(acting_user_id),
+        },
+    )
+    acting.role = "admin"
+    member.role = "owner"
+    notify_access_changed(db, [acting.user_id, member.user_id])
+    db.commit()
+    db.refresh(member)
+    return member
+
+
 def delete_team(db: Session, user_id: UUID, team_id: UUID) -> None:
     """Owner only. Members and invites cascade; projects and labels the team
     owned demote to personal (SET NULL); grants *to* the team are swept here
@@ -455,8 +572,125 @@ def delete_team(db: Session, user_id: UUID, team_id: UUID) -> None:
     db.query(ProjectGrant).filter(
         ProjectGrant.principal_type == "team", ProjectGrant.principal_id == team.id
     ).delete(synchronize_session=False)
+    release_team_rows(db, [team.id])
     db.delete(team)
     db.commit()
+
+
+def reassign_team_rows_from(db: Session, user_id: UUID) -> None:
+    """Hand the team-owned rows `user_id` created to each team's owner, ahead
+    of deleting the account.
+
+    On a team's project, label or agent, `user_id` only records who created
+    it — but the column's FK CASCADEs, so deleting the creator's account would
+    take the team's work with it (and every task on the project, since
+    `tasks.user_id` is the project's `user_id`). Each row moves to its team's
+    active owner instead; `delete_user_account` runs this after promoting an
+    heir, so every surviving team has one. A team with nobody left is being
+    deleted anyway (`release_team_rows` handles its rows).
+    """
+    team_ids = {
+        row[0]
+        for model in (Project, TaskLabel, AgentProfile)
+        for row in db.query(model.team_id).filter(
+            model.user_id == user_id, model.team_id.is_not(None)
+        )
+    }
+    for team_id in team_ids:
+        owner = (
+            db.query(TeamMember.user_id)
+            .filter(
+                TeamMember.team_id == team_id,
+                TeamMember.role == "owner",
+                TeamMember.status == "active",
+                TeamMember.user_id.is_not(None),
+                TeamMember.user_id != user_id,
+            )
+            .order_by(TeamMember.created_at.asc())
+            .first()
+        )
+        if owner is None:
+            continue
+        heir = owner[0]
+        project_ids = [
+            row[0]
+            for row in db.query(Project.id).filter(
+                Project.team_id == team_id, Project.user_id == user_id
+            )
+        ]
+        if project_ids:
+            db.query(Project).filter(Project.id.in_(project_ids)).update(
+                {"user_id": heir}, synchronize_session=False
+            )
+            # `tasks.user_id` is always the owning project's `user_id`.
+            db.query(Task).filter(Task.project_id.in_(project_ids)).update(
+                {"user_id": heir}, synchronize_session=False
+            )
+        for model in (TaskLabel, AgentProfile):
+            db.query(model).filter(
+                model.team_id == team_id, model.user_id == user_id
+            ).update({"user_id": heir}, synchronize_session=False)
+
+
+_MAX_AGENT_NAME = 64
+
+
+def release_team_rows(db: Session, team_ids: Iterable[UUID]) -> None:
+    """Hand a team's projects and agents back to their creators ahead of the
+    team's deletion, making room for them first.
+
+    `ON DELETE SET NULL` is the right demotion (§3.3: deleting a team never
+    destroys work), but it lands each row in its creator's personal space,
+    where a project key or an agent name may already be taken — and one
+    unique-index violation would fail the whole delete. So each row is
+    demoted here, explicitly: a clashing key gets the next free one (VIC →
+    VIC2, as on a move), a clashing agent is renamed "Name (Team)". Labels
+    need nothing: their names are not unique."""
+    ids = list(team_ids)
+    if not ids:
+        return
+    for project in (
+        db.query(Project)
+        .filter(Project.team_id.in_(ids))
+        .order_by(Project.created_at.asc())
+        .all()
+    ):
+        if project.key and key_is_taken(db, project.user_id, project.key):
+            project.key = suggest_free_key(db, project.user_id, project.key)
+        project.team_id = None
+        # So the next project's check sees this one in its new namespace.
+        db.flush()
+
+    team_names = {
+        team.id: team.name for team in db.query(Team).filter(Team.id.in_(ids))
+    }
+    for profile in (
+        db.query(AgentProfile)
+        .filter(AgentProfile.team_id.in_(ids), AgentProfile.is_archived.is_(False))
+        .order_by(AgentProfile.created_at.asc())
+        .all()
+    ):
+        taken = {
+            row[0]
+            for row in db.query(func.lower(AgentProfile.name)).filter(
+                AgentProfile.user_id == profile.user_id,
+                AgentProfile.team_id.is_(None),
+                AgentProfile.is_archived.is_(False),
+            )
+        }
+        if profile.name.lower() in taken:
+            team_name = (
+                team_names.get(profile.team_id) if profile.team_id else None
+            ) or "team"
+            base = f"{profile.name} ({team_name})"
+            candidate, suffix = base[:_MAX_AGENT_NAME], 2
+            while candidate.lower() in taken:
+                tail = f" {suffix}"
+                candidate = base[: _MAX_AGENT_NAME - len(tail)] + tail
+                suffix += 1
+            profile.name = candidate
+        profile.team_id = None
+        db.flush()
 
 
 def list_members(db: Session, team: Team) -> list[TeamMember]:
@@ -812,6 +1046,236 @@ def accept_invite_link(db: Session, user: User, token: str) -> TeamMember:
     db.commit()
     db.refresh(member)
     return member
+
+
+# --- Project ownership --------------------------------------------------------
+#
+# `projects.team_id` NULL ⇒ personal, SET ⇒ team-owned (§2 layer 2). Moving a
+# project changes who owns it, not what it holds: tasks, sessions, grants and
+# share links all stay attached by id. What does have to follow is everything
+# keyed by the *owner* — the task key namespace (§3.5), the label vocabulary
+# (§3.3) and the payer's seats (§6).
+
+
+class ProjectKeyConflictError(Exception):
+    """The project's task key is already held in the destination's key
+    namespace (→ 409). Keys are unique within the owner (§3.5), so a move can
+    collide where the project never did; the caller picks a new key, and
+    `suggested_key` is one that is free there."""
+
+    def __init__(self, key: str, suggested_key: str) -> None:
+        super().__init__(f"Another project there already uses the key {key}")
+        self.key = key
+        self.suggested_key = suggested_key
+
+
+def _carry_labels(
+    db: Session,
+    project: Project,
+    *,
+    team_id: UUID | None,
+    owner_user_id: UUID,
+    acting_user_id: UUID,
+) -> None:
+    """Re-point the project's task labels into the new owner's vocabulary.
+
+    Labels are owner-scoped (one vocabulary per person or team, never per
+    project), so a label from the old owner's set would stay on its tasks but
+    drop out of every picker on the board — and `_resolve_labels` would then
+    refuse the task's own labels on the next edit. Each such label is matched
+    by name in the destination vocabulary, or copied into it (name and colour)
+    when there is no match. The old labels are left where they are: they
+    still belong to their owner's other projects.
+    """
+    links = db.execute(
+        select(task_label_links.c.task_id, task_label_links.c.label_id)
+        .join(Task, Task.id == task_label_links.c.task_id)
+        .where(Task.project_id == project.id)
+    ).all()
+    if not links:
+        return
+
+    def in_destination(label: TaskLabel) -> bool:
+        if team_id is not None:
+            return label.team_id == team_id
+        return label.team_id is None and label.user_id == owner_user_id
+
+    labels = (
+        db.query(TaskLabel)
+        .filter(TaskLabel.id.in_({label_id for _, label_id in links}))
+        .all()
+    )
+    foreign = [label for label in labels if not in_destination(label)]
+    if not foreign:
+        return
+
+    destination = (
+        TaskLabel.team_id == team_id
+        if team_id is not None
+        else and_(TaskLabel.user_id == owner_user_id, TaskLabel.team_id.is_(None))
+    )
+    by_name = {
+        label.name.strip().lower(): label
+        for label in db.query(TaskLabel).filter(destination)
+    }
+    replacement: dict[UUID, UUID] = {}
+    for label in foreign:
+        match = by_name.get(label.name.strip().lower())
+        if match is None:
+            match = TaskLabel(
+                user_id=acting_user_id if team_id is not None else owner_user_id,
+                team_id=team_id,
+                name=label.name,
+                color=label.color,
+            )
+            db.add(match)
+            db.flush()
+            by_name[label.name.strip().lower()] = match
+        replacement[label.id] = match.id
+
+    present = {(task_id, label_id) for task_id, label_id in links}
+    for task_id, label_id in links:
+        new_id = replacement.get(label_id)
+        if new_id is None:
+            continue
+        db.execute(
+            delete(task_label_links).where(
+                task_label_links.c.task_id == task_id,
+                task_label_links.c.label_id == label_id,
+            )
+        )
+        if (task_id, new_id) not in present:
+            db.execute(
+                insert(task_label_links).values(task_id=task_id, label_id=new_id)
+            )
+            present.add((task_id, new_id))
+
+
+def transfer_project(
+    db: Session,
+    user: User,
+    project: Project,
+    *,
+    team_id: UUID | None,
+    key: str | None = None,
+) -> Project:
+    """Move a project into a team (`team_id`), or out of one into the caller's
+    personal space (`team_id=None`).
+
+    Owner only: the personal owner, or the owner of the team that owns it —
+    the same floor as deleting it, since both end the current owner's hold on
+    the project. Moving *into* a team needs an active membership there; a
+    plain member may bring their own project in, becoming an editor of it the
+    moment it lands (the team's role map, §4 as-built).
+
+    `key` replaces the task key on the way (§3.5). When the project's key is
+    already held in the destination and no new one is given, this raises
+    `ProjectKeyConflictError` with a free suggestion and changes nothing.
+
+    Seats (§6): the destination's payer takes on the project's outside
+    editors, so that is asked of `collab.grant_write` before anything moves.
+    """
+    target_team: Team | None = None
+    if team_id is not None:
+        if access.team_role(db, user.id, team_id) is None:
+            raise TeamNotFoundError("Team not found")
+        target_team = db.get(Team, team_id)
+        assert target_team is not None  # an active membership implies the row
+    if project.team_id == team_id and (
+        team_id is not None or project.user_id == user.id
+    ):
+        if key is None or key == project.key:
+            return project
+
+    # Serialize concurrent moves of one project; the key check below is
+    # read-check-write against the destination namespace.
+    db.query(Project).filter(Project.id == project.id).with_for_update().one()
+    new_owner_id = user.id if team_id is None else project.user_id
+
+    wanted = key or project.key
+    moving = project.team_id != team_id or project.user_id != new_owner_id
+    if wanted is not None and (moving or wanted != project.key):
+        if key_is_taken(db, new_owner_id, wanted, team_id=team_id):
+            raise ProjectKeyConflictError(
+                wanted, suggest_free_key(db, new_owner_id, wanted, team_id=team_id)
+            )
+
+    if moving:
+        payer_id = _payer_id(db, target_team) if target_team is not None else user.id
+        brought = _paid_grant_keys(db, [project.id])
+        if team_id is None:
+            # A grant to the new personal owner is dropped below, so it
+            # brings no one.
+            brought.discard(f"user:{new_owner_id}")
+        check_seats(
+            db,
+            payer_id,
+            CAPABILITY_GRANT_WRITE,
+            brought,
+            {
+                "project_id": str(project.id),
+                "action": "transfer_project",
+                "team_id": str(team_id) if team_id else None,
+                "acting_user_id": str(user.id),
+            },
+        )
+
+    old_team_id, old_owner_id = project.team_id, project.user_id
+    project.key = wanted
+    if moving:
+        project.team_id = team_id
+        project.user_id = new_owner_id
+        if new_owner_id != old_owner_id:
+            # `tasks.user_id` is always the owning project's `user_id` (the
+            # task_queries module invariant), so the owner-only lens keeps
+            # seeing every task on the board it now owns.
+            db.query(Task).filter(Task.project_id == project.id).update(
+                {"user_id": new_owner_id}, synchronize_session=False
+            )
+        _carry_labels(
+            db,
+            project,
+            team_id=team_id,
+            owner_user_id=new_owner_id,
+            acting_user_id=user.id,
+        )
+        # A grant to whoever now owns the project confers nothing on top of
+        # ownership; leaving it would make them a "collaborator" on their own
+        # project in the People list.
+        redundant = (
+            and_(
+                ProjectGrant.principal_type == "team",
+                ProjectGrant.principal_id == team_id,
+            )
+            if team_id is not None
+            else and_(
+                ProjectGrant.principal_type == "user",
+                ProjectGrant.principal_id == new_owner_id,
+            )
+        )
+        db.query(ProjectGrant).filter(
+            ProjectGrant.project_id == project.id, redundant
+        ).delete(synchronize_session=False)
+        notify_access_changed(
+            db,
+            {old_owner_id, new_owner_id}
+            | team_member_ids(db, old_team_id)
+            | team_member_ids(db, team_id),
+            project_id=project.id,
+        )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if wanted is None:
+            raise
+        # Lost a race for the key in the destination namespace — the only
+        # unique constraint a move can trip.
+        raise ProjectKeyConflictError(
+            wanted, suggest_free_key(db, new_owner_id, wanted, team_id=team_id)
+        ) from exc
+    db.refresh(project)
+    return project
 
 
 # --- Project grants -----------------------------------------------------------

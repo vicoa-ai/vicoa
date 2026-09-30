@@ -107,6 +107,34 @@ def next_free_key(
         suffix += 1
 
 
+def key_is_taken(
+    db: Session, user_id: UUID, key: str, *, team_id: UUID | None = None
+) -> bool:
+    """Whether another project of this owner already holds `key`."""
+    return key.upper() in _taken_keys(db, user_id, team_id)
+
+
+def suggest_free_key(
+    db: Session, user_id: UUID, key: str, *, team_id: UUID | None = None
+) -> str:
+    """A free key that still reads like `key`: VIC → VIC2, VIC3 …
+
+    What a project moving into another owner's namespace is offered when its
+    own key is taken there (§3.5: "a key collision forces the user to pick a
+    new key"). Derived from the key rather than the name, because a key the
+    user already chose by hand is the thing they recognise.
+    """
+    taken = _taken_keys(db, user_id, team_id)
+    base = key.upper()
+    suffix = 2
+    while True:
+        tail = str(suffix)
+        candidate = f"{base[: MAX_KEY_LENGTH - len(tail)]}{tail}"
+        if candidate not in taken:
+            return candidate
+        suffix += 1
+
+
 def allocate_task_number(db: Session, project: Project) -> int:
     """Take the next number in `project`, bumping the counter atomically.
 

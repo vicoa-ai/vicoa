@@ -38,6 +38,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { agentsForProject, labelOwnerForProject, labelsForProject } from '@/lib/project-vocabulary';
 import type { Principal } from '@/lib/principals';
 import {
   AssigneePickerPill,
@@ -208,11 +209,16 @@ export default function TaskDetailPage() {
   const createLabelAndAttach = useCallback(
     async (name: string) => {
       if (!api || !task) return;
-      const label = await api.createTaskLabel({ name, color: '#6b7280' });
+      const project = projects.find((p) => p.id === task.project_id);
+      const label = await api.createTaskLabel({
+        name,
+        color: '#6b7280',
+        team_id: labelOwnerForProject(project),
+      });
       setLabels((prev) => [...prev, label]);
       await patchTask({ label_ids: [...task.labels.map((l) => l.id), label.id] });
     },
-    [api, task, patchTask],
+    [api, task, patchTask, projects],
   );
 
   const postComment = useCallback(
@@ -405,7 +411,10 @@ export default function TaskDetailPage() {
             <AssigneePickerPill
               assignee={task.assignee}
               viewer={viewer}
-              agentProfiles={agentProfiles}
+              agentProfiles={agentsForProject(
+                agentProfiles,
+                projects.find((p) => p.id === task.project_id),
+              )}
               onSelect={(next) =>
                 void patchTask({
                   assignee_type: next?.type ?? null,
@@ -484,7 +493,11 @@ export default function TaskDetailPage() {
 
           <RailGroup label="Labels">
             <LabelPickerPill
-              labels={labels}
+              labels={labelsForProject(
+                labels,
+                projects.find((p) => p.id === task.project_id),
+                task.labels,
+              )}
               selectedIds={task.labels.map((l) => l.id)}
               onToggle={(labelId) => {
                 const current = task.labels.map((l) => l.id);

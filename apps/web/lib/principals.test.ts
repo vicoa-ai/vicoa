@@ -35,10 +35,19 @@ describe('principalAvatarSrc', () => {
     expect(src).toBe('/api/users/u1/avatar');
   });
 
-  it('has no image for teams or agents yet (P1/P3)', () => {
+  it('routes a team picture through the teams proxy, cache-busted', () => {
     expect(
-      principalAvatarSrc({ type: 'team', id: 't1', avatarImageUri: '/api/v1/users/t1/avatar' }),
-    ).toBeNull();
+      principalAvatarSrc({
+        type: 'team',
+        id: 't1',
+        avatarImageUri: '/api/v1/teams/t1/avatar',
+        updatedAt: '2026-09-29T10:00:00Z',
+      }),
+    ).toBe('/api/teams/t1/avatar?v=2026-09-29T10%3A00%3A00Z');
+  });
+
+  it('draws no image for a team without one', () => {
+    expect(principalAvatarSrc({ type: 'team', id: 't1', avatarImageUri: null })).toBeNull();
   });
 });
 

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import useSWR from 'swr';
 import { Check, ExternalLink, Loader2 } from 'lucide-react';
+import { SeatsCard } from '@/components/billing/seats-card';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { getBackendAPI, type BillingSubscription } from '@/lib/backend-api';
@@ -132,7 +133,9 @@ export function BillingSettingsSection({
                 Pro Plan
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Your subscription is managed with Stripe.
+                {billingSubscription?.seat_quantity
+                  ? `Billed per seat, ${billingSubscription.seat_quantity} ${billingSubscription.seat_quantity === 1 ? 'seat' : 'seats'}. Managed with Stripe.`
+                  : 'Your subscription is managed with Stripe.'}
               </p>
             </div>
             <Button
@@ -175,6 +178,7 @@ export function BillingSettingsSection({
             </p>
           </div>
         )}
+        {!isBillingLoading && !billingFetchError && <SeatsCard className="mb-6" />}
       </CardContent>
     </Card>
   );

@@ -20,14 +20,26 @@
  * `/dashboard/agents/` (they predate this page); the old URLs are kept alive by
  * redirects in `next.config.ts`. This page owns the bare path only, and selects
  * a row through `?agent=<id>` rather than a sub-route, like `?automation=<id>`.
+ *
+ * Agents are yours or a team's (§3.6): every member can run a team's agents,
+ * its owner and admins create and edit them, so "New agent" offers the teams
+ * the caller administers.
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Bot, Loader2, Plus } from 'lucide-react';
+import useSWR from 'swr';
+import { Bot, ChevronDown, Loader2, Plus } from 'lucide-react';
 
 import { DesktopCollapsedLead } from '@/components/desktop/window-chrome';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import {
   Dialog,
   DialogContent,
@@ -41,9 +53,13 @@ import {
   defaultsFor,
   type AgentCatalog,
 } from '@/lib/agent-catalog';
+import { nextAgentName } from '@/lib/agent-owners';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
-import type { AgentProfile } from '@/lib/backend-api';
+import type { AgentProfile, TeamSummary } from '@/lib/backend-api';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
+import { isDesktopLocal } from '@/lib/runtime-config';
+import { canManageTeam } from '@/lib/team-settings';
+import { TEAMS_KEY } from '@/lib/use-team-invitations';
 import { AgentDetailPanel } from './components/agent-detail-panel';
 import { AgentList } from './components/agent-list';
 
@@ -71,6 +87,13 @@ function AgentsPageInner() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AgentProfile | null>(null);
+  const { data: teams } = useSWR<TeamSummary[]>(
+    api && !isDesktopLocal() ? TEAMS_KEY : null,
+    () => api!.listTeams(),
+    { shouldRetryOnError: false },
+  );
+  // Teams whose list the caller may add to (owner/admin).
+  const adminTeams = useMemo(() => (teams ?? []).filter((t) => canManageTeam(t.role)), [teams]);
 
   useEffect(() => {
     if (!api) return;
@@ -118,20 +141,18 @@ function AgentsPageInner() {
     [profiles, selectedId],
   );
 
-  const handleCreate = useCallback(async () => {
+  const handleCreate = useCallback(async (teamId: string | null = null) => {
     if (!api) return;
     setCreating(true);
     setError(null);
     try {
-      // Named "New agent 2", "New agent 3"… because the name is unique per user
-      // and a second unnamed create would otherwise 409.
-      const taken = new Set(profiles.map((p) => p.name.toLowerCase()));
-      let name = 'New agent';
-      for (let i = 2; taken.has(name.toLowerCase()); i += 1) name = `New agent ${i}`;
+      // Named "New agent 2", "New agent 3"… because the name is unique per
+      // owner and a second unnamed create would otherwise 409.
       const created = await api.createAgentProfile({
-        name,
+        name: nextAgentName(profiles, teamId),
         agent: 'claude',
         config: defaultsFor(catalog, 'claude') as unknown as Record<string, unknown>,
+        ...(teamId ? { team_id: teamId } : {}),
       });
       setProfiles((prev) => [...prev, created]);
       setSelectedId(created.id);
@@ -215,19 +236,62 @@ function AgentsPageInner() {
           <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
           <h1 className="shrink-0 text-sm font-medium">Agents</h1>
           <div style={NO_DRAG} className="ml-auto flex items-center gap-2">
-            <Button
-              size="sm"
-              className="h-7 gap-1 text-xs"
-              onClick={() => void handleCreate()}
-              disabled={!api || creating}
-            >
-              {creating ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Plus className="size-3.5" />
-              )}
-              New agent
-            </Button>
+            {adminTeams.length > 0 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" className="h-7 gap-1 text-xs" disabled={!api || creating}>
+                    {creating ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Plus className="size-3.5" />
+                    )}
+                    New agent
+                    <ChevronDown className="size-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56 font-mono">
+                  <DropdownMenuItem
+                    className="cursor-pointer text-xs"
+                    onSelect={() => void handleCreate(null)}
+                  >
+                    For yourself
+                  </DropdownMenuItem>
+                  {adminTeams.map((team) => (
+                    <DropdownMenuItem
+                      key={team.id}
+                      className="cursor-pointer gap-2 text-xs"
+                      onSelect={() => void handleCreate(team.id)}
+                    >
+                      <PrincipalAvatar
+                        principal={{
+                          type: 'team',
+                          id: team.id,
+                          name: team.name,
+                          avatarImageUri: team.avatar_image_uri,
+                          updatedAt: team.updated_at,
+                        }}
+                        size="xs"
+                      />
+                      <span className="truncate">For {team.name}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button
+                size="sm"
+                className="h-7 gap-1 text-xs"
+                onClick={() => void handleCreate()}
+                disabled={!api || creating}
+              >
+                {creating ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Plus className="size-3.5" />
+                )}
+                New agent
+              </Button>
+            )}
           </div>
         </div>
 
@@ -246,6 +310,7 @@ function AgentsPageInner() {
         ) : (
           <AgentList
             profiles={profiles}
+            teams={teams}
             catalog={catalog}
             selectedId={selectedId}
             onSelect={(p) => setSelectedId(p.id)}
@@ -269,6 +334,7 @@ function AgentsPageInner() {
               api={api}
               profile={selected}
               catalog={catalog}
+              teams={teams}
               onReplace={replace}
               onDelete={(p) => setDeleteTarget(p)}
               onClose={() => setSelectedId(null)}

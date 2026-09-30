@@ -223,8 +223,9 @@ def create_spawn_request_endpoint(
     # model/effort in the picker after choosing it.
     profile = None
     if request.agent_profile_id is not None:
+        # Personal or one of the caller's teams' agents (§3.6).
         profile = agent_profile_queries.get_agent_profile(
-            db, current_user.id, request.agent_profile_id
+            db, current_user.id, request.agent_profile_id, sharing=True
         )
         if profile is None:
             raise HTTPException(

@@ -25,6 +25,7 @@ from shared.database import AgentInstance, Automation, Message, Task
 from shared.database.enums import AgentStatus
 
 from .queries import _get_instance_message_stats
+from .task_queries import owned_task_filter
 
 # Snippet window: characters of context kept before/after the first hit.
 SNIPPET_BEFORE = 40
@@ -221,7 +222,7 @@ def search_tasks(db: Session, user_id: UUID, query: str, limit: int) -> list[dic
 
     tasks = (
         db.query(Task)
-        .filter(Task.user_id == user_id, or_(title_match, description_match))
+        .filter(owned_task_filter(user_id), or_(title_match, description_match))
         .order_by(rank, closed_rank, Task.updated_at.desc())
         .limit(limit)
         .all()

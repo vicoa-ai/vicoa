@@ -205,6 +205,10 @@ class Settings(BaseSettings):
     stripe_pro_monthly_price_id: str = ""
     stripe_pro_annual_price_id: str = ""
     stripe_pro_trial_days: int = 7
+    # Per-seat prices for team billing: one subscription item whose quantity is
+    # the number of seats bought. Unset ⇒ per-seat checkout is unavailable.
+    stripe_team_seat_monthly_price_id: str = ""
+    stripe_team_seat_annual_price_id: str = ""
 
     # RevenueCat Configuration
     revenuecat_secret_key: str = ""  # Your RevenueCat secret API key

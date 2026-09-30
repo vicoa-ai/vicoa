@@ -264,3 +264,56 @@ async def test_spawn_files_the_repo_root_as_the_recent_directory(
     row = test_db.get(Machine, machine.id)
     assert row is not None
     assert row.machine_metadata["recent_directories"] == ["~/scratch", "~/src/app"]
+
+
+def test_team_agent_resolves_for_active_members_only(test_db, bound_session, user):
+    """A spawn may use a team's agent while the spawner is an active member of
+    that team — and not a moment after, creator included."""
+    from shared.database import Team, TeamMember
+
+    teammate = User(
+        id=uuid4(),
+        email="teammate@example.com",
+        display_name="Teammate",
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    stranger = User(
+        id=uuid4(),
+        email="stranger@example.com",
+        display_name="Stranger",
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    team = Team(name="Crew", slug=f"crew-{uuid4().hex[:6]}")
+    test_db.add_all([teammate, stranger, team])
+    test_db.flush()
+    membership = TeamMember(
+        team_id=team.id, user_id=teammate.id, role="member", status="active"
+    )
+    creator = TeamMember(
+        team_id=team.id, user_id=user.id, role="owner", status="active"
+    )
+    test_db.add_all([membership, creator])
+    team_agent = AgentProfile(
+        id=uuid4(),
+        user_id=user.id,
+        team_id=team.id,
+        name="Team reviewer",
+        agent="claude",
+        system_prompt="Team rules.",
+    )
+    test_db.add(team_agent)
+    test_db.commit()
+
+    resolve = queries_module.resolve_spawn_agent_profile
+    resolved = resolve(str(teammate.id), str(team_agent.id))
+    assert resolved is not None and resolved["system_prompt"] == "Team rules."
+    assert resolve(str(stranger.id), str(team_agent.id)) is None
+
+    membership.status = "removed"
+    creator.status = "removed"
+    test_db.commit()
+    assert resolve(str(teammate.id), str(team_agent.id)) is None
+    # The creator's user_id is still on the row; membership is what counts.
+    assert resolve(str(user.id), str(team_agent.id)) is None

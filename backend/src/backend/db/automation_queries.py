@@ -11,9 +11,12 @@ manual "run now" path — and by the server scheduler directly.
 from datetime import datetime, timezone as dt_timezone
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from shared.agent_profile_resolution import usable_profile_filter
 from shared.database import AgentInstance, Automation, AutomationRun, Machine
+from shared.database.agent_profile_models import AgentProfile
 from shared.scheduling import compute_next_run, is_valid_frequency
 
 # Schedule-DEFINING fields that, when changed, force a `next_run_at` recompute
@@ -37,6 +40,23 @@ class MachineNotFoundError(Exception):
 
 class InvalidScheduleError(Exception):
     """Raised when the schedule fields are inconsistent (400)."""
+
+
+class AgentProfileNotFoundError(Exception):
+    """The referenced agent isn't one the automation's owner may run."""
+
+
+def _require_usable_profile(db: Session, user_id: UUID, profile_id: UUID) -> None:
+    """An automation may only reference an agent its owner can run — their
+    own, or one of their teams' (§3.6). The dispatcher re-checks at every run
+    (a membership can end); this is the up-front refusal."""
+    found = db.execute(
+        select(AgentProfile.id).where(
+            AgentProfile.id == profile_id, usable_profile_filter(user_id)
+        )
+    ).first()
+    if found is None:
+        raise AgentProfileNotFoundError("Agent not found")
 
 
 class AutomationNotFoundError(Exception):
@@ -116,6 +136,8 @@ def create_automation(
 ) -> Automation:
     if _get_machine(db, user_id, machine_id) is None:
         raise MachineNotFoundError("Machine not found")
+    if agent_profile_id is not None:
+        _require_usable_profile(db, user_id, agent_profile_id)
 
     # Anchor interval schedules ("every N …") to creation time.
     anchor_at = datetime.now(dt_timezone.utc)
@@ -165,6 +187,8 @@ def update_automation(
         if _get_machine(db, user_id, machine_id) is None:
             raise MachineNotFoundError("Machine not found")
         automation.machine_id = machine_id
+    if fields.get("agent_profile_id") is not None:
+        _require_usable_profile(db, user_id, fields["agent_profile_id"])
 
     # Decide whether to recompute BEFORE popping run_at, so a PATCH that sends
     # only run_at still triggers it.

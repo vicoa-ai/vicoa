@@ -46,6 +46,13 @@ export interface UserProfile {
  */
 export interface AgentProfile {
   id: string;
+  /** NULL ⇒ the caller's own; set ⇒ a team's agent, which every member of
+   *  that team can run. */
+  team_id?: string | null;
+  /** Whether the caller may edit, archive or delete it: always for their
+   *  own, only the team's owner and admins for a team's. Absent (older
+   *  backends) means their own. */
+  can_edit?: boolean;
   name: string;
   description: string | null;
   avatar_image_uri: string | null;
@@ -82,6 +89,8 @@ export interface AgentProfileInput {
   default_project_id?: string | null;
   position?: number;
   is_archived?: boolean;
+  /** Create in (or move to) a team's list; `null` moves it back to yours. */
+  team_id?: string | null;
 }
 
 /** The avatar endpoints' payload. Deliberately carries no email — an avatar is
@@ -418,6 +427,41 @@ export interface BillingSubscription {
   current_period_end: string | null;
   cancel_at_period_end: boolean;
   provider: 'stripe' | 'apple' | 'google' | null;
+  /** Seats bought on the per-seat plan; null on a fixed-seat plan. */
+  seat_quantity?: number | null;
+}
+
+/** One per-seat price as Stripe has it (minor units). */
+export interface SeatPrice {
+  unit_amount: number;
+  currency: string;
+}
+
+/**
+ * The caller's seats as a payer (collaboration §6): everyone their
+ * subscription covers — themselves, members of teams they own, outside
+ * editors on their work. `over` = more in use than the plan includes: nobody
+ * loses access, but nobody new can be added until seats are bought.
+ * Only the hosted build serves this; elsewhere the call 404s.
+ */
+export interface BillingSeats {
+  used: number;
+  /** null ⇒ unlimited. */
+  included: number | null;
+  over: boolean;
+  plan_type: string;
+  provider: 'stripe' | 'apple' | 'google' | null;
+  /** Seats bought on the per-seat plan; null on a fixed-seat plan. */
+  purchased: number | null;
+  billing_interval: BillingInterval | null;
+  per_seat_available: boolean;
+  prices: { monthly: SeatPrice | null; annual: SeatPrice | null } | null;
+}
+
+export interface ChangeBillingSeatsResponse {
+  status: 'checkout' | 'updated';
+  checkout_url: string | null;
+  seats: BillingSeats | null;
 }
 
 export interface BillingUsage {
@@ -511,6 +555,12 @@ export interface ProjectResponse {
    * "Shared with me" only. Absent from an older backend: read as not followed.
    */
   followed?: boolean;
+  /**
+   * The caller is on the team that owns this project: it is their team's
+   * work, always in their own list, reached through the team. Not a share
+   * they can stop following or leave. Absent from an older backend: false.
+   */
+  is_team_member?: boolean;
 }
 
 /** Echo of `setProjectOrder`: the ids actually stored, in order. */
@@ -546,6 +596,8 @@ export interface TaskLabelResponse {
   name: string;
   /** Always #rrggbb — the backend pins the format (chips inline-style it). */
   color: string;
+  /** NULL ⇒ the caller's own vocabulary; set ⇒ that team's. */
+  team_id?: string | null;
 }
 
 /** A user, a team or an agent, in the one shape `<PrincipalAvatar>` renders. */
@@ -801,6 +853,8 @@ export interface UpdateTaskRequest {
 export interface CreateTaskLabelRequest {
   name: string;
   color: string;
+  /** Create in a team's vocabulary (needs membership) instead of your own. */
+  team_id?: string | null;
 }
 
 // --- Automations (scheduled agent runs) -----------------------------------
@@ -1208,12 +1262,19 @@ export interface BackendApiError extends Error {
   status: number;
   capability?: string;
   requiredRole?: string;
+  /** A machine-readable reason some 4xx answers carry (e.g.
+   *  `project_key_taken` on a project move). */
+  code?: string;
+  /** With `code: 'project_key_taken'`: a key that is free at the destination. */
+  suggestedKey?: string;
 }
 
 async function backendApiError(response: Response): Promise<BackendApiError> {
   let errorMessage = `Backend API error: ${response.status} ${response.statusText}`;
   let capability: string | undefined;
   let requiredRole: string | undefined;
+  let code: string | undefined;
+  let suggestedKey: string | undefined;
   try {
     const errorBody = await response.json();
     if (typeof errorBody?.detail === 'string' && errorBody.detail.trim()) {
@@ -1221,6 +1282,8 @@ async function backendApiError(response: Response): Promise<BackendApiError> {
     }
     if (typeof errorBody?.capability === 'string') capability = errorBody.capability;
     if (typeof errorBody?.required_role === 'string') requiredRole = errorBody.required_role;
+    if (typeof errorBody?.code === 'string') code = errorBody.code;
+    if (typeof errorBody?.suggested_key === 'string') suggestedKey = errorBody.suggested_key;
   } catch {
     // Ignore JSON parse failures and fall back to the generic HTTP error.
   }
@@ -1228,6 +1291,8 @@ async function backendApiError(response: Response): Promise<BackendApiError> {
     status: response.status,
     capability,
     requiredRole,
+    code,
+    suggestedKey,
   });
 }
 
@@ -1797,6 +1862,25 @@ class BackendAPI {
     });
   }
 
+  /** The caller's seats as a payer. Hosted build only — 404 elsewhere. */
+  async getBillingSeats(): Promise<BillingSeats> {
+    return this.request<BillingSeats>('/api/v1/billing/seats');
+  }
+
+  /** Start per-seat billing (returns a Checkout URL) or change the seats on
+   *  the Stripe subscription already in place (prorated, `status: updated`). */
+  async changeBillingSeats(data: {
+    quantity: number;
+    billing_interval: BillingInterval;
+    success_url: string;
+    cancel_url: string;
+  }): Promise<ChangeBillingSeatsResponse> {
+    return this.request<ChangeBillingSeatsResponse>('/api/v1/billing/seats', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   // Support
   async reportIssue(data: { message: string }): Promise<{ status: string }> {
     return this.request<{ status: string }>('/api/v1/support/report-issue', {
@@ -1876,6 +1960,22 @@ class BackendAPI {
   async updateProject(projectId: string, data: UpdateProjectRequest): Promise<ProjectResponse> {
     return this.request<ProjectResponse>(`/api/v1/projects/${projectId}`, {
       method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  /**
+   * Move a project into a team (`team_id`), or out of one into the caller's
+   * personal space (`team_id: null`). Owner only. A 409 with
+   * `code === 'project_key_taken'` means its task key is already used there;
+   * resend with `key` (the error's `suggestedKey` is a free one).
+   */
+  async transferProject(
+    projectId: string,
+    data: { team_id: string | null; key?: string },
+  ): Promise<ProjectResponse> {
+    return this.request<ProjectResponse>(`/api/v1/projects/${projectId}/transfer`, {
+      method: 'POST',
       body: JSON.stringify(data),
     });
   }
@@ -2237,6 +2337,35 @@ class BackendAPI {
 
   async deleteTeam(teamId: string): Promise<void> {
     return this.requestVoid(`/api/v1/teams/${teamId}`, { method: 'DELETE' });
+  }
+
+  /** Set the team's picture (owner/admin; multipart). */
+  async uploadTeamAvatar(teamId: string, file: File | Blob): Promise<TeamSummary> {
+    const headers = await this.getHeaders();
+    // Let the browser set the multipart boundary; a fixed JSON type breaks it.
+    delete headers['Content-Type'];
+    const form = new FormData();
+    form.append('file', file);
+    const response = await fetch(`${this.config.baseUrl}/api/v1/teams/${teamId}/avatar`, {
+      method: 'PUT',
+      headers,
+      body: form,
+    });
+    if (!response.ok) throw await backendApiError(response);
+    return response.json();
+  }
+
+  async deleteTeamAvatar(teamId: string): Promise<TeamSummary> {
+    return this.request<TeamSummary>(`/api/v1/teams/${teamId}/avatar`, { method: 'DELETE' });
+  }
+
+  /** Hand the team to another active member (owner only); you stay on as
+   *  an admin. The new owner pays for its seats, so this can 402. */
+  async transferTeamOwnership(teamId: string, memberId: string): Promise<TeamDetail> {
+    return this.request<TeamDetail>(`/api/v1/teams/${teamId}/transfer`, {
+      method: 'POST',
+      body: JSON.stringify({ member_id: memberId }),
+    });
   }
 
   /** Email invites waiting on the caller. Also attaches any project grants

@@ -382,9 +382,13 @@ function TasksPageInner() {
   // Inline label creation from the picker; color derives from the name
   // (multica INLINE_COLORS) so the same name always gets the same color.
   const createLabel = useCallback(
-    async (name: string): Promise<TaskLabelResponse> => {
+    async (name: string, teamId: string | null = null): Promise<TaskLabelResponse> => {
       if (!api) throw new Error('API not ready');
-      const label = await api.createTaskLabel({ name, color: inlineLabelColor(name) });
+      const label = await api.createTaskLabel({
+        name,
+        color: inlineLabelColor(name),
+        team_id: teamId,
+      });
       setLabels((prev) => [...prev, label].sort((a, b) => a.name.localeCompare(b.name)));
       return label;
     },

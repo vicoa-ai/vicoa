@@ -150,6 +150,11 @@ def team_role(db: Session, user_id: UUID, team_id: UUID) -> str | None:
     return row[0] if row else None
 
 
+def team_roles(db: Session, user_id: UUID) -> dict[UUID, str]:
+    """{team_id: role} for every team `user_id` is an active member of."""
+    return _active_team_roles(db, user_id)
+
+
 def _active_team_roles(db: Session, user_id: UUID) -> dict[UUID, str]:
     rows = db.execute(
         select(TeamMember.team_id, TeamMember.role).where(

@@ -35,9 +35,16 @@ export function isSharedProject(project: ProjectResponse): boolean {
   return project.owner != null && !project.is_archived;
 }
 
-/** A shared project the user follows into their own list (`followed`). */
+/** A shared project the user follows into their own list (`followed`). A
+ *  project of a team they are on is not one: it is in their list because it
+ *  is their team's, and there is no share to unfollow or leave. */
 export function isFollowedSharedProject(project: ProjectResponse): boolean {
-  return isSharedProject(project) && project.followed === true;
+  return isSharedProject(project) && project.followed === true && !project.is_team_member;
+}
+
+/** A project owned by a team the user is on — listed as their own work. */
+export function isOwnTeamProject(project: ProjectResponse): boolean {
+  return project.is_team_member === true && !project.is_archived;
 }
 
 /**
@@ -58,7 +65,7 @@ export function groupSharedWithMe(
   // Projects the sidebar lists as the user's own; their sessions sit there.
   const listed = new Set<string>();
   for (const project of projects) {
-    if (!project.owner) {
+    if (!project.owner || project.is_team_member) {
       listed.add(project.id);
       continue;
     }

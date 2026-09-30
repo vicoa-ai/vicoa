@@ -457,6 +457,17 @@ ENDPOINTS: list[Endpoint] = [
             f"/api/v1/projects/{w.project.id}", json={"name": "Renamed"}
         ),
     ),
+    # Moving a project between owners ends the current owner's hold on it,
+    # like deleting it. `team_id: null` = into the caller's personal space: a
+    # no-op for the personal owner, a real move for a team's owner.
+    Endpoint(
+        "POST /projects/{id}/transfer",
+        "project",
+        "owner",
+        lambda c, w: c.post(
+            f"/api/v1/projects/{w.project.id}/transfer", json={"team_id": None}
+        ),
+    ),
     Endpoint(
         "GET /projects/{id}/summary",
         "project",
@@ -907,6 +918,7 @@ def test_every_dashboard_route_is_in_the_matrix_or_owner_only():
         "/projects/{project_id}/icon": "/projects/{id}/icon",
         "/projects/{project_id}/summary": "/projects/{id}/summary",
         "/projects/{project_id}/follow": "/projects/{id}/follow",
+        "/projects/{project_id}/transfer": "/projects/{id}/transfer",
         "/tasks/{task_id}": "/tasks/{id}",
         "/tasks/{task_id}/sessions": "/tasks/{id}/sessions",
         "/tasks/{task_id}/timeline": "/tasks/{id}/timeline",

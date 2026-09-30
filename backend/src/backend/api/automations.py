@@ -19,6 +19,7 @@ from shared.database.session import get_db
 from ..auth.dependencies import get_current_user
 from ..db import automation_queries
 from ..db.automation_queries import (
+    AgentProfileNotFoundError,
     AutomationNotFoundError,
     InvalidScheduleError,
     MachineNotFoundError,
@@ -70,7 +71,7 @@ def create_automation_endpoint(
             run_at=request.run_at,
             enabled=request.enabled,
         )
-    except MachineNotFoundError as exc:
+    except (MachineNotFoundError, AgentProfileNotFoundError) as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
@@ -107,7 +108,7 @@ def update_automation_endpoint(
         automation = automation_queries.update_automation(
             db, current_user.id, automation_id, fields
         )
-    except MachineNotFoundError as exc:
+    except (MachineNotFoundError, AgentProfileNotFoundError) as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc

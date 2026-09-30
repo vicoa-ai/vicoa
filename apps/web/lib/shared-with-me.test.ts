@@ -76,6 +76,20 @@ describe('groupSharedWithMe', () => {
     expect(groups.map((g) => g.key)).toEqual(['board']);
   });
 
+  it("lists a team's project you are on as your own, not as shared", () => {
+    const groups = groupSharedWithMe(
+      [session('s1', 'crew')],
+      [
+        project('crew', {
+          owner: { type: 'team', id: 't1', name: 'Crew', avatar_image_uri: null, emoji: null, updated_at: null },
+          followed: true,
+          is_team_member: true,
+        }),
+      ],
+    );
+    expect(groups).toEqual([]);
+  });
+
   it('gathers sessions shared on their own under their owner', () => {
     const bo: PrincipalResponse = { ...ada, id: 'bo', name: 'Bo' };
     const groups = groupSharedWithMe(
@@ -116,6 +130,10 @@ describe('sidebar membership of shared projects', () => {
     expect(isFollowedSharedProject(project('p'))).toBe(false);
     // Your own project is not "added" — it is simply yours.
     expect(isFollowedSharedProject(project('p', { owner: null, followed: true }))).toBe(false);
+    // A project of a team you are on is your team's work, not a share.
+    expect(
+      isFollowedSharedProject(project('p', { followed: true, is_team_member: true })),
+    ).toBe(false);
   });
 
   it('can be added only with the sessions scope', () => {

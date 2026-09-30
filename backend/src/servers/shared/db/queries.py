@@ -24,6 +24,7 @@ from shared.websocket import (
     build_machine_update,
     build_new_message_update,
 )
+from shared.agent_profile_resolution import usable_profile_filter
 from shared.database.agent_profile_models import AgentProfile
 from shared.database.session import SessionLocal
 from shared.database.utils import sanitize_git_diff
@@ -1019,14 +1020,15 @@ def create_user_message(
 
 
 def resolve_spawn_agent_profile(user_id: str, agent_profile_id: str) -> dict | None:
-    """Load an agent profile for a spawn, scoped to its owner.
+    """Load an agent profile for a spawn, scoped to who may run it.
 
     Returns ``{"id", "agent", "system_prompt"}`` or ``None`` when the id is
-    unknown, malformed, archived, or belongs to someone else. The user scope is
-    the point: a ``system_prompt`` is text injected into the agent process, so
-    resolving it server-side from an id — rather than trusting instructions sent
-    in the spawn metadata — is what keeps one user's profile out of another's
-    session.
+    unknown, malformed, archived, or not usable by this user — neither their
+    own personal profile nor an agent of a team they are an active member of
+    (``usable_profile_filter``). The scope is the point: a ``system_prompt`` is
+    text injected into the agent process, so resolving it server-side from an
+    id — rather than trusting instructions sent in the spawn metadata — is what
+    keeps anyone else's profile out of this user's session.
     """
     try:
         owner_uuid = UUID(user_id)
@@ -1038,7 +1040,7 @@ def resolve_spawn_agent_profile(user_id: str, agent_profile_id: str) -> dict | N
             db.query(AgentProfile)
             .filter(
                 AgentProfile.id == profile_uuid,
-                AgentProfile.user_id == owner_uuid,
+                usable_profile_filter(owner_uuid),
                 AgentProfile.is_archived.is_(False),
             )
             .first()

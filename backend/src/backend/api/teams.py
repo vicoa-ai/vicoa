@@ -13,13 +13,25 @@ authenticated, and fails identically for unknown / revoked / expired /
 exhausted tokens.
 """
 
+import logging
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    UploadFile,
+    status,
+)
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
+from shared import storage
 from shared.database import Team, TeamInvite, TeamMember, User
 from shared.database.session import get_db
+from shared.images import InvalidImageError, process_image
 
 from ..auth.dependencies import get_current_user
 from ..db import collab_queries
@@ -41,9 +53,12 @@ from ..models import (
     TeamMemberInviteResponse,
     TeamMemberResponse,
     TeamMemberRoleUpdateRequest,
+    TeamOwnershipTransferRequest,
     TeamSummary,
     TeamUpdateRequest,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 invite_router = APIRouter(prefix="/team-invites", tags=["teams"])
@@ -52,6 +67,16 @@ invite_router = APIRouter(prefix="/team-invites", tags=["teams"])
 # with Accept / Decline. Not a capability — it only shows an invitation to the
 # account that holds the invited address.
 TEAM_INVITATIONS_PATH = "/dashboard/settings?tab=teams"
+
+# Same bound and served types as user / agent avatars (backend/api/users.py is
+# the reference implementation, §3.1 as-built).
+MAX_AVATAR_UPLOAD_BYTES = 8 * 1024 * 1024
+_INLINE_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+
+def avatar_served_url(team_id: UUID | str) -> str:
+    """Backend-relative URL clients render (stored in ``avatar_image_uri``)."""
+    return f"/api/v1/teams/{team_id}/avatar"
 
 
 # --- serializers --------------------------------------------------------------
@@ -68,6 +93,11 @@ def _summary(team: Team, role: str, member_count: int) -> TeamSummary:
         created_at=team.created_at,
         updated_at=team.updated_at,
     )
+
+
+def _summary_for(db: Session, user_id: UUID, team: Team) -> TeamSummary:
+    _, membership = collab_queries.require_team(db, user_id, team.id)
+    return _summary(team, membership.role, len(collab_queries.list_members(db, team)))
 
 
 def _member(member: TeamMember, *, show_email: bool) -> TeamMemberResponse:
@@ -221,10 +251,143 @@ def delete_team_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
+    team = db.get(Team, team_id)
+    had_avatar = team is not None and bool(team.avatar_image_uri)
     try:
         collab_queries.delete_team(db, current_user.id, team_id)
     except (TeamNotFoundError, TeamPermissionError) as exc:
         raise _team_error(exc) from exc
+    if had_avatar:
+        _delete_avatar_object(team_id)
+
+
+@router.post("/{team_id}/transfer", response_model=TeamDetailResponse)
+def transfer_team_endpoint(
+    team_id: UUID,
+    request: TeamOwnershipTransferRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TeamDetailResponse:
+    """Make another active member the owner (owner only). The owner is who
+    pays for the team's seats (D-C), so the new owner's plan is asked first —
+    a 402 leaves the team as it was."""
+    try:
+        collab_queries.transfer_team_ownership(
+            db, current_user.id, team_id, request.member_id
+        )
+        team, membership = collab_queries.require_team(db, current_user.id, team_id)
+    except (TeamNotFoundError, TeamPermissionError, TeamConflictError) as exc:
+        raise _team_error(exc) from exc
+    return _detail(db, team, membership)
+
+
+# --- avatar -------------------------------------------------------------------
+
+
+def _delete_avatar_object(team_id: UUID) -> None:
+    try:
+        storage.delete_object(storage.team_avatar_key(str(team_id)))
+    except Exception:
+        # An orphaned S3 object is harmless; never fail the request on it.
+        logger.warning("team avatar S3 delete failed for %s", team_id)
+
+
+@router.put("/{team_id}/avatar", response_model=TeamSummary)
+def upload_team_avatar_endpoint(
+    team_id: UUID,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TeamSummary:
+    """Set the team's picture (owner/admin). Validated and re-encoded by
+    ``process_image``, stored under ``team-avatars/{team_id}``."""
+    try:
+        collab_queries.require_team(db, current_user.id, team_id, minimum="admin")
+    except (TeamNotFoundError, TeamPermissionError) as exc:
+        raise _team_error(exc) from exc
+    raw = file.file.read(MAX_AVATAR_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_AVATAR_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Image exceeds {MAX_AVATAR_UPLOAD_BYTES // (1024 * 1024)}MB limit",
+        )
+    if not raw:
+        raise HTTPException(status_code=400, detail="File is empty")
+    try:
+        processed = process_image(raw)
+    except InvalidImageError as exc:
+        raise HTTPException(
+            status_code=400, detail="Not a valid image in a supported format"
+        ) from exc
+    try:
+        storage.upload_attachment(
+            storage.team_avatar_key(str(team_id)),
+            processed.data,
+            processed.mime_type,
+        )
+    except Exception as exc:
+        logger.exception("team avatar upload to S3 failed")
+        raise HTTPException(status_code=502, detail="Failed to store image") from exc
+    team = collab_queries.set_team_avatar(
+        db, current_user.id, team_id, avatar_image_uri=avatar_served_url(team_id)
+    )
+    return _summary_for(db, current_user.id, team)
+
+
+@router.delete("/{team_id}/avatar", response_model=TeamSummary)
+def delete_team_avatar_endpoint(
+    team_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TeamSummary:
+    """Back to the generated initial (owner/admin)."""
+    try:
+        team = collab_queries.set_team_avatar(
+            db, current_user.id, team_id, avatar_image_uri=None
+        )
+    except (TeamNotFoundError, TeamPermissionError) as exc:
+        raise _team_error(exc) from exc
+    _delete_avatar_object(team_id)
+    return _summary_for(db, current_user.id, team)
+
+
+@router.get("/{team_id}/avatar")
+def get_team_avatar_endpoint(
+    team_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Serve the team's picture.
+
+    Authenticated but not membership-scoped, like ``GET /users/{id}/avatar``:
+    a team's picture is exactly what the surfaces that name it to outsiders
+    show — the owner badge on a project shared with you, an invitation, a
+    join-link preview — and the id has to be known already to ask."""
+    del current_user
+    team = db.get(Team, team_id)
+    if team is None or not team.avatar_image_uri:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Avatar not found"
+        )
+    try:
+        data, content_type = storage.download_object(
+            storage.team_avatar_key(str(team_id))
+        )
+    except Exception as exc:
+        logger.exception("team avatar download from S3 failed")
+        raise HTTPException(status_code=502, detail="Failed to fetch image") from exc
+    if content_type not in _INLINE_IMAGE_TYPES:
+        content_type = "application/octet-stream"
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            # The URL is stable across replacements; clients cache-bust on the
+            # team's updated_at.
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 # --- members ------------------------------------------------------------------

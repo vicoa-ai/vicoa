@@ -54,7 +54,10 @@ import { NewSessionButton } from '@/components/dashboard/new-session-button';
 import { WorktreeSubGroupHeader } from '@/components/dashboard/worktree-sub-group-header';
 import type { AgentInstanceResponse, ProjectResponse } from '@/lib/backend-api';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
-import { projectSettingsHref as settingsHrefForProject } from '@/lib/project-settings-route';
+import {
+  PROJECTS_CHANGED_EVENT,
+  projectSettingsHref as settingsHrefForProject,
+} from '@/lib/project-settings-route';
 import {
   formatSidebarTime,
   getSessionTitle,
@@ -102,7 +105,7 @@ import {
   SidebarSharedWithMe,
 } from '@/components/dashboard/sidebar-shared-with-me';
 import { useSharedSessions, useWatchInstances } from '@/lib/hooks/use-shared-sessions';
-import { isFollowedSharedProject } from '@/lib/shared-with-me';
+import { isFollowedSharedProject, isOwnTeamProject } from '@/lib/shared-with-me';
 import {
   TEAM_EXPANDED_STORAGE_KEY,
   teamRowLabel,
@@ -540,11 +543,17 @@ export function SidebarSessions({
     // reloads the picture.
   }, [refreshProjects, linkedProjectIds, pathname]);
 
-  // Also refresh when the window/tab regains focus (edited in another tab/window).
+  // Also refresh when the window/tab regains focus (edited in another tab/window),
+  // and when Settings changes a project in place (a move into a team swaps its
+  // owner badge without any route change).
   useEffect(() => {
     const onFocus = () => refreshProjects();
     window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+    window.addEventListener(PROJECTS_CHANGED_EVENT, onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener(PROJECTS_CHANGED_EVENT, onFocus);
+    };
   }, [refreshProjects]);
 
   // Other people's sessions this user can see. One fetch feeds both
@@ -972,8 +981,10 @@ export function SidebarSessions({
         const isDraggableProject =
           groupBy === 'project' && key !== 'PINNED' && label !== null;
         // Someone else's project: its folder is on their machine, so there is
-        // nowhere here to start a session in.
-        const foreignProject = groupBy === 'project' && !!projectsById.get(key)?.owner;
+        // nowhere here to start a session in. A project of the user's own team
+        // is theirs to work in: each member has their own checkout.
+        const dbProject = groupBy === 'project' ? projectsById.get(key) : undefined;
+        const foreignProject = !!dbProject?.owner && !isOwnTeamProject(dbProject);
         const flatDirectory =
           isDraggableProject && !foreignProject ? instances[0]?.project ?? null : null;
         const notSplit = {

@@ -7,8 +7,9 @@
  *
  * Two views, both addressed by the URL so they survive a reload and
  * back/forward: `?tab=teams` is the list (invitations waiting on you, your
- * teams, a new-team field) and `?tab=teams&teamId=<id>` is one team (name,
- * invites, members, invite links, and leave/delete).
+ * teams, a new-team field) and `?tab=teams&teamId=<id>` is one team: its
+ * name and picture, members, what it owns (projects, agents, labels), invite
+ * links, the seats it takes on the owner's plan, and leave/delete.
  *
  * A team is a group of people you share projects and sessions with. It is not
  * a workspace: nothing here switches or scopes the rest of the app.
@@ -28,13 +29,22 @@ import {
   LogOut,
   MoreHorizontal,
   Plus,
+  Crown,
   Trash2,
   UserCog,
   UserMinus,
 } from 'lucide-react';
 
+import { BILLING_SEATS_KEY } from '@/components/billing/seats-card';
 import { SeatLimitNotice } from '@/components/billing/seat-limit-notice';
+import { AvatarEditor } from '@/components/dashboard/avatar-editor';
 import { ConfirmDeleteDialog } from '@/components/dashboard/session-dialogs';
+import {
+  TeamAgentsSection,
+  TeamLabelsSection,
+  TeamProjectsSection,
+  TeamSeatsSection,
+} from '@/components/dashboard/team-work-sections';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -105,8 +115,19 @@ const inviteLinksKey = (teamId: string) => ['team-invite-links', teamId] as cons
 const SELECT_TRIGGER =
   'h-9 cursor-pointer text-xs focus:ring-0 focus:ring-offset-0 focus-visible:ring-2 focus-visible:ring-ring';
 
-function teamPrincipal(team: { id: string; name: string; avatar_image_uri: string | null }): Principal {
-  return { type: 'team', id: team.id, name: team.name, avatarImageUri: team.avatar_image_uri };
+function teamPrincipal(team: {
+  id: string;
+  name: string;
+  avatar_image_uri: string | null;
+  updated_at?: string;
+}): Principal {
+  return {
+    type: 'team',
+    id: team.id,
+    name: team.name,
+    avatarImageUri: team.avatar_image_uri,
+    updatedAt: team.updated_at,
+  };
 }
 
 function memberPrincipal(member: TeamMember): Principal {
@@ -421,6 +442,7 @@ function InvitationRow({
 
 type PendingConfirm =
   | { kind: 'remove'; member: TeamMember }
+  | { kind: 'transfer'; member: TeamMember }
   | { kind: 'leave' }
   | { kind: 'delete' }
   | { kind: 'revoke-link'; link: TeamInviteLink };
@@ -531,6 +553,12 @@ function TeamDetailView({ teamId }: { teamId: string }) {
         setMembersError(null);
         await api.removeTeamMember(teamId, confirm.member.id);
         await refreshTeam();
+      } else if (confirm.kind === 'transfer') {
+        setMembersError(null);
+        await api.transferTeamOwnership(teamId, confirm.member.id);
+        await refreshTeam();
+        // The payer changed, so whose seats these are did too.
+        void globalMutate(BILLING_SEATS_KEY);
       } else if (confirm.kind === 'leave') {
         setDangerError(null);
         if (!myMember) throw new Error("Couldn't find your membership. Reload and try again.");
@@ -547,6 +575,8 @@ function TeamDetailView({ teamId }: { teamId: string }) {
       }
     } catch (err) {
       if (confirm.kind === 'remove') setMembersError(toTeamActionError(err, 'Failed to remove the member'));
+      else if (confirm.kind === 'transfer')
+        setMembersError(toTeamActionError(err, 'Failed to transfer the team'));
       else if (confirm.kind === 'leave') setDangerError(toTeamActionError(err, 'Failed to leave the team'));
       else if (confirm.kind === 'delete') setDangerError(toTeamActionError(err, 'Failed to delete the team'));
       else setLinksActionError(toTeamActionError(err, 'Failed to revoke the link'));
@@ -561,6 +591,10 @@ function TeamDetailView({ teamId }: { teamId: string }) {
         member={member}
         actions={actions}
         onChangeRole={(role) => void changeRole(member, role)}
+        onMakeOwner={() => {
+          setMembersError(null);
+          setConfirm({ kind: 'transfer', member });
+        }}
         onRemove={() => {
           setMembersError(null);
           setDangerError(null);
@@ -583,7 +617,7 @@ function TeamDetailView({ teamId }: { teamId: string }) {
     <section>
       {backLink}
 
-      <TeamHeader team={team} canRename={canManage} onRenamed={refreshTeam} />
+      <TeamHeader team={team} canEdit={canManage} onChanged={refreshTeam} />
 
       {canManage && (
         <div className="mt-8">
@@ -608,6 +642,10 @@ function TeamDetailView({ teamId }: { teamId: string }) {
         <ActionError error={membersError} className="mt-2" />
       </div>
 
+      <TeamProjectsSection team={team} />
+      <TeamAgentsSection team={team} />
+      <TeamLabelsSection team={team} />
+
       {canManage && (
         <div className="mt-8">
           <SectionHeading>Invite links</SectionHeading>
@@ -623,13 +661,15 @@ function TeamDetailView({ teamId }: { teamId: string }) {
         </div>
       )}
 
+      <TeamSeatsSection team={team} />
+
       <div className="mt-8">
         <SectionHeading>Danger zone</SectionHeading>
         <SectionCard>
           {isOwner ? (
             <DangerRow
               title="Delete team"
-              description="Its projects move back to their creators' personal space, and anyone who had access through this team loses it."
+              description="Its projects, agents and labels move back to whoever created them, and anyone who had access through this team loses it."
               action="Delete team…"
               onClick={() => {
                 setDangerError(null);
@@ -659,7 +699,7 @@ function TeamDetailView({ teamId }: { teamId: string }) {
         description={dialog.description}
         confirmLabel={dialog.confirmLabel}
         subject={
-          confirm?.kind === 'remove' ? (
+          confirm?.kind === 'remove' || confirm?.kind === 'transfer' ? (
             <div className="flex items-center gap-2 text-sm">
               <PrincipalAvatar principal={memberPrincipal(confirm.member)} size="sm" />
               <span className="truncate">{memberDisplayName(confirm.member)}</span>
@@ -695,6 +735,12 @@ function confirmDialogCopy(
             description: `${memberDisplayName(confirm.member)} will lose access to everything shared with ${teamName}.`,
             confirmLabel: 'Remove',
           };
+    case 'transfer':
+      return {
+        title: 'Make owner',
+        description: `${memberDisplayName(confirm.member)} becomes the owner of ${teamName} and pays for its seats from then on. You stay on as an admin, and only they can make you owner again.`,
+        confirmLabel: 'Make owner',
+      };
     case 'leave':
       return {
         title: 'Leave team',
@@ -705,7 +751,7 @@ function confirmDialogCopy(
       return {
         title: 'Delete team',
         description:
-          "The team's projects move back to their creators' personal space, and anyone who had access through this team loses it. This can't be undone.",
+          "The team's projects, agents and labels move back to whoever created them, and anyone who had access through this team loses it. This can't be undone.",
         confirmLabel: 'Delete team',
       };
     case 'revoke-link':
@@ -721,12 +767,13 @@ function confirmDialogCopy(
 
 function TeamHeader({
   team,
-  canRename,
-  onRenamed,
+  canEdit,
+  onChanged,
 }: {
   team: TeamDetail;
-  canRename: boolean;
-  onRenamed: () => Promise<void>;
+  /** Owner/admin: rename and change the picture. */
+  canEdit: boolean;
+  onChanged: () => Promise<void>;
 }) {
   const [name, setName] = useState(team.name);
   const [saving, setSaving] = useState(false);
@@ -750,7 +797,7 @@ function TeamHeader({
     setError(null);
     try {
       await getBackendAPI(true).renameTeam(team.id, trimmed);
-      await onRenamed();
+      await onChanged();
     } catch (err) {
       setName(team.name);
       setError(toTeamActionError(err, 'Failed to rename the team'));
@@ -762,9 +809,24 @@ function TeamHeader({
   return (
     <div className="mt-5">
       <div className="flex items-center gap-4">
-        <PrincipalAvatar principal={teamPrincipal(team)} size="lg" />
+        {canEdit ? (
+          <AvatarEditor
+            principal={teamPrincipal(team)}
+            size="lg"
+            onUploadImage={async (file) => {
+              await getBackendAPI(true).uploadTeamAvatar(team.id, file);
+              await onChanged();
+            }}
+            onRemoveImage={async () => {
+              await getBackendAPI(true).deleteTeamAvatar(team.id);
+              await onChanged();
+            }}
+          />
+        ) : (
+          <PrincipalAvatar principal={teamPrincipal(team)} size="lg" />
+        )}
         <div className="min-w-0 flex-1">
-          {canRename ? (
+          {canEdit ? (
             <div className="flex items-center gap-2">
               <input
                 value={name}
@@ -912,11 +974,13 @@ function MemberRow({
   member,
   actions,
   onChangeRole,
+  onMakeOwner,
   onRemove,
 }: {
   member: TeamMember;
   actions: MemberActions;
   onChangeRole: (role: InvitableRole) => void;
+  onMakeOwner: () => void;
   onRemove: () => void;
 }) {
   const name = memberDisplayName(member);
@@ -991,7 +1055,13 @@ function MemberRow({
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
               ))}
-            {actions.showChangeRole && actions.remove && <DropdownMenuSeparator />}
+            {actions.makeOwner && (
+              <DropdownMenuItem onSelect={onMakeOwner} className="cursor-pointer gap-2 text-xs">
+                <Crown className="h-3.5 w-3.5 text-muted-foreground" />
+                Make owner…
+              </DropdownMenuItem>
+            )}
+            {(actions.showChangeRole || actions.makeOwner) && actions.remove && <DropdownMenuSeparator />}
             {actions.remove && (
               <DropdownMenuItem
                 variant="destructive"

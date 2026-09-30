@@ -153,6 +153,8 @@ export interface MemberActions {
   changeRoleLockedReason: string | null;
   /** "Remove" (someone else) or "Leave team" (yourself), or null for none. */
   remove: 'remove' | 'leave' | null;
+  /** "Make owner…": the owner handing the team to another active member. */
+  makeOwner: boolean;
 }
 
 /**
@@ -161,11 +163,13 @@ export interface MemberActions {
  * - only the owner changes roles, and the owner row can never be changed;
  * - owners and admins remove others, but admins cannot remove admins;
  * - anyone but the owner may remove themselves (leaving the team);
- * - nobody removes the owner.
+ * - nobody removes the owner;
+ * - the owner may hand the team to anyone who has joined (not a pending
+ *   invite), staying on as an admin.
  */
 export function memberActions(
   viewer: { role: TeamRole; userId: string | null | undefined },
-  member: Pick<TeamMember, 'role' | 'user_id'>,
+  member: Pick<TeamMember, 'role' | 'user_id'> & { status?: TeamMember['status'] },
 ): MemberActions {
   const isSelf = !!viewer.userId && member.user_id === viewer.userId;
   const isOwnerRow = member.role === 'owner';
@@ -185,11 +189,28 @@ export function memberActions(
     remove = 'remove';
   }
 
-  return { isSelf, showChangeRole, changeRoleLockedReason, remove };
+  const makeOwner =
+    viewer.role === 'owner' &&
+    !isSelf &&
+    !isOwnerRow &&
+    !!member.user_id &&
+    (member.status ?? 'active') === 'active';
+
+  return { isSelf, showChangeRole, changeRoleLockedReason, remove, makeOwner };
 }
 
 export function hasMemberActions(actions: MemberActions): boolean {
-  return actions.showChangeRole || actions.remove !== null;
+  return actions.showChangeRole || actions.remove !== null || actions.makeOwner;
+}
+
+/** "Team agent", then "Team agent 2", … — agent names are unique within
+ *  their owner, and a team is one. */
+export function nextTeamAgentName(existing: string[]): string {
+  const taken = new Set(existing.map((name) => name.trim().toLowerCase()));
+  if (!taken.has('team agent')) return 'Team agent';
+  let n = 2;
+  while (taken.has(`team agent ${n}`)) n += 1;
+  return `Team agent ${n}`;
 }
 
 export const INVITE_LINK_EXPIRY_OPTIONS = [

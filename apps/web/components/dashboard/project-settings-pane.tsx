@@ -6,7 +6,8 @@
  * `section` param picks a tab:
  *
  *   General         Display (name / icon) · Folders (one row per machine) ·
- *                   Danger zone (archive / delete)
+ *                   Owner (personal or a team's; move) · Danger zone
+ *                   (archive / delete)
  *   Git & Worktree  Worktree hooks, bound to one linked folder
  *   Tasks           Task key prefix · pointer to the labels
  *
@@ -19,6 +20,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import useSWR from 'swr';
 import {
   Archive,
   ArchiveRestore,
@@ -28,6 +30,7 @@ import {
   Loader2,
   Plus,
   Trash2,
+  Truck,
   X,
 } from 'lucide-react';
 
@@ -47,17 +50,24 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { DirectoryPickerPopover } from '@/components/dashboard/directory-picker-popover';
+import { MoveProjectDialog } from '@/components/dashboard/move-project-dialog';
 import { ProjectDisplaySection } from '@/components/dashboard/project-display-section';
 import { ConfirmDeleteDialog } from '@/components/dashboard/session-dialogs';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
 import { WorktreeSetupSection } from '@/components/dashboard/worktree-setup-section';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import {
   getBackendAPI,
   projectRoleAtLeast,
   type MachineSummary,
   type ProjectResponse,
   type ProjectSummaryResponse,
+  type TeamSummary,
 } from '@/lib/backend-api';
+import { principalFromResponse, type Principal } from '@/lib/principals';
+import { moveDestinations } from '@/lib/project-transfer';
+import { isDesktopLocal } from '@/lib/runtime-config';
+import { TEAMS_KEY } from '@/lib/use-team-invitations';
 import { ensureLocalMachineId } from '@/lib/local-machine';
 import { machineDisplayName } from '@/lib/machine-display';
 import { getDesktopConfig } from '@/lib/runtime-config';
@@ -228,6 +238,7 @@ function GeneralTab({
     <div className="flex flex-col gap-8">
       <ProjectDisplaySection project={project} onUpdated={onUpdated} />
       <FoldersSection project={project} machines={machines} onUpdated={onUpdated} />
+      <OwnerSection project={project} onUpdated={onUpdated} />
       <DangerZone project={project} onUpdated={onUpdated} onDeleted={onDeleted} />
     </div>
   );
@@ -363,6 +374,94 @@ function FoldersSection({
         ) : null}
       </SectionCard>
       {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * Who owns the project: the caller personally, or a team (§3.3). The owner —
+ * personal owner, or the owning team's owner — can move it into a team they
+ * are on, or out of a team into their own space. Hidden in the logged-out
+ * desktop, which has no account and so no teams.
+ */
+function OwnerSection({
+  project,
+  onUpdated,
+}: {
+  project: ProjectResponse;
+  onUpdated: (project: ProjectResponse) => void;
+}) {
+  const local = isDesktopLocal();
+  const { data: teams } = useSWR<TeamSummary[]>(
+    local ? null : TEAMS_KEY,
+    () => getBackendAPI(true).listTeams(),
+    { shouldRetryOnError: false },
+  );
+  const [moving, setMoving] = useState(false);
+  if (local) return null;
+
+  const isOwner = projectRoleAtLeast(project.role, 'owner');
+  const owningTeam = project.team_id ? (teams?.find((t) => t.id === project.team_id) ?? null) : null;
+  const destinations = moveDestinations(project, teams ?? []);
+  const teamName = owningTeam?.name ?? (project.owner?.type === 'team' ? project.owner.name : null);
+  const teamAvatar: Principal | null = project.team_id
+    ? (principalFromResponse(project.owner) ??
+      (owningTeam
+        ? {
+            type: 'team',
+            id: owningTeam.id,
+            name: owningTeam.name,
+            avatarImageUri: owningTeam.avatar_image_uri,
+            updatedAt: owningTeam.updated_at,
+          }
+        : null))
+    : null;
+
+  return (
+    <div className="space-y-3">
+      <SectionHeading
+        title="Owner"
+        description={
+          project.team_id
+            ? "A team's project: everyone on the team can work in it, and its owner and admins manage it."
+            : 'A personal project. Share it with people, or move it into a team you are on.'
+        }
+      />
+      <SectionCard>
+        <div className="flex items-center justify-between gap-4 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            {teamAvatar && <PrincipalAvatar principal={teamAvatar} size="sm" />}
+            <div className="min-w-0">
+              <p className="truncate text-sm text-foreground">
+                {project.team_id ? (teamName ?? 'A team') : 'You'}
+              </p>
+              <p className="text-xs text-muted-foreground">{project.team_id ? 'Team' : 'Personal'}</p>
+            </div>
+          </div>
+          {isOwner && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0 cursor-pointer whitespace-nowrap"
+              disabled={!teams}
+              onClick={() => setMoving(true)}
+            >
+              <Truck className="h-3.5 w-3.5" />
+              Move
+            </Button>
+          )}
+        </div>
+      </SectionCard>
+      {isOwner && (
+        <MoveProjectDialog
+          open={moving}
+          onOpenChange={setMoving}
+          project={project}
+          destinations={destinations}
+          currentTeam={teamName ? { name: teamName } : null}
+          onMoved={onUpdated}
+        />
+      )}
     </div>
   );
 }

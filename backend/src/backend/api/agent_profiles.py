@@ -4,6 +4,11 @@ The user-facing "Agent": a named provider + model + config + instructions with a
 avatar. Picked in one click when starting a session, referenced by an automation,
 assignable to a task from P2.
 
+A profile is personal (``team_id`` NULL) or a team's (§3.6). This router is the
+dashboard, so it resolves both: every member *runs* a team's agents, its owner
+and admins *edit* them (``can_edit``) — the instructions run on every member's
+machine that picks one. The CLI mirror in ``servers`` stays personal-only.
+
 The clean ``/agents`` path is free because P0.5 renamed the *agent type* table
 internals without touching its legacy ``/user-agents`` route (PR #39) — so the
 good name lands on the resource users actually see, and no already-installed
@@ -33,6 +38,7 @@ from shared.images import InvalidImageError, process_image
 
 from ..auth.dependencies import get_current_user
 from ..db import agent_profile_queries as queries
+from ..db import collab_queries
 from ..db.queries import get_agent_profile_instances
 from ..models import AgentInstanceResponse
 
@@ -62,6 +68,12 @@ def _normalize_agent_id(value: str) -> str:
 
 class AgentProfileResponse(BaseModel):
     id: str
+    # NULL ⇒ personal; set ⇒ the team's agent, shared with every member.
+    team_id: str | None = None
+    # Whether the caller may edit, archive or delete it: always for their own,
+    # team owners/admins for a team's. The CLI mirror only ever serves the
+    # caller's own, so the default is the true answer there.
+    can_edit: bool = True
     name: str
     description: str | None
     avatar_image_uri: str | None
@@ -96,6 +108,8 @@ class AgentProfileCreate(BaseModel):
     system_prompt: str | None = None
     default_machine_id: UUID | None = None
     default_project_id: UUID | None = None
+    # Create in a team's list instead of the caller's own (team owner/admin).
+    team_id: UUID | None = None
 
     @field_validator("agent")
     @classmethod
@@ -126,6 +140,9 @@ class AgentProfileUpdate(BaseModel):
     default_project_id: UUID | None = None
     position: float | None = None
     is_archived: bool | None = None
+    # Move to a team's list (its owner/admin), or back to the caller's own
+    # with an explicit ``null``.
+    team_id: UUID | None = None
 
     @field_validator("agent")
     @classmethod
@@ -156,9 +173,12 @@ def to_response(
     *,
     session_count: int | None = None,
     last_active_at: datetime | None = None,
+    can_edit: bool = True,
 ) -> AgentProfileResponse:
     return AgentProfileResponse(
         id=str(profile.id),
+        team_id=str(profile.team_id) if profile.team_id else None,
+        can_edit=can_edit,
         name=profile.name,
         description=profile.description,
         avatar_image_uri=profile.avatar_image_uri,
@@ -195,16 +215,59 @@ def _with_stats(
     count, last = queries.session_stats_by_profile(db, user_id, [profile.id]).get(
         profile.id, (0, None)
     )
-    return to_response(profile, session_count=count, last_active_at=last)
+    return to_response(
+        profile,
+        session_count=count,
+        last_active_at=last,
+        can_edit=queries.can_edit(db, user_id, profile),
+    )
 
 
 def _load_or_404(db: Session, user: User, profile_id: UUID) -> AgentProfile:
-    profile = queries.get_agent_profile(db, user.id, profile_id)
+    profile = queries.get_agent_profile(db, user.id, profile_id, sharing=True)
     if profile is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found"
         )
     return profile
+
+
+def _load_editable(db: Session, user: User, profile_id: UUID) -> AgentProfile:
+    """A profile the caller can see *and* change: 404 when invisible, 403 when
+    it is a team agent and they are a plain member."""
+    profile = _load_or_404(db, user, profile_id)
+    if not queries.can_edit(db, user.id, profile):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the team's owner and admins can change its agents",
+        )
+    return profile
+
+
+def _require_team_admin(db: Session, user: User, team_id: UUID) -> None:
+    """Placing an agent in a team's list is the team owner's or an admin's."""
+    try:
+        collab_queries.require_team(db, user.id, team_id, minimum="admin")
+    except collab_queries.TeamNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Team not found"
+        ) from exc
+    except collab_queries.TeamPermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the team's owner and admins can add agents to it",
+        ) from exc
+
+
+def _name_conflict(name: str | None, team_id: UUID | None) -> HTTPException:
+    # The only unique constraints here are (user_id, lower(name)) among
+    # personal rows and (team_id, lower(name)) among a team's, both over
+    # non-archived rows only.
+    owner = "This team already has" if team_id is not None else "You already have"
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=f"{owner} an agent named '{name}'",
+    )
 
 
 @router.get("/agents", response_model=list[AgentProfileResponse])
@@ -214,16 +277,24 @@ def list_agents(
     db: Session = Depends(get_db),
 ) -> list[AgentProfileResponse]:
     profiles = queries.list_agent_profiles(
-        db, current_user.id, include_archived=include_archived
+        db, current_user.id, include_archived=include_archived, sharing=True
     )
     stats = queries.session_stats_by_profile(
         db, current_user.id, [p.id for p in profiles]
+    )
+    editable_teams = queries.editable_team_ids(
+        db, current_user.id, {p.team_id for p in profiles if p.team_id is not None}
     )
     return [
         to_response(
             p,
             session_count=stats.get(p.id, (0, None))[0],
             last_active_at=stats.get(p.id, (0, None))[1],
+            can_edit=(
+                p.team_id in editable_teams
+                if p.team_id is not None
+                else p.user_id == current_user.id
+            ),
         )
         for p in profiles
     ]
@@ -237,10 +308,13 @@ def create_agent(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AgentProfileResponse:
+    if payload.team_id is not None:
+        _require_team_admin(db, current_user, payload.team_id)
     try:
         profile = queries.create_agent_profile(
             db,
             current_user.id,
+            team_id=payload.team_id,
             name=payload.name,
             description=payload.description,
             color=payload.color,
@@ -250,16 +324,11 @@ def create_agent(
             system_prompt=payload.system_prompt,
             default_machine_id=payload.default_machine_id,
             default_project_id=payload.default_project_id,
-            position=queries.next_position(db, current_user.id),
+            position=queries.next_position(db, current_user.id, payload.team_id),
         )
     except IntegrityError as exc:
         db.rollback()
-        # The only unique constraint here is (user_id, lower(name)) among
-        # non-archived rows.
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"You already have an agent named '{payload.name}'",
-        ) from exc
+        raise _name_conflict(payload.name, payload.team_id) from exc
     return _with_stats(db, current_user.id, profile)
 
 
@@ -279,8 +348,23 @@ def update_agent(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AgentProfileResponse:
-    profile = _load_or_404(db, current_user, profile_id)
+    profile = _load_editable(db, current_user, profile_id)
     supplied = payload.model_dump(exclude_unset=True)
+
+    # Moving between the caller's own list and a team's. Into a team needs
+    # its owner/admin; out of one makes the caller the owner. The list
+    # position restarts at the end of the destination list.
+    if "team_id" in supplied and supplied["team_id"] != profile.team_id:
+        target = supplied["team_id"]
+        if target is not None:
+            _require_team_admin(db, current_user, target)
+        else:
+            supplied["user_id"] = current_user.id
+        supplied.setdefault(
+            "position", queries.next_position(db, current_user.id, target)
+        )
+    else:
+        supplied.pop("team_id", None)
 
     # `agent` and `config` move together: the column is authoritative, so a
     # config sent alongside a new agent is re-stamped with it, and changing the
@@ -295,9 +379,9 @@ def update_agent(
         updated = queries.update_agent_profile(db, profile, supplied)
     except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"You already have an agent named '{supplied.get('name')}'",
+        raise _name_conflict(
+            supplied.get("name", profile.name),
+            supplied.get("team_id", profile.team_id),
         ) from exc
     return _with_stats(db, current_user.id, updated)
 
@@ -308,7 +392,7 @@ def delete_agent(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AgentProfileDeleteResponse:
-    profile = _load_or_404(db, current_user, profile_id)
+    profile = _load_editable(db, current_user, profile_id)
     affected = queries.count_automations_using(db, profile.id)
     if profile.avatar_image_uri:
         try:
@@ -346,7 +430,7 @@ def upload_agent_avatar(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AgentProfileResponse:
-    profile = _load_or_404(db, current_user, profile_id)
+    profile = _load_editable(db, current_user, profile_id)
     raw = file.file.read(MAX_AVATAR_UPLOAD_BYTES + 1)
     if len(raw) > MAX_AVATAR_UPLOAD_BYTES:
         raise HTTPException(
@@ -387,7 +471,7 @@ def delete_agent_avatar(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AgentProfileResponse:
-    profile = _load_or_404(db, current_user, profile_id)
+    profile = _load_editable(db, current_user, profile_id)
     if profile.avatar_image_uri:
         try:
             storage.delete_object(storage.agent_profile_avatar_key(str(profile.id)))
@@ -404,14 +488,9 @@ def get_agent_avatar(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Response:
-    """Serve an agent's avatar bytes.
-
-    Owner-scoped for now: unlike a user avatar (which a shared surface is meant to
-    show), an agent profile is not yet reachable by anyone but its owner, so the
-    narrower check costs nothing. When ``shared/access.py`` lands (P3) this widens
-    to the same visibility rule as the rest of the resource.
-    """
-    profile = queries.get_agent_profile(db, current_user.id, profile_id)
+    """Serve an agent's avatar bytes to whoever can see the agent: its owner,
+    or for a team agent every active member of the team."""
+    profile = queries.get_agent_profile(db, current_user.id, profile_id, sharing=True)
     if profile is None or not profile.avatar_image_uri:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Avatar not found"

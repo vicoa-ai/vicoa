@@ -12,6 +12,9 @@
  * With the detail panel open there is no room for columns, so the same rows
  * collapse to name + config and the header disappears. Never two lines per
  * agent: a stacked row makes a list of five agents look like ten.
+ *
+ * Team agents (§3.6) sit under their team's name, after the caller's own; a
+ * list with no team agents has no group labels at all.
  */
 
 import { useMemo, useState } from 'react';
@@ -26,7 +29,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import { agentPickerLabel, type AgentCatalog } from '@/lib/agent-catalog';
-import type { AgentProfile } from '@/lib/backend-api';
+import { groupAgentsByOwner } from '@/lib/agent-owners';
+import type { AgentProfile, TeamSummary } from '@/lib/backend-api';
 import { humanizeDuration } from '@/lib/machine-display';
 import { agentPrincipal } from '@/lib/use-agent-profiles';
 import { cn } from '@/lib/utils';
@@ -60,6 +64,7 @@ function Empty() {
 
 export function AgentList({
   profiles,
+  teams,
   catalog,
   selectedId,
   onSelect,
@@ -67,6 +72,8 @@ export function AgentList({
   wide,
 }: {
   profiles: AgentProfile[];
+  /** The caller's teams, for naming team agents' groups. */
+  teams: TeamSummary[] | undefined;
   catalog: AgentCatalog;
   selectedId: string | null;
   onSelect: (profile: AgentProfile) => void;
@@ -128,8 +135,26 @@ export function AgentList({
             No matches.
           </div>
         ) : (
-          <ul>
-            {visible.map((profile) => {
+          groupAgentsByOwner(visible, teams).map((group) => (
+          <ul key={group.key}>
+            {group.label && (
+              <li className="flex items-center gap-2 border-b border-border/50 bg-muted/20 px-3 py-1.5 text-[11px] text-muted-foreground">
+                {group.team && (
+                  <PrincipalAvatar
+                    principal={{
+                      type: 'team',
+                      id: group.team.id,
+                      name: group.team.name,
+                      avatarImageUri: group.team.avatar_image_uri,
+                      updatedAt: group.team.updated_at,
+                    }}
+                    size="xs"
+                  />
+                )}
+                <span className="truncate">{group.label}</span>
+              </li>
+            )}
+            {group.profiles.map((profile) => {
               const config = configLabel(profile, catalog);
               const description = profile.description?.trim();
               const lastUsed = lastUsedLabel(profile, now);
@@ -202,6 +227,11 @@ export function AgentList({
                     </div>
                   )}
 
+                  {profile.can_edit === false ? (
+                    // A team agent you can run but not change: no menu, and
+                    // the column keeps its width so rows stay aligned.
+                    <span className="w-6 shrink-0" aria-hidden />
+                  ) : (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button
@@ -224,10 +254,12 @@ export function AgentList({
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
+                  )}
                 </li>
               );
             })}
           </ul>
+          ))
         )}
       </div>
     </div>

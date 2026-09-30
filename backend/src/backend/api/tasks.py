@@ -28,7 +28,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from shared import access, project_icons, storage
@@ -39,7 +39,7 @@ from shared.database.task_models import Project, Task
 from shared.images import InvalidImageError, process_image
 
 from ..auth.dependencies import get_current_user
-from ..db import task_queries, task_timeline_queries
+from ..db import collab_queries, task_queries, task_timeline_queries
 from ..db.queries import list_task_instances
 from ..db.task_serializers import serialize_task, serialize_tasks
 from ..db.task_queries import (
@@ -70,6 +70,7 @@ from ..models import (
     TaskPriorityLiteral,
     TaskResponse,
     TaskStatusLiteral,
+    TransferProjectRequest,
     UpdateProjectRequest,
     UpdateTaskLabelRequest,
     UpdateTaskRequest,
@@ -117,13 +118,15 @@ def list_projects_endpoint(
             background_tasks.add_task(project_icons.seed_project_icon, project.id)
     owners = _project_owners(db, current_user.id, projects)
     followed = task_queries.followed_project_ids(db, current_user.id, list(owners))
+    my_teams = access.active_team_ids(db, current_user.id) if owners else set()
     return [
         _project_response(
             p,
             accesses.get(p.id),
             viewer_id=current_user.id,
             owner=owners.get(p.id),
-            followed=p.id not in owners or p.id in followed,
+            followed=_in_own_list(p, owners, followed, my_teams),
+            team_member=p.team_id is not None and p.team_id in my_teams,
             last_activity_at=last_at,
             position=position,
         )
@@ -157,6 +160,7 @@ def _project_response(
     viewer_id: UUID,
     owner: PrincipalResponse | None = None,
     followed: bool | None = None,
+    team_member: bool = False,
     last_activity_at: datetime | None = None,
     position: int | None = None,
 ) -> ProjectResponse:
@@ -185,9 +189,27 @@ def _project_response(
     # Unknown to a caller that did not look it up: an owned project is always
     # listed, a shared one only when the list query says it is followed.
     response.followed = owner is None if followed is None else followed
+    response.is_team_member = team_member
     response.last_activity_at = last_activity_at
     response.position = position
     return response
+
+
+def _in_own_list(
+    project: Project,
+    owners: dict[UUID, PrincipalResponse],
+    followed: set[UUID],
+    my_teams: set[UUID],
+) -> bool:
+    """Whether the project sits in the caller's own list rather than under
+    "Shared with me": always for one they own personally, and for a team's
+    project when they are on that team — it is their team's work, not
+    something shared with them — otherwise only once they follow it."""
+    return (
+        project.id not in owners
+        or (project.team_id is not None and project.team_id in my_teams)
+        or project.id in followed
+    )
 
 
 def _project_owners(
@@ -248,14 +270,20 @@ def _project_response_for(
     The list endpoint batches this with `access.project_accesses`; everything
     that returns one project uses this.
     """
-    owner = _project_owners(db, user_id, [project]).get(project.id)
+    owners = _project_owners(db, user_id, [project])
+    my_teams = access.active_team_ids(db, user_id) if owners else set()
     return _project_response(
         project,
         access.project_access(db, user_id, project),
         viewer_id=user_id,
-        owner=owner,
-        followed=owner is None
-        or bool(task_queries.followed_project_ids(db, user_id, [project.id])),
+        owner=owners.get(project.id),
+        followed=_in_own_list(
+            project,
+            owners,
+            task_queries.followed_project_ids(db, user_id, list(owners)),
+            my_teams,
+        ),
+        team_member=project.team_id is not None and project.team_id in my_teams,
     )
 
 
@@ -342,6 +370,47 @@ def update_project_endpoint(
             status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
         )
     return _project_response_for(db, current_user.id, project)
+
+
+@router.post("/projects/{project_id}/transfer", response_model=ProjectResponse)
+def transfer_project_endpoint(
+    project_id: UUID,
+    request: TransferProjectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProjectResponse | JSONResponse:
+    """Move a project into a team, or out of one into the caller's personal
+    space (collaboration §3.3). Owner only — the same floor as deleting it.
+
+    409 when the project's task key is already used in the destination:
+    ``{"detail", "code": "project_key_taken", "key", "suggested_key"}``, so the
+    client can offer the free key and resend with ``key`` set (§3.5)."""
+    project = task_queries.get_accessible_project(
+        db, current_user.id, project_id, sharing=True, minimum="owner"
+    )
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+    try:
+        moved = collab_queries.transfer_project(
+            db, current_user, project, team_id=request.team_id, key=request.key
+        )
+    except collab_queries.TeamNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Team not found"
+        ) from exc
+    except collab_queries.ProjectKeyConflictError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "detail": str(exc),
+                "code": "project_key_taken",
+                "key": exc.key,
+                "suggested_key": exc.suggested_key,
+            },
+        )
+    return _project_response_for(db, current_user.id, moved)
 
 
 @router.get("/projects/{project_id}/summary", response_model=ProjectSummaryResponse)

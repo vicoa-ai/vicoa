@@ -12,6 +12,7 @@ import {
   invitableRoles,
   invitedYouLine,
   memberActions,
+  nextTeamAgentName,
   memberCountLabel,
   memberDisplayName,
   parseMaxUses,
@@ -157,6 +158,7 @@ describe('memberActions', () => {
       showChangeRole: true,
       changeRoleLockedReason: null,
       remove: 'remove',
+      makeOwner: true,
     });
     expect(memberActions(owner, invitedRow).remove).toBe('remove');
   });
@@ -190,6 +192,21 @@ describe('memberActions', () => {
 
   it('an unknown viewer id never matches a row with no user id', () => {
     expect(memberActions({ role: 'member', userId: null }, invitedRow).isSelf).toBe(false);
+  });
+
+  it('only the owner hands the team over, and only to someone who joined', () => {
+    expect(memberActions(owner, otherMemberRow).makeOwner).toBe(true);
+    expect(memberActions(owner, invitedRow).makeOwner).toBe(false);
+    expect(memberActions(owner, ownerRow).makeOwner).toBe(false);
+    expect(memberActions(admin, otherMemberRow).makeOwner).toBe(false);
+  });
+});
+
+describe('nextTeamAgentName', () => {
+  it('counts up past taken names, case-insensitively', () => {
+    expect(nextTeamAgentName([])).toBe('Team agent');
+    expect(nextTeamAgentName(['team agent'])).toBe('Team agent 2');
+    expect(nextTeamAgentName(['Team agent', 'Team Agent 2'])).toBe('Team agent 3');
   });
 });
 

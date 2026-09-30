@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, Suspense, Fragment } from 'react';
+import useSWR from 'swr';
 import { preload } from 'react-dom';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
@@ -21,7 +22,9 @@ import {
   X,
 } from 'lucide-react';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
-import type { AgentProfile, MachineSummary, ProjectResponse, TaskResponse } from '@/lib/backend-api';
+import type { AgentProfile, MachineSummary, ProjectResponse, TaskResponse, TeamSummary } from '@/lib/backend-api';
+import { groupAgentsByOwner } from '@/lib/agent-owners';
+import { TEAMS_KEY } from '@/lib/use-team-invitations';
 import { TaskPickerPopover } from '@/components/dashboard/task-picker-popover';
 import { MentionTextarea } from '@/components/mention-textarea';
 import { AgentTypeIcon, getAgentLogoSrc } from '@/components/dashboard/agent-type-icon';
@@ -454,6 +457,14 @@ function NewSessionContent() {
   // once there is something to put in it.
   const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
+  // Names the team sections of the picker (a team's agents, §3.6). Only
+  // fetched once there is a team agent to label.
+  const hasTeamAgents = agentProfiles.some((p) => p.team_id);
+  const { data: teams } = useSWR<TeamSummary[]>(
+    api && hasTeamAgents ? TEAMS_KEY : null,
+    () => api!.listTeams(),
+    { shouldRetryOnError: false },
+  );
   // Selected machine's cached real per-agent model (and mode) lists, fetched
   // lazily so the picker can show actual models instead of catalog placeholders.
   const [cachedAgentModels, setCachedAgentModels] = useState<MachineAgentModelsCache>(EMPTY_AGENT_MODELS_CACHE);
@@ -2419,12 +2430,12 @@ function NewSessionContent() {
                           {/* Saved presets first, then the raw providers. The
                               section only renders when the user has agents, so
                               nobody pays for a feature they haven't used. */}
-                          {agentProfiles.length > 0 && (
-                            <>
+                          {groupAgentsByOwner(agentProfiles, teams).map((group) => (
+                            <Fragment key={group.key}>
                               <div className="px-2 pt-1 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                                My agents
+                                {group.team ? group.label : 'My agents'}
                               </div>
-                              {agentProfiles.map((profile) => {
+                              {group.profiles.map((profile) => {
                                 // Instructions need a daemon new enough to carry
                                 // them; an older one drops the metadata silently,
                                 // so offer the profile as unavailable rather than
@@ -2450,8 +2461,8 @@ function NewSessionContent() {
                                 );
                               })}
                               <div className="my-1 h-px bg-border" />
-                            </>
-                          )}
+                            </Fragment>
+                          ))}
                           {agentEntries.map((a) => (
                             <TickItem
                               key={a.id}

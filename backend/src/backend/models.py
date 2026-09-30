@@ -567,6 +567,13 @@ class TeamMemberRoleUpdateRequest(BaseModel):
     role: TeamInviteRoleLiteral
 
 
+class TeamOwnershipTransferRequest(BaseModel):
+    """The member (``team_members.id``) who becomes the owner; the current
+    owner stays on as an admin."""
+
+    member_id: UUID
+
+
 class TeamInviteCreateRequest(BaseModel):
     role: TeamInviteRoleLiteral = "member"
     # None ⇒ never expires. Default one week, like GitHub org invites.
@@ -781,6 +788,10 @@ class ProjectResponse(BaseModel):
     # they own; for one shared with them, once they follow it — until then it
     # sits under "Shared with me" only.
     followed: bool = True
+    # The caller is an active member of the team that owns this project: it is
+    # their team's work (always in their list, reached through the team),
+    # not a share they could stop following or leave.
+    is_team_member: bool = False
     # Task-identifier prefix; None until the project's first task allocates one.
     key: str | None = None
     git_remote_url: str | None = None
@@ -866,14 +877,34 @@ class UpdateProjectRequest(BaseModel):
     @field_validator("key")
     @classmethod
     def validate_key(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        upper = v.strip().upper()
-        if not re.fullmatch(r"[A-Z][A-Z0-9]{1,7}", upper):
-            raise ValueError(
-                "key must be 2-8 characters, letters and digits, starting with a letter"
-            )
-        return upper
+        return _validate_project_key(v)
+
+
+def _validate_project_key(v: str | None) -> str | None:
+    if v is None:
+        return None
+    upper = v.strip().upper()
+    if not re.fullmatch(r"[A-Z][A-Z0-9]{1,7}", upper):
+        raise ValueError(
+            "key must be 2-8 characters, letters and digits, starting with a letter"
+        )
+    return upper
+
+
+class TransferProjectRequest(BaseModel):
+    """Move a project into a team, or (``team_id: null``) out of one into the
+    caller's personal space. ``team_id`` is required so an omitted field can
+    never read as "make it personal"."""
+
+    team_id: UUID | None
+    # A new task key, for when the project's key is already used by another
+    # project in the destination (the 409 carries a free suggestion).
+    key: str | None = Field(default=None, min_length=2, max_length=8)
+
+    @field_validator("key")
+    @classmethod
+    def validate_key(cls, v: str | None) -> str | None:
+        return _validate_project_key(v)
 
 
 class TaskResponse(BaseModel):

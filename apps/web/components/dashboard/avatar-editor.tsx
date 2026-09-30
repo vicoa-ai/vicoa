@@ -1,7 +1,7 @@
 'use client';
 
-// The editor for any principal's avatar — a user's profile photo or an agent's
-// picture. The avatar IS the control: clicking it opens a popover offering the
+// The editor for any principal's avatar — a user's profile photo, an agent's
+// or a team's picture. The avatar IS the control: clicking it opens a popover offering the
 // two ways to be recognisable, an uploaded image or a picked emoji, and a small
 // camera badge on the corner is the affordance.
 //
@@ -48,8 +48,10 @@ export function AvatarEditor({
   size?: Extract<PrincipalAvatarSize, 'lg' | 'xl'>;
   onUploadImage: (file: File) => Promise<void> | void;
   onRemoveImage: () => Promise<void> | void;
-  onSetEmoji: (emoji: string) => Promise<void> | void;
-  onClearEmoji: () => Promise<void> | void;
+  /** Omit both for a principal with no emoji field (a team): the popover
+   *  then offers the image actions only. */
+  onSetEmoji?: (emoji: string) => Promise<void> | void;
+  onClearEmoji?: () => Promise<void> | void;
 }) {
   const badge = BADGES[size];
   const [open, setOpen] = useState(false);
@@ -143,12 +145,14 @@ export function AvatarEditor({
               </button>
             )}
           </div>
-          <EmojiPicker
-            variant="avatar"
-            onSelect={(emoji) => void run(() => onSetEmoji(emoji))}
-            onClear={principal.emoji ? () => void run(onClearEmoji) : undefined}
-            clearLabel="Remove emoji"
-          />
+          {onSetEmoji && (
+            <EmojiPicker
+              variant="avatar"
+              onSelect={(emoji) => void run(() => onSetEmoji(emoji))}
+              onClear={principal.emoji && onClearEmoji ? () => void run(onClearEmoji) : undefined}
+              clearLabel="Remove emoji"
+            />
+          )}
         </PopoverContent>
       </Popover>
       {error && <p className="text-xs text-destructive">{error}</p>}

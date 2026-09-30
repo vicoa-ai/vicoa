@@ -49,9 +49,9 @@ export type Principal = {
  */
 export function principalAvatarSrc(principal: Principal | null | undefined): string | null {
   if (!principal?.id || !principal.avatarImageUri) return null;
-  if (principal.type === 'team') return null; // teams get images in P3
   const version = principal.updatedAt ? `?v=${encodeURIComponent(principal.updatedAt)}` : '';
-  const base = principal.type === 'agent' ? 'agents' : 'users';
+  const base =
+    principal.type === 'agent' ? 'agents' : principal.type === 'team' ? 'teams' : 'users';
   return `/api/${base}/${principal.id}/avatar${version}`;
 }
 

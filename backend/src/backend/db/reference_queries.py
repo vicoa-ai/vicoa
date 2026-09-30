@@ -32,6 +32,7 @@ from shared.database.task_models import ProjectDirectory
 
 from .queries import CLOSED_STATUSES
 from .search_queries import _escape_like
+from .task_queries import owned_task_filter
 from .task_serializers import serialize_task, serialize_tasks
 
 # A task is "closed" for ranking/default-list purposes in exactly the words the
@@ -160,7 +161,7 @@ def _task_candidates(
     as "what am I working on". A typed query widens to the whole backlog with
     done/cancelled ranked last, so "how did we do VIC-12" still resolves.
     """
-    query = db.query(Task).filter(Task.user_id == user_id)
+    query = db.query(Task).filter(owned_task_filter(user_id))
     closed_rank = case((Task.status.in_(CLOSED_TASK_STATUSES), 1), else_=0)
 
     if lowered:
@@ -422,7 +423,7 @@ def _expand_session(db: Session, user_id: UUID, ref_id: UUID) -> dict | None:
 
 
 def _expand_task(db: Session, user_id: UUID, ref_id: UUID) -> dict | None:
-    task = db.query(Task).filter(Task.id == ref_id, Task.user_id == user_id).first()
+    task = db.query(Task).filter(Task.id == ref_id, owned_task_filter(user_id)).first()
     if task is None:
         return None
     response = serialize_task(db, task)

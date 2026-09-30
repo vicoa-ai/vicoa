@@ -820,8 +820,8 @@ def _validate_assignee(
 
     A user assignee is the caller, or (sharing lens) anyone who can see the
     board — owner, team member or grantee. An agent assignee is one of the
-    caller's own profiles, or (sharing lens) one belonging to the project's
-    owner or owning team. An unfiled task (``project`` None) has no board for
+    caller's own personal profiles, or (sharing lens) one belonging to the
+    project's owner or owning team. An unfiled task (``project`` None) has no board for
     anyone else to stand on: the caller and the caller's own profiles only.
     """
     if assignee_type is None or assignee_id is None:
@@ -837,12 +837,19 @@ def _validate_assignee(
         ):
             return
         raise AssigneeNotFoundError("Assignee not found")
-    owners = [AgentProfile.user_id == user_id]
+    # The caller's own *personal* profiles: a team agent they created belongs
+    # to that team's boards, not to every board they can edit.
+    owners = [and_(AgentProfile.user_id == user_id, AgentProfile.team_id.is_(None))]
     if sharing and project is not None:
         if project.team_id is not None:
             owners.append(AgentProfile.team_id == project.team_id)
         else:
-            owners.append(AgentProfile.user_id == project.user_id)
+            owners.append(
+                and_(
+                    AgentProfile.user_id == project.user_id,
+                    AgentProfile.team_id.is_(None),
+                )
+            )
     owned = (
         db.query(AgentProfile.id)
         .filter(AgentProfile.id == assignee_id, or_(*owners))
@@ -882,9 +889,29 @@ def _validate_parent(
 # --- Tasks ------------------------------------------------------------------
 
 
+def owned_task_filter(user_id: UUID):
+    """The owner-only lens on tasks: unfiled ones the caller filed, and every
+    task on the caller's own *personal* projects.
+
+    `tasks.user_id` alone is not enough once a project can belong to a team:
+    it stays the project's `user_id` — whoever created it — and that person
+    may since have left the team. Their CLI, search and `#` references must
+    stop reaching the team's board the moment their membership does.
+    """
+    return and_(
+        Task.user_id == user_id,
+        or_(
+            Task.project_id.is_(None),
+            Task.project_id.in_(
+                select(Project.id).where(_owner_only_project_filter(user_id))
+            ),
+        ),
+    )
+
+
 def _visible_task_filter(user_id: UUID, *, sharing: bool):
     if not sharing:
-        return Task.user_id == user_id
+        return owned_task_filter(user_id)
     # An unfiled task has no project to be shared through: its owner alone.
     return or_(
         Task.project_id.in_(

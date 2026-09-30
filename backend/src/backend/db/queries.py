@@ -1342,6 +1342,11 @@ def delete_user_account(db: Session, user_id: UUID) -> None:
                 )
                 heir.role = "owner"
 
+        # A team's projects, labels and agents keep their creator in
+        # `user_id`, whose FK CASCADEs: hand them to the team's owner first,
+        # or deleting this account would delete the team's work.
+        collab_queries.reassign_team_rows_from(db, user_id)
+
         if orphaned_team_ids:
             # `principal_id` is polymorphic, so team grants have no FK to
             # cascade through. `team_members` / `team_invites` do (CASCADE), so
@@ -1350,6 +1355,10 @@ def delete_user_account(db: Session, user_id: UUID) -> None:
                 ProjectGrant.principal_type == "team",
                 ProjectGrant.principal_id.in_(orphaned_team_ids),
             ).delete(synchronize_session=False)
+            # Other creators' projects and agents go back to them, with room
+            # made for clashing keys and names first (the delete below would
+            # otherwise trip their personal unique indexes).
+            collab_queries.release_team_rows(db, orphaned_team_ids)
             db.query(Team).filter(Team.id.in_(orphaned_team_ids)).delete(
                 synchronize_session=False
             )

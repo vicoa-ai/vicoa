@@ -46,6 +46,12 @@ def agent_profile_avatar_key(agent_profile_id: str) -> str:
     return f"agent-avatars/{agent_profile_id}"
 
 
+def team_avatar_key(team_id: str) -> str:
+    # Fourth of the family (project icons / user / agent avatars): keyed by id
+    # alone, no extension — the served Content-Type comes from the object.
+    return f"team-avatars/{team_id}"
+
+
 def user_avatar_key(user_id: str) -> str:
     # Same shape as project_icon_key: keyed by id alone, no extension — the
     # served Content-Type comes from the stored object's own metadata

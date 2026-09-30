@@ -61,6 +61,7 @@ def _claim_due_blocking() -> list[dict]:
                 db,
                 agent_profile_id=row.agent_profile_id,
                 session_config=row.session_config,
+                owner_id=row.user_id,
             )
             if resolved.from_profile and resolved.session_config != row.session_config:
                 row.session_config = resolved.session_config

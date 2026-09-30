@@ -35,6 +35,7 @@ import { Switch } from '@/components/ui/switch';
 import { MentionPromptField } from '@/components/mention-prompt-field';
 import { loadPersistedSelection } from '@/lib/agent-catalog';
 import { getPref, setPref } from '@/lib/desktop-prefs';
+import { labelOwnerForProject, labelsForProject } from '@/lib/project-vocabulary';
 import {
   AgentInstanceResponse,
   ProjectResponse,
@@ -121,7 +122,8 @@ export function TaskDialog({
   childTasks?: TaskResponse[];
   /** Agent sessions started from `task` (edit mode), newest first. */
   sessions?: AgentInstanceResponse[];
-  onCreateLabel?: (name: string) => Promise<TaskLabelResponse>;
+  /** `teamId`: the project's team, whose label set a new label joins. */
+  onCreateLabel?: (name: string, teamId: string | null) => Promise<TaskLabelResponse>;
   onAddSubtask?: (parent: TaskResponse, title: string) => Promise<void>;
   onOpenTask?: (task: TaskResponse) => void;
   /** Navigate to one of the task's linked sessions. */
@@ -209,6 +211,9 @@ export function TaskDialog({
 
   const set = <K extends keyof TaskFormValues>(key: K, value: TaskFormValues[K]) =>
     setValues((prev) => ({ ...prev, [key]: value }));
+
+  // Labels are owner-scoped: a team's project draws from the team's set.
+  const selectedProject = projects.find((p) => p.id === values.project_id) ?? null;
 
   // `@` file search in the description runs against the selected project's
   // linked folder. A project can be linked on several machines, so prefer the
@@ -506,7 +511,11 @@ export function TaskDialog({
             onSelect={(id) => set('project_id', id ?? '')}
           />
           <LabelPickerPill
-            labels={labels}
+            labels={labelsForProject(
+              labels,
+              selectedProject,
+              labels.filter((l) => values.label_ids.includes(l.id)),
+            )}
             selectedIds={values.label_ids}
             onToggle={(labelId) =>
               set(
@@ -519,7 +528,7 @@ export function TaskDialog({
             onCreate={
               onCreateLabel
                 ? (name) => {
-                    onCreateLabel(name)
+                    onCreateLabel(name, labelOwnerForProject(selectedProject))
                       .then((label) => set('label_ids', [...values.label_ids, label.id]))
                       .catch((err) => console.error('Failed to create label:', err));
                   }
