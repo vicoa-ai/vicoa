@@ -20,6 +20,7 @@ import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/l10n/app_localizations.dart';
 import '../machine_offline_banner.dart';
+import 'video_file_view.dart';
 
 class FileViewerWidget extends StatefulWidget {
   const FileViewerWidget({super.key, required this.machineId, required this.cwd, required this.path, required this.name});
@@ -262,7 +263,21 @@ class _FileViewerWidgetState extends State<FileViewerWidget> {
     final content = _content;
     if (content == null) return _NoCachePlaceholder(theme: theme);
     if (content.encoding == 'base64' && content.isBinary) return _ImageView(base64Content: content.content, truncated: content.truncated, size: content.size);
-    if (content.isBinary) return _BinaryPlaceholder(size: content.size, theme: theme);
+    // Offline the bytes can't be fetched, so a video falls through to the
+    // plain placeholder under the offline banner.
+    if (content.isVideo && !_offline) {
+      return FileVideoView(machineId: widget.machineId, cwd: widget.cwd, path: widget.path, name: widget.name, size: content.size, theme: theme, formatBytes: _formatBytes, errorBuilder: (code, onRetry) => _ErrorCard(code: code, theme: theme, onRetry: onRetry));
+    }
+    if (content.isBinary) {
+      // A video the daemon didn't tag with a mime type: it predates video
+      // playback, so say how to get it rather than just "no preview".
+      final needsUpdate = !_offline && _isVideoName(widget.name);
+      return _BinaryPlaceholder(
+        size: content.size,
+        theme: theme,
+        detail: needsUpdate ? AppLocalizations.of(context).fileViewerXVideoNeedsUpdate : null,
+      );
+    }
     return _TextView(content: content, fileName: widget.name, theme: theme);
   }
 }
@@ -404,9 +419,10 @@ class _ImageView extends StatelessWidget {
 }
 
 class _BinaryPlaceholder extends StatelessWidget {
-  const _BinaryPlaceholder({required this.size, required this.theme});
+  const _BinaryPlaceholder({required this.size, required this.theme, this.detail});
   final int size;
   final FlutterFlowTheme theme;
+  final String? detail;
 
   @override
   Widget build(BuildContext context) {
@@ -420,7 +436,7 @@ class _BinaryPlaceholder extends StatelessWidget {
             const SizedBox(height: 12),
             Text(AppLocalizations.of(context).fileViewerXBinaryFile(_formatBytes(size)), style: theme.titleMedium.override(font: GoogleFonts.sourceSans3(), letterSpacing: 0.0)),
             const SizedBox(height: 4),
-            Text(AppLocalizations.of(context).fileViewerXPreviewNotAvailable, style: theme.bodySmall.override(font: GoogleFonts.sourceSans3(), color: theme.secondaryText, letterSpacing: 0.0)),
+            Text(detail ?? AppLocalizations.of(context).fileViewerXPreviewNotAvailable, textAlign: TextAlign.center, style: theme.bodySmall.override(font: GoogleFonts.sourceSans3(), color: theme.secondaryText, letterSpacing: 0.0)),
           ],
         ),
       ),
@@ -496,9 +512,19 @@ String _errorMessage(BuildContext context, String code) {
       return l10n.fileViewerXErrMachineOffline;
     case 'timeout':
       return l10n.fileViewerXErrTimeout;
+    case 'file_changed':
+      return l10n.fileViewerXErrFileChanged;
     default:
       return l10n.fileViewerXErrDefault(code);
   }
+}
+
+// Mirrors the daemon's `_VIDEO_MIME_TYPES` (vicoa/rpc/file_ops.py).
+const Set<String> _videoExtensions = {'mp4', 'm4v', 'mov', 'webm', 'mkv'};
+
+bool _isVideoName(String name) {
+  final dot = name.lastIndexOf('.');
+  return dot >= 0 && _videoExtensions.contains(name.substring(dot + 1).toLowerCase());
 }
 
 String _formatBytes(int bytes) {

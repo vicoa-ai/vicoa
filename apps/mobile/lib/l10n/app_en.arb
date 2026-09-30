@@ -329,6 +329,7 @@
       }
     }
   },
+  "fileViewerXErrFileChanged": "The file changed while loading. Try again.",
   "fileViewerXErrMachineOffline": "Machine is offline.",
   "fileViewerXErrNoHandler": "Update the daemon on this machine — older version doesn’t support file viewing.",
   "fileViewerXErrNotAFile": "Not a file.",
@@ -349,6 +350,28 @@
       }
     }
   },
+  "fileViewerXVideoLoading": "Loading video",
+  "fileViewerXVideoNeedsUpdate": "Update Vicoa on this machine to play videos here.",
+  "fileViewerXVideoProgress": "{received} of {total}",
+  "@fileViewerXVideoProgress": {
+    "placeholders": {
+      "received": {
+        "type": "Object"
+      },
+      "total": {
+        "type": "Object"
+      }
+    }
+  },
+  "fileViewerXVideoTooLarge": "Video too large to play on mobile ({limit} max).",
+  "@fileViewerXVideoTooLarge": {
+    "placeholders": {
+      "limit": {
+        "type": "Object"
+      }
+    }
+  },
+  "fileViewerXVideoUnsupported": "This video can’t be played on this device.",
   "filesGitXBinaryFileChanged": "Binary file changed · {size}",
   "@filesGitXBinaryFileChanged": {
     "placeholders": {

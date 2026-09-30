@@ -788,6 +788,10 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get fileViewerXErrFileChanged =>
+      'The file changed while loading. Try again.';
+
+  @override
   String get fileViewerXErrMachineOffline => 'Machine is offline.';
 
   @override
@@ -830,6 +834,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String fileViewerXShowingFirstPortion(Object size) {
     return 'Showing first portion of $size. Open on desktop to see the rest.';
   }
+
+  @override
+  String get fileViewerXVideoLoading => 'Loading video';
+
+  @override
+  String get fileViewerXVideoNeedsUpdate =>
+      'Update Vicoa on this machine to play videos here.';
+
+  @override
+  String fileViewerXVideoProgress(Object received, Object total) {
+    return '$received of $total';
+  }
+
+  @override
+  String fileViewerXVideoTooLarge(Object limit) {
+    return 'Video too large to play on mobile ($limit max).';
+  }
+
+  @override
+  String get fileViewerXVideoUnsupported =>
+      'This video can’t be played on this device.';
 
   @override
   String filesGitXBinaryFileChanged(Object size) {

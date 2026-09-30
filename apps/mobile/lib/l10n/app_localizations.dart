@@ -1526,6 +1526,12 @@ abstract class AppLocalizations {
   /// **'Couldn’t load this file ({code}).'**
   String fileViewerXErrDefault(Object code);
 
+  /// No description provided for @fileViewerXErrFileChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'The file changed while loading. Try again.'**
+  String get fileViewerXErrFileChanged;
+
   /// No description provided for @fileViewerXErrMachineOffline.
   ///
   /// In en, this message translates to:
@@ -1603,6 +1609,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Showing first portion of {size}. Open on desktop to see the rest.'**
   String fileViewerXShowingFirstPortion(Object size);
+
+  /// No description provided for @fileViewerXVideoLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading video'**
+  String get fileViewerXVideoLoading;
+
+  /// No description provided for @fileViewerXVideoNeedsUpdate.
+  ///
+  /// In en, this message translates to:
+  /// **'Update Vicoa on this machine to play videos here.'**
+  String get fileViewerXVideoNeedsUpdate;
+
+  /// No description provided for @fileViewerXVideoProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'{received} of {total}'**
+  String fileViewerXVideoProgress(Object received, Object total);
+
+  /// No description provided for @fileViewerXVideoTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'Video too large to play on mobile ({limit} max).'**
+  String fileViewerXVideoTooLarge(Object limit);
+
+  /// No description provided for @fileViewerXVideoUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'This video can’t be played on this device.'**
+  String get fileViewerXVideoUnsupported;
 
   /// No description provided for @filesGitXBinaryFileChanged.
   ///

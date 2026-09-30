@@ -763,6 +763,9 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get fileViewerXErrFileChanged => '加载过程中文件发生了变化，请重试。';
+
+  @override
   String get fileViewerXErrMachineOffline => '机器已离线。';
 
   @override
@@ -802,6 +805,25 @@ class AppLocalizationsZh extends AppLocalizations {
   String fileViewerXShowingFirstPortion(Object size) {
     return '仅显示 $size 的开头部分。在桌面端查看剩余内容。';
   }
+
+  @override
+  String get fileViewerXVideoLoading => '正在加载视频';
+
+  @override
+  String get fileViewerXVideoNeedsUpdate => '在此机器上更新 Vicoa 后即可在这里播放视频。';
+
+  @override
+  String fileViewerXVideoProgress(Object received, Object total) {
+    return '$received / $total';
+  }
+
+  @override
+  String fileViewerXVideoTooLarge(Object limit) {
+    return '视频过大，无法在移动端播放（上限 $limit）。';
+  }
+
+  @override
+  String get fileViewerXVideoUnsupported => '此设备无法播放该视频。';
 
   @override
   String filesGitXBinaryFileChanged(Object size) {
