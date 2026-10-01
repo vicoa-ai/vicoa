@@ -27,31 +27,29 @@ After setup, the Live Preview can:
 
 ## 1. Install the Live Preview skill
 
-The Live Preview skill is open-sourced at [https://github.com/vicoa-ai/agent-skills](https://github.com/vicoa-ai/agent-skills).
+The Live Preview skill is open source and lives in the Vicoa repository at [skills/live-preview](https://github.com/vicoa-ai/vicoa/tree/main/skills/live-preview).
 
 You have two easy ways to install it:
 
 ### Option 1. Install it yourself
 
 ```bash
-npx skills add vicoa-ai/agent-skills
+npx skills add vicoa-ai/vicoa --skill live-preview
 ```
-
-Then select `live-preview` when prompted.
 
 If you want to install it specifically for Claude Code, use:
 
 ```bash
-npx skills add vicoa-ai/agent-skills --agent claude-code
+npx skills add vicoa-ai/vicoa --skill live-preview --agent claude-code
 ```
 
 ### Option 2. Ask the agent to install it
 
-You can also ask your agent to install the skill for you from `https://github.com/vicoa-ai/agent-skills`.
+You can also ask your agent to install the skill for you from `https://github.com/vicoa-ai/vicoa/tree/main/skills/live-preview`.
 
 For example:
 
-- "Install the `live-preview` skill from `https://github.com/vicoa-ai/agent-skills`"
+- "Install the `live-preview` skill from `https://github.com/vicoa-ai/vicoa/tree/main/skills/live-preview`"
 
 ## 2. Start Live Preview
 
