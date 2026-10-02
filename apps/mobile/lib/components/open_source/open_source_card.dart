@@ -14,6 +14,10 @@ import '/pages/common/session_actions.dart';
 /// computer later. Purely informational: the free-messages reward for starring
 /// lives on Usage & Credits alone, so home never asks for anything. Hides
 /// itself once dismissed, so it doesn't become permanent furniture.
+///
+/// Not mounted anywhere right now: it was taken off home. To bring it back,
+/// render it above the getting-started checklist in `HomeWidget`, skipped
+/// when `FFAppState().openSourceCardDismissed` so no padding is left behind.
 class OpenSourceCard extends StatefulWidget {
   const OpenSourceCard({super.key, this.onStateChanged});
 

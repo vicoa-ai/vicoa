@@ -21,7 +21,6 @@ import '/components/review_dialog/review_prompt_helper.dart' as review_prompts;
 import '/components/empty_filter_state/empty_filter_state_widget.dart';
 import '/components/welcome_demo/welcome_demo_card.dart';
 import '/components/getting_started/getting_started_checklist.dart';
-import '/components/open_source/open_source_card.dart';
 import '/index.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -758,21 +757,8 @@ class _HomeWidgetState extends State<HomeWidget>
                               ),
                             ),
                           ],
-                          // "Vicoa is open source" — a link to the repo, shown
-                          // until dismissed. The star reward lives on Usage &
-                          // Credits; home never asks for one.
-                          if (_showOpenSourceCard)
-                            Padding(
-                              padding: const EdgeInsetsDirectional.fromSTEB(
-                                  16.0, 12.0, 16.0, 0.0),
-                              child: OpenSourceCard(
-                                onStateChanged: () {
-                                  if (mounted) setState(() {});
-                                },
-                              ),
-                            ),
-                          // Getting-started checklist, below the open-source card:
-                          // drives the phone→desktop "connect a computer" step.
+                          // Getting-started checklist: drives the
+                          // phone→desktop "connect a computer" step.
                           Padding(
                             padding: const EdgeInsetsDirectional.fromSTEB(
                                 16.0, 12.0, 16.0, 0.0),
@@ -795,15 +781,6 @@ class _HomeWidgetState extends State<HomeWidget>
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            if (_showOpenSourceCard)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 8.0),
-                                child: OpenSourceCard(
-                                  onStateChanged: () {
-                                    if (mounted) setState(() {});
-                                  },
-                                ),
-                              ),
                             // Keeps nudging progress (e.g. "send a message")
                             // until the user finishes onboarding, then hides.
                             Padding(
@@ -847,10 +824,6 @@ class _HomeWidgetState extends State<HomeWidget>
       ),
     );
   }
-
-  /// The open-source card is skipped entirely once dismissed, so home doesn't
-  /// keep the surrounding padding around an invisible widget.
-  bool get _showOpenSourceCard => !FFAppState().openSourceCardDismissed;
 
   Widget _buildSessionCard(
       Map<String, dynamic> instance, String status, {String groupBy = 'Time'}) {
