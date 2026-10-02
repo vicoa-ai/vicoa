@@ -54,8 +54,8 @@ export interface Slide {
     These are the agents Vicoa drives itself; the catalog it launches over ACP
     is far too long for a strip, so the trailing ellipsis chip stands in for the
     rest. Keep this ONE row — `intro-slides.test.ts` holds the chip budget that
-    fits the 680px web-modal card, and a second row costs the hero screenshot
-    enough height to overlap the slide title. */
+    fits the 680px web-modal card, and a second row takes its height out of
+    the hero screenshot, which shrinks to make room. */
 export const AGENT_LOGOS: { src: string; alt: string }[] = [
   { src: '/images/integrations/claude-color.svg', alt: 'Claude Code' },
   { src: '/images/integrations/openai.svg', alt: 'Codex' },
@@ -228,9 +228,6 @@ const SLIDE_SCALE: Record<SlideSize, Record<string, string>> = {
     subtitle: 'text-xs',
     title: 'text-xl',
     body: 'text-sm',
-    // Height cap so the shot + header + description (and, on the hero slide, the
-    // agent-logo strip) fit the 680px web-modal card.
-    image: 'max-h-[360px]',
   },
   // Sized against `/desktop-welcome`, the screen the intro hands off to: it
   // uses an h-12 logo and a text-3xl heading, so anything bigger here makes the
@@ -242,10 +239,18 @@ const SLIDE_SCALE: Record<SlideSize, Record<string, string>> = {
     subtitle: 'text-sm',
     title: 'text-2xl',
     body: 'text-base',
-    // Cap on the tall desktop window so a header + screenshot + description (and
-    // the hero slide's agent-logo strip) all fit without the shot dominating.
-    image: 'max-h-[460px]',
   },
+};
+
+/**
+ * Tallest the screenshot gets, in px. 360 fits the 680px web-modal card; 460
+ * keeps the shot from dominating the 1280×860 desktop window. Both are upper
+ * bounds only: on a smaller window the shot shrinks further to leave room for
+ * the header, description, and (on the hero slide) the agent-logo strip.
+ */
+const SLIDE_IMAGE_MAX_PX: Record<SlideSize, number> = {
+  default: 360,
+  lg: 460,
 };
 
 /**
@@ -310,38 +315,57 @@ export function SlideView({
         <h2 className={cn('font-semibold text-foreground leading-tight', s.title)}>{slide.title}</h2>
       </div>
 
-      {/* Screenshots keep their real aspect ratio (intrinsic width/height +
-          object-contain); the fixed max-h from the scale caps them so a header,
-          shot, and description all fit. The gradient "mat" wraps the shot with
-          even padding; cropped shots (imageRounded) round their own corners so
-          they read like the windowed captures that already have rounded edges. */}
+      {/* Screenshots keep their real aspect ratio and shrink with the window,
+          so a short or narrow window never pushes the shot over the header or
+          the description. The gradient "mat" wraps the shot with even padding;
+          cropped shots (imageRounded) round their own corners so they read like
+          the windowed captures that already have rounded edges.
+
+          How the shot fits the space left over:
+          - The outer box is the column's only shrinkable item (header, logo
+            strip, and description are shrink-0), and an inline-size container
+            so the frame below can read the column width as `cqw`.
+          - The frame asks for the shot's natural height, i.e. the smaller of
+            the height cap and the height at full column width, plus the mat.
+            So on a roomy window it is exactly as tall as the shot and leaves no
+            stranded space. When the column runs out of height, the frame
+            shrinks with it.
+          - The frame is a size container, so the image caps itself at the
+            frame's height and width (`cqh`/`cqw`) less the mat and keeps its
+            aspect ratio. The mat hugs the image at every size. */}
       {slide.hasImage && (
         <div
           className={cn(
-            'mb-5 flex min-h-0 flex-col items-center justify-center',
+            'mb-5 flex min-h-0 flex-col items-center justify-center [container-type:inline-size]',
+            slide.wideMat
+              ? '[--mat-pad:1.5rem] sm:[--mat-pad:2.5rem]'
+              : '[--mat-pad:0.75rem] sm:[--mat-pad:1rem]',
             fillHeight && 'flex-1'
           )}
         >
           {slide.imageSrc ? (
             <div
-              className={cn(
-                'flex max-w-full rounded-2xl bg-gradient-to-br from-[#C9DEFF] to-[#FFEDE2] shadow-lg',
-                slide.wideMat ? 'p-6 sm:p-10' : 'p-3 sm:p-4'
-              )}
+              className="flex min-h-0 w-full items-center justify-center [container-type:size]"
+              style={{
+                flex: `0 1 calc(min(${SLIDE_IMAGE_MAX_PX[size]}px, (100cqw - 2 * var(--mat-pad)) * ${
+                  slide.imageHeight ?? IMAGE_HEIGHT
+                } / ${slide.imageWidth ?? IMAGE_WIDTH}) + 2 * var(--mat-pad))`,
+              }}
             >
-              <Image
-                src={slide.imageSrc}
-                alt={slide.title}
-                width={slide.imageWidth ?? IMAGE_WIDTH}
-                height={slide.imageHeight ?? IMAGE_HEIGHT}
-                sizes="(max-width: 768px) 100vw, 1024px"
-                // sizes={SLIDE_IMAGE_SIZES}
-                className={cn(
-                  'w-auto max-w-full object-contain',
-                  slide.imageRounded && 'rounded-xl',
-                  s.image
-                )}
-              />
+              <div className="flex rounded-2xl bg-gradient-to-br from-[#C9DEFF] to-[#FFEDE2] p-(--mat-pad) shadow-lg">
+                <Image
+                  src={slide.imageSrc}
+                  alt={slide.title}
+                  width={slide.imageWidth ?? IMAGE_WIDTH}
+                  height={slide.imageHeight ?? IMAGE_HEIGHT}
+                  sizes="(max-width: 768px) 100vw, 1024px"
+                  // sizes={SLIDE_IMAGE_SIZES}
+                  className={cn(
+                    'w-auto max-h-[calc(100cqh-2*var(--mat-pad))] max-w-[calc(100cqw-2*var(--mat-pad))] object-contain',
+                    slide.imageRounded && 'rounded-xl'
+                  )}
+                />
+              </div>
             </div>
           ) : slide.imagePlaceholderLabel ? (
             <ImagePlaceholder label={slide.imagePlaceholderLabel} />

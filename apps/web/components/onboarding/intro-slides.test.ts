@@ -24,8 +24,8 @@ describe('the intro deck agent strip', () => {
   });
 
   it('stays on one row', () => {
-    // A second row pushes the hero screenshot up until its mat overlaps the
-    // slide title, so this is a real constraint, not a style preference.
+    // A second row takes its height out of the hero screenshot, which shrinks
+    // to make room, so this is a real constraint, not a style preference.
     // `+ 1` is the trailing ellipsis chip that stands in for the rest.
     expect(AGENT_LOGOS.length + 1).toBeLessThanOrEqual(MAX_CHIPS_PER_ROW);
   });
