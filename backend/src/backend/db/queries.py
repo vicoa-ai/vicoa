@@ -1868,23 +1868,6 @@ def create_user_message_with_access(
     if mark_as_read:
         instance.last_read_message_id = message.id
 
-    try:
-        from servers.shared.db.queries import trigger_webhook_for_user_response
-
-        trigger_webhook_for_user_response(
-            db=db,
-            agent_instance_id=str(instance.id),
-            user_message_content=content,
-            user_message_id=str(message.id),
-            user_id=str(user_id),
-        )
-    except (
-        Exception
-    ) as exc:  # pragma: no cover - webhook failures shouldn't block messaging
-        logging.getLogger(__name__).exception(
-            "Failed to trigger webhook for user response: %s", exc
-        )
-
     return message
 
 

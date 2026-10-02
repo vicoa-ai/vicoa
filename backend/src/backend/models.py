@@ -23,11 +23,6 @@ from shared.database.enums import (
     InstanceAccessLevel,
 )
 from shared.database.liveness import LiveState
-from shared.webhook_schemas import (
-    get_webhook_type_schema,
-    validate_webhook_config as validate_webhook_config_func,
-    WEBHOOK_TYPES,
-)
 
 # ============================================================================
 # Message Models
@@ -717,52 +712,12 @@ class ProjectGrantCreateResponse(ProjectPersonResponse):
 
 class UserAgentRequest(BaseModel):
     name: str = Field(..., description="Name of the user agent")
-    webhook_type: str | None = Field(None, description="Type of webhook integration")
-    webhook_config: dict | None = Field(None, description="Webhook configuration")
     is_active: bool = Field(True, description="Whether the agent is active")
-
-    @field_validator("webhook_type")
-    @classmethod
-    def validate_webhook_type(cls, v: str | None) -> str | None:
-        """Validate that the webhook type is supported."""
-        if v is None:
-            return None
-
-        if not get_webhook_type_schema(v):
-            supported = ", ".join(WEBHOOK_TYPES.keys())
-            raise ValueError(
-                f"Unknown webhook type: {v}. Supported types are: {supported}"
-            )
-
-        return v
-
-    @field_validator("webhook_config")
-    @classmethod
-    def validate_webhook_config(cls, v: dict | None, info) -> dict | None:
-        """Validate webhook configuration against the webhook type schema."""
-        if v is None:
-            return None
-
-        # Get the webhook_type from the data
-        webhook_type = info.data.get("webhook_type")
-
-        # If no webhook_type, can't validate config
-        if not webhook_type:
-            return v
-
-        # Validate the configuration
-        is_valid, error_msg = validate_webhook_config_func(webhook_type, v)
-        if not is_valid:
-            raise ValueError(f"Invalid webhook configuration: {error_msg}")
-
-        return v
 
 
 class UserAgentResponse(BaseModel):
     id: str
     name: str
-    webhook_type: str | None = None
-    webhook_config: dict | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -777,25 +732,6 @@ class UserAgentResponse(BaseModel):
         return dt.isoformat() + "Z"
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class CreateAgentInstanceRequest(BaseModel):
-    """Request to create a new agent instance with dynamic runtime fields based on webhook type."""
-
-    name: str | None = Field(
-        None, description="Optional display name for the agent instance"
-    )
-
-    # Accept any additional fields dynamically based on the webhook's runtime_fields
-    # (e.g., prompt, worktree_name, branch_name for VICOA_SERVE)
-    model_config = ConfigDict(extra="allow")
-
-
-class WebhookTriggerResponse(BaseModel):
-    success: bool
-    agent_instance_id: str | None = None
-    message: str
-    error: str | None = None
 
 
 # ============================================================================

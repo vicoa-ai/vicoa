@@ -2,11 +2,9 @@
 
 from datetime import datetime, timezone
 from uuid import uuid4
-from unittest.mock import patch, AsyncMock
 
 from shared.database.models import AgentType, AgentInstance, User
 from shared.database.enums import AgentStatus
-from backend.models import WebhookTriggerResponse
 
 
 class TestUserAgentEndpoints:
@@ -72,12 +70,7 @@ class TestUserAgentEndpoints:
 
     def test_create_user_agent(self, authenticated_client, test_db, test_user):
         """Test creating a new user agent."""
-        agent_data = {
-            "name": "New Agent",
-            "is_active": True,
-            "webhook_type": "DEFAULT",
-            "webhook_config": {"url": "https://example.com/webhook"},
-        }
+        agent_data = {"name": "New Agent", "is_active": True}
 
         response = authenticated_client.post("/api/v1/user-agents", json=agent_data)
         assert response.status_code == 200
@@ -85,25 +78,16 @@ class TestUserAgentEndpoints:
 
         assert data["name"] == "New Agent"
         assert data["is_active"] is True
-        assert data["webhook_type"] == "DEFAULT"
-        assert data["webhook_config"]["url"] == "https://example.com/webhook"
         assert "id" in data
 
         # Verify in database
         agent = test_db.query(AgentType).filter_by(name="New Agent").first()
         assert agent is not None
         assert agent.user_id == test_user.id
-        assert agent.webhook_type == "DEFAULT"
-        assert agent.webhook_config["url"] == "https://example.com/webhook"
 
     def test_update_user_agent(self, authenticated_client, test_db, test_agent_type):
         """Test updating a user agent."""
-        update_data = {
-            "name": "Updated Claude",
-            "is_active": False,
-            "webhook_type": "DEFAULT",
-            "webhook_config": {"url": "https://new-webhook.com"},
-        }
+        update_data = {"name": "Updated Claude", "is_active": False}
 
         response = authenticated_client.patch(
             f"/api/v1/user-agents/{test_agent_type.id}", json=update_data
@@ -113,15 +97,11 @@ class TestUserAgentEndpoints:
 
         assert data["name"] == "Updated Claude"
         assert data["is_active"] is False
-        assert data["webhook_type"] == "DEFAULT"
-        assert data["webhook_config"]["url"] == "https://new-webhook.com"
 
         # Verify in database
         test_db.refresh(test_agent_type)
         assert test_agent_type.name == "Updated Claude"
         assert test_agent_type.is_active is False
-        assert test_agent_type.webhook_type == "DEFAULT"
-        assert test_agent_type.webhook_config["url"] == "https://new-webhook.com"
 
     def test_update_user_agent_not_found(self, authenticated_client):
         """Test updating a non-existent user agent."""
@@ -202,98 +182,36 @@ class TestUserAgentEndpoints:
         assert response.status_code == 404
         assert response.json()["detail"] == "User agent not found"
 
-    def test_create_agent_instance_no_webhook(
+    def test_webhook_fields_are_ignored(self, authenticated_client):
+        """Webhook agents are gone; old clients sending their fields still work."""
+        response = authenticated_client.post(
+            "/api/v1/user-agents",
+            json={
+                "name": "Old Client Agent",
+                "webhook_type": "DEFAULT",
+                "webhook_config": {"url": "http://127.0.0.1:45678/internal-webhook"},
+            },
+        )
+        assert response.status_code == 200
+        assert "webhook_type" not in response.json()
+        assert "webhook_config" not in response.json()
+
+    def test_starting_an_instance_by_webhook_is_gone(
         self, authenticated_client, test_db, test_agent_type
     ):
-        """Test creating an instance for agent without webhook returns error."""
+        """The backend no longer POSTs to a user-supplied URL to start an agent."""
         response = authenticated_client.post(
             f"/api/v1/user-agents/{test_agent_type.id}/instances",
             json={"prompt": "Test prompt"},
         )
 
-        assert response.status_code == 400
-        data = response.json()
+        assert response.status_code == 405
         assert (
-            data["detail"]
-            == "Webhook configuration is required to create agent instances"
-        )
-
-        # Verify no instance was created
-        instance = (
             test_db.query(AgentInstance)
             .filter_by(agent_type_id=test_agent_type.id)
             .first()
+            is None
         )
-        assert instance is None
-
-    def test_create_agent_instance_with_webhook(
-        self, authenticated_client, test_db, test_agent_type
-    ):
-        """Test creating an instance for agent with webhook."""
-        # Set webhook configuration
-        test_agent_type.webhook_type = "DEFAULT"
-        test_agent_type.webhook_config = {"url": "https://example.com/webhook"}
-        test_db.commit()
-
-        # Mock the async webhook function
-        with patch(
-            "backend.api.user_agents.trigger_webhook_agent",
-            new_callable=AsyncMock,
-        ) as mock_trigger:
-            # Set the return value for the async mock
-            mock_trigger.return_value = WebhookTriggerResponse(
-                success=True,
-                agent_instance_id=str(uuid4()),
-                message="Webhook triggered successfully",
-            )
-
-            response = authenticated_client.post(
-                f"/api/v1/user-agents/{test_agent_type.id}/instances",
-                json={"prompt": "Test prompt with webhook"},
-            )
-
-            assert response.status_code == 200
-            data = response.json()
-            # The actual webhook is still being called, so let's just check the response structure
-            assert "success" in data
-            assert "agent_instance_id" in data
-            assert "message" in data
-
-    def test_create_agent_instance_not_found(self, authenticated_client):
-        """Test creating instance for non-existent user agent."""
-        fake_id = uuid4()
-        response = authenticated_client.post(
-            f"/api/v1/user-agents/{fake_id}/instances", json={"prompt": "Test"}
-        )
-        assert response.status_code == 404
-        assert response.json()["detail"] == "User agent not found"
-
-    def test_create_agent_instance_wrong_user(self, authenticated_client, test_db):
-        """Test creating instance for another user's agent."""
-        # Create another user with agent
-        other_user = User(
-            id=uuid4(),
-            email="other@example.com",
-            display_name="Other User",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
-        test_db.add(other_user)
-
-        other_agent = AgentType(
-            id=uuid4(),
-            user_id=other_user.id,
-            name="other agent",
-            is_active=True,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
-        test_db.add(other_agent)
-        test_db.commit()
-
-        response = authenticated_client.post(
-            f"/api/v1/user-agents/{other_agent.id}/instances",
-            json={"prompt": "Trying to use other's agent"},
-        )
-        assert response.status_code == 404
-        assert response.json()["detail"] == "User agent not found"
+        # Only PATCH/DELETE remain on /user-agents/{id}.
+        response = authenticated_client.get("/api/v1/user-agents/webhook-types")
+        assert response.status_code == 405

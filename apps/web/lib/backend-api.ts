@@ -337,34 +337,6 @@ export interface AgentInstanceDetail {
   participants?: PrincipalResponse[];
 }
 
-export interface UserAgentResponse {
-  id: string;
-  name: string;
-  webhook_url: string | null;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-  instance_count: number;
-  active_instance_count: number;
-  waiting_instance_count: number;
-  completed_instance_count: number;
-  error_instance_count: number;
-  has_webhook: boolean;
-}
-
-export interface CreateUserAgentRequest {
-  name: string;
-  webhook_url?: string | null;
-  webhook_api_key?: string | null;
-  is_active?: boolean;
-}
-
-export interface CreateAgentInstanceRequest {
-  prompt: string;
-  name?: string | null;
-  worktree_name?: string | null;
-}
-
 export interface UserMessageRequest {
   content: string;
   /** Ids of images eagerly uploaded via /api/attachments; ride the message. */
@@ -1669,40 +1641,6 @@ class BackendAPI {
     return this.request<AgentInstanceResponse>(`/api/v1/agent-instances/${instanceId}/status`, {
       method: 'PUT',
       body: JSON.stringify(statusUpdate),
-    });
-  }
-
-  // User Agents
-  async listUserAgents(): Promise<UserAgentResponse[]> {
-    return this.request<UserAgentResponse[]>('/api/v1/user-agents');
-  }
-
-  async createUserAgent(data: CreateUserAgentRequest): Promise<UserAgentResponse> {
-    return this.request<UserAgentResponse>('/api/v1/user-agents', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async updateUserAgent(agentId: string, data: CreateUserAgentRequest): Promise<UserAgentResponse> {
-    return this.request<UserAgentResponse>(`/api/v1/user-agents/${agentId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async deleteUserAgent(agentId: string) {
-    return this.request(`/api/v1/user-agents/${agentId}`, { method: 'DELETE' });
-  }
-
-  async getUserAgentInstances(agentId: string): Promise<AgentInstanceResponse[]> {
-    return this.request<AgentInstanceResponse[]>(`/api/v1/user-agents/${agentId}/instances`);
-  }
-
-  async createAgentInstance(agentId: string, data: CreateAgentInstanceRequest) {
-    return this.request(`/api/v1/user-agents/${agentId}/instances`, {
-      method: 'POST',
-      body: JSON.stringify(data),
     });
   }
 

@@ -94,8 +94,7 @@ class AgentType(Base):
     """A kind of agent the user runs — "claude code", "codex", "opencode".
 
     Auto-created per (user, name) on session registration by
-    ``get_or_create_agent_type``; ``webhook_type``/``webhook_config`` optionally
-    turn one into a remote-start webhook target.
+    ``get_or_create_agent_type``.
 
     Renamed from ``UserAgent``/``user_agents`` in P0.5 so the word "agent" is
     free for the user-facing agent presets. The REST surface is deliberately
@@ -123,12 +122,10 @@ class AgentType(Base):
         ForeignKey("users.id", ondelete="CASCADE"), type_=PostgresUUID(as_uuid=True)
     )
     name: Mapped[str] = mapped_column(String(255))
-    webhook_type: Mapped[str | None] = mapped_column(
-        String(50), nullable=True, default=None
-    )
-    webhook_config: Mapped[dict | None] = mapped_column(
-        JSONB, nullable=True, default=None
-    )
+    # The table still has `webhook_type` / `webhook_config` from the removed
+    # webhook agents. They are unmapped first and dropped by a later migration:
+    # release_command migrates before the old machines of both Fly apps are
+    # replaced, and those still select every mapped column.
     is_active: Mapped[bool] = mapped_column(default=True)
     is_deleted: Mapped[bool] = mapped_column(default=False)  # Soft delete flag
     created_at: Mapped[datetime] = mapped_column(

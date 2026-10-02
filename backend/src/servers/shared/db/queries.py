@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-import httpx
 from shared import access
 from shared.database import (
     AgentInstance,
@@ -1008,16 +1007,6 @@ def create_user_message(
     if mark_as_read:
         instance.last_read_message_id = message.id
 
-    # Trigger webhook if previous agent message was waiting for response
-    # TODO: do this in a background task
-    trigger_webhook_for_user_response(
-        db=db,
-        agent_instance_id=agent_instance_id,
-        user_message_content=content,
-        user_message_id=str(message.id),
-        user_id=user_id,
-    )
-
     return {
         "id": str(message.id),
         "content": message.content,
@@ -1027,94 +1016,6 @@ def create_user_message(
         "marked_as_read": mark_as_read,
         "instance_id": agent_instance_id,
     }
-
-
-def trigger_webhook_for_user_response(
-    db: Session,
-    agent_instance_id: UUID | str,
-    user_message_content: str,
-    user_message_id: str,
-    user_id: str,
-) -> None:
-    """Trigger webhook if the last agent message was waiting for user input.
-
-    This function checks if the previous agent message has a webhook URL in its
-    metadata and triggers it with the user's response.
-    """
-    # Convert to UUID if string
-    if isinstance(agent_instance_id, str):
-        agent_instance_id = UUID(agent_instance_id)
-
-    # Find the last agent message that requires user input
-    last_agent_message = (
-        db.query(Message)
-        .filter(
-            Message.agent_instance_id == agent_instance_id,
-            Message.sender_type == SenderType.AGENT,
-            Message.requires_user_input,
-        )
-        .order_by(Message.created_at.desc())
-        .first()
-    )
-
-    if not last_agent_message:
-        return
-
-    # Check if it has a webhook URL in metadata
-    if not last_agent_message.message_metadata:
-        return
-
-    webhook_url = last_agent_message.message_metadata.get("webhook_url")
-    if not webhook_url:
-        return
-
-    # Check if webhook was already triggered
-    if last_agent_message.message_metadata.get("webhook_triggered"):
-        logger.info(f"Webhook already triggered for message {last_agent_message.id}")
-        return
-
-    # Prepare webhook payload
-    webhook_payload = {
-        "user_message": user_message_content,
-        "user_id": user_id,
-        "message_id": user_message_id,
-        "agent_instance_id": str(agent_instance_id),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-
-    # TODO: call this in the background so user message doesn't hang
-    try:
-        with httpx.Client() as client:
-            response = client.post(
-                webhook_url,
-                json=webhook_payload,
-                timeout=10.0,  # 10 second timeout
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Vicoa-Webhook": "true",
-                },
-            )
-
-            if response.status_code >= 200 and response.status_code < 300:
-                logger.info(
-                    f"Successfully triggered webhook for agent instance {agent_instance_id}"
-                )
-                # Mark webhook as triggered to prevent multiple triggers
-                if not last_agent_message.message_metadata:
-                    last_agent_message.message_metadata = {}
-                last_agent_message.message_metadata["webhook_triggered"] = True
-                last_agent_message.message_metadata["webhook_response_status"] = (
-                    response.status_code
-                )
-            else:
-                logger.warning(
-                    f"Webhook returned non-success status {response.status_code} "
-                    f"for agent instance {agent_instance_id}"
-                )
-    except Exception as e:
-        logger.error(
-            f"Failed to trigger webhook for agent instance {agent_instance_id}: {e}"
-        )
 
 
 def resolve_spawn_agent_profile(user_id: str, agent_profile_id: str) -> dict | None:

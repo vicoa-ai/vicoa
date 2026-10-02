@@ -348,7 +348,7 @@ class CreateMessageRequest(BaseModel):
     )
     message_metadata: dict | None = Field(
         None,
-        description="Optional metadata to store with the message (e.g., webhook URLs)",
+        description="Optional metadata to store with the message",
     )
 
 

@@ -190,7 +190,6 @@ def create_user_message_endpoint(
     - Creates a user message for an existing agent instance
     - Optionally marks it as read (updates last_read_message_id)
     - Returns the message ID
-    - Triggers any waiting webhooks (e.g., n8n workflows)
     - Generates session title if needed (in background)
     """
 

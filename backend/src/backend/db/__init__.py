@@ -35,7 +35,6 @@ from .user_agent_queries import (
     get_user_agents,
     update_user_agent,
     delete_user_agent,
-    trigger_webhook_agent,
     get_user_agent_instances,
 )
 
@@ -74,6 +73,5 @@ __all__ = [
     "get_user_agents",
     "update_user_agent",
     "delete_user_agent",
-    "trigger_webhook_agent",
     "get_user_agent_instances",
 ]
