@@ -608,6 +608,11 @@ export interface ProjectOrderResponse {
   project_ids: string[];
 }
 
+/** Echo of `setAutomationOrder`: the ids actually stored, in order. */
+export interface AutomationOrderResponse {
+  automation_ids: string[];
+}
+
 /** What deleting the project would file under No project — for the confirm dialog. */
 export interface ProjectSummaryResponse {
   task_count: number;
@@ -2220,7 +2225,8 @@ class BackendAPI {
    * Default: your own automations, in every project. `scope: 'all'` adds
    * collaborators' automations in projects shared with you; `projectId` lists
    * one project's. Collaborators' rows are read-only, with `owner` set: edit,
-   * run and delete stay with their author.
+   * run and delete stay with their author. Every list comes back in your own
+   * order (`setAutomationOrder`): unranked ones first, newest first.
    */
   async listAutomations(
     options: { scope?: 'me' | 'all'; projectId?: string | null } = {},
@@ -2230,6 +2236,19 @@ class BackendAPI {
     else if (options.scope === 'all') params.set('scope', 'all');
     const query = params.toString();
     return this.request<AutomationResponse[]>(`/api/v1/automations${query ? `?${query}` : ''}`);
+  }
+
+  /**
+   * Replace the caller's manual automation order (drag-and-drop), first to
+   * last, over everything they can see. Per viewer, so ranking a
+   * collaborator's automation never moves it for anyone else. Ids the caller
+   * cannot see are dropped; the echo is what got stored.
+   */
+  async setAutomationOrder(automationIds: string[]): Promise<AutomationOrderResponse> {
+    return this.request<AutomationOrderResponse>('/api/v1/automations/order', {
+      method: 'PUT',
+      body: JSON.stringify({ automation_ids: automationIds }),
+    });
   }
 
   async getAutomation(id: string): Promise<AutomationResponse> {

@@ -45,6 +45,7 @@ import { DetailPanel } from './components/detail-panel';
 import { SharedDetailPanel } from './components/shared-detail-panel';
 import type { AutomationTemplate } from './lib/templates';
 import { NO_PROJECT } from './lib/group-by-project';
+import { reorderRows } from './lib/order';
 
 type Selection = AutomationResponse | 'new' | null;
 
@@ -129,8 +130,13 @@ function AutomationPageInner() {
     setSelection('new');
   }, []);
 
+  // The drag-order save in flight, if any: a refetch waits for it, or it could
+  // land before the save and snap the list back to the old order.
+  const orderSaveRef = useRef<Promise<unknown> | null>(null);
+
   const refresh = useCallback(async () => {
     if (!api) return;
+    await orderSaveRef.current;
     const [automationList, machineList] = await Promise.all([
       api.listAutomations({ scope: 'all' }),
       api.listMachines(),
@@ -319,6 +325,29 @@ function AutomationPageInner() {
       }
     },
     [api, refresh],
+  );
+
+  // Drag-to-reorder: `rendered` is one group's on-screen rows in their new
+  // order. Move them now, then save the whole order (it is the viewer's own,
+  // so a collaborator's rows move too). On failure refetch rather than guess.
+  const reorder = useCallback(
+    (rendered: string[]) => {
+      if (!api) return;
+      const next = reorderRows(automations, rendered);
+      setAutomations(next);
+      const save = api
+        .setAutomationOrder(next.map((a) => a.id))
+        .catch((err) => {
+          console.error('Failed to save automation order:', err);
+          orderSaveRef.current = null;
+          void refresh();
+        })
+        .finally(() => {
+          if (orderSaveRef.current === save) orderSaveRef.current = null;
+        });
+      orderSaveRef.current = save;
+    },
+    [api, automations, refresh],
   );
 
   const deleteAutomation = useCallback(
@@ -626,6 +655,7 @@ function AutomationPageInner() {
             onRunNow={runNow}
             onTogglePause={togglePause}
             onDelete={(a) => setDeleteTarget(a)}
+            onReorder={reorder}
             busyId={busyId}
           />
         )}

@@ -38,10 +38,12 @@ from shared.database.project_matching import resolve_automation_project_ids
 
 from ..db.queries import _user_principal
 from ..models import (
+    AutomationOrderResponse,
     AutomationResponse,
     AutomationRunResponse,
     CreateAutomationRequest,
     RecordAutomationRunRequest,
+    SetAutomationOrderRequest,
     UpdateAutomationRequest,
 )
 
@@ -183,6 +185,23 @@ def create_automation_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
     return _responses_for(db, [VisibleAutomation(automation, "owner")])[0]
+
+
+# Declared before the `/automations/{automation_id}` routes on purpose: that
+# path param is typed UUID, so "order" would otherwise be matched there and 422.
+@router.put("/automations/order", response_model=AutomationOrderResponse)
+def set_automation_order_endpoint(
+    request: SetAutomationOrderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AutomationOrderResponse:
+    """Save the caller's drag order. It is their view only, so any automation
+    they can see may be ranked, a collaborator's included, and nobody else's
+    list moves."""
+    stored = automation_queries.set_automation_order(
+        db, current_user.id, request.automation_ids
+    )
+    return AutomationOrderResponse(automation_ids=stored)
 
 
 @router.get("/automations/{automation_id}", response_model=AutomationResponse)

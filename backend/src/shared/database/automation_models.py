@@ -21,6 +21,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
 )
@@ -124,6 +125,38 @@ class Automation(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
+
+
+class AutomationPosition(Base):
+    """A viewer's manual ordering of the automations they can see.
+
+    One row per (user, automation) the user has dragged into place; an
+    automation with no row for the viewer is unranked and sorts above the
+    ranked ones, newest first, so a new automation (yours, or one a
+    collaborator just wrote in a shared project) shows up on top. Per viewer,
+    not a column on `automations`, for the reason `project_positions` is: a
+    project's automations are shared with its collaborators, and how one
+    person arranges their list must not rearrange anyone else's. Rows follow
+    the automation; one the viewer can no longer see keeps a stale row that no
+    list surfaces and the next full rewrite discards.
+    """
+
+    __tablename__ = "automation_positions"
+    __table_args__ = (Index("ix_automation_positions_automation", "automation_id"),)
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        type_=PostgresUUID(as_uuid=True),
+        primary_key=True,
+    )
+    automation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("automations.id", ondelete="CASCADE"),
+        type_=PostgresUUID(as_uuid=True),
+        primary_key=True,
+    )
+    # 0-based rank within the viewer's ordered automations; contiguous after
+    # every rewrite, but the reader only relies on ascending order.
+    position: Mapped[int] = mapped_column(Integer)
 
 
 class AutomationRun(Base):

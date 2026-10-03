@@ -1,6 +1,24 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type Modifier,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import {
   Circle,
   CirclePause,
@@ -34,6 +52,25 @@ import { groupByProject, NO_PROJECT } from '../lib/group-by-project';
 
 export type AutomationFilter = 'all' | 'active' | 'paused';
 
+// Rows only move up and down, and stay inside their group's list (dnd-kit's
+// container rect is the dragged row's parent): a row's group is its project,
+// which a drag can't change, so it shouldn't look like it can leave.
+const restrictToGroup: Modifier = ({ transform, draggingNodeRect, containerNodeRect }) => ({
+  ...transform,
+  x: 0,
+  y:
+    draggingNodeRect && containerNodeRect
+      ? Math.min(
+          Math.max(transform.y, containerNodeRect.top - draggingNodeRect.top),
+          containerNodeRect.bottom - draggingNodeRect.bottom,
+        )
+      : transform.y,
+});
+
+// A row's own controls must not start a drag: a press that wobbles past the
+// activation distance would drag the row instead of toggling or opening the menu.
+const stopDragStart = (e: React.PointerEvent) => e.stopPropagation();
+
 function matches(a: AutomationResponse, filter: AutomationFilter, q: string): boolean {
   if (filter === 'active' && !a.enabled) return false;
   if (filter === 'paused' && a.enabled) return false;
@@ -51,6 +88,7 @@ export function AutomationList({
   onRunNow,
   onTogglePause,
   onDelete,
+  onReorder,
   busyId,
 }: {
   /** Yours and collaborators' mixed: a row with `owner` set is a
@@ -66,6 +104,9 @@ export function AutomationList({
   onRunNow: (a: AutomationResponse) => void;
   onTogglePause: (a: AutomationResponse) => void;
   onDelete: (a: AutomationResponse) => void;
+  /** Rows were dragged: the ids one group shows, in their new order. Yours and
+   *  collaborators' alike, since the order is the viewer's own view. */
+  onReorder: (rendered: string[]) => void;
   busyId: string | null;
 }) {
   const [query, setQuery] = useState('');
@@ -118,28 +159,90 @@ export function AutomationList({
             <div className="px-4 py-10 text-center text-xs text-muted-foreground">
               {automations.length === 0 ? emptyLabel : 'No matches.'}
             </div>
-          ) : (
+          ) : groups ? (
             <ul>
-              {groups
-                ? groups.map((group) => (
-                    <li key={group.key}>
-                      <div className="flex items-center gap-1.5 px-3 pb-1 pt-3 text-[0.8rem] font-normal text-muted-foreground">
-                        <ProjectIcon project={group.project} />
-                        <span className="truncate">
-                          {group.project?.name ??
-                            (group.key === NO_PROJECT ? 'No project' : 'Other project')}
-                        </span>
-                      </div>
-                      <ul>{group.rows.map(renderRow)}</ul>
-                    </li>
-                  ))
-                : visible.map(renderRow)}
+              {groups.map((group) => (
+                <li key={group.key}>
+                  <div className="flex items-center gap-1.5 px-3 pb-1 pt-3 text-[0.8rem] font-normal text-muted-foreground">
+                    <ProjectIcon project={group.project} />
+                    <span className="truncate">
+                      {group.project?.name ??
+                        (group.key === NO_PROJECT ? 'No project' : 'Other project')}
+                    </span>
+                  </div>
+                  <SortableRows rows={group.rows} onReorder={onReorder}>
+                    {group.rows.map(renderRow)}
+                  </SortableRows>
+                </li>
+              ))}
             </ul>
+          ) : (
+            <SortableRows rows={visible} onReorder={onReorder}>
+              {visible.map(renderRow)}
+            </SortableRows>
           )}
         </div>
       </div>
     </TooltipProvider>
   );
+}
+
+/**
+ * One group's rows, draggable among themselves only: a row's group is its
+ * project, which comes from its folder, so a drag can't move it to another.
+ */
+function SortableRows({
+  rows,
+  onReorder,
+  children,
+}: {
+  rows: AutomationResponse[];
+  onReorder: (rendered: string[]) => void;
+  children: ReactNode;
+}) {
+  // A small activation distance keeps a plain click opening the row. A focused
+  // row also moves with space, then the arrow keys.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const ids = rows.map((a) => a.id);
+
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over) return;
+    const from = ids.indexOf(String(active.id));
+    const to = ids.indexOf(String(over.id));
+    if (from < 0 || to < 0 || from === to) return;
+    onReorder(arrayMove(ids, from, to));
+  };
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      modifiers={[restrictToGroup]}
+      onDragEnd={handleDragEnd}
+    >
+      <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+        <ul>{children}</ul>
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+/** Wires a row into its group's `SortableRows`. */
+function useSortableRow(id: string) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id });
+  return {
+    sortableProps: {
+      ref: setNodeRef,
+      style: { transform: CSS.Transform.toString(transform), transition },
+      ...attributes,
+      ...listeners,
+    },
+    draggingClass: isDragging ? 'relative z-10 bg-background shadow-md' : undefined,
+  };
 }
 
 /** One of your own automations: pause toggle on the left, actions on hover. */
@@ -160,14 +263,17 @@ function OwnRow({
   onTogglePause: (a: AutomationResponse) => void;
   onDelete: (a: AutomationResponse) => void;
 }) {
+  const { sortableProps, draggingClass } = useSortableRow(a.id);
   return (
     <li
+      {...sortableProps}
       onClick={() => onSelect(a)}
       className={cn(
         'group flex cursor-pointer items-center gap-2.5 border-b border-border/50 px-3 py-2.5',
         selected
           ? 'bg-foreground/[0.07]'
           : 'hover:bg-foreground/[0.04]',
+        draggingClass,
       )}
     >
       {/* Active/paused toggle: empty circle when active (hover →
@@ -176,6 +282,7 @@ function OwnRow({
         <TooltipTrigger asChild>
           <button
             type="button"
+            onPointerDown={stopDragStart}
             onClick={(e) => {
               e.stopPropagation();
               onTogglePause(a);
@@ -216,6 +323,7 @@ function OwnRow({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
+              onPointerDown={stopDragStart}
               onClick={(e) => e.stopPropagation()}
               className="flex-shrink-0 rounded-md p-1 text-muted-foreground opacity-0 hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
               title="Actions"
@@ -272,12 +380,15 @@ function SharedRow({
   selected: boolean;
   onSelect: (a: AutomationResponse) => void;
 }) {
+  const { sortableProps, draggingClass } = useSortableRow(a.id);
   return (
     <li
+      {...sortableProps}
       onClick={() => onSelect(a)}
       className={cn(
         'flex cursor-pointer items-center gap-2.5 border-b border-border/50 px-3 py-2.5',
         selected ? 'bg-foreground/[0.07]' : 'hover:bg-foreground/[0.04]',
+        draggingClass,
       )}
     >
       <span

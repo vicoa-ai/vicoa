@@ -6,7 +6,9 @@ import 'index.dart';
 /// web dashboard's backend-api.ts automation methods; the server owns all
 /// next-run computation — the app only reads/writes the stored schedule.
 
-/// GET /api/v1/automations → list of automation maps (created_at DESC).
+/// GET /api/v1/automations → list of automation maps in the user's own order
+/// (set by dragging on the web dashboard; ones they haven't ranked, new ones
+/// included, sit on top, newest first). The app shows the list as returned.
 /// Returns null on failure so the caller can distinguish "error" from "empty".
 Future<List<dynamic>?> apiGetAutomations() async {
   try {

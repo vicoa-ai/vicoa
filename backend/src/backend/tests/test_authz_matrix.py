@@ -755,6 +755,18 @@ ENDPOINTS: list[Endpoint] = [
         lambda c, w: c.get(f"/api/v1/automations?project_id={w.project.id}"),
         listed_ids=_ids(),
     ),
+    # The caller's own drag order: their view only, so any standing that can
+    # read the automation may rank it; an invisible id is dropped, not 404'd.
+    Endpoint(
+        "PUT /automations/order",
+        "automations",
+        "viewer",
+        lambda c, w: c.put(
+            "/api/v1/automations/order",
+            json={"automation_ids": [str(w.automation.id)]},
+        ),
+        listed_ids=lambda r: {str(i) for i in r.json()["automation_ids"]},
+    ),
     Endpoint(
         "GET /automations/{id}",
         "automations",
@@ -888,6 +900,7 @@ _LISTED_OBJECT: dict[str, Callable[[World], str]] = {
     "GET /automations": lambda w: str(w.automation.id),
     "GET /automations?project_id={id}": lambda w: str(w.automation.id),
     "GET /automations?scope=all": lambda w: str(w.automation.id),
+    "PUT /automations/order": lambda w: str(w.automation.id),
     "GET /references": lambda w: str(w.task.id),
 }
 

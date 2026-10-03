@@ -1274,6 +1274,20 @@ class UpdateAutomationRequest(BaseModel):
         return None if v is None else _validate_session_config(v)
 
 
+class SetAutomationOrderRequest(BaseModel):
+    """The caller's full automation order, first to last, over everything
+    they can see (theirs and collaborators'). Replaces the previous order
+    wholesale; an empty list resets everything to newest first."""
+
+    automation_ids: list[UUID] = Field(default_factory=list, max_length=5000)
+
+
+class AutomationOrderResponse(BaseModel):
+    """The order actually stored: ids the caller cannot see are dropped."""
+
+    automation_ids: list[UUID]
+
+
 class RecordAutomationRunRequest(BaseModel):
     """Report the outcome of a client-side ("run now") spawn so it lands in
     history. Scheduler-fired runs are recorded server-side, not via this."""

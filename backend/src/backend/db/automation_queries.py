@@ -11,10 +11,15 @@ The dashboard additionally *reads* collaborators' automations through the
 project their folder files them under (`list_project_automations`,
 `get_visible_automation`; collaboration §10.6), and a project share link
 carrying `automations` reads them all (`automations_filed_in`).
+
+Lists come back in the caller's own order (`automation_positions`, written by
+`set_automation_order` when they drag a row): automations they have not ranked
+first, newest first, then the ranked ones.
 """
 
 # `timezone` is aliased because create/update take a `timezone: str` parameter
 # that would otherwise shadow datetime.timezone.
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone as dt_timezone
 from uuid import UUID
@@ -25,7 +30,13 @@ from sqlalchemy.orm import Session
 from shared import access
 from shared.access import Role
 from shared.agent_profile_resolution import usable_profile_filter
-from shared.database import AgentInstance, Automation, AutomationRun, Machine
+from shared.database import (
+    AgentInstance,
+    Automation,
+    AutomationPosition,
+    AutomationRun,
+    Machine,
+)
 from shared.database.agent_profile_models import AgentProfile
 from shared.database.project_matching import resolve_automation_project_ids
 from shared.database.task_models import Project, ProjectDirectory
@@ -111,10 +122,19 @@ def _resolve_next_run_at(
 
 
 def list_automations(db: Session, user_id: UUID) -> list[Automation]:
+    """The user's own automations, in their order (see the module docstring)."""
     return (
         db.query(Automation)
+        .outerjoin(
+            AutomationPosition,
+            (AutomationPosition.automation_id == Automation.id)
+            & (AutomationPosition.user_id == user_id),
+        )
         .filter(Automation.user_id == user_id)
-        .order_by(Automation.created_at.desc())
+        .order_by(
+            AutomationPosition.position.asc().nullsfirst(),
+            Automation.created_at.desc(),
+        )
         .all()
     )
 
@@ -192,7 +212,7 @@ def list_project_automations(
             out.append(VisibleAutomation(automation, "owner", pid))
         elif foreign_role is not None:
             out.append(VisibleAutomation(automation, foreign_role, pid))
-    return out
+    return _in_viewer_order(db, user_id, out)
 
 
 def list_visible_automations(db: Session, user_id: UUID) -> list[VisibleAutomation]:
@@ -206,7 +226,7 @@ def list_visible_automations(db: Session, user_id: UUID) -> list[VisibleAutomati
     )
     foreign = [(a, pid) for a, pid in _filed_in(db, projects) if a.user_id != user_id]
     if not foreign:
-        return own
+        return own  # already in the caller's order
     standings = access.project_accesses(
         db,
         user_id,
@@ -216,7 +236,69 @@ def list_visible_automations(db: Session, user_id: UUID) -> list[VisibleAutomati
         role = access.foreign_automation_role(standings.get(pid))
         if role is not None:
             own.append(VisibleAutomation(automation, role, pid))
-    return own
+    return _in_viewer_order(db, user_id, own)
+
+
+def _in_viewer_order(
+    db: Session, user_id: UUID, visibles: list[VisibleAutomation]
+) -> list[VisibleAutomation]:
+    """`visibles` in the caller's order: unranked newest first, then ranked.
+    The SQL `list_automations` sorts the same way for the author-only list."""
+    ids = [v.automation.id for v in visibles]
+    positions: dict[UUID, int] = (
+        {
+            automation_id: position
+            for automation_id, position in db.execute(
+                select(
+                    AutomationPosition.automation_id, AutomationPosition.position
+                ).where(
+                    AutomationPosition.user_id == user_id,
+                    AutomationPosition.automation_id.in_(ids),
+                )
+            )
+        }
+        if ids
+        else {}
+    )
+    unranked = [v for v in visibles if v.automation.id not in positions]
+    ranked = [v for v in visibles if v.automation.id in positions]
+    unranked.sort(key=lambda v: v.automation.created_at, reverse=True)
+    ranked.sort(key=lambda v: positions[v.automation.id])
+    return unranked + ranked
+
+
+def set_automation_order(
+    db: Session, user_id: UUID, automation_ids: Sequence[UUID]
+) -> list[UUID]:
+    """Replace the caller's manual automation order with `automation_ids`.
+
+    Same contract as `task_queries.set_project_order`: the client sends the
+    full list it renders and the whole order is rewritten, so an automation
+    left out becomes unranked (and sorts on top again). Duplicates keep their
+    first slot; ids the caller cannot see are dropped rather than rejected, so
+    an invisible automation stays indistinguishable from a missing one and one
+    deleted elsewhere between load and drag doesn't fail the save. Any
+    automation the caller can see may be ranked, a collaborator's included:
+    the order is the caller's view only. Returns the ids stored, in order.
+    """
+    visible = {v.automation.id for v in list_visible_automations(db, user_id)}
+    kept: list[UUID] = []
+    seen: set[UUID] = set()
+    for automation_id in automation_ids:
+        if automation_id in seen or automation_id not in visible:
+            continue
+        seen.add(automation_id)
+        kept.append(automation_id)
+
+    db.query(AutomationPosition).filter(AutomationPosition.user_id == user_id).delete(
+        synchronize_session=False
+    )
+    db.add_all(
+        AutomationPosition(user_id=user_id, automation_id=automation_id, position=index)
+        for index, automation_id in enumerate(kept)
+    )
+    db.commit()
+    return kept
 
 
 def automations_filed_in(db: Session, project_id: UUID) -> list[Automation]:
