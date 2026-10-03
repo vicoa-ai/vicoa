@@ -27,6 +27,7 @@ import {
   TaskLabelResponse,
   TaskReactionSummary,
   TaskResponse,
+  TaskStatus,
   UpdateTaskRequest,
   UserProfile,
 } from '@/lib/backend-api';
@@ -55,6 +56,7 @@ import {
 } from '@/components/dashboard/task-ui';
 import { ReactionRow, TaskTimeline } from './task-timeline';
 import { CommentComposer } from './comment-composer';
+import { ParentTaskLink, SubTasksSection, subTaskProgress } from './sub-tasks';
 import { StartSessionDialog } from '../start-session-dialog';
 import { cn } from '@/lib/utils';
 
@@ -120,11 +122,15 @@ export default function TaskDetailPage() {
   const load = useCallback(async () => {
     if (!api || !taskId) return;
     try {
-      const [taskRow, timeline, taskSessions, projectRows] = await Promise.all([
+      const [taskRow, timeline, taskSessions, projectRows, taskRows] = await Promise.all([
         api.getTask(taskId),
         api.getTaskTimeline(taskId),
         api.listTaskSessions(taskId),
         api.listProjects(),
+        // The sub-task list and the parent picker both read this. Polled with
+        // the rest so a sub-task an agent closes shows here, but a failure only
+        // keeps the last list rather than breaking the page.
+        api.listTasks().catch(() => null),
       ]);
       setTask(taskRow);
       setComments(timeline.comments);
@@ -132,6 +138,7 @@ export default function TaskDetailPage() {
       setTaskReactions(timeline.reactions);
       setSessions(taskSessions);
       setProjects(projectRows);
+      if (taskRows) setAllTasks(taskRows);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load task');
@@ -150,7 +157,6 @@ export default function TaskDetailPage() {
     // Reference data for the property pickers. Loaded once, and failing to load
     // it degrades a picker to empty rather than breaking the page.
     void api.listTaskLabels().then(setLabels).catch(() => setLabels([]));
-    void api.listTasks().then(setAllTasks).catch(() => setAllTasks([]));
     void api
       .listAgentProfiles()
       .then(setAgentProfiles)
@@ -179,11 +185,9 @@ export default function TaskDetailPage() {
   // keeps a viewer from being offered controls that would 403. An unfiled
   // task is visible to its owner alone. A project missing from the list reads
   // as the least privilege, never as owner.
-  const taskRole: ProjectRole | undefined = !task
-    ? undefined
-    : task.project_id === null
-      ? 'owner'
-      : projects.find((p) => p.id === task.project_id)?.role;
+  const roleOf = (t: TaskResponse): ProjectRole | undefined =>
+    t.project_id === null ? 'owner' : projects.find((p) => p.id === t.project_id)?.role;
+  const taskRole: ProjectRole | undefined = task ? roleOf(task) : undefined;
   const canEdit = projectRoleAtLeast(taskRole, 'editor');
   const canComment = projectRoleAtLeast(taskRole, 'commenter');
   const isOwner = taskRole === 'owner';
@@ -203,6 +207,70 @@ export default function TaskDetailPage() {
       }
     },
     [api, task, load],
+  );
+
+  // Tree context, all off the flat list: this task's children (in board
+  // order), its parent and that parent's children for the "Sub-task of" link,
+  // and each task's own child progress for sub-tasks that are parents too.
+  const subTasks = useMemo(
+    () =>
+      task
+        ? allTasks
+            .filter((t) => t.parent_task_id === task.id)
+            .sort((a, b) => a.position - b.position)
+        : [],
+    [allTasks, task],
+  );
+  const parentTask = useMemo(
+    () => (task?.parent_task_id ? allTasks.find((t) => t.id === task.parent_task_id) ?? null : null),
+    [allTasks, task],
+  );
+  const siblingTasks = useMemo(
+    () =>
+      task?.parent_task_id
+        ? allTasks.filter((t) => t.parent_task_id === task.parent_task_id)
+        : [],
+    [allTasks, task],
+  );
+  const progressById = useMemo(() => {
+    const byParent = new Map<string, TaskResponse[]>();
+    for (const t of allTasks) {
+      if (!t.parent_task_id) continue;
+      byParent.set(t.parent_task_id, [...(byParent.get(t.parent_task_id) ?? []), t]);
+    }
+    return new Map([...byParent].map(([id, children]) => [id, subTaskProgress(children)]));
+  }, [allTasks]);
+
+  // Same shape as the board's add: the child takes the parent's project and
+  // lands at the end of the board order.
+  const addSubTask = useCallback(
+    async (title: string) => {
+      if (!api || !task) return;
+      const maxPosition = allTasks.reduce((max, t) => Math.max(max, t.position), 0);
+      const created = await api.createTask({
+        title,
+        parent_task_id: task.id,
+        project_id: task.project_id,
+        position: maxPosition + 1,
+      });
+      setAllTasks((prev) => [...prev, created]);
+    },
+    [api, task, allTasks],
+  );
+
+  const setSubTaskStatus = useCallback(
+    async (child: TaskResponse, status: TaskStatus) => {
+      if (!api) return;
+      const replace = (next: TaskResponse) =>
+        setAllTasks((prev) => prev.map((t) => (t.id === next.id ? next : t)));
+      replace({ ...child, status });
+      try {
+        replace(await api.updateTask(child.id, { status }));
+      } catch {
+        replace(child);
+      }
+    },
+    [api],
   );
 
   // Mirrors the dialog's label affordance: type a name, get a label, attached.
@@ -342,6 +410,7 @@ export default function TaskDetailPage() {
               onSave={(title) => void patchTask({ title })}
               readOnly={!canEdit}
             />
+            <ParentTaskLink task={task} parent={parentTask} siblings={siblingTasks} />
             <EditableDescription
               value={task.description}
               onSave={(description) => void patchTask({ description })}
@@ -356,6 +425,17 @@ export default function TaskDetailPage() {
               }
             />
           </div>
+
+          <SubTasksSection
+            key={task.id}
+            subTasks={subTasks}
+            progressById={progressById}
+            viewer={viewer}
+            canAdd={canEdit}
+            canEditTask={(t) => projectRoleAtLeast(roleOf(t), 'editor')}
+            onAdd={addSubTask}
+            onStatusChange={(t, status) => void setSubTaskStatus(t, status)}
+          />
 
           <div className="space-y-3 border-t pt-6">
             <TaskTimeline
