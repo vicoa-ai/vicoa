@@ -5,8 +5,11 @@ and the SDK subset the headless agent calls (register, agent message,
 pending, status, user message, request-input, end session).
 """
 
+import hashlib
+import hmac
 from collections.abc import Iterator
 from pathlib import Path
+from urllib.parse import urlencode
 
 import pytest
 from starlette.testclient import TestClient
@@ -18,6 +21,7 @@ from vicoa.local_server.app import (
     create_local_app,
 )
 from vicoa.local_server.store import LocalStore
+from vicoa.rpc import file_ops
 from vicoa.terminal.service import TerminalService
 
 NONCE = "0123456789abcdef0123456789abcdef"
@@ -31,6 +35,8 @@ class StubDaemon:
     machine_id: str | None = None
 
     def _handle_rpc_request(self, frame: dict) -> dict:
+        if frame.get("method") == "read-file":
+            return file_ops.read_file(**frame["params"])
         return {"echoed_method": frame.get("method")}
 
     def _supported_rpc_methods(self) -> list[str]:
@@ -434,6 +440,95 @@ def test_file_mentions_empty_without_project_path(client: TestClient) -> None:
     response = client.get("/api/v1/files", headers=AUTH)
     assert response.status_code == 200
     assert response.json() == {"project_path": "", "files": [], "file_count": 0}
+
+
+# ----------------------------------------------------------------------
+# Media: the Files tab's video player loads a signed URL off this server
+# ----------------------------------------------------------------------
+def _read_file(client: TestClient, cwd: str, path: str) -> dict:
+    """`read-file` over the local socket, the way the renderer opens a tab."""
+    with client.websocket_connect(
+        "/ws", subprotocols=["vicoa-ws", f"vicoa-local.{NONCE}"]
+    ) as ws:
+        ws.send_json({"type": "hello", "scope": "user-scoped"})
+        ws.receive_json()
+        ws.send_json(
+            {
+                "type": "rpc-call",
+                "request_id": "m1",
+                "machine_id": "local",
+                "method": "read-file",
+                "params": {"cwd": cwd, "path": path},
+            }
+        )
+        return ws.receive_json()["result"]
+
+
+def _signed(cwd: str, path: str) -> str:
+    """A correctly signed media URL for any path, to probe the GET's own checks."""
+    sig = hmac.new(
+        NONCE.encode(), f"media\0{cwd}\0{path}".encode(), hashlib.sha256
+    ).hexdigest()
+    return "/api/v1/files/media?" + urlencode({"cwd": cwd, "path": path, "sig": sig})
+
+
+def test_video_read_file_carries_a_stream_url_with_ranges(
+    client: TestClient, tmp_path: Path
+) -> None:
+    project = tmp_path / "proj"
+    (project / "out").mkdir(parents=True)
+    (project / "out" / "demo.mp4").write_bytes(bytes(range(256)) * 4)
+
+    result = _read_file(client, str(project), "out/demo.mp4")
+    assert result["mime_type"] == "video/mp4"
+    url = result["stream_url"]
+    # Signed, not the nonce: the URL goes into a <video src>.
+    assert url.startswith("/api/v1/files/media?") and NONCE not in url
+
+    whole = client.get(url)
+    assert whole.status_code == 200
+    assert whole.headers["content-type"] == "video/mp4"
+    assert whole.headers["x-content-type-options"] == "nosniff"
+    assert len(whole.content) == 1024
+
+    part = client.get(url, headers={"Range": "bytes=256-511"})
+    assert part.status_code == 206
+    assert part.content == bytes(range(256))
+
+
+def test_non_video_read_file_has_no_stream_url(
+    client: TestClient, tmp_path: Path
+) -> None:
+    (tmp_path / "notes.txt").write_text("hi")
+    assert "stream_url" not in _read_file(client, str(tmp_path), "notes.txt")
+
+
+def test_media_rejects_a_signature_for_another_file(
+    client: TestClient, tmp_path: Path
+) -> None:
+    (tmp_path / "a.mp4").write_bytes(b"a")
+    (tmp_path / "b.mp4").write_bytes(b"b")
+    url = _read_file(client, str(tmp_path), "a.mp4")["stream_url"]
+
+    assert client.get(url.replace("a.mp4", "b.mp4")).status_code == 401
+    assert client.get(url.replace("sig=", "sig=0")).status_code == 401
+
+
+def test_media_only_serves_video_inside_the_project(
+    client: TestClient, tmp_path: Path
+) -> None:
+    project = tmp_path / "proj"
+    project.mkdir()
+    (tmp_path / "outside.mp4").write_bytes(b"x")
+    (project / "page.html").write_text("<script>alert(1)</script>")
+    (project / "clip.mp4").symlink_to(project / "page.html")
+    cwd = str(project)
+
+    assert client.get(_signed(cwd, "../outside.mp4")).status_code == 403
+    assert client.get(_signed(cwd, "page.html")).status_code == 415
+    # A video-named link to something else is judged by its target.
+    assert client.get(_signed(cwd, "clip.mp4")).status_code == 415
+    assert client.get(_signed(cwd, "missing.mp4")).status_code == 404
 
 
 def test_slash_commands_claude_shape(client: TestClient) -> None:

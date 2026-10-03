@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import hljs from 'highlight.js';
 import { ExternalLink } from 'lucide-react';
@@ -145,6 +145,52 @@ function UnviewablePlaceholder({
   );
 }
 
+/** A project video, streamed from the session's machine: straight off disk
+ * when that is this desktop, through the cloud relay otherwise. Either way the
+ * player gets Range requests, so a long recording seeks without loading the
+ * whole file. No URL (an older server), or a codec the browser can't decode,
+ * falls back to the open-elsewhere card. */
+function VideoPreview({
+  path,
+  url,
+  size,
+  machineId,
+  cwd,
+}: {
+  path: string;
+  url: string | undefined;
+  size: number;
+  machineId: string | null;
+  cwd: string | null;
+}) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [url]);
+
+  if (!url || failed) {
+    return (
+      <UnviewablePlaceholder
+        path={path}
+        message="Can't play this video here"
+        size={size}
+        machineId={machineId}
+        cwd={cwd}
+      />
+    );
+  }
+  return (
+    <div className={`flex flex-col items-center justify-center h-full p-4 gap-3 overflow-auto ${SCROLL_STYLE}`}>
+      <video
+        src={url}
+        controls
+        preload="metadata"
+        className="max-w-full max-h-[90%] rounded bg-black"
+        onError={() => setFailed(true)}
+      />
+      <div className="text-xs text-muted-foreground font-mono">{formatBytes(size)}</div>
+    </div>
+  );
+}
+
 function ErrorMessage({ code }: { code: string }) {
   const messageByCode: Record<string, string> = {
     path_not_found: 'File no longer exists',
@@ -237,6 +283,18 @@ export function FileViewer({
   }
   const result = state.result;
   if (!result) return <ErrorMessage code="unknown" />;
+
+  if (result.mime_type?.startsWith('video/')) {
+    return (
+      <VideoPreview
+        path={state.path}
+        url={result.stream_url}
+        size={result.size}
+        machineId={machineId}
+        cwd={cwd}
+      />
+    );
+  }
 
   if (result.is_binary && result.encoding === 'base64') {
     const ext = state.path.split('.').pop()?.toLowerCase() ?? '';

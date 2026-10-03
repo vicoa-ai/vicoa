@@ -59,6 +59,7 @@ from shared.websocket.envelope import (
 from shared.websocket.in_tx import after_commit
 from shared.websocket.protocol import watcher_room
 from shared.websocket.rpc import RpcError, rpc_router
+from servers.api.media import attach_stream_url
 from servers.shared.db import (
     send_agent_message,
     end_session,
@@ -836,6 +837,8 @@ async def machine_rpc_endpoint(
             "timeout": status.HTTP_504_GATEWAY_TIMEOUT,
         }.get(exc.code, status.HTTP_502_BAD_GATEWAY)
         raise HTTPException(status_code=http_status, detail=exc.code) from exc
+    if request.method == "read-file" and isinstance(result, dict):
+        attach_stream_url(user_id, machine_id, request.params, result)
     # Mirror the WS handler's post-spawn side effect so REST clients see the
     # same recent_directories update (the repo root when the daemon reports
     # one — never a worktree or subfolder; see the WS handler).

@@ -31,7 +31,7 @@ _RANGE_CAP = 1 * 1024 * 1024
 # Videos a client can stream through `read-file-range`. `read-file` tags them
 # with `mime_type` instead of sniffing them as opaque binary, which is also how
 # a client learns this daemon can serve the range reads.
-_VIDEO_MIME_TYPES = {
+VIDEO_MIME_TYPES = {
     ".mp4": "video/mp4",
     ".m4v": "video/x-m4v",
     ".mov": "video/quicktime",
@@ -169,7 +169,7 @@ def read_file(cwd: str, path: str) -> dict[str, Any]:
             "truncated": size > _IMAGE_CAP,
             "content_hash": None,
         }
-    video_mime = _VIDEO_MIME_TYPES.get(abs_file.suffix.lower())
+    video_mime = VIDEO_MIME_TYPES.get(abs_file.suffix.lower())
     if video_mime is not None:
         return {
             "content": "",

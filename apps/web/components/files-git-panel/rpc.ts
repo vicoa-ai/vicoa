@@ -40,6 +40,12 @@ export interface ReadFileResult {
    * for binary/truncated files (not editable), and absent from daemons that
    * predate editing — both leave the file read-only. */
   content_hash?: string | null;
+  /** Set for a video (the daemon tags them instead of sniffing them binary). */
+  mime_type?: string;
+  /** Where a `<video>` streams that video from, signed for this one file:
+   * this machine's local server on desktop, the cloud relay otherwise. Absent
+   * when the route can't serve one (an older server). Already absolute here. */
+  stream_url?: string;
 }
 
 /** `stat-file` — a cheap freshness probe (no contents) the editor polls for
@@ -236,9 +242,14 @@ export async function rpcReadFile(
   cwd: string,
   path: string,
 ): Promise<ReadFileResult> {
-  const result = await getRpcClient(machineId).callRpc(machineId, 'read-file', { cwd, path });
+  const client = getRpcClient(machineId);
+  const result = await client.callRpc(machineId, 'read-file', { cwd, path });
   if (typeof result.error === 'string') {
     throw new RpcError(result.error);
+  }
+  // The server sends a path; it resolves against the socket that carried it.
+  if (typeof result.stream_url === 'string') {
+    result.stream_url = client.httpUrl(result.stream_url);
   }
   return result as unknown as ReadFileResult;
 }

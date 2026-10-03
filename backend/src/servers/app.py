@@ -42,6 +42,7 @@ from servers.api.routers import agent_router
 from servers.api.agent_profiles import agent_profile_router
 from servers.api.shares import share_router
 from servers.api.tasks import task_router
+from servers.api.media import media_router
 from servers.api.ws_handler import ws_router
 from servers.presence import LeaseFlusher, presence
 from servers.scheduler import AutomationScheduler
@@ -289,6 +290,9 @@ app.include_router(instance_router, prefix="/api/v1")
 if settings.enable_websocket:
     app.include_router(ws_router)
     logger.info("WebSocket endpoint mounted at /ws")
+    # Video playback proxies HTTP Range requests into daemon RPCs, so it lives
+    # where the daemons' sockets (and the process-local rpc_router) are.
+    app.include_router(media_router, prefix="/api/v1")
 app.mount("/mcp", mcp_app)
 
 

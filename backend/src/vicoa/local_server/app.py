@@ -21,9 +21,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
 import hmac
 import logging
+import os
 import platform as platform_module
+import stat
 import threading
 import time
 import uuid
@@ -32,7 +35,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import (
     FastAPI,
@@ -44,6 +47,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from starlette.websockets import WebSocketState
 
 from protocol.agent_catalog import AGENT_CATALOG_ETAG, AGENT_CATALOG_JSON
@@ -60,6 +64,8 @@ from .store import (
 )
 from integrations.cli_wrappers.claude_code.command_sync import scan_agent_commands
 from vicoa.file_sync import scan_project_files
+from vicoa.rpc.file_ops import VIDEO_MIME_TYPES
+from vicoa.rpc.paths import OutsideProject, resolve_inside_project
 from vicoa.terminal.rpc import PTY_ORDERED_METHODS
 from vicoa.terminal.service import TerminalService
 
@@ -267,10 +273,24 @@ def create_local_app(
         allow_headers=["Authorization", "Content-Type"],
     )
 
+    # A <video> element can't send the nonce, and the nonce must not sit in a
+    # src attribute either, so a video's `read-file` answer carries a
+    # `stream_url` signed for that one file and `GET /api/v1/files/media`
+    # checks the signature instead. Keyed on the per-launch nonce, so the URLs
+    # die with the daemon.
+    def _media_sig(cwd: str, path: str) -> str:
+        message = f"media\0{cwd}\0{path}".encode()
+        return hmac.new(nonce.encode(), message, hashlib.sha256).hexdigest()
+
+    def _stream_url(cwd: str, path: str) -> str:
+        query = urlencode({"cwd": cwd, "path": path, "sig": _media_sig(cwd, path)})
+        return f"/api/v1/files/media?{query}"
+
     dispatcher = LocalRpcDispatcher(
         daemon_dispatch=daemon._handle_rpc_request,
         daemon_methods=daemon._supported_rpc_methods(),
         terminal=terminal,
+        stream_url=_stream_url,
     )
     server_started_at = utc_now_iso()
     hostname = platform_module.node()[:255]
@@ -930,6 +950,38 @@ def create_local_app(
         files = body.get("files")
         count = len(files) if isinstance(files, list) else 0
         return {"success": True, "synced_count": count}
+
+    # ------------------------------------------------------------------
+    # Media: project videos streamed straight off disk for the Files tab
+    # ------------------------------------------------------------------
+    @app.get("/api/v1/files/media")
+    def get_media(cwd: str, path: str, sig: str) -> FileResponse:
+        if not hmac.compare_digest(sig, _media_sig(cwd, path)):
+            raise HTTPException(status_code=401, detail="unauthorized")
+        try:
+            target = resolve_inside_project(Path(os.path.expanduser(cwd)), path)
+        except OutsideProject:
+            raise HTTPException(status_code=403, detail="outside_project") from None
+        # Judged by the resolved file, not the requested name: a `clip.mp4`
+        # symlink to some other file in the project is served only if that file
+        # is itself a video. The response is loadable in a browser, so it must
+        # never hand a repo's HTML back as a page.
+        media_type = VIDEO_MIME_TYPES.get(target.suffix.lower())
+        if media_type is None:
+            raise HTTPException(status_code=415, detail="unsupported_media")
+        try:
+            is_file = stat.S_ISREG(target.stat().st_mode)
+        except FileNotFoundError:
+            is_file = False
+        if not is_file:
+            raise HTTPException(status_code=404, detail="path_not_found")
+        # FileResponse answers Range requests, which is what lets the player
+        # seek through a large file without reading it all first.
+        return FileResponse(
+            target,
+            media_type=media_type,
+            headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"},
+        )
 
     @app.get("/api/v1/attachments/{attachment_id}")
     def download_attachment(request: Request, attachment_id: str) -> dict:

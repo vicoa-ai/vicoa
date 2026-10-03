@@ -32,6 +32,9 @@ dependencies = [
     "websocket-client>=1.6.0",
     "fastmcp>=3.2.4",
     "fastapi>=0.100.0",
+    # Range support in FileResponse (0.39), which the local server's video
+    # streaming relies on for seeking.
+    "starlette>=0.39.0",
     "uvicorn>=0.20.0",
     # Server-side WebSocket protocol for uvicorn (the local desktop listener's
     # /ws endpoint); bare uvicorn ships without one.

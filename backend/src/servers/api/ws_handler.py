@@ -52,6 +52,7 @@ from shared.websocket.protocol import (
 )
 from shared.websocket.rpc import RpcError, rpc_router
 from shared.websocket.watchers import narrow_instance_body
+from servers.api.media import attach_stream_url
 from servers.presence import broadcast_session_connected, presence
 from servers.watchers import (
     cached_role,
@@ -424,6 +425,8 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
 
     try:
         result = await rpc_router.call(conn.user_id, machine_id, method, params)
+        if method == "read-file" and isinstance(result, dict):
+            attach_stream_url(conn.user_id, machine_id, params, result)
         conn.enqueue({"type": "rpc-result", "request_id": request_id, "result": result})
         # Mirror the legacy HTTP spawn-session side effect: when the web/CLI
         # spawns a session through the daemon, push the directory onto the

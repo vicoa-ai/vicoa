@@ -3,8 +3,8 @@
 `rpc-call` frames from the local WebSocket route here. Everything the cloud
 daemon already serves (`spawn-session`, files, git, worktrees) delegates
 straight into ``MachineDaemon._handle_rpc_request`` — no proxy hop. The
-desktop-only additions (`pty-*` for the terminal tab, `git-worktree-create`)
-are handled in this module.
+desktop-only additions (`pty-*` for the terminal tab, `git-worktree-create`,
+the local `stream_url` on a video's `read-file`) are handled in this module.
 
 Handlers are sync/blocking; the WebSocket layer runs ``dispatch`` in a thread
 executor. Failures are returned as ``{"error": ...}`` result dicts — the same
@@ -42,10 +42,12 @@ class LocalRpcDispatcher:
         daemon_dispatch: Callable[[dict[str, Any]], dict[str, Any]],
         daemon_methods: list[str],
         terminal: TerminalService,
+        stream_url: Callable[[str, str], str] | None = None,
     ) -> None:
         self._daemon_dispatch = daemon_dispatch
         self._daemon_methods = list(daemon_methods)
         self._terminal = terminal
+        self._stream_url = stream_url
 
     def methods(self) -> list[str]:
         return [*self._daemon_methods, *LOCAL_ONLY_RPC_METHODS]
@@ -57,7 +59,16 @@ class LocalRpcDispatcher:
         try:
             if method == "git-worktree-create":
                 return self._git_worktree_create(params)
-            return self._daemon_dispatch({"method": method, "params": params})
+            result = self._daemon_dispatch({"method": method, "params": params})
+            if (
+                method == "read-file"
+                and self._stream_url
+                and str(result.get("mime_type", "")).startswith("video/")
+            ):
+                # The player loads this from the local server, straight off
+                # disk; the cloud relay adds its own proxy URL instead.
+                result["stream_url"] = self._stream_url(params["cwd"], params["path"])
+            return result
         except (ValueError, RuntimeError) as exc:
             return {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001 - any failure -> rpc result

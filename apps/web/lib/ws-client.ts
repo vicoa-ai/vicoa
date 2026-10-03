@@ -440,6 +440,17 @@ class WsClient {
   }
 
   /**
+   * `path` as an absolute URL on the server behind this socket. A server hands
+   * out paths rather than URLs (behind a proxy it can't be sure of its own
+   * public host), and the socket's own URL is the reliable base.
+   */
+  httpUrl(path: string): string {
+    const base = new URL(this.url);
+    base.protocol = base.protocol === 'wss:' ? 'https:' : 'http:';
+    return new URL(path, base).toString();
+  }
+
+  /**
    * Invoke an RPC method on a daemon over the shared connection (§2.8) — e.g.
    * `spawn-session`. Resolves with the daemon's result, or rejects with an
    * `RpcError` carrying the wire error code.
