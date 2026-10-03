@@ -13,7 +13,7 @@ Two small, independent changes that land together with team-owned projects.
   today). Nullable and additive.
 
 Revision ID: e7b3d1f9a2c5
-Revises: a8e4c2f6d0b3
+Revises: 83319b5520d0
 Create Date: 2026-09-29 12:00:00.000000
 """
 
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "e7b3d1f9a2c5"
-down_revision: Union[str, None] = "a8e4c2f6d0b3"
+down_revision: Union[str, None] = "83319b5520d0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
