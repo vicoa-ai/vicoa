@@ -453,6 +453,8 @@ export interface BillingSeats {
   provider: 'stripe' | 'apple' | 'google' | null;
   /** Seats bought on the per-seat plan; null on a fixed-seat plan. */
   purchased: number | null;
+  /** The interval a live Stripe subscription (per seat or Pro) is billed at;
+   *  null without one. */
   billing_interval: BillingInterval | null;
   per_seat_available: boolean;
   prices: { monthly: SeatPrice | null; annual: SeatPrice | null } | null;

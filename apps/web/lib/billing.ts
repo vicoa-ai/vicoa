@@ -1,5 +1,9 @@
 import type { BillingSeats, BillingSubscription, SeatPrice } from '@/lib/backend-api';
 
+/** Buying or changing seats, apart from the plan picker at /dashboard/upgrade.
+ *  Every seat entry point links here, whatever plan the payer is on. */
+export const SEATS_PAGE_HREF = '/dashboard/seats';
+
 export const BILLING_PLAN_LABELS: Record<string, string> = {
   free: 'Free',
   pro: 'Pro',

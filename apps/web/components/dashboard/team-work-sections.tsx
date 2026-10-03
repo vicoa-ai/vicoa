@@ -34,7 +34,7 @@ import {
   type TeamDetail,
   type TeamSummary,
 } from '@/lib/backend-api';
-import { seatSummary } from '@/lib/billing';
+import { SEATS_PAGE_HREF, seatSummary } from '@/lib/billing';
 import { notifyProjectsChanged, projectSettingsHref } from '@/lib/project-settings-route';
 import { moveDestinations } from '@/lib/project-transfer';
 import { isDesktopLocal } from '@/lib/runtime-config';
@@ -305,7 +305,7 @@ export function TeamSeatsSection({ team }: { team: TeamDetail }) {
             <p className="text-xs text-muted-foreground">{summary.detail}</p>
           </div>
           <Button asChild size="sm" variant="outline" className="h-8 shrink-0 cursor-pointer text-xs">
-            <Link href="/dashboard/upgrade">{seats.purchased ? 'Manage seats' : 'Add seats'}</Link>
+            <Link href={SEATS_PAGE_HREF}>{seats.purchased ? 'Manage seats' : 'Add seats'}</Link>
           </Button>
         </div>
       </SectionCard>

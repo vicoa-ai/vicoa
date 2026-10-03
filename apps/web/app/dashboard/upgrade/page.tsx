@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { PricingCards } from '@/components/billing/pricing-cards';
-import { SeatsCard } from '@/components/billing/seats-card';
 import { Button } from '@/components/ui/button';
 import { PostHogPageEvent } from '@/components/posthog-page-event';
 
@@ -26,12 +25,11 @@ export default function DashboardUpgradePage() {
       </div>
 
       <PostHogPageEvent event="upgrade_page_viewed" />
+      {/* Plans only. Seats have their own page (/dashboard/seats), which
+          every seat entry point links to directly. */}
       <div className="mt-10">
         <PricingCards />
       </div>
-      {/* Seats for teams and outside editors; renders only for someone they
-          apply to (and only where the hosted billing overlay serves them). */}
-      <SeatsCard className="mx-auto mt-10 max-w-3xl" />
     </div>
   );
 }
