@@ -78,12 +78,12 @@ jobs:
     # a fork that enables Actions and pushes a desktop-v* tag never attempts a
     # signed release with absent secrets. Upstream is always vicoa-ai/vicoa.
     if: github.repository == 'vicoa-ai/vicoa'
-    # macOS 14 runners are Apple Silicon. electron-builder cross-packages the
+    # macOS 15 runners are Apple Silicon. electron-builder cross-packages the
     # x64 app here too (the x64 daemon is downloaded by stage-daemon; the
     # notification helper is a universal binary), so this ONE job emits both
     # arm64 + x64 in a single electron-builder invocation — required to keep
     # both archs listed in one latest-mac.yml (two runs would clobber it).
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 

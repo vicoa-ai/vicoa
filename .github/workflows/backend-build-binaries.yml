@@ -69,7 +69,7 @@ jobs:
   build-macos-arm64:
     needs: [resolve-context]
     if: github.repository == 'vicoa-ai/vicoa' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')  # fork guard (see resolve-context)
-    runs-on: macos-14  # M1 runner (arm64)
+    runs-on: macos-15  # Apple Silicon runner (arm64)
     defaults:
       run:
         working-directory: backend
