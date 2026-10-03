@@ -290,7 +290,7 @@ export function SeatsCheckout() {
               aria-label="Billing interval"
               className="inline-flex overflow-hidden rounded-lg border border-border/70"
             >
-              {(['monthly', 'annual'] as const).map((value) => {
+              {(['annual', 'monthly'] as const).map((value) => {
                 const checked = interval === value;
                 return (
                   <button
