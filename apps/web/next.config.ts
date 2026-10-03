@@ -73,6 +73,10 @@ const nextConfig: NextConfig = {
     // AVIF first: ~30–50% smaller than WebP at equal sharpness, so we can serve
     // denser images (crisp on low-DPI external monitors) without growing bytes.
     formats: ['image/avif', 'image/webp'],
+    // Next's defaults plus 2400. The landing hero is 1152 CSS px wide, so a
+    // retina screen needs ~2304px; without a 2400 step it jumps to 3840, about
+    // twice the bytes.
+    deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 2400, 3840],
     remotePatterns: [
       {
         protocol: 'https',

@@ -187,12 +187,13 @@ export function HeroSection({
               width={4116}
               height={2488}
               priority
+              fetchPriority="high"
               quality={80}
-              // Slot is ~1152 CSS px, but we request ~2× so DPR-1 external
-              // monitors fetch the 2048 variant and downscale it (crisp at 1:1).
-              // Retina (DPR 2) already pulls the 3840 variant, so its load is
-              // unchanged; AVIF keeps the DPR-1 byte cost roughly flat.
-              sizes="(max-width: 1024px) 100vw, 2048px"
+              // Slot is ~1152 CSS px, but DPR-1 external monitors request ~2× so
+              // they fetch the 2048 variant and downscale it (crisp at 1:1).
+              // Denser screens (DPR >= 1.25) size to the real slot instead: 1920
+              // at 1.25-1.5, 2400 on retina (~300 KB) rather than 3840 (~600 KB).
+              sizes="(max-width: 1024px) 100vw, (min-resolution: 1.25dppx) 1152px, 2048px"
               className="w-full h-auto rounded-xl shadow-lg"
             />
           </div>

@@ -66,6 +66,7 @@ export function MobileDownloadCta({
               alt="QR code to download Vicoa mobile app"
               width={180}
               height={180}
+              loading="lazy"
               className="mx-auto"
             />
             <p className="mt-4 text-sm font-medium text-foreground">Scan to download the app</p>

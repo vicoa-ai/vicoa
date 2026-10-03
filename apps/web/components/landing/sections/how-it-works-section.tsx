@@ -23,15 +23,15 @@ function AgentLogo({ agent }: { agent: 'claude' | 'codex' | 'opencode' }) {
   const base = '/images/integrations';
   const size = 'h-4 w-4 shrink-0';
   if (agent === 'claude') {
-    return <img src={`${base}/claude-color.svg`} alt="Claude Code" width={16} height={16} className={size} />;
+    return <img src={`${base}/claude-color.svg`} alt="Claude Code" loading="lazy" width={16} height={16} className={size} />;
   }
   if (agent === 'codex') {
-    return <img src={`${base}/openai.svg`} alt="Codex" width={16} height={16} className={cn(size, 'dark:invert')} />;
+    return <img src={`${base}/openai.svg`} alt="Codex" loading="lazy" width={16} height={16} className={cn(size, 'dark:invert')} />;
   }
   return (
     <>
-      <img src={`${base}/opencode-dark.svg`} alt="OpenCode" width={16} height={16} className={cn(size, 'dark:hidden')} />
-      <img src={`${base}/opencode.svg`} alt="OpenCode" width={16} height={16} className={cn(size, 'hidden dark:block')} />
+      <img src={`${base}/opencode-dark.svg`} alt="OpenCode" loading="lazy" width={16} height={16} className={cn(size, 'dark:hidden')} />
+      <img src={`${base}/opencode.svg`} alt="OpenCode" loading="lazy" width={16} height={16} className={cn(size, 'hidden dark:block')} />
     </>
   );
 }
@@ -131,6 +131,7 @@ export const defaultSteps: Step[] = [
               alt="QR code to download the Vicoa mobile app"
               width={80}
               height={80}
+              loading="lazy"
               className="h-22 w-22"
             />
           </Link>

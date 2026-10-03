@@ -150,11 +150,14 @@ function FeaturedItemCard({ item }: { item: FeaturedItem }) {
         }}
       >
         {item.name === 'LaunchIgniter' || item.logo.includes('.svg') ? (
+          // Lazy like the next/image branch: React preloads every eager <img>
+          // in <head>, where a dozen third-party badges compete with the hero.
           <img
             src={item.logo}
             alt={`Vicoa - Featured on ${item.name}`}
             width={item.width}
             height={item.height}
+            loading="lazy"
             className="object-contain"
           />
         ) : (
