@@ -57,6 +57,7 @@ import {
 import { ReactionRow, TaskTimeline } from './task-timeline';
 import { CommentComposer } from './comment-composer';
 import { ParentTaskLink, SubTasksSection, subTaskProgress } from './sub-tasks';
+import { TaskDetailSkeleton } from './task-detail-skeleton';
 import { StartSessionDialog } from '../start-session-dialog';
 import { cn } from '@/lib/utils';
 
@@ -344,11 +345,7 @@ export default function TaskDetailPage() {
     [router, sessionDialog],
   );
 
-  if (isLoading) {
-    return (
-      <div className="mx-auto max-w-5xl px-6 py-8 text-sm text-muted-foreground">Loading…</div>
-    );
-  }
+  if (isLoading) return <TaskDetailSkeleton />;
 
   if (error || !task) {
     return (
