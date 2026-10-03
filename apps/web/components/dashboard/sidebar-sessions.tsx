@@ -399,7 +399,7 @@ export function SidebarSessions({
   // the two sidebars stay in sync. Read post-mount to keep SSR stable.
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(DEFAULT_STATUS_FILTER);
   const [agentFilter, setAgentFilter] = useState<string>('all');
-  const [groupBy, setGroupBy] = useState<GroupBy>('time');
+  const [groupBy, setGroupBy] = useState<GroupBy>('project');
   // Split each project group by worktree (desktop-local only). Off by default so
   // the flat project list stays the baseline view.
   const [displayWorktrees, setDisplayWorktrees] = useState(false);
@@ -1433,7 +1433,7 @@ export function SidebarSessions({
                     close the menu; the Project multi-select stays open. */}
                 <FilterSubRow
                   label="Group by"
-                  value={GROUP_BY_OPTIONS.find((o) => o.value === groupBy)?.label ?? 'Time'}
+                  value={GROUP_BY_OPTIONS.find((o) => o.value === groupBy)?.label ?? 'Project'}
                 >
                   {GROUP_BY_OPTIONS.map(({ value, label }) => (
                     <FilterOptionItem
