@@ -529,11 +529,16 @@ class TestSeatGating:
             "detail": "Team seats need the Teams plan",
             "capability": hooks.CAPABILITY_TEAM_SEAT,
         }
+        # Creating the team asks whether the caller may own one; the invite
+        # asks for a seat, naming who it would be for.
         assert [c for c, _ in seen] == [
-            hooks.CAPABILITY_TEAM_SEAT,
+            hooks.CAPABILITY_TEAM_OWN,
             hooks.CAPABILITY_TEAM_SEAT,
         ]
+        assert seen[0][1]["action"] == "create_team"
         assert seen[1][1]["seats"] == 2
+        assert seen[1][1]["new_keys"] == ["email:two@example.com"]
+        assert len(seen[1][1]["seat_keys"]) == 2
         # Nothing was written.
         assert (
             test_db.query(TeamMember).filter(TeamMember.team_id == team["id"]).count()

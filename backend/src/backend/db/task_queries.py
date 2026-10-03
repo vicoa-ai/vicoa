@@ -738,9 +738,14 @@ def create_label(
     team_id: UUID | None = None,
 ) -> TaskLabel:
     """A personal label, or — with `team_id` — one in a team's vocabulary,
-    which needs an active membership of that team."""
-    if team_id is not None and access.team_role(db, user_id, team_id) is None:
-        raise TeamNotFoundError("Team not found")
+    which needs an active membership of that team in a role that edits (a
+    team viewer reads the vocabulary but cannot change it → 403)."""
+    if team_id is not None:
+        trole = access.team_role(db, user_id, team_id)
+        if trole is None:
+            raise TeamNotFoundError("Team not found")
+        if not access.can_edit_in_team(trole):
+            raise access.AccessDenied("member", trole)
     label = TaskLabel(user_id=user_id, team_id=team_id, name=name, color=color)
     db.add(label)
     db.commit()
@@ -750,13 +755,20 @@ def create_label(
 def _get_editable_label(
     db: Session, user_id: UUID, label_id: UUID, *, sharing: bool
 ) -> TaskLabel | None:
-    return (
+    """The label if the caller may change it. A team viewer sees the team's
+    labels but cannot edit them: visible, so 403 (`AccessDenied`), not 404."""
+    label = (
         db.query(TaskLabel)
         .filter(
             TaskLabel.id == label_id, _visible_label_filter(user_id, sharing=sharing)
         )
         .first()
     )
+    if label is not None and label.team_id is not None:
+        trole = access.team_role(db, user_id, label.team_id)
+        if not access.can_edit_in_team(trole):
+            raise access.AccessDenied("member", trole)
+    return label
 
 
 def update_label(

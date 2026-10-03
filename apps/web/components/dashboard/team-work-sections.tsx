@@ -103,8 +103,9 @@ export function TeamProjectsSection({ team }: { team: TeamDetail }) {
     [projects],
   );
 
+  // A viewer reads the team's work but brings nothing into it.
   const moveMenu =
-    movable.length > 0 ? (
+    team.role !== 'viewer' && movable.length > 0 ? (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button type="button" size="sm" variant="outline" className="h-7 cursor-pointer gap-1.5 text-xs">
@@ -305,7 +306,7 @@ export function TeamSeatsSection({ team }: { team: TeamDetail }) {
             <p className="text-xs text-muted-foreground">{summary.detail}</p>
           </div>
           <Button asChild size="sm" variant="outline" className="h-8 shrink-0 cursor-pointer text-xs">
-            <Link href={SEATS_PAGE_HREF}>{seats.purchased ? 'Manage seats' : 'Add seats'}</Link>
+            <Link href={SEATS_PAGE_HREF}>{seats.purchased !== null ? 'Manage seats' : 'Get Vicoa Team'}</Link>
           </Button>
         </div>
       </SectionCard>

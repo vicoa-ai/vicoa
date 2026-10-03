@@ -35,7 +35,9 @@ from shared.database.collab_models import TeamMember
 
 def usable_profile_filter(user_id: UUID):
     """Profiles `user_id` may run: their own personal ones, and those of every
-    team they are an *active* member of (§3.6, team_id NULL ⇒ personal).
+    team they are an *active* member of in a role that works in the team
+    (§3.6, team_id NULL ⇒ personal). A team viewer reads the team's work but
+    does not run its agents.
 
     The one predicate every spawn path shares — web RPC, REST spawn, and the
     automation dispatcher — because a profile carries a ``system_prompt`` that
@@ -47,7 +49,9 @@ def usable_profile_filter(user_id: UUID):
         and_(AgentProfile.user_id == user_id, AgentProfile.team_id.is_(None)),
         AgentProfile.team_id.in_(
             select(TeamMember.team_id).where(
-                TeamMember.user_id == user_id, TeamMember.status == "active"
+                TeamMember.user_id == user_id,
+                TeamMember.status == "active",
+                TeamMember.role != "viewer",
             )
         ),
     )

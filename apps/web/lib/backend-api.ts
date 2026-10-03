@@ -420,6 +420,20 @@ export interface FileMention {
   path: string;
 }
 
+export type BillingTier = 'pro' | 'team';
+
+/** A Team seat someone else pays for: "your seat comes from <name>". */
+export interface SeatCoverage {
+  name: string;
+  /** The team the seat comes through; null for an outside editor. */
+  team_id: string | null;
+}
+
+/**
+ * The caller's subscription and entitlement. `plan_type` is what every client
+ * gates on: 'pro' for their own Pro or Team, and also for a member whose Team
+ * seat someone else pays for (`covered_by`). `tier` tells Pro from Team.
+ */
 export interface BillingSubscription {
   id: string;
   plan_type: string;
@@ -427,8 +441,10 @@ export interface BillingSubscription {
   current_period_end: string | null;
   cancel_at_period_end: boolean;
   provider: 'stripe' | 'apple' | 'google' | null;
-  /** Seats bought on the per-seat plan; null on a fixed-seat plan. */
+  /** Seats bought on Vicoa Team; null on every other plan. */
   seat_quantity?: number | null;
+  tier?: BillingTier | null;
+  covered_by?: SeatCoverage | null;
 }
 
 /** One per-seat price as Stripe has it (minor units). */
@@ -439,9 +455,10 @@ export interface SeatPrice {
 
 /**
  * The caller's seats as a payer (collaboration §6): everyone their
- * subscription covers — themselves, members of teams they own, outside
- * editors on their work. `over` = more in use than the plan includes: nobody
- * loses access, but nobody new can be added until seats are bought.
+ * subscription covers, themselves, the editing members of teams they own and
+ * outside editors on their work, minus anyone with their own Pro (`own_pro`).
+ * `over` = more in use than the plan includes: nobody loses access, but nobody
+ * new can be added until seats are bought.
  * Only the hosted build serves this; elsewhere the call 404s.
  */
 export interface BillingSeats {
@@ -449,10 +466,20 @@ export interface BillingSeats {
   /** null ⇒ unlimited. */
   included: number | null;
   over: boolean;
+  /** People on the caller's work who bring their own Pro: no seat taken. */
+  own_pro: number;
   plan_type: string;
+  tier: BillingTier | null;
   provider: 'stripe' | 'apple' | 'google' | null;
-  /** Seats bought on the per-seat plan; null on a fixed-seat plan. */
+  /** Seats bought on Vicoa Team; null otherwise. */
   purchased: number | null;
+  /** The fewest seats Vicoa Team sells. */
+  min_quantity: number;
+  /** An owner always sees the Team card on Billing. */
+  owns_team: boolean;
+  /** What buying or changing seats does from here: change the Stripe
+   *  subscription in place (prorated, so confirm first) or open Checkout. */
+  change_mode: 'checkout' | 'in_place';
   /** The interval a live Stripe subscription (per seat or Pro) is billed at;
    *  null without one. */
   billing_interval: BillingInterval | null;
@@ -614,7 +641,8 @@ export interface PrincipalResponse {
 
 // --- Teams & people (collaboration §3.2, §3.3, §8.4) -------------------------
 
-export type TeamRole = 'owner' | 'admin' | 'member';
+/** `viewer` is the free role: sees and comments, cannot edit or prompt. */
+export type TeamRole = 'owner' | 'admin' | 'member' | 'viewer';
 export type GrantRole = Exclude<ProjectRole, 'owner'>;
 
 export interface TeamSummary {
@@ -639,6 +667,9 @@ export interface TeamMember {
   avatar_image_uri: string | null;
   role: TeamRole;
   status: 'invited' | 'active';
+  /** Set while a viewer only because the seat paying for them lapsed (the
+   *  owner's Team subscription ended): the role that comes back with seats. */
+  lapsed_role?: 'admin' | 'member' | null;
   joined_at: string | null;
   created_at: string;
 }
@@ -694,6 +725,9 @@ export interface ProjectPerson {
   role: ProjectRole;
   scopes: GrantScope[];
   member_count: number | null;
+  /** Set while a grant reads commenter because the seat paying for it
+   *  lapsed: the role that comes back with seats. */
+  lapsed_role?: 'editor' | 'admin' | null;
   is_owner: boolean;
   is_self: boolean;
   created_at: string | null;
@@ -720,6 +754,8 @@ export interface SessionShare {
   member_count: number | null;
   invited: boolean;
   is_owner: boolean;
+  /** A WRITE share reading READ because the seat paying for it lapsed. */
+  lapsed?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -1258,7 +1294,8 @@ export interface BillingPortalSessionResponse {
  * — telling someone to try again after a 401 sends them chasing the wrong
  * problem, since retrying can never fix it. `capability` is set on a 402: the
  * action exists and the caller may ask for it, but it is metered
- * (`collab.team_seat` | `collab.grant_write`); see `seatLimitFromError`.
+ * (`collab.team_seat` | `collab.grant_write` | `collab.team_own`); see
+ * `seatLimitFromError`.
  */
 export interface BackendApiError extends Error {
   status: number;

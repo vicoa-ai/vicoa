@@ -401,6 +401,18 @@ function RoleText({ children, busy }: { children: React.ReactNode; busy?: boolea
   );
 }
 
+/** Edit access that dropped to read and comment because the seat paying for
+ *  it lapsed (the payer's Team subscription ended). It comes back with seats,
+ *  or when someone picks a role here. */
+function LapsedNote({ was }: { was: string }) {
+  return (
+    <span className="text-warning" title={`Was ${was.toLowerCase()} until the seat paying for it lapsed`}>
+      {' '}
+      · seat lapsed
+    </span>
+  );
+}
+
 // --- project ----------------------------------------------------------------
 
 function ProjectPeople({
@@ -540,6 +552,7 @@ function ProjectPeople({
                   <>
                     <RoleText busy={busy}>
                       {roleLabel(person.role)}
+                      {person.lapsed_role && <LapsedNote was={roleLabel(person.lapsed_role)} />}
                       {person.scopes.length < ALL_SCOPES.length && (
                         <span className="text-muted-foreground/70"> · {scopeSummary(person.scopes)}</span>
                       )}
@@ -785,7 +798,10 @@ function SessionPeople({
                 isSelf={false}
                 trailing={
                   <>
-                    <RoleText busy={pendingRow === share.id}>{roleLabel(share.access)}</RoleText>
+                    <RoleText busy={pendingRow === share.id}>
+                      {roleLabel(share.access)}
+                      {share.lapsed && <LapsedNote was={roleLabel('WRITE')} />}
+                    </RoleText>
                     <RowMenu label={`Access for ${lines.primary}`}>
                       <RoleSubmenu
                         label="Change role"

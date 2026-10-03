@@ -13,7 +13,9 @@ import logging
 import re
 import secrets
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import TypeAlias
 from uuid import UUID
 
 from sqlalchemy import and_, case, delete, func, insert, or_, select
@@ -26,6 +28,7 @@ from .access_events import notify_access_changed, principal_user_ids, team_membe
 from shared.database import (
     GRANT_ROLES,
     GRANT_SCOPES,
+    TEAM_SEAT_ROLES,
     AgentInstance,
     Project,
     ProjectGrant,
@@ -43,6 +46,7 @@ from shared.database.task_identity import key_is_taken, suggest_free_key
 from shared.database.task_models import task_label_links
 from shared.hooks import (
     CAPABILITY_GRANT_WRITE,
+    CAPABILITY_TEAM_OWN,
     CAPABILITY_TEAM_SEAT,
     check_capability,
 )
@@ -195,11 +199,12 @@ def _membership(db: Session, team_id: UUID, user_id: UUID) -> TeamMember | None:
 
 
 def require_team(
-    db: Session, user_id: UUID, team_id: UUID, *, minimum: str = "member"
+    db: Session, user_id: UUID, team_id: UUID, *, minimum: str = "viewer"
 ) -> tuple[Team, TeamMember]:
     """The team and the caller's active membership, or the matching error.
 
-    `minimum` is a team role ('member' < 'admin' < 'owner')."""
+    `minimum` is a team role ('viewer' < 'member' < 'admin' < 'owner'); the
+    default lets in anyone on the team."""
     membership = _membership(db, team_id, user_id)
     if membership is None:
         raise TeamNotFoundError("Team not found")
@@ -210,7 +215,7 @@ def require_team(
     return team, membership
 
 
-_TEAM_RANK = {"member": 1, "admin": 2, "owner": 3}
+_TEAM_RANK = {"viewer": 0, "member": 1, "admin": 2, "owner": 3}
 
 
 def _require_grant_admin(db: Session, user_id: UUID, project: Project) -> None:
@@ -232,11 +237,16 @@ def _require_grant_admin(db: Session, user_id: UUID, project: Project) -> None:
 
 
 def _seat_count(db: Session, team_id: UUID) -> int:
-    """Members who occupy a seat: everyone not removed, pending invites
-    included — an invite is a promise of a seat."""
+    """Members who occupy a seat: everyone not removed in a role that edits,
+    pending invites included — an invite is a promise of a seat. Viewers are
+    free."""
     return (
         db.query(func.count(TeamMember.id))
-        .filter(TeamMember.team_id == team_id, TeamMember.status != "removed")
+        .filter(
+            TeamMember.team_id == team_id,
+            TeamMember.status != "removed",
+            TeamMember.role.in_(TEAM_SEAT_ROLES),
+        )
         .scalar()
         or 0
     )
@@ -249,12 +259,16 @@ def _seat_count(db: Session, team_id: UUID) -> int:
 # overlay compares that with the subscription. Nothing in the open core knows a
 # price or a limit; with no hook registered the count is simply never read.
 #
-# "A seat is for team members and for outside editors — never for a role by
-# itself" (§6): everyone in a team the payer owns (invited or active — an
-# invite is a promise of a seat), plus anyone holding editor/admin on the
-# payer's work as a *user* (a project grant, or a WRITE share of one session).
-# Viewers and commenters never appear. A team principal holding a grant rides
+# "Every editor needs a seat" (§6, Team tier): everyone in a team the payer
+# owns in a role that edits (invited or active — an invite is a promise of a
+# seat), plus anyone holding editor/admin on the payer's work as a *user* (a
+# project grant, or a WRITE share of one session). Viewers and commenters
+# never appear, team viewers included. A team principal holding a grant rides
 # on that team's own seats, so it is not counted again here.
+#
+# The core says *who*; whether someone's own subscription already covers them
+# (their own Pro takes no seat on someone else's plan) is the overlay's call,
+# which is why the capability context carries the keys and not only a count.
 
 _PAID_GRANT_ROLES = ("editor", "admin")
 
@@ -292,15 +306,14 @@ def seat_keys(db: Session, payer_id: UUID) -> set[str]:
     if team_ids:
         for user_id, email in db.query(
             TeamMember.user_id, TeamMember.invited_email
-        ).filter(TeamMember.team_id.in_(team_ids), TeamMember.status != "removed"):
+        ).filter(
+            TeamMember.team_id.in_(team_ids),
+            TeamMember.status != "removed",
+            TeamMember.role.in_(TEAM_SEAT_ROLES),
+        ):
             add(user_id, email)
 
-    paid_projects = select(Project.id).where(
-        or_(
-            and_(Project.team_id.is_(None), Project.user_id == payer_id),
-            Project.team_id.in_(team_ids),
-        )
-    )
+    paid_projects = _paid_projects_select(payer_id, team_ids)
     for principal_id, email in db.query(
         ProjectGrant.principal_id, ProjectGrant.invited_email
     ).filter(
@@ -353,11 +366,18 @@ def check_seats(
     a new owner (the whole team comes with it). Same context contract."""
     keys = seat_keys(db, payer_id)
     added = {key for key in new_keys if key is not None} - keys
+    after = keys | added
     check_capability(
         db,
         payer_id,
         capability,
-        {**context, "seats": len(keys | added), "new_seat": bool(added)},
+        {
+            **context,
+            "seats": len(after),
+            "new_seat": bool(added),
+            "seat_keys": sorted(after),
+            "new_keys": sorted(added),
+        },
     )
 
 
@@ -387,6 +407,241 @@ def seat_usage(db: Session, payer_id: UUID) -> int:
     return len(seat_keys(db, payer_id))
 
 
+# --- Lapsed seats (§6, Team tier) -------------------------------------------------
+#
+# When a Team subscription ends, the people it paid a seat for drop to read and
+# comment until seats return; nothing is deleted. Each row keeps what it held
+# (`lapsed_role` / `lapsed_at`) so editing comes back as it was. Which people
+# lapse or come back is the overlay's decision (it knows the plan and who has
+# their own Pro); the core only says who the payer's seat holders are and
+# flips their rows.
+
+_LAPSED_TEAM_ROLE = "viewer"
+_LAPSED_GRANT_ROLE = "commenter"
+
+SeatRow: TypeAlias = TeamMember | ProjectGrant | UserInstanceAccess
+
+
+@dataclass(frozen=True)
+class SeatHolder:
+    """One person the payer's seats cover now (`live`) or did until they
+    lapsed (`lapsed`). Someone reached several ways is one holder and can be
+    both: a lapsed grant beside a membership the owner already restored."""
+
+    key: str
+    user_id: UUID | None
+    since: datetime
+    live: bool
+    lapsed: bool
+
+
+def _paid_projects_select(payer_id: UUID, team_ids: set[UUID]):
+    return select(Project.id).where(
+        or_(
+            and_(Project.team_id.is_(None), Project.user_id == payer_id),
+            Project.team_id.in_(team_ids),
+        )
+    )
+
+
+def _seat_rows(db: Session, payer_id: UUID) -> list[tuple[str, SeatRow, bool]]:
+    """(key, row, lapsed) for every row through which `payer_id` pays — or
+    paid, before a lapse — for someone other than themselves."""
+    team_ids = _paid_team_ids(db, payer_id)
+    payer_key = f"user:{payer_id}"
+    out: list[tuple[str, SeatRow, bool]] = []
+
+    def keep(key: str | None, row: SeatRow, lapsed: bool) -> None:
+        if key is not None and key != payer_key:
+            out.append((key, row, lapsed))
+
+    if team_ids:
+        for member in db.query(TeamMember).filter(
+            TeamMember.team_id.in_(team_ids),
+            TeamMember.status != "removed",
+            or_(
+                TeamMember.role.in_(("admin", "member")),
+                TeamMember.lapsed_role.is_not(None),
+            ),
+        ):
+            keep(
+                seat_key(member.user_id, member.invited_email),
+                member,
+                member.lapsed_role is not None,
+            )
+    for grant in db.query(ProjectGrant).filter(
+        ProjectGrant.principal_type == "user",
+        ProjectGrant.project_id.in_(_paid_projects_select(payer_id, team_ids)),
+        or_(
+            ProjectGrant.role.in_(_PAID_GRANT_ROLES),
+            ProjectGrant.lapsed_role.is_not(None),
+        ),
+    ):
+        keep(
+            seat_key(grant.principal_id, grant.invited_email),
+            grant,
+            grant.lapsed_role is not None,
+        )
+    for share in (
+        db.query(UserInstanceAccess)
+        .join(AgentInstance, AgentInstance.id == UserInstanceAccess.agent_instance_id)
+        .filter(
+            AgentInstance.user_id == payer_id,
+            AgentInstance.status != AgentStatus.DELETED,
+            or_(
+                UserInstanceAccess.access == InstanceAccessLevel.WRITE,
+                UserInstanceAccess.lapsed_at.is_not(None),
+            ),
+        )
+    ):
+        keep(
+            seat_key(share.user_id, share.shared_email),
+            share,
+            share.lapsed_at is not None,
+        )
+    return out
+
+
+def _row_user_id(row: SeatRow) -> UUID | None:
+    if isinstance(row, ProjectGrant):
+        return row.principal_id
+    return row.user_id
+
+
+def seat_holders(db: Session, payer_id: UUID) -> list[SeatHolder]:
+    """Everyone `payer_id`'s seats cover or covered, the payer left out,
+    longest-standing first — the order a lapse keeps people in and a restore
+    brings them back."""
+    by_key: dict[str, SeatHolder] = {}
+    for key, row, lapsed in _seat_rows(db, payer_id):
+        current = by_key.get(key)
+        since = row.created_at
+        user_id = _row_user_id(row)
+        if current is None:
+            by_key[key] = SeatHolder(key, user_id, since, not lapsed, lapsed)
+        else:
+            by_key[key] = SeatHolder(
+                key,
+                current.user_id or user_id,
+                min(current.since, since, key=_aware),
+                current.live or not lapsed,
+                current.lapsed or lapsed,
+            )
+    return sorted(by_key.values(), key=lambda h: (_aware(h.since), h.key))
+
+
+def _aware(value: datetime) -> datetime:
+    """`user_instance_access` timestamps are naive (UTC); the collab tables'
+    are aware. Compare them as UTC."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def lapse_seats(db: Session, payer_id: UUID, keys: Iterable[str]) -> int:
+    """Drop these holders to read-and-comment on everything `payer_id` pays
+    for, remembering what each row held. Returns how many rows changed."""
+    wanted = set(keys)
+    if not wanted:
+        return 0
+    changed = 0
+    affected: set[UUID | None] = set()
+    for key, row, lapsed in _seat_rows(db, payer_id):
+        if key not in wanted or lapsed:
+            continue
+        if isinstance(row, TeamMember):
+            row.lapsed_role = row.role
+            row.role = _LAPSED_TEAM_ROLE
+        elif isinstance(row, ProjectGrant):
+            row.lapsed_role = row.role
+            row.role = _LAPSED_GRANT_ROLE
+        else:
+            row.lapsed_at = _utcnow()
+            row.access = InstanceAccessLevel.READ
+        changed += 1
+        affected.add(_row_user_id(row))
+    if changed:
+        logger.info("lapsed %d seat row(s) paid by %s", changed, payer_id)
+        notify_access_changed(db, affected)
+        db.commit()
+    return changed
+
+
+def restore_seats(db: Session, payer_id: UUID, keys: Iterable[str]) -> int:
+    """Give these holders back what they held before their seat lapsed.
+    Returns how many rows changed."""
+    wanted = set(keys)
+    if not wanted:
+        return 0
+    changed = 0
+    affected: set[UUID | None] = set()
+    for key, row, lapsed in _seat_rows(db, payer_id):
+        if key not in wanted or not lapsed:
+            continue
+        if isinstance(row, TeamMember):
+            row.role = row.lapsed_role or "member"
+            row.lapsed_role = None
+        elif isinstance(row, ProjectGrant):
+            row.role = row.lapsed_role or "editor"
+            row.lapsed_role = None
+        else:
+            row.access = InstanceAccessLevel.WRITE
+            row.lapsed_at = None
+        changed += 1
+        affected.add(_row_user_id(row))
+    if changed:
+        logger.info("restored %d seat row(s) paid by %s", changed, payer_id)
+        notify_access_changed(db, affected)
+        db.commit()
+    return changed
+
+
+def lapsed_payer_ids(db: Session, user_id: UUID) -> set[UUID]:
+    """Payers holding a lapsed seat row for `user_id` — whose pools to look at
+    again when this person gets a Pro of their own."""
+    payers: set[UUID] = set()
+    team_ids = [
+        row[0]
+        for row in db.query(TeamMember.team_id).filter(
+            TeamMember.user_id == user_id,
+            TeamMember.status != "removed",
+            TeamMember.lapsed_role.is_not(None),
+        )
+    ]
+    for team in db.query(Team).filter(Team.id.in_(team_ids)) if team_ids else []:
+        payer = team_payer_id(db, team)
+        if payer is not None:
+            payers.add(payer)
+    for project in (
+        db.query(Project)
+        .join(ProjectGrant, ProjectGrant.project_id == Project.id)
+        .filter(
+            ProjectGrant.principal_type == "user",
+            ProjectGrant.principal_id == user_id,
+            ProjectGrant.lapsed_role.is_not(None),
+        )
+    ):
+        if project.team_id is None:
+            payers.add(project.user_id)
+        else:
+            team = db.get(Team, project.team_id)
+            payer = team_payer_id(db, team) if team is not None else None
+            if payer is not None:
+                payers.add(payer)
+    for row in (
+        db.query(AgentInstance.user_id)
+        .join(
+            UserInstanceAccess,
+            UserInstanceAccess.agent_instance_id == AgentInstance.id,
+        )
+        .filter(
+            UserInstanceAccess.user_id == user_id,
+            UserInstanceAccess.lapsed_at.is_not(None),
+        )
+    ):
+        payers.add(row[0])
+    payers.discard(user_id)
+    return payers
+
+
 def _payer_id(db: Session, team: Team) -> UUID:
     """Whose subscription covers the team's seats: the owner member (D-C,
     owner-pays), falling back to the creator if the owner row is gone."""
@@ -411,8 +666,19 @@ def _payer_id(db: Session, team: Team) -> UUID:
     raise TeamStateError("Team has no owner to bill")
 
 
+def team_payer_id(db: Session, team: Team) -> UUID | None:
+    """`_payer_id` for callers outside a request (the billing overlay working
+    out whose seats cover someone): None instead of raising for a team in a
+    state nobody can be billed from."""
+    try:
+        return _payer_id(db, team)
+    except TeamStateError:
+        return None
+
+
 def list_user_teams(db: Session, user_id: UUID) -> list[tuple[Team, str, int]]:
-    """(team, my role, seat count) for every team the caller is active in."""
+    """(team, my role, member count) for every team the caller is active in —
+    everyone not removed, viewers and pending invites included."""
     rows = (
         db.query(Team, TeamMember.role)
         .join(TeamMember, TeamMember.team_id == Team.id)
@@ -436,16 +702,14 @@ def list_user_teams(db: Session, user_id: UUID) -> list[tuple[Team, str, int]]:
 
 
 def create_team(db: Session, owner: User, name: str) -> Team:
-    """Create a team with `owner` as its active owner. The owner is the first
-    seat, so this is where the seat capability is first asked."""
-    # Creating a team adds no one — the owner is already their own seat — but
-    # it is still asked, so a plan without teams can refuse it up front.
-    check_seat(
+    """Create a team with `owner` as its active owner. The owner edits
+    everything the team owns, so owning one is asked of the capability hooks
+    first (`collab.team_own`): a plan may require more than Free for it."""
+    check_capability(
         db,
         owner.id,
-        CAPABILITY_TEAM_SEAT,
-        None,
-        {"team_id": None, "acting_user_id": str(owner.id)},
+        CAPABILITY_TEAM_OWN,
+        {"action": "create_team", "team_id": None, "acting_user_id": str(owner.id)},
     )
     for attempt in range(SLUG_ALLOCATION_ATTEMPTS):
         nested = db.begin_nested()
@@ -512,10 +776,11 @@ def transfer_team_ownership(
 ) -> TeamMember:
     """Hand the team to another active member; the old owner stays on as admin.
 
-    The owner is the payer (D-C, owner-pays), so the new owner's plan has to
-    cover what the team brings: its members and the outside editors on its
-    projects. Asked as `collab.team_seat` against the new owner before anything
-    changes, so a denial leaves the team exactly as it was."""
+    The owner is the payer (D-C, owner-pays), so the new owner has to be
+    allowed to own a team at all (`collab.team_own`) and their plan has to
+    cover what the team brings: its editing members and the outside editors on
+    its projects (`collab.team_seat`). Both are asked of the new owner before
+    anything changes, so a denial leaves the team exactly as it was."""
     team, acting = require_team(db, acting_user_id, team_id, minimum="owner")
     member = (
         db.query(TeamMember)
@@ -534,11 +799,25 @@ def transfer_team_ownership(
     if member.status != "active" or member.user_id is None:
         raise TeamConflictError("Only someone who has joined can own the team")
 
+    check_capability(
+        db,
+        member.user_id,
+        CAPABILITY_TEAM_OWN,
+        {
+            "action": "transfer_ownership",
+            "team_id": str(team.id),
+            "acting_user_id": str(acting_user_id),
+        },
+    )
     brought = {
         seat_key(user_id, email)
         for user_id, email in db.query(
             TeamMember.user_id, TeamMember.invited_email
-        ).filter(TeamMember.team_id == team.id, TeamMember.status != "removed")
+        ).filter(
+            TeamMember.team_id == team.id,
+            TeamMember.status != "removed",
+            TeamMember.role.in_(TEAM_SEAT_ROLES),
+        )
     }
     team_projects = [
         row[0] for row in db.query(Project.id).filter(Project.team_id == team.id)
@@ -557,6 +836,7 @@ def transfer_team_ownership(
     )
     acting.role = "admin"
     member.role = "owner"
+    member.lapsed_role = None
     notify_access_changed(db, [acting.user_id, member.user_id])
     db.commit()
     db.refresh(member)
@@ -694,7 +974,8 @@ def release_team_rows(db: Session, team_ids: Iterable[UUID]) -> None:
 
 
 def list_members(db: Session, team: Team) -> list[TeamMember]:
-    """Everyone with a seat — active and invited — oldest first."""
+    """Everyone on the team — active and invited, viewers included — oldest
+    first."""
     return (
         db.query(TeamMember)
         .options(joinedload(TeamMember.user))
@@ -717,7 +998,8 @@ def invite_member(
     If the address already belongs to an account the row is attached to it
     immediately but stays `invited` until that person accepts — being added
     to a team is a thing you agree to. A previously removed member is revived
-    in place rather than duplicated (the (team, user) uniqueness).
+    in place rather than duplicated (the (team, user) uniqueness). A `viewer`
+    takes no seat, so inviting one is never metered.
     """
     team, acting = require_team(db, acting_user_id, team_id, minimum="admin")
     if role == "owner":
@@ -739,22 +1021,25 @@ def invite_member(
     if existing is not None and existing.status != "removed":
         raise TeamConflictError("That person is already on the team")
 
-    check_seat(
-        db,
-        _payer_id(db, team),
-        CAPABILITY_TEAM_SEAT,
-        seat_key(target.id if target else None, normalized),
-        {
-            "team_id": str(team.id),
-            "team_seats": _seat_count(db, team.id) + 1,
-            "acting_user_id": str(acting_user_id),
-        },
-    )
+    if role in TEAM_SEAT_ROLES:
+        check_seat(
+            db,
+            _payer_id(db, team),
+            CAPABILITY_TEAM_SEAT,
+            seat_key(target.id if target else None, normalized),
+            {
+                "team_id": str(team.id),
+                "team_seats": _seat_count(db, team.id) + 1,
+                "role": role,
+                "acting_user_id": str(acting_user_id),
+            },
+        )
 
     if existing is not None:
         member = existing
         member.status = "invited"
         member.role = role
+        member.lapsed_role = None
         member.invited_email = email.strip()
         member.user_id = target.id if target else None
         member.invited_by_user_id = acting_user_id
@@ -837,7 +1122,10 @@ def decline_invitation(db: Session, user: User, team_id: UUID) -> None:
 def update_member_role(
     db: Session, acting_user_id: UUID, team_id: UUID, member_id: UUID, *, role: str
 ) -> TeamMember:
-    """Owner only; the owner row itself is immutable here (transfer is P7)."""
+    """Owner only; the owner row itself is immutable here (ownership moves
+    through `transfer_team_ownership`). Making a viewer an admin or member is
+    metered like inviting one; anything else stays inside what is paid for. An
+    explicit role also ends a lapse: the owner has decided."""
     team, _ = require_team(db, acting_user_id, team_id, minimum="owner")
     member = (
         db.query(TeamMember)
@@ -853,7 +1141,21 @@ def update_member_role(
         raise TeamNotFoundError("Member not found")
     if member.role == "owner" or role == "owner":
         raise TeamConflictError("Ownership cannot be changed here")
+    if role in TEAM_SEAT_ROLES and member.role not in TEAM_SEAT_ROLES:
+        check_seat(
+            db,
+            _payer_id(db, team),
+            CAPABILITY_TEAM_SEAT,
+            seat_key(member.user_id, member.invited_email),
+            {
+                "team_id": str(team.id),
+                "team_seats": _seat_count(db, team.id) + 1,
+                "role": role,
+                "acting_user_id": str(acting_user_id),
+            },
+        )
     member.role = role
+    member.lapsed_role = None
     notify_access_changed(db, [member.user_id])
     db.commit()
     db.refresh(member)
@@ -881,7 +1183,7 @@ def remove_member(
         raise TeamConflictError("The team owner cannot be removed")
     is_self = member.id == acting.id
     if not is_self:
-        if acting.role == "member":
+        if acting.role in ("member", "viewer"):
             raise TeamPermissionError("Only owners or admins can remove members")
         if acting.role == "admin" and member.role == "admin":
             raise TeamPermissionError("Admins can only remove members or themselves")
@@ -1011,19 +1313,27 @@ def accept_invite_link(db: Session, user: User, token: str) -> TeamMember:
     if member is not None and member.status == "active":
         return member
 
-    # A pending row already holds its seat (under the address it was sent
-    # to), so redeeming a link on top of one adds nobody.
-    check_seat(
-        db,
-        _payer_id(db, team),
-        CAPABILITY_TEAM_SEAT,
-        None if member else seat_key(user.id, None),
-        {
-            "team_id": str(team.id),
-            "team_seats": _seat_count(db, team.id) + (0 if member else 1),
-            "acting_user_id": str(user.id),
-        },
-    )
+    # A viewer link takes no seat. A pending row in a seat role already holds
+    # its seat (under the address it was sent to), so redeeming a link on top
+    # of one adds nobody.
+    if invite.role in TEAM_SEAT_ROLES:
+        holds_seat = (
+            member is not None
+            and member.status == "invited"
+            and member.role in TEAM_SEAT_ROLES
+        )
+        check_seat(
+            db,
+            _payer_id(db, team),
+            CAPABILITY_TEAM_SEAT,
+            None if holds_seat else seat_key(user.id, None),
+            {
+                "team_id": str(team.id),
+                "team_seats": _seat_count(db, team.id) + (0 if holds_seat else 1),
+                "role": invite.role,
+                "acting_user_id": str(user.id),
+            },
+        )
     if member is None:
         member = TeamMember(
             team_id=team.id,
@@ -1036,6 +1346,7 @@ def accept_invite_link(db: Session, user: User, token: str) -> TeamMember:
     else:
         member.user_id = user.id
         member.role = invite.role
+        member.lapsed_role = None
     member.status = "active"
     member.joined_at = _utcnow()
     # SQL-side increment. `invite.uses + 1` in Python emits `SET uses = <n>`
@@ -1177,8 +1488,11 @@ def transfer_project(
     """
     target_team: Team | None = None
     if team_id is not None:
-        if access.team_role(db, user.id, team_id) is None:
+        trole = access.team_role(db, user.id, team_id)
+        if trole is None:
             raise TeamNotFoundError("Team not found")
+        if not access.can_edit_in_team(trole):
+            raise TeamPermissionError("Viewers can't move projects into the team")
         target_team = db.get(Team, team_id)
         assert target_team is not None  # an active membership implies the row
     if project.team_id == team_id and (
@@ -1454,6 +1768,8 @@ def update_project_grant(
                 invited_email=grant.invited_email,
             )
         grant.role = role
+        # An explicit role ends a lapse: whoever administers it has decided.
+        grant.lapsed_role = None
     if scopes is not None:
         if not scopes or any(s not in GRANT_SCOPES for s in scopes):
             raise GrantError("scopes must be a non-empty subset of tasks/sessions")

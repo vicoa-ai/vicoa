@@ -26,6 +26,7 @@ from .collab_models import (
     GRANT_SCOPES,
     TEAM_MEMBER_STATUSES,
     TEAM_ROLES,
+    TEAM_SEAT_ROLES,
 )
 from .share_models import (
     ShareLink,
@@ -141,4 +142,5 @@ __all__ = [
     "GRANT_SCOPES",
     "TEAM_MEMBER_STATUSES",
     "TEAM_ROLES",
+    "TEAM_SEAT_ROLES",
 ]

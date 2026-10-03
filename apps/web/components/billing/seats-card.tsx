@@ -1,17 +1,18 @@
 'use client';
 
 /**
- * Seats on Billing (collaboration §6): how many people the caller's plan pays
- * for and the over-seats state, with a link to the seats page
- * (`/dashboard/seats`, `SeatsCheckout`), where seats are bought or changed.
+ * The Team card on Billing (collaboration §6): how many people the caller's
+ * plan pays for and the over-seats state, with a link to the seats page
+ * (`/dashboard/seats`, `SeatsCheckout`), where Vicoa Team is bought or its
+ * seats changed.
  *
- * A seat is anyone on a team you own, plus anyone outside them you gave edit
- * access; viewers and commenters are free.
+ * Every editor needs a seat; viewers, commenters and people with their own
+ * Pro are free.
  *
  * Hosted only: `GET /billing/seats` is served by the billing overlay, so on a
- * self-hosted build (seats unmetered) the card renders nothing. Shown only
- * once seats mean something to the caller — they share with someone, bought
- * seats, or are over — so a solo account never sees it.
+ * self-hosted build (seats unmetered) the card renders nothing. A team owner
+ * always sees it; anyone else once seats mean something to them (they share
+ * edit access, bought seats, or are over), so a solo account never does.
  */
 
 import Link from 'next/link';
@@ -32,9 +33,10 @@ export function SeatsCard({ className }: { className?: string }) {
   );
 
   if (error || !seats) return null;
-  if (seats.used <= 1 && !seats.purchased && !seats.over) return null;
+  if (!seats.owns_team && seats.used <= 1 && seats.purchased === null && !seats.over) return null;
 
   const summary = seatSummary(seats);
+  const onTeam = seats.purchased !== null;
 
   return (
     <div
@@ -44,7 +46,7 @@ export function SeatsCard({ className }: { className?: string }) {
       )}
     >
       <div className="flex flex-col gap-1">
-        <p className="text-sm font-medium text-foreground">Seats</p>
+        <p className="text-sm font-medium text-foreground">{onTeam ? 'Seats' : 'Vicoa Team'}</p>
         <p className={cn('text-sm', seats.over ? 'text-warning' : 'text-foreground/90')}>
           {summary.headline}
         </p>
@@ -52,7 +54,7 @@ export function SeatsCard({ className }: { className?: string }) {
       </div>
       {seats.per_seat_available && (
         <Button asChild variant="outline" className="shrink-0 cursor-pointer">
-          <Link href={SEATS_PAGE_HREF}>{seats.purchased ? 'Manage seats' : 'Add seats'}</Link>
+          <Link href={SEATS_PAGE_HREF}>{onTeam ? 'Manage seats' : 'Get Vicoa Team'}</Link>
         </Button>
       )}
     </div>

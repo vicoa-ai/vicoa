@@ -35,6 +35,7 @@ import {
   UserMinus,
 } from 'lucide-react';
 
+import { ConfirmChargeDialog } from '@/components/billing/confirm-charge-dialog';
 import { BILLING_SEATS_KEY } from '@/components/billing/seats-card';
 import { SeatLimitNotice } from '@/components/billing/seat-limit-notice';
 import { AvatarEditor } from '@/components/dashboard/avatar-editor';
@@ -68,6 +69,7 @@ import {
 } from '@/components/ui/select';
 import {
   getBackendAPI,
+  type BillingSeats,
   type TeamDetail,
   type TeamInvitation,
   type TeamInviteLink,
@@ -77,6 +79,7 @@ import {
   type TeamSummary,
   type UserProfile,
 } from '@/lib/backend-api';
+import { SEATS_PAGE_HREF, formatSeatPrice } from '@/lib/billing';
 import { useCopyToClipboard } from '@/lib/hooks/use-session-operations';
 import type { Principal } from '@/lib/principals';
 import { isDesktopLocal } from '@/lib/runtime-config';
@@ -175,8 +178,37 @@ function Pill({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'neu
 
 function ActionError({ error, className }: { error: TeamActionError | null; className?: string }) {
   if (!error) return null;
+  if (error.kind === 'team-own') return <TeamOwnOffer className={className} />;
   if (error.kind === 'seat-limit') return <SeatLimitNotice detail={error.detail} className={className} />;
   return <p className={cn('text-xs text-destructive', className)}>{error.message}</p>;
+}
+
+/** Creating (or being handed) a team on Free: the owner edits everything the
+ *  team owns, so it takes Pro or Vicoa Team. Offer both. */
+function TeamOwnOffer({ className }: { className?: string }) {
+  return (
+    <div
+      role="alert"
+      className={cn(
+        'rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs text-foreground/90',
+        className,
+      )}
+    >
+      <p className="font-medium">Teams need Pro or Vicoa Team</p>
+      <p className="mt-0.5 text-muted-foreground">
+        With Vicoa Team you pay a seat for everyone who edits. With Pro, you edit alongside teammates who have
+        their own Pro. Viewers are always free.
+      </p>
+      <div className="mt-2.5 flex flex-wrap gap-2">
+        <Button asChild size="sm" className="h-8 cursor-pointer text-xs">
+          <Link href={SEATS_PAGE_HREF}>Get Vicoa Team</Link>
+        </Button>
+        <Button asChild size="sm" variant="outline" className="h-8 cursor-pointer text-xs">
+          <Link href="/dashboard/upgrade">Get Pro</Link>
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function LoadingRow({ label }: { label: string }) {
@@ -880,26 +912,36 @@ function InviteCard({
   const [role, setRole] = useState<InvitableRole>('member');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<TeamActionError | null>(null);
+  // The address and role a seat limit refused, kept so "Add a seat" or
+  // "Invite as a viewer" can finish the same invite.
+  const [refused, setRefused] = useState<{ email: string; role: InvitableRole } | null>(null);
   const [result, setResult] = useState<{ email: string; invite: TeamMemberInvite } | null>(null);
   const { copied, copy } = useCopyToClipboard();
+
+  const send = async (address: string, asRole: InvitableRole) => {
+    setSending(true);
+    setError(null);
+    setRefused(null);
+    setResult(null);
+    try {
+      const invite = await getBackendAPI(true).inviteTeamMember(teamId, address, asRole);
+      setResult({ email: address, invite });
+      setEmail('');
+      await onInvited();
+    } catch (err) {
+      const actionError = toTeamActionError(err, 'Failed to send the invite');
+      setError(actionError);
+      if (actionError.kind === 'seat-limit') setRefused({ email: address, role: asRole });
+    } finally {
+      setSending(false);
+    }
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const address = email.trim();
     if (!address || sending) return;
-    setSending(true);
-    setError(null);
-    setResult(null);
-    try {
-      const invite = await getBackendAPI(true).inviteTeamMember(teamId, address, role);
-      setResult({ email: address, invite });
-      setEmail('');
-      await onInvited();
-    } catch (err) {
-      setError(toTeamActionError(err, 'Failed to send the invite'));
-    } finally {
-      setSending(false);
-    }
+    await send(address, role);
   };
 
   return (
@@ -925,11 +967,22 @@ function InviteCard({
           </Button>
         </form>
         <p className="mt-2 text-[11px] text-muted-foreground">
-          {roles.includes('admin')
-            ? `Admin: ${TEAM_ROLE_DESCRIPTION.admin}. Member: ${TEAM_ROLE_DESCRIPTION.member}.`
-            : `Members: ${TEAM_ROLE_DESCRIPTION.member}.`}
+          {roles
+            .map((r) => `${TEAM_ROLE_LABEL[r]}: ${TEAM_ROLE_DESCRIPTION[r]}.`)
+            .join(' ')}
         </p>
-        <ActionError error={error} className="mt-2" />
+        {error?.kind === 'seat-limit' && refused ? (
+          <InviteSeatLimit
+            detail={error.detail}
+            isOwner={viewerRole === 'owner'}
+            busy={sending}
+            onInviteAsViewer={() => void send(refused.email, 'viewer')}
+            onSeatAdded={() => send(refused.email, refused.role)}
+            className="mt-2"
+          />
+        ) : (
+          <ActionError error={error} className="mt-2" />
+        )}
         {result &&
           (result.invite.email_sent ? (
             <p className="mt-2 flex items-center gap-1.5 text-xs text-success">
@@ -970,6 +1023,123 @@ function InviteCard({
   );
 }
 
+/**
+ * An editor invite past the seats the owner pays for. Fixed in place, without
+ * leaving the team page: an owner on Vicoa Team adds a seat (confirmed, since
+ * it bills the live subscription) and the invite goes out; any other owner is
+ * pointed at the seats page; and anyone can send the same invite as a viewer,
+ * which is free.
+ */
+function InviteSeatLimit({
+  detail,
+  isOwner,
+  busy,
+  onInviteAsViewer,
+  onSeatAdded,
+  className,
+}: {
+  detail: string;
+  isOwner: boolean;
+  busy: boolean;
+  onInviteAsViewer: () => void;
+  onSeatAdded: () => Promise<void>;
+  className?: string;
+}) {
+  const { mutate } = useSWRConfig();
+  const { data: seats } = useSWR<BillingSeats>(
+    isOwner && !isDesktopLocal() ? BILLING_SEATS_KEY : null,
+    () => getBackendAPI(true).getBillingSeats(),
+    { shouldRetryOnError: false },
+  );
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+
+  const onTeam = seats?.purchased != null;
+  const addInPlace = isOwner && onTeam && seats?.change_mode === 'in_place';
+  const nextQuantity = (seats?.purchased ?? 0) + 1;
+  const interval = seats?.billing_interval ?? 'monthly';
+  const price = seats?.prices?.[interval] ?? null;
+  const unit = interval === 'annual' ? 'year' : 'month';
+
+  const addSeat = async () => {
+    setAddError(null);
+    try {
+      const here = window.location.href;
+      await getBackendAPI(true).changeBillingSeats({
+        quantity: nextQuantity,
+        billing_interval: interval,
+        success_url: here,
+        cancel_url: here,
+      });
+      void mutate(BILLING_SEATS_KEY);
+      void mutate('billing-subscription');
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : 'Failed to add a seat.');
+      return;
+    }
+    await onSeatAdded();
+  };
+
+  return (
+    <div
+      role="alert"
+      className={cn(
+        'rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs text-foreground/90',
+        className,
+      )}
+    >
+      <p className="font-medium">No seat left for another editor</p>
+      <p className="mt-0.5 text-muted-foreground">{detail}</p>
+      <div className="mt-2.5 flex flex-wrap gap-2">
+        {addInPlace ? (
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 cursor-pointer text-xs"
+            disabled={busy}
+            onClick={() => setConfirmOpen(true)}
+          >
+            Add a seat and invite
+          </Button>
+        ) : isOwner ? (
+          <Button asChild size="sm" className="h-8 cursor-pointer text-xs">
+            <Link href={SEATS_PAGE_HREF}>{onTeam ? 'Add seats' : 'Get Vicoa Team'}</Link>
+          </Button>
+        ) : null}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 cursor-pointer text-xs"
+          disabled={busy}
+          onClick={onInviteAsViewer}
+        >
+          Invite as a viewer instead
+        </Button>
+      </div>
+      {addError && <p className="mt-2 text-destructive">{addError}</p>}
+      <ConfirmChargeDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title="Add a seat?"
+        description={`Your Vicoa Team goes from ${seats?.purchased ?? 0} to ${nextQuantity} seats now, and the invite goes out. The difference is prorated on your next invoice.`}
+        summary={
+          price ? (
+            <div className="flex items-baseline justify-between gap-4">
+              <span className="text-muted-foreground">New total</span>
+              <span className="tabular-nums text-foreground">
+                {formatSeatPrice({ ...price, unit_amount: price.unit_amount * nextQuantity })} per {unit}
+              </span>
+            </div>
+          ) : undefined
+        }
+        confirmLabel="Add seat"
+        onConfirm={addSeat}
+      />
+    </div>
+  );
+}
+
 function MemberRow({
   member,
   actions,
@@ -1000,6 +1170,13 @@ function MemberRow({
         </div>
         {showEmail && <div className="mt-0.5 truncate text-xs text-muted-foreground">{member.email}</div>}
       </div>
+      {member.lapsed_role && (
+        <span
+          title={`Was ${TEAM_ROLE_LABEL[member.lapsed_role].toLowerCase()}. Editing comes back when the owner adds seats.`}
+        >
+          <Pill tone="warning">Seat lapsed</Pill>
+        </span>
+      )}
       <Pill tone={invited ? 'warning' : 'success'}>{invited ? 'Invited' : 'Active'}</Pill>
       <span className="w-14 shrink-0 text-right text-xs text-muted-foreground">{TEAM_ROLE_LABEL[member.role]}</span>
       {hasMemberActions(actions) ? (
@@ -1037,7 +1214,7 @@ function MemberRow({
                     Change role
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent className="w-64 font-mono text-xs">
-                    {(['admin', 'member'] as const).map((role) => (
+                    {(['admin', 'member', 'viewer'] as const).map((role) => (
                       <DropdownMenuItem
                         key={role}
                         onSelect={() => onChangeRole(role)}

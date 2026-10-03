@@ -60,13 +60,25 @@ ROLE_RANK: dict[str, int] = {
 
 # What standing in a team confers on a project the team owns. A team `owner`
 # is the project's owner (can delete it); an `admin` runs it; a plain `member`
-# works in it. Team-owned projects arrive with P7 — the mapping is fixed now so
-# the resolver is complete on day one.
+# works in it; a `viewer` (the free team role, §6 Team tier) reads and
+# comments on it but cannot edit or prompt.
 TEAM_ROLE_TO_PROJECT_ROLE: dict[str, Role] = {
     "owner": "owner",
     "admin": "admin",
     "member": "editor",
+    "viewer": "commenter",
 }
+
+# A team viewer reads and comments, whatever reaches them through the team: a
+# grant made *to* the team, or a session shared with it, is capped here too —
+# otherwise an editor grant to the team would make its viewers editors.
+TEAM_VIEWER_ROLE = "viewer"
+_TEAM_VIEWER_CAP: Role = "commenter"
+
+
+def _cap_for_team_viewer(role: str) -> str:
+    return _TEAM_VIEWER_CAP if ROLE_RANK[role] > ROLE_RANK[_TEAM_VIEWER_CAP] else role
+
 
 _ACCESS_PRIORITY = {InstanceAccessLevel.READ: 1, InstanceAccessLevel.WRITE: 2}
 
@@ -139,7 +151,8 @@ def active_team_ids(db: Session, user_id: UUID) -> set[UUID]:
 
 
 def team_role(db: Session, user_id: UUID, team_id: UUID) -> str | None:
-    """'owner' | 'admin' | 'member' when `user_id` is an active member, else None."""
+    """'owner' | 'admin' | 'member' | 'viewer' when `user_id` is an active
+    member, else None."""
     row = db.execute(
         select(TeamMember.role).where(
             TeamMember.team_id == team_id,
@@ -155,6 +168,22 @@ def team_roles(db: Session, user_id: UUID) -> dict[UUID, str]:
     return _active_team_roles(db, user_id)
 
 
+def can_edit_in_team(role: str | None) -> bool:
+    """Whether a team role works in the team (edits its projects, labels and
+    agents) rather than only reading: every role but `viewer`."""
+    return role is not None and role != TEAM_VIEWER_ROLE
+
+
+def editing_team_ids_select(user_id: UUID) -> Select[tuple[UUID]]:
+    """Teams `user_id` is an active member of in a role that edits — the
+    write-side twin of `active_team_ids_select`."""
+    return select(TeamMember.team_id).where(
+        TeamMember.user_id == user_id,
+        TeamMember.status == "active",
+        TeamMember.role != TEAM_VIEWER_ROLE,
+    )
+
+
 def _active_team_roles(db: Session, user_id: UUID) -> dict[UUID, str]:
     rows = db.execute(
         select(TeamMember.team_id, TeamMember.role).where(
@@ -167,8 +196,13 @@ def _active_team_roles(db: Session, user_id: UUID) -> dict[UUID, str]:
 # --- projects -----------------------------------------------------------------
 
 
-def _grant_principal_predicate(user_id: UUID):
-    teams = active_team_ids_select(user_id)
+def _grant_principal_predicate(user_id: UUID, *, editing: bool = False):
+    """Grants held by `user_id` or one of their active teams. `editing` drops
+    teams where they are only a viewer: a team grant reaches a viewer capped
+    at commenter, so it can never satisfy an editor floor."""
+    teams = (
+        editing_team_ids_select(user_id) if editing else active_team_ids_select(user_id)
+    )
     return or_(
         and_(
             ProjectGrant.principal_type == "user",
@@ -222,7 +256,9 @@ def visible_project_select(
         )
     )
     grant_filters = [
-        _grant_principal_predicate(user_id),
+        _grant_principal_predicate(
+            user_id, editing=ROLE_RANK[min_role] > ROLE_RANK[_TEAM_VIEWER_CAP]
+        ),
         ProjectGrant.role.in_(_roles_at_least(min_role)),
     ]
     if grant_scope is not None:
@@ -279,7 +315,13 @@ def project_accesses(
         return out
 
     rows = db.execute(
-        select(ProjectGrant.project_id, ProjectGrant.role, ProjectGrant.scopes).where(
+        select(
+            ProjectGrant.project_id,
+            ProjectGrant.role,
+            ProjectGrant.scopes,
+            ProjectGrant.principal_type,
+            ProjectGrant.principal_id,
+        ).where(
             ProjectGrant.project_id.in_([p.id for p in unresolved]),
             _grant_principal_predicate(user_id),
         )
@@ -290,7 +332,12 @@ def project_accesses(
     # reading of "I was given both".
     best_role: dict[UUID, str] = {}
     covered: dict[UUID, set[str]] = {}
-    for project_id, role, scopes in rows:
+    for project_id, role, scopes, principal_type, principal_id in rows:
+        if (
+            principal_type == "team"
+            and team_roles.get(principal_id) == TEAM_VIEWER_ROLE
+        ):
+            role = _cap_for_team_viewer(role)
         best_role[project_id] = max_role(best_role.get(project_id), role) or role
         covered.setdefault(project_id, set()).update(scopes or [])
     for project_id, role in best_role.items():
@@ -375,7 +422,7 @@ def session_share_access(
         access_levels.append(direct_access.access)
 
     team_access_rows = (
-        db.query(TeamInstanceAccess.access)
+        db.query(TeamInstanceAccess.access, TeamMember.role)
         .join(TeamMember, TeamMember.team_id == TeamInstanceAccess.team_id)
         .filter(
             TeamInstanceAccess.agent_instance_id == instance.id,
@@ -386,7 +433,10 @@ def session_share_access(
     )
     for row in team_access_rows:
         if row.access:
-            access_levels.append(row.access)
+            # A team viewer reads a session shared with the team, never writes.
+            access_levels.append(
+                InstanceAccessLevel.READ if row.role == TEAM_VIEWER_ROLE else row.access
+            )
 
     if not access_levels:
         return None
@@ -461,8 +511,12 @@ def instance_roles(
         )
     ).all():
         levels.setdefault(iid, []).append(level)
-    for iid, level in db.execute(
-        select(TeamInstanceAccess.agent_instance_id, TeamInstanceAccess.access)
+    for iid, level, trole in db.execute(
+        select(
+            TeamInstanceAccess.agent_instance_id,
+            TeamInstanceAccess.access,
+            TeamMember.role,
+        )
         .join(TeamMember, TeamMember.team_id == TeamInstanceAccess.team_id)
         .where(
             TeamInstanceAccess.agent_instance_id.in_(ids),
@@ -470,6 +524,8 @@ def instance_roles(
             TeamMember.status == "active",
         )
     ).all():
+        if level and trole == TEAM_VIEWER_ROLE:
+            level = InstanceAccessLevel.READ
         levels.setdefault(iid, []).append(level)
 
     project_ids = {i.project_id for i in foreign if i.project_id is not None}

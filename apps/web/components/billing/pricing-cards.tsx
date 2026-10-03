@@ -58,8 +58,9 @@ function FeatureList({ leadIn, features }: { leadIn?: string; features: string[]
   );
 }
 
-export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
-  const [isAnnual, setIsAnnual] = useState(false);
+export function PricingCards() {
+  // Opens on annual, the cheaper per-month price.
+  const [isAnnual, setIsAnnual] = useState(true);
   const [activeCheckoutPlan, setActiveCheckoutPlan] = useState<'pro' | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const { data: supabaseUser } = useSWR('/api/supabase-user', fetcher);
@@ -86,12 +87,13 @@ export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
   const proFeatures = [
     'Unlimited machines',
     'Unlimited automations',
+    'Teams & shared projects',
     'Priority support',
     'Early feature access',
   ];
 
   const enterpriseFeatures = [
-    'Centralized billing & admin portal',
+    'Admin portal',
     'SSO & SCIM',
     'On-premise deployment',
     'Usage analytics',
@@ -232,7 +234,7 @@ export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
           <CardHeader className="pb-0">
             <CardTitle className="text-2xl mb-0">Pro</CardTitle>
             <p className="text-sm text-muted-foreground">
-              All your machines, no limits.
+              For power users and teams.
             </p>
           </CardHeader>
 
@@ -247,10 +249,10 @@ export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
                     <span className="text-3xl font-semibold text-foreground">
                       ${annualMonthlyEquivalent}
                     </span>
-                    <span className="text-lg text-muted-foreground">/month</span>
+                    <span className="text-lg text-muted-foreground">/user/month</span>
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Billed ${annualPrice} yearly · save ${annualSaving}/year
+                    ${annualPrice} per user, billed yearly
                   </p>
                 </>
               ) : (
@@ -259,7 +261,7 @@ export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
                     <span className="text-3xl font-semibold text-foreground">
                       ${monthlyPrice}
                     </span>
-                    <span className="text-lg text-muted-foreground">/month</span>
+                    <span className="text-lg text-muted-foreground">/user/month</span>
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">Billed monthly</p>
                 </>
@@ -287,7 +289,7 @@ export function PricingCards({ trialDays = 7 }: { trialDays?: number }) {
                 </>
               ) : (
                 <>
-                  {isAnnual ? `Start ${trialDays}-Day Free Trial` : 'Get Pro'}
+                  Get Pro
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </>
               )}

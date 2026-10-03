@@ -86,6 +86,7 @@ def _instance_access_to_response(
         display_name=user.display_name if user else None,
         avatar_image_uri=user.avatar_image_uri if user else None,
         invited=access_obj.user_id is None,
+        lapsed=access_obj.lapsed_at is not None,
         is_owner=is_owner,
         created_at=access_obj.created_at,
         updated_at=access_obj.updated_at,
@@ -1318,8 +1319,8 @@ def delete_user_account(db: Session, user_id: UUID) -> None:
         # Every surviving team must keep an active owner: `_payer_id` has
         # nobody to bill without one, and `require_team(minimum="owner")` would
         # make the team permanently unadministerable. Promote the
-        # longest-standing active member (admins first) when the leaver was the
-        # last owner.
+        # longest-standing active member (admins first, viewers last) when the
+        # leaver was the last owner.
         for team_id in surviving_team_ids:
             eligible = db.query(TeamMember).filter(
                 TeamMember.team_id == team_id,
@@ -1330,7 +1331,11 @@ def delete_user_account(db: Session, user_id: UUID) -> None:
             if eligible.filter(TeamMember.role == "owner").first() is not None:
                 continue
             heir = eligible.order_by(
-                case((TeamMember.role == "admin", 0), else_=1),
+                case(
+                    (TeamMember.role == "admin", 0),
+                    (TeamMember.role == "member", 1),
+                    else_=2,
+                ),
                 TeamMember.created_at.asc(),
             ).first()
             if heir is not None:
@@ -1341,6 +1346,7 @@ def delete_user_account(db: Session, user_id: UUID) -> None:
                     user_id,
                 )
                 heir.role = "owner"
+                heir.lapsed_role = None
 
         # A team's projects, labels and agents keep their creator in
         # `user_id`, whose FK CASCADEs: hand them to the team's owner first,
@@ -2338,6 +2344,8 @@ def update_instance_share(
                 email=share.shared_email,
             )
         share.access = access_level
+        # An explicit level ends a lapse: whoever manages the session decided.
+        share.lapsed_at = None
         db.flush()
         notify_access_changed(db, [share.user_id], instance_id=instance_id)
         return _instance_access_to_response(share)

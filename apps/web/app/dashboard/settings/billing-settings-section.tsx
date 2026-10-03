@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import useSWR from 'swr';
-import { Check, ExternalLink, Loader2 } from 'lucide-react';
+import { Check, ExternalLink, Loader2, Users } from 'lucide-react';
 import { SeatsCard } from '@/components/billing/seats-card';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -73,8 +73,12 @@ export function BillingSettingsSection({
 
   const isBillingLoading = isBillingSubscriptionLoading;
   const billingFetchError = billingSubscriptionError instanceof Error;
+  // A Team seat someone else pays for: Pro everywhere, nothing to manage here.
+  const coveredBy = billingSubscription?.covered_by ?? null;
   const isFreePlan = (billingSubscription?.plan_type ?? 'free') === 'free';
   const isStripePro = billingSubscription?.plan_type === 'pro' && billingSubscription.provider === 'stripe';
+  const isTeamPayer = isStripePro && billingSubscription?.tier === 'team';
+  const seatQuantity = billingSubscription?.seat_quantity ?? null;
   const isMobileStorePro = billingSubscription?.plan_type === 'pro'
     && (billingSubscription.provider === 'apple' || billingSubscription.provider === 'google');
 
@@ -103,6 +107,16 @@ export function BillingSettingsSection({
           <div className="text-sm text-muted-foreground">
             Billing details are unavailable right now.
           </div>
+        ) : coveredBy ? (
+          <div className="flex items-start gap-3">
+            <Users className="mt-0.5 h-5 w-5 flex-shrink-0 text-muted-foreground" />
+            <div>
+              <p className="text-base font-medium text-foreground">Pro, with a Team seat</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Your seat comes from {coveredBy.name}. You have everything in Pro while you hold it.
+              </p>
+            </div>
+          </div>
         ) : isFreePlan ? (
           <div>
             <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
@@ -130,16 +144,17 @@ export function BillingSettingsSection({
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-base font-medium text-foreground">
-                Pro Plan
+                {isTeamPayer ? 'Vicoa Team' : 'Pro Plan'}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                {billingSubscription?.seat_quantity
-                  ? `Billed per seat, ${billingSubscription.seat_quantity} ${billingSubscription.seat_quantity === 1 ? 'seat' : 'seats'}. Managed with Stripe.`
+                {isTeamPayer && seatQuantity !== null
+                  ? `${seatQuantity} ${seatQuantity === 1 ? 'seat' : 'seats'}, managed with Stripe.`
                   : 'Your subscription is managed with Stripe.'}
               </p>
             </div>
             <Button
               variant="outline"
+              className="cursor-pointer"
               onClick={handleOpenPortal}
               disabled={billingAction !== null}
             >
@@ -171,7 +186,7 @@ export function BillingSettingsSection({
           <div>
             <p className="text-sm text-muted-foreground">Plan</p>
             <p className="text-base font-medium text-foreground">
-              {getBillingPlanLabel(billingSubscription?.plan_type)}
+              {getBillingPlanLabel(billingSubscription?.plan_type, billingSubscription?.tier)}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
               Billing information is available, but this subscription type is not yet configurable here.

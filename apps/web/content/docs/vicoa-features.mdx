@@ -406,17 +406,25 @@ invitation shows up in the invitee's account menu and in **Settings → Teams**,
 with **Join** and **Decline**. On a server that can't send email, the dialog
 says so and gives you a link to pass on instead.
 
+| Role | Can |
+|---|---|
+| Viewer | See and comment on the team's projects and sessions, but not edit or prompt. Free, and takes no seat |
+| Member | Also edit tasks and labels, prompt sessions and start sessions with the team's agents |
+| Admin | Also invite people and manage the team's projects and agents |
+| Owner | Also change roles, buy seats and hand the team on |
+
 Share a project or a session with a team from the People tab, and everyone on
-the team gets access. People who leave the team lose it.
+the team gets access. People who leave the team lose it. The team's viewers
+read and comment, whatever role the share gives the team.
 
 **Give a project to a team.** Instead of sharing it, a project can belong to
 the team: open its settings (**⋯ → Project settings**, **General**) and choose
 **Move** under **Owner**, or use **Move a project here** on the team's page.
 Everyone on the team then works in it as their own: it sits in their project
-list (not under **Shared with me**), members can edit its tasks and prompt its
-sessions, past ones included, and the team's owner and admins manage it. Its
-tasks, sessions and share links stay attached. Only the project's owner can
-move it, and only the team's owner can move it out again.
+list (not under **Shared with me**), everyone but viewers can edit its tasks
+and prompt its sessions, past ones included, and the team's owner and admins
+manage it. Its tasks, sessions and share links stay attached. Only the
+project's owner can move it, and only the team's owner can move it out again.
 
 Task keys are unique within an owner, so if the team already has a project
 with the same key (say `VIC`), the move asks you for a new one and suggests a
@@ -424,11 +432,12 @@ free one (`VIC2`). The project's labels move into the team's set, matched by
 name.
 
 **Team agents and labels.** A team has its own agents (the saved setups on the
-**Agents** page) and its own label set. Everyone on the team can start sessions with the
-team's agents and assign them to the team's tasks; only the owner and admins
-create or change them, since their instructions run on every member's machine
-that picks one. Labels on the team's projects come from the team's set, which
-anyone on the team can edit under **Settings → Tasks** or on the team's page.
+**Agents** page) and its own label set. Everyone on the team but viewers can
+start sessions with the team's agents and assign them to the team's tasks; only
+the owner and admins create or change them, since their instructions run on
+every member's machine that picks one. Labels on the team's projects come from
+the team's set, which everyone but viewers can edit under **Settings → Tasks**
+or on the team's page.
 
 **The team's page** (**Settings → Teams**, then the team) shows its picture
 (owners and admins can change it), members, projects, agents and labels, its
@@ -437,12 +446,27 @@ team to another member with **Make owner…** on their row and stays on as an
 admin. Deleting a team gives its projects, agents and labels back to whoever
 created them.
 
-**Seats.** On vicoa.ai, a seat is anyone on a team you own, plus anyone outside
-them you gave edit access to your projects or sessions. Viewers and commenters
-never take a seat. If you end up using more seats than your plan includes,
-nobody loses access, but you can't add people until you add seats or remove
-some. The team's owner pays for its seats. Self-hosted servers have no seat
-limit.
+**Seats.** On vicoa.ai, everyone who edits needs a seat: the owner, admins and
+members of a team you own, plus anyone outside it you gave edit access to your
+projects or sessions. A seat is either their own Pro or one you buy for them on
+Vicoa Team. Viewers and commenters are free and unlimited, and someone with
+their own Pro takes no seat. Creating or owning a team takes Pro or Team.
+Invite an editor past the seats you have and Vicoa offers to add a seat right
+there, or to invite them as a viewer instead. If you end up using more seats
+than you have, nobody loses access, but you can't add editors until you add
+seats or remove some. Self-hosted servers have no seat limit.
+
+**Vicoa Team.** Team is $12 per seat per month, or $9 per seat per month billed
+yearly, with a minimum of 2 seats. The team's owner buys them on the **Seats**
+page (**Settings → Billing → Seats**, or from the team's page) and pays for
+everyone from one subscription. Each seat counts as Pro everywhere (desktop,
+web and mobile), and the holder's **Billing** page says which team their seat
+comes from. If you already pay for Pro on the web, upgrading to Team changes
+that subscription in place, prorated, after you confirm.
+
+**When Team ends.** A cancelled Team subscription runs to the end of its
+billing period. After that, editors without their own Pro become viewers.
+Nothing is deleted, and editing comes back when you buy seats again.
 
 The `vicoa` CLI lists tasks from your personal projects only; work on a team's
 board from the app.

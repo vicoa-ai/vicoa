@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, Index, String, Text, text
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PostgresUUID, JSONB
 from sqlalchemy.orm import (
     DeclarativeBase,  # type: ignore[attr-defined]
@@ -500,6 +500,12 @@ class UserInstanceAccess(Base):
         nullable=True,
     )
     access: Mapped[InstanceAccessLevel] = mapped_column()
+    # Set while a WRITE share reads READ because the seat paying for it lapsed
+    # (the session owner's Team subscription ended). Cleared, and WRITE back,
+    # when seats return (collaboration §6, Team tier).
+    lapsed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     granted_by_user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), type_=PostgresUUID(as_uuid=True)
     )

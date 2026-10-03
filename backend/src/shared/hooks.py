@@ -79,8 +79,18 @@ def run_user_delete_hooks(db: Any, user_id: UUID) -> None:
 #   collab.team_seat   — adding a member to a team (context: team_id, seats)
 #   collab.grant_write — an editor/admin project grant to someone outside the
 #                        owner's teams (context: project_id, role, principal_type)
+#   collab.team_own    — becoming a team's owner: creating a team, or being
+#                        handed one (context: action, team_id). The owner edits
+#                        everything the team owns, so a plan may require more
+#                        than Free for it.
+#
+# The seat capabilities carry `seats` (how many people the payer pays for after
+# the action), `new_seat` (whether the action adds one) and, so a hook can tell
+# *who* rather than just how many, `seat_keys` (everyone after the action) and
+# `new_keys` (the ones it adds), as "user:<id>" / "email:<address>" strings.
 CAPABILITY_TEAM_SEAT = "collab.team_seat"
 CAPABILITY_GRANT_WRITE = "collab.grant_write"
+CAPABILITY_TEAM_OWN = "collab.team_own"
 
 # Returns a human-readable denial reason, or None to allow.
 CapabilityHook = Callable[[Any, UUID, str, dict[str, Any]], str | None]

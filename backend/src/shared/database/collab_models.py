@@ -39,7 +39,11 @@ from .models import Base
 if TYPE_CHECKING:
     from .models import TeamInstanceAccess, User
 
-TEAM_ROLES = ("owner", "admin", "member")
+# `viewer` is the free team role: it sees and comments on the team's work but
+# cannot edit or prompt, so it takes no seat (collaboration §6, Team tier).
+TEAM_ROLES = ("owner", "admin", "member", "viewer")
+# The team roles that edit, and so take a seat on the owner's plan.
+TEAM_SEAT_ROLES = ("owner", "admin", "member")
 TEAM_MEMBER_STATUSES = ("invited", "active", "removed")
 GRANT_PRINCIPAL_TYPES = ("user", "team")
 # The grantable ladder (§2). 'owner' exists as a *resolved* role in
@@ -116,7 +120,11 @@ class TeamMember(Base):
     __tablename__ = "team_members"
     __table_args__ = (
         CheckConstraint(
-            "role IN ('owner','admin','member')", name="ck_team_members_role"
+            "role IN ('owner','admin','member','viewer')", name="ck_team_members_role"
+        ),
+        CheckConstraint(
+            "lapsed_role IS NULL OR lapsed_role IN ('admin','member')",
+            name="ck_team_members_lapsed_role",
         ),
         CheckConstraint(
             "status IN ('invited','active','removed')",
@@ -170,6 +178,12 @@ class TeamMember(Base):
     )
     invited_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(16), default="member")
+    # The role held before the seat paying for it lapsed (the payer's Team
+    # subscription ended); `role` reads 'viewer' meanwhile. NULL when not
+    # lapsed. Kept so editing comes back when seats do (§6, Team tier).
+    lapsed_role: Mapped[str | None] = mapped_column(
+        String(16), nullable=True, default=None
+    )
     status: Mapped[str] = mapped_column(String(16), default="invited")
     invited_by_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -203,7 +217,7 @@ class TeamInvite(Base):
     __tablename__ = "team_invites"
     __table_args__ = (
         CheckConstraint(
-            "role IN ('owner','admin','member')", name="ck_team_invites_role"
+            "role IN ('owner','admin','member','viewer')", name="ck_team_invites_role"
         ),
         Index("ix_team_invites_team", "team_id"),
     )
@@ -253,6 +267,10 @@ class ProjectGrant(Base):
         CheckConstraint(
             "role IN ('viewer','commenter','editor','admin')",
             name="ck_project_grants_role",
+        ),
+        CheckConstraint(
+            "lapsed_role IS NULL OR lapsed_role IN ('editor','admin')",
+            name="ck_project_grants_lapsed_role",
         ),
         # Invariants that used to live only in `create_project_grant`'s Python
         # branches. Both partial unique indexes below are `WHERE ... IS NOT
@@ -311,6 +329,11 @@ class ProjectGrant(Base):
     )
     invited_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(16))
+    # Like `TeamMember.lapsed_role`: the editor/admin role this grant held
+    # before the payer's seats lapsed; `role` reads 'commenter' meanwhile.
+    lapsed_role: Mapped[str | None] = mapped_column(
+        String(16), nullable=True, default=None
+    )
     scopes: Mapped[list[str]] = mapped_column(
         JSONB,
         default=all_grant_scopes,

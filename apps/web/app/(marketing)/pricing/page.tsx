@@ -8,7 +8,7 @@ import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
   title: 'Pricing Plans - Vicoa | Affordable Remote AI Coding Assistant',
-  description: 'Choose the perfect Vicoa plan for your coding needs. A free desktop, web and mobile app with one remote machine, Pro for unlimited machines and automations, or custom Enterprise plans. Run Claude Code, Codex, and 40+ coding agents from anywhere.',
+  description: 'Choose the perfect Vicoa plan for your coding needs. A free desktop, web and mobile app with one remote machine, Pro for unlimited machines and automations, per user for you or your whole team, or custom Enterprise plans. Run Claude Code, Codex, and 40+ coding agents from anywhere.',
   keywords: [
     'Vicoa pricing',
     'AI coding assistant pricing',
@@ -20,14 +20,14 @@ export const metadata: Metadata = {
   ],
   openGraph: {
     title: 'Vicoa Pricing - Free, Pro & Enterprise Plans',
-    description: 'Flexible pricing for developers of all levels. Start free on one machine, or upgrade to Pro to run agents across every machine you own.',
+    description: 'Flexible pricing for developers of all levels. Start free on one machine, or upgrade to Pro to run agents across every machine you own, on your own or with your team.',
     type: 'website',
     url: 'https://vicoa.ai/pricing',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Vicoa Pricing Plans',
-    description: 'Choose the perfect plan for your coding needs. Free on one machine; Pro for unlimited machines and automations.',
+    description: 'Choose the perfect plan for your coding needs. Free on one machine; Pro for unlimited machines and automations, per user.',
   },
   alternates: {
     canonical: 'https://vicoa.ai/pricing',
@@ -43,22 +43,27 @@ const pricingFaqs: FAQItem[] = [
   {
     question: 'Can I change plans anytime?',
     answer:
-      'Yes. Web subscriptions can be managed from dashboard settings, and iOS subscriptions can be managed through your Apple account settings.'
+      'Yes. Web subscriptions can be managed from dashboard settings, and iOS subscriptions can be managed through your Apple account settings. Adding seats for teammates to a Pro subscription on the web changes it in place, prorated, once you confirm.'
   },
   {
     question: 'What payment methods do you accept?',
     answer:
-      'We accept payments using cards or Fast links in the web via Stripe. You can subscribe via App Store or Google Play Store using in-app payments.'
+      'We accept payments using cards or Fast links in the web via Stripe. You can subscribe to Pro for yourself via App Store or Google Play Store using in-app payments. Seats for teammates are available on the web only.'
   },
   {
     question: 'Do you offer refunds?',
     answer:
-      "Annual Pro includes a free trial. If you're not satisfied, you can cancel anytime during the trial period at no charge. For subscriptions via mobile apps, refunds are handled by App Store and Google Play Store."
+      "Annual Pro includes a free trial. If you're not satisfied, you can cancel anytime during the trial period at no charge. Seats bought for a team have no trial. For subscriptions via mobile apps, refunds are handled by App Store and Google Play Store."
+  },
+  {
+    question: 'Can I buy Pro for my team?',
+    answer:
+      'Yes. Pro is priced per user: $12 per user per month, or $9 per user per month billed yearly ($108 per user per year). Buy it for yourself, or buy seats for your team on the web, from one subscription, starting at 2. Every seat is full Pro on desktop, web and mobile. Only people who edit need a seat: viewers and commenters are free, and anyone who already has their own Pro takes no seat. You can add or remove seats anytime. If the subscription ends, the people it paid for become viewers. Nothing is deleted, and editing comes back when you buy seats again.'
   },
   {
     question: 'What do Enterprise plans include?',
     answer:
-      'Enterprise adds centralized billing with an admin portal, SSO & SCIM provisioning, on-premise deployment, usage analytics, advanced security, and an SLA with a dedicated account manager and direct access to our engineering team. Pricing depends on seat count and deployment, so email hi@vicoa.ai and we will put together a quote.'
+      'Enterprise adds an admin portal, SSO & SCIM provisioning, on-premise deployment, usage analytics, advanced security, and an SLA with a dedicated account manager and direct access to our engineering team. Pricing depends on seat count and deployment, so email hi@vicoa.ai and we will put together a quote.'
   },
   {
     question: 'Do I need my own AI subscription or API keys?',
@@ -68,11 +73,6 @@ const pricingFaqs: FAQItem[] = [
 ];
 
 export default async function PricingPage() {
-  const rawTrialDays = Number(process.env.NEXT_PUBLIC_STRIPE_PRO_TRIAL_DAYS ?? '7');
-  const trialDays = Number.isFinite(rawTrialDays) && rawTrialDays > 0
-    ? rawTrialDays
-    : 7;
-
   return (
     <main>
       <PostHogPageEvent event="pricing_page_viewed" />
@@ -83,7 +83,7 @@ export default async function PricingPage() {
             Vicoa Pricing Plans
           </h1>
           <p className="text-base sm:text-lg text-muted-foreground max-w-2xl mx-auto">
-            Free on one machine. Go Pro to code across all of them.
+            Free on one machine. Go Pro to code across all of them, on your own or with your team.
           </p>
         </div>
       </section>
@@ -91,7 +91,7 @@ export default async function PricingPage() {
       {/* Pricing Cards Section */}
       <section className="pb-20 sm:pb-24 lg:pb-32 relative">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <PricingCards trialDays={trialDays} />
+          <PricingCards />
         </div>
       </section>
 
@@ -123,6 +123,12 @@ export default async function PricingPage() {
                 <ComparisonRow feature="Desktop app (Mac, Windows, Linux)" free={true} pro={true} enterprise={true} />
                 <ComparisonRow feature="Web & mobile apps (iOS, Android)" free={true} pro={true} enterprise={true} />
 
+                <ComparisonSection title="Teams & sharing" />
+                <ComparisonRow feature="Share projects & sessions with unlimited viewers & commenters" free={true} pro={true} enterprise={true} />
+                <ComparisonRow feature="Create & own teams, with team projects, labels & agents" free={false} pro={true} enterprise={true} />
+                <ComparisonRow feature="Buy Pro for your team" free={false} pro={true} enterprise={true} />
+                <ComparisonRow feature="Centralized billing" free={false} pro={true} enterprise={true} />
+
                 <ComparisonSection title="Agents & models" />
                 <ComparisonRow feature="Claude Code, Codex, OpenCode, Gemini, Antigravity, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi" free={true} pro={true} enterprise={true} />
                 <ComparisonRow feature="30+ more agents via ACP: Amp, Cline, Devin, goose, Kiro, Qwen Code & others" free={true} pro={true} enterprise={true} />
@@ -153,7 +159,7 @@ export default async function PricingPage() {
                 <ComparisonSection title="Support & enterprise" />
                 <ComparisonRow feature="Support" free="Community" pro="Priority" enterprise="Dedicated" />
                 <ComparisonRow feature="Early feature access" free={false} pro={true} enterprise={true} />
-                <ComparisonRow feature="Centralized billing & admin portal" free={false} pro={false} enterprise={true} />
+                <ComparisonRow feature="Admin portal" free={false} pro={false} enterprise={true} />
                 <ComparisonRow feature="SSO & SCIM provisioning" free={false} pro={false} enterprise={true} />
                 <ComparisonRow feature="On-premise deployment" free={false} pro={false} enterprise={true} />
                 <ComparisonRow feature="Usage analytics" free={false} pro={false} enterprise={true} />

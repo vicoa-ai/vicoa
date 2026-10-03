@@ -184,6 +184,7 @@ def _person(
         pending=grant.principal_id is None,
         role=grant.role,  # type: ignore[arg-type]
         scopes=scopes,  # type: ignore[arg-type]
+        lapsed_role=grant.lapsed_role,  # type: ignore[arg-type]
         is_self=grant.principal_id == caller_id,
         created_at=grant.created_at,
     )

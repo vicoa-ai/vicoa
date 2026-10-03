@@ -400,6 +400,10 @@ def transfer_project_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Team not found"
         ) from exc
+    except collab_queries.TeamPermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
     except collab_queries.ProjectKeyConflictError as exc:
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,

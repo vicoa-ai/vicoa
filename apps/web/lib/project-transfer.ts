@@ -30,7 +30,8 @@ export const PERSONAL_DESTINATION_NAME = 'Personal';
  * Destinations for a project the caller owns: every team they are on except
  * the one that already owns it, and their own space when it is a team's.
  * (Owning a team's project means owning the team, so taking it out is theirs
- * to do.) Any member may bring their own project into a team.
+ * to do.) Any member may bring their own project into a team; a viewer may
+ * not, since they read the team's work but do not edit it.
  */
 export function moveDestinations(
   project: Pick<ProjectResponse, 'team_id'>,
@@ -41,7 +42,9 @@ export function moveDestinations(
     out.push({ teamId: null, name: PERSONAL_DESTINATION_NAME, team: null });
   }
   for (const team of [...teams].sort((a, b) => a.name.localeCompare(b.name))) {
-    if (team.id !== project.team_id) out.push({ teamId: team.id, name: team.name, team });
+    if (team.id !== project.team_id && team.role !== 'viewer') {
+      out.push({ teamId: team.id, name: team.name, team });
+    }
   }
   return out;
 }
@@ -70,7 +73,7 @@ export function moveConsequences(
     ];
   }
   const lines = [
-    `Everyone on ${destination.name} can see its tasks and sessions, including past ones. Members can edit tasks and prompt its sessions.`,
+    `Everyone on ${destination.name} can see its tasks and sessions, including past ones. Everyone but viewers can edit tasks and prompt its sessions.`,
   ];
   if (current.teamName) {
     lines.push(`People on ${current.teamName} lose access unless it is shared with them.`);

@@ -530,6 +530,9 @@ class InstanceShareResponse(BaseModel):
     member_count: int | None = None
     invited: bool = False
     is_owner: bool = False
+    # A WRITE share reading READ because the seat paying for it lapsed (the
+    # owner's Team subscription ended); WRITE comes back with seats.
+    lapsed: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -545,8 +548,8 @@ class InstanceShareResponse(BaseModel):
 # Roles and statuses are plain lowercase strings on the wire, matching the
 # varchar+CHECK columns. No client shipped against the pre-P3 enum shape.
 
-TeamRoleLiteral = Literal["owner", "admin", "member"]
-TeamInviteRoleLiteral = Literal["admin", "member"]
+TeamRoleLiteral = Literal["owner", "admin", "member", "viewer"]
+TeamInviteRoleLiteral = Literal["admin", "member", "viewer"]
 TeamMemberStatusLiteral = Literal["invited", "active"]
 
 
@@ -603,6 +606,9 @@ class TeamMemberResponse(BaseModel):
     avatar_image_uri: str | None = None
     role: TeamRoleLiteral
     status: TeamMemberStatusLiteral
+    # A viewer only because the seat paying for them lapsed (the owner's Team
+    # subscription ended); `lapsed_role` is what comes back with seats.
+    lapsed_role: TeamInviteRoleLiteral | None = None
     joined_at: datetime | None = None
     created_at: datetime
 
@@ -701,6 +707,9 @@ class ProjectPersonResponse(BaseModel):
     scopes: list[GrantScopeLiteral]
     # Team rows: active + invited members, i.e. who the grant reaches.
     member_count: int | None = None
+    # A grant reading commenter because the seat paying for it lapsed (the
+    # payer's Team subscription ended); `lapsed_role` comes back with seats.
+    lapsed_role: GrantRoleLiteral | None = None
     is_owner: bool = False
     # The row is the caller — "You" in the UI.
     is_self: bool = False

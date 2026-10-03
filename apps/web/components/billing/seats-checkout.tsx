@@ -8,11 +8,16 @@
  * through the plans, and a Pro payer adding someone goes straight to Team.
  *
  * Three starting points, one page:
- * - already per seat (`purchased`): change the quantity or interval in place,
+ * - already on Team (`purchased`): change the quantity or interval in place,
  *   prorated on the next invoice;
- * - Pro billed by Stripe: that same subscription switches to per seat, in
- *   place (the backend never opens a second, double-billed one);
+ * - Pro billed by Stripe: that same subscription switches to Team, in place
+ *   (the backend never opens a second, double-billed one);
  * - anyone else (Free, or Pro billed by a store): Stripe Checkout.
+ *
+ * Which of those happens is the backend's call (`change_mode`), the same test
+ * `POST /billing/seats` runs. An in-place change bills the live subscription
+ * at once, so it is confirmed first; Checkout is its own confirmation. Team
+ * starts at `min_quantity` seats (two).
  *
  * Hosted only: `GET /billing/seats` is served by the billing overlay. On a
  * self-hosted build (seats unmetered) it 404s and the page says so.
@@ -23,6 +28,7 @@ import { useRouter } from 'next/navigation';
 import useSWR, { mutate as globalMutate } from 'swr';
 import { ArrowLeft, Clock, Loader2, Minus, Plus, Users } from 'lucide-react';
 
+import { ConfirmChargeDialog } from '@/components/billing/confirm-charge-dialog';
 import { BILLING_SEATS_KEY } from '@/components/billing/seats-card';
 import { Button } from '@/components/ui/button';
 import {
@@ -34,6 +40,7 @@ import {
   type SeatPrice,
 } from '@/lib/backend-api';
 import {
+  SEAT_EXPLAINER,
   formatBillingDate,
   formatSeatPrice,
   getBillingProviderLabel,
@@ -141,14 +148,16 @@ export function SeatsCheckout() {
   const [quantity, setQuantity] = useState(1);
   const [interval, setBillingInterval] = useState<BillingInterval>('annual');
   const [busy, setBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!seats) return;
-    // Start from what they pay for now; a new per-seat plan starts one seat
-    // above what their current plan includes, never below what is in use.
-    const floor = Math.max(seats.used, 1);
+    // Start from what they pay for now; a new Team starts one seat above what
+    // their current plan includes, never below what is in use or Team's
+    // minimum.
+    const floor = Math.max(seats.used, seats.min_quantity);
     setQuantity(
       seats.purchased ?? Math.max(floor, seats.included !== null ? seats.included + 1 : floor),
     );
@@ -217,12 +226,13 @@ export function SeatsCheckout() {
     );
   }
 
-  const floor = Math.max(seats.used, 1);
+  const floor = Math.max(seats.used, seats.min_quantity);
   const price = seats.prices ? seats.prices[interval] : null;
   const unit = interval === 'annual' ? 'year' : 'month';
   // A live Stripe subscription is changed in place (prorated on the next
-  // invoice); anything else goes through Checkout and is paid today.
-  const inPlace = seats.provider === 'stripe' && seats.plan_type !== 'free';
+  // invoice); anything else goes through Checkout and is paid today. The
+  // backend says which, so this can never promise Checkout and bill at once.
+  const inPlace = seats.change_mode === 'in_place';
   const changed = !onPerSeat || quantity !== seats.purchased || interval !== seats.billing_interval;
   const storeLabel =
     seats.provider === 'apple' || seats.provider === 'google'
@@ -245,8 +255,22 @@ export function SeatsCheckout() {
       ? Math.round((1 - annual.unit_amount / (monthly.unit_amount * 12)) * 100)
       : 0;
 
+  const proration = intervalChanges
+    ? `You're charged today, with credit for the rest of your current ${currentUnit}, and your billing date moves to today.`
+    : `The difference is prorated on your next invoice${nextPayment ? `, ${nextPayment}` : ''}.`;
+
   const submit = async () => {
     if (busy || !changed) return;
+    // An in-place change bills the live subscription the moment it is made,
+    // so it goes through the confirmation; Checkout confirms on its own page.
+    if (inPlace) {
+      setConfirmOpen(true);
+      return;
+    }
+    await change();
+  };
+
+  const change = async () => {
     setBusy(true);
     setActionError(null);
     setNotice(null);
@@ -275,8 +299,9 @@ export function SeatsCheckout() {
   const title = onPerSeat ? 'Manage seats' : 'Upgrade to Vicoa Team';
   const subtitle = onPerSeat
     ? `${summary.headline}. ${summary.detail}`
-    : 'Pay per seat, you included. A seat is anyone on a team you own, or anyone outside them you gave edit access. Viewers and commenters are free.';
-  const cta = onPerSeat ? 'Update seats' : inPlace ? 'Switch to Vicoa Team' : 'Continue to checkout';
+    : `Every seat is a full Pro, billed to you. ${SEAT_EXPLAINER}`;
+  const cta = onPerSeat ? 'Update seats' : inPlace ? 'Switch to Team' : 'Continue to checkout';
+  const newTotal = price ? `${formatSeatPrice(times(price, quantity))} per ${unit}` : seatCount(quantity);
 
   return shell(
     <>
@@ -358,8 +383,13 @@ export function SeatsCheckout() {
             </div>
             <p className="text-sm text-muted-foreground">
               {price ? `Each seat costs ${formatSeatPrice(price)} per ${unit}, you included. ` : ''}
-              {`You are using ${seatCount(seats.used)} now`}
-              {seats.used > 1 ? ', so that is the fewest you can pay for. Remove people to go lower.' : '.'}
+              {`Vicoa Team starts at ${seatCount(seats.min_quantity)}. You are using ${seatCount(seats.used)} now`}
+              {seats.own_pro > 0
+                ? `, and ${seats.own_pro} more ${seats.own_pro === 1 ? 'person brings' : 'people bring'} their own Pro`
+                : ''}
+              {seats.used > seats.min_quantity
+                ? '. That is the fewest you can pay for; remove people to go lower.'
+                : '.'}
             </p>
           </Step>
         </div>
@@ -379,9 +409,7 @@ export function SeatsCheckout() {
           {inPlace ? (
             <p className="text-sm text-muted-foreground">
               {onPerSeat ? '' : 'Your Pro subscription switches to Vicoa Team. '}
-              {intervalChanges
-                ? `You're charged today, with credit for the rest of your current ${currentUnit}, and your billing date moves to today.`
-                : `The difference is prorated on your next invoice${nextPayment ? `, ${nextPayment}` : ''}.`}
+              {proration}
             </p>
           ) : (
             <SummaryRow
@@ -401,7 +429,7 @@ export function SeatsCheckout() {
           </Button>
 
           {!onPerSeat && (
-            <p className="text-xs text-muted-foreground">Includes Pro for you.</p>
+            <p className="text-xs text-muted-foreground">Every seat includes Pro, yours too.</p>
           )}
           {storeLabel && !onPerSeat && (
             <p className="text-xs text-muted-foreground">
@@ -413,6 +441,25 @@ export function SeatsCheckout() {
           {actionError && <p className="text-xs text-destructive">{actionError}</p>}
         </aside>
       </div>
+
+      <ConfirmChargeDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title={onPerSeat ? `Change to ${seatCount(quantity)}?` : 'Switch to Vicoa Team?'}
+        description={
+          onPerSeat
+            ? `Your Vicoa Team subscription changes now. ${proration}`
+            : `Your Pro subscription becomes Vicoa Team with ${seatCount(quantity)}, starting now. ${proration}`
+        }
+        summary={
+          <div className="flex items-baseline justify-between gap-4">
+            <span className="text-muted-foreground">New total</span>
+            <span className="tabular-nums text-foreground">{newTotal}</span>
+          </div>
+        }
+        confirmLabel={cta}
+        onConfirm={change}
+      />
     </>,
   );
 }

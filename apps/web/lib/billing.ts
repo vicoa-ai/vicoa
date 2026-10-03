@@ -1,4 +1,4 @@
-import type { BillingSeats, BillingSubscription, SeatPrice } from '@/lib/backend-api';
+import type { BillingSeats, BillingSubscription, BillingTier, SeatPrice } from '@/lib/backend-api';
 
 /** Buying or changing seats, apart from the plan picker at /dashboard/upgrade.
  *  Every seat entry point links here, whatever plan the payer is on. */
@@ -10,10 +10,13 @@ export const BILLING_PLAN_LABELS: Record<string, string> = {
   enterprise: 'Enterprise',
 };
 
-export function getBillingPlanLabel(planType?: string | null) {
+/** The plan's name as people see it. One plan inside (`plan_type` 'pro'),
+ *  two outside: `tier` 'team' reads "Vicoa Team". */
+export function getBillingPlanLabel(planType?: string | null, tier?: BillingTier | null) {
   if (!planType) {
     return BILLING_PLAN_LABELS.free;
   }
+  if (planType === 'pro' && tier === 'team') return 'Vicoa Team';
 
   return BILLING_PLAN_LABELS[planType] || planType;
 }
@@ -54,29 +57,38 @@ function seats(n: number): string {
   return `${n} ${n === 1 ? 'seat' : 'seats'}`;
 }
 
+/** What a seat is, in one line: shared by Billing, the team page and the
+ *  seats page. */
+export const SEAT_EXPLAINER =
+  'Everyone who edits your team or your work needs a seat, you included. Viewers, commenters and people with their own Pro are free.';
+
 /**
  * How the seats read on the team page and in Billing (collaboration §6). Over
  * seats is a state, not a punishment: nobody loses access, the payer just
  * can't add anyone until they buy seats or remove someone.
  */
-export function seatSummary(state: Pick<BillingSeats, 'used' | 'included' | 'over'>): {
+export function seatSummary(
+  state: Pick<BillingSeats, 'used' | 'included' | 'over'> & Partial<Pick<BillingSeats, 'own_pro'>>,
+): {
   headline: string;
   detail: string;
 } {
+  const ownPro = state.own_pro ?? 0;
+  const bringing =
+    ownPro > 0 ? `, plus ${ownPro} with their own Pro` : '';
   if (state.included === null) {
-    return { headline: `${seats(state.used)} in use`, detail: 'Your plan has no seat limit.' };
+    return { headline: `${seats(state.used)} in use${bringing}`, detail: 'Your plan has no seat limit.' };
   }
   if (state.over) {
     return {
-      headline: `${seats(state.used)} in use, ${state.included} included`,
+      headline: `${seats(state.used)} in use, ${state.included} included${bringing}`,
       detail:
-        "Nobody loses access, but you can't add people until you add seats or remove some.",
+        "Nobody loses access, but you can't add editors until you add seats or remove some.",
     };
   }
   return {
-    headline: `${state.used} of ${seats(state.included)} in use`,
-    detail:
-      'A seat is anyone on a team you own, or anyone outside them you gave edit access. Viewers and commenters are free.',
+    headline: `${state.used} of ${seats(state.included)} in use${bringing}`,
+    detail: SEAT_EXPLAINER,
   };
 }
 

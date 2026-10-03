@@ -18,6 +18,7 @@ import {
   parseMaxUses,
   partitionMembers,
   roleWithArticle,
+  takesSeat,
   teamJoinPath,
   teamJoinUrl,
   teamsSettingsHref,
@@ -47,6 +48,12 @@ describe('toTeamActionError', () => {
     expect(
       toTeamActionError(withStatus('Your plan has 3 seats', 402, { capability: 'collab.team_seat' }), 'x'),
     ).toEqual({ kind: 'seat-limit', detail: 'Your plan has 3 seats' });
+  });
+
+  it('tells a plan that cannot own a team apart from a seat limit', () => {
+    expect(
+      toTeamActionError(withStatus('Teams need Pro or Vicoa Team.', 402, { capability: 'collab.team_own' }), 'x'),
+    ).toEqual({ kind: 'team-own', detail: 'Teams need Pro or Vicoa Team.' });
   });
 
   it('keeps any other message, or falls back', () => {
@@ -92,15 +99,23 @@ describe('roles', () => {
     expect(canManageTeam(null)).toBe(false);
   });
 
-  it('lets only the owner invite admins', () => {
-    expect(invitableRoles('owner')).toEqual(['member', 'admin']);
-    expect(invitableRoles('admin')).toEqual(['member']);
+  it('lets only the owner invite admins, and any manager invite viewers', () => {
+    expect(invitableRoles('owner')).toEqual(['member', 'admin', 'viewer']);
+    expect(invitableRoles('admin')).toEqual(['member', 'viewer']);
     expect(invitableRoles('member')).toEqual([]);
+    expect(invitableRoles('viewer')).toEqual([]);
+  });
+
+  it('knows which roles take a seat', () => {
+    expect(takesSeat('owner')).toBe(true);
+    expect(takesSeat('member')).toBe(true);
+    expect(takesSeat('viewer')).toBe(false);
   });
 
   it('phrases a role for a sentence', () => {
     expect(roleWithArticle('admin')).toBe('an admin');
     expect(roleWithArticle('member')).toBe('a member');
+    expect(roleWithArticle('viewer')).toBe('a viewer');
     expect(roleWithArticle('owner')).toBe('the owner');
   });
 
@@ -126,16 +141,17 @@ describe('memberDisplayName', () => {
 });
 
 describe('partitionMembers', () => {
-  it('splits invited from active and orders owner, admins, members, then by name', () => {
+  it('splits invited from active and orders owner, admins, members, viewers, then by name', () => {
     const members = [
       member({ id: '1', display_name: 'Zed', role: 'member' }),
       member({ id: '2', display_name: 'Bob', role: 'admin' }),
       member({ id: '3', display_name: 'Amy', role: 'member' }),
       member({ id: '4', display_name: 'Olga', role: 'owner' }),
       member({ id: '5', email: 'new@x.io', role: 'member', status: 'invited', user_id: null }),
+      member({ id: '6', display_name: 'Abe', role: 'viewer' }),
     ];
     const { active, pending } = partitionMembers(members);
-    expect(active.map((m) => m.id)).toEqual(['4', '2', '3', '1']);
+    expect(active.map((m) => m.id)).toEqual(['4', '2', '3', '1', '6']);
     expect(pending.map((m) => m.id)).toEqual(['5']);
   });
 });
@@ -171,8 +187,9 @@ describe('memberActions', () => {
     expect(actions.remove).toBeNull();
   });
 
-  it('admin: removes members only, never admins or the owner, and cannot change roles', () => {
+  it('admin: removes members and viewers, never admins or the owner, and cannot change roles', () => {
     expect(memberActions(admin, otherMemberRow)).toMatchObject({ showChangeRole: false, remove: 'remove' });
+    expect(memberActions(admin, member({ role: 'viewer', user_id: 'u-viewer' })).remove).toBe('remove');
     expect(memberActions(admin, invitedRow).remove).toBe('remove');
     expect(memberActions(admin, otherAdminRow).remove).toBeNull();
     expect(hasMemberActions(memberActions(admin, otherAdminRow))).toBe(false);
@@ -188,6 +205,12 @@ describe('memberActions', () => {
   it('plain member: no actions on others', () => {
     expect(hasMemberActions(memberActions(plain, otherMemberRow))).toBe(false);
     expect(hasMemberActions(memberActions(plain, ownerRow))).toBe(false);
+  });
+
+  it('viewer: may leave, nothing on others', () => {
+    const viewer = { role: 'viewer' as const, userId: 'u-viewer' };
+    expect(memberActions(viewer, member({ role: 'viewer', user_id: 'u-viewer' })).remove).toBe('leave');
+    expect(hasMemberActions(memberActions(viewer, otherMemberRow))).toBe(false);
   });
 
   it('an unknown viewer id never matches a row with no user id', () => {

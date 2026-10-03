@@ -37,6 +37,11 @@ describe('moveDestinations', () => {
     expect(out.map((d) => d.teamId)).toEqual([null, 'b']);
     expect(out[0].name).toBe('Personal');
   });
+
+  it('skips teams where the caller is only a viewer', () => {
+    const out = moveDestinations({ team_id: null }, [...teams, team('c', 'Gamma', 'viewer')]);
+    expect(out.map((d) => d.teamId)).toEqual(['a', 'b']);
+  });
 });
 
 describe('project keys', () => {

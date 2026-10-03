@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatSeatPrice, seatSummary } from './billing';
+import { formatSeatPrice, getBillingPlanLabel, seatSummary } from './billing';
 
 describe('seatSummary', () => {
   it('reads used of included', () => {
@@ -11,6 +11,12 @@ describe('seatSummary', () => {
     const summary = seatSummary({ used: 5, included: 3, over: true });
     expect(summary.headline).toBe('5 seats in use, 3 included');
     expect(summary.detail).toContain('Nobody loses access');
+  });
+
+  it('names the people who bring their own Pro without counting them', () => {
+    expect(seatSummary({ used: 2, included: 3, over: false, own_pro: 2 }).headline).toBe(
+      '2 of 3 seats in use, plus 2 with their own Pro',
+    );
   });
 
   it('handles an unlimited plan', () => {
@@ -35,5 +41,14 @@ describe('formatSeatPrice', () => {
   it('formats minor units in the currency', () => {
     expect(formatSeatPrice({ unit_amount: 800, currency: 'usd' })).toBe('$8');
     expect(formatSeatPrice({ unit_amount: 750, currency: 'usd' })).toBe('$7.50');
+  });
+});
+
+describe('getBillingPlanLabel', () => {
+  it('names Team apart from Pro, though both are plan_type pro', () => {
+    expect(getBillingPlanLabel('pro', 'team')).toBe('Vicoa Team');
+    expect(getBillingPlanLabel('pro', 'pro')).toBe('Pro');
+    expect(getBillingPlanLabel('pro')).toBe('Pro');
+    expect(getBillingPlanLabel(null)).toBe('Free');
   });
 });

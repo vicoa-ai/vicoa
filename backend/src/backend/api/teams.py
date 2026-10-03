@@ -116,6 +116,7 @@ def _member(member: TeamMember, *, show_email: bool) -> TeamMemberResponse:
         avatar_image_uri=user.avatar_image_uri if user else None,
         role=member.role,  # type: ignore[arg-type]
         status=member.status,  # type: ignore[arg-type]
+        lapsed_role=member.lapsed_role,  # type: ignore[arg-type]
         joined_at=member.joined_at,
         created_at=member.created_at,
     )

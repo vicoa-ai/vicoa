@@ -16,16 +16,22 @@ import {
 } from '@/lib/backend-api';
 import { getDesktopConfig } from '@/lib/runtime-config';
 
+/** The 402 capability for owning a team (creating one, or being handed one). */
+export const CAPABILITY_TEAM_OWN = 'collab.team_own';
+
 /**
- * A failed team action as the UI shows it: a 402 is a seat limit (rendered by
- * `<SeatLimitNotice>`), anything else is a one-line message.
+ * A failed team action as the UI shows it: a 402 is either a plan that cannot
+ * own a team (`team-own`, offered Team or Pro) or a seat limit (rendered by
+ * `<SeatLimitNotice>`); anything else is a one-line message.
  */
 export type TeamActionError =
+  | { kind: 'team-own'; detail: string }
   | { kind: 'seat-limit'; detail: string }
   | { kind: 'message'; message: string };
 
 export function toTeamActionError(err: unknown, fallback: string): TeamActionError {
   const limit = seatLimitFromError(err);
+  if (limit?.capability === CAPABILITY_TEAM_OWN) return { kind: 'team-own', detail: limit.detail };
   if (limit) return { kind: 'seat-limit', detail: limit.detail };
   const message = err instanceof Error && err.message.trim() ? err.message : fallback;
   return { kind: 'message', message };
@@ -80,18 +86,26 @@ export const TEAM_ROLE_LABEL: Record<TeamRole, string> = {
   owner: 'Owner',
   admin: 'Admin',
   member: 'Member',
+  viewer: 'Viewer',
 };
 
 /** One line per assignable role, shown under it in pickers and menus. */
 export const TEAM_ROLE_DESCRIPTION: Record<InvitableRole, string> = {
   admin: 'Invite and remove members, manage invite links',
   member: "Works in the team's projects",
+  viewer: 'Sees and comments for free, takes no seat',
 };
 
-/** "an admin", "a member", "the owner": for "invited you as …". */
+/** The roles that edit, and so take a seat on the owner's plan. */
+export function takesSeat(role: TeamRole): boolean {
+  return role !== 'viewer';
+}
+
+/** "an admin", "a member", "a viewer", "the owner": for "invited you as …". */
 export function roleWithArticle(role: TeamRole): string {
   if (role === 'owner') return 'the owner';
   if (role === 'admin') return 'an admin';
+  if (role === 'viewer') return 'a viewer';
   return 'a member';
 }
 
@@ -108,10 +122,11 @@ export function canManageTeam(role: TeamRole | null | undefined): boolean {
   return role === 'owner' || role === 'admin';
 }
 
-/** Roles the viewer may hand out: only the owner can make admins. */
+/** Roles the viewer may hand out: only the owner can make admins. Viewers
+ *  are free, so anyone who manages the team can invite one. */
 export function invitableRoles(viewerRole: TeamRole | null | undefined): InvitableRole[] {
-  if (viewerRole === 'owner') return ['member', 'admin'];
-  if (viewerRole === 'admin') return ['member'];
+  if (viewerRole === 'owner') return ['member', 'admin', 'viewer'];
+  if (viewerRole === 'admin') return ['member', 'viewer'];
   return [];
 }
 
@@ -128,10 +143,10 @@ export function memberDisplayName(member: Pick<TeamMember, 'display_name' | 'ema
   return member.display_name?.trim() || member.email?.trim() || 'Vicoa user';
 }
 
-const ROLE_RANK: Record<TeamRole, number> = { owner: 0, admin: 1, member: 2 };
+const ROLE_RANK: Record<TeamRole, number> = { owner: 0, admin: 1, member: 2, viewer: 3 };
 
-/** Active members (owner first, then admins, then members, by name) and the
- *  invited ones, which the detail view lists apart. */
+/** Active members (owner first, then admins, members and viewers, by name)
+ *  and the invited ones, which the detail view lists apart. */
 export function partitionMembers(members: TeamMember[]): {
   active: TeamMember[];
   pending: TeamMember[];
@@ -162,6 +177,7 @@ export interface MemberActions {
  * rules so the UI never offers an action that can only fail:
  * - only the owner changes roles, and the owner row can never be changed;
  * - owners and admins remove others, but admins cannot remove admins;
+ * - members and viewers remove nobody but themselves;
  * - anyone but the owner may remove themselves (leaving the team);
  * - nobody removes the owner;
  * - the owner may hand the team to anyone who has joined (not a pending
@@ -185,7 +201,7 @@ export function memberActions(
     remove = 'leave';
   } else if (viewer.role === 'owner') {
     remove = 'remove';
-  } else if (viewer.role === 'admin' && member.role === 'member') {
+  } else if (viewer.role === 'admin' && (member.role === 'member' || member.role === 'viewer')) {
     remove = 'remove';
   }
 

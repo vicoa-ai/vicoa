@@ -982,9 +982,12 @@ export function SidebarSessions({
           groupBy === 'project' && key !== 'PINNED' && label !== null;
         // Someone else's project: its folder is on their machine, so there is
         // nowhere here to start a session in. A project of the user's own team
-        // is theirs to work in: each member has their own checkout.
+        // is theirs to work in: each member has their own checkout. Not for a
+        // team viewer, who reads the team's work but does not run sessions in it.
         const dbProject = groupBy === 'project' ? projectsById.get(key) : undefined;
-        const foreignProject = !!dbProject?.owner && !isOwnTeamProject(dbProject);
+        const foreignProject =
+          !!dbProject?.owner &&
+          !(isOwnTeamProject(dbProject) && projectRoleAtLeast(dbProject.role, 'editor'));
         const flatDirectory =
           isDraggableProject && !foreignProject ? instances[0]?.project ?? null : null;
         const notSplit = {
