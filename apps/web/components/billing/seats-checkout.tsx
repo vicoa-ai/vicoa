@@ -9,7 +9,8 @@
  *
  * Three starting points, one page:
  * - already on Team (`purchased`): change the quantity or interval in place,
- *   prorated on the next invoice;
+ *   prorated on the next invoice, or, with nobody else on the seats, drop to
+ *   one to go back to Pro;
  * - Pro billed by Stripe: that same subscription switches to Team, in place
  *   (the backend never opens a second, double-billed one);
  * - anyone else (Free, or Pro billed by a store): Stripe Checkout.
@@ -227,6 +228,11 @@ export function SeatsCheckout() {
   }
 
   const floor = Math.max(seats.used, seats.min_quantity);
+  // A Team payer with nobody else on their seats can go back to Pro, for just
+  // themselves: one seat, swapped to the Pro price in place. Under Team's
+  // minimum is not a Team otherwise.
+  const canGoSolo = onPerSeat && seats.used <= 1;
+  const toPro = canGoSolo && quantity === 1;
   const price = seats.prices ? seats.prices[interval] : null;
   const unit = interval === 'annual' ? 'year' : 'month';
   // A live Stripe subscription is changed in place (prorated on the next
@@ -288,7 +294,7 @@ export function SeatsCheckout() {
       }
       if (result.seats) await mutate(result.seats, { revalidate: false });
       void globalMutate(BILLING_SUBSCRIPTION_KEY);
-      setNotice(`You now pay for ${seatCount(quantity)}.`);
+      setNotice(toPro ? 'You are back on Pro, for just you.' : `You now pay for ${seatCount(quantity)}.`);
       setBusy(false);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Failed to update seats.');
@@ -300,7 +306,13 @@ export function SeatsCheckout() {
   const subtitle = onPerSeat
     ? `${summary.headline}. ${summary.detail}`
     : `Every seat is a full Pro, billed to you. ${SEAT_EXPLAINER}`;
-  const cta = onPerSeat ? 'Update seats' : inPlace ? 'Switch to Team' : 'Continue to checkout';
+  const cta = toPro
+    ? 'Switch to Pro'
+    : onPerSeat
+      ? 'Update seats'
+      : inPlace
+        ? 'Switch to Team'
+        : 'Continue to checkout';
   const newTotal = price ? `${formatSeatPrice(times(price, quantity))} per ${unit}` : seatCount(quantity);
 
   return shell(
@@ -354,8 +366,8 @@ export function SeatsCheckout() {
               <button
                 type="button"
                 aria-label="Fewer seats"
-                disabled={busy || quantity <= floor}
-                onClick={() => setQuantity((q) => Math.max(floor, q - 1))}
+                disabled={busy || quantity <= (canGoSolo ? 1 : floor)}
+                onClick={() => setQuantity((q) => (canGoSolo && q <= floor ? 1 : Math.max(floor, q - 1)))}
                 className="cursor-pointer px-4 py-2.5 text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Minus className="size-4" />
@@ -368,14 +380,16 @@ export function SeatsCheckout() {
                   const next = Number.parseInt(e.target.value.replace(/\D/g, ''), 10);
                   if (!Number.isNaN(next)) setQuantity(Math.min(MAX_SEATS, next));
                 }}
-                onBlur={() => setQuantity((q) => Math.min(MAX_SEATS, Math.max(floor, q)))}
+                onBlur={() =>
+                  setQuantity((q) => Math.min(MAX_SEATS, canGoSolo && q <= 1 ? 1 : Math.max(floor, q)))
+                }
                 className="w-16 border-x border-border/70 bg-transparent text-center text-base tabular-nums outline-none"
               />
               <button
                 type="button"
                 aria-label="More seats"
                 disabled={busy || quantity >= MAX_SEATS}
-                onClick={() => setQuantity((q) => Math.min(MAX_SEATS, q + 1))}
+                onClick={() => setQuantity((q) => Math.min(MAX_SEATS, q < floor ? floor : q + 1))}
                 className="cursor-pointer px-4 py-2.5 text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Plus className="size-4" />
@@ -387,9 +401,13 @@ export function SeatsCheckout() {
               {seats.own_pro > 0
                 ? `, and ${seats.own_pro} more ${seats.own_pro === 1 ? 'person brings' : 'people bring'} their own Pro`
                 : ''}
-              {seats.used > seats.min_quantity
-                ? '. That is the fewest you can pay for; remove people to go lower.'
-                : '.'}
+              {toPro
+                ? '. At 1 seat, you go back to Pro for just you.'
+                : canGoSolo
+                  ? '. Go down to 1 to switch back to Pro for just you.'
+                  : seats.used > seats.min_quantity
+                    ? '. That is the fewest you can pay for; remove people to go lower.'
+                    : '.'}
             </p>
           </Step>
         </div>
@@ -408,7 +426,11 @@ export function SeatsCheckout() {
           <div className="border-t border-border/50" />
           {inPlace ? (
             <p className="text-sm text-muted-foreground">
-              {onPerSeat ? '' : 'Your Pro subscription switches to Vicoa Team. '}
+              {toPro
+                ? 'Your Vicoa Team subscription goes back to Pro for just you. '
+                : onPerSeat
+                  ? ''
+                  : 'Your Pro subscription switches to Vicoa Team. '}
               {proration}
             </p>
           ) : (
@@ -422,7 +444,7 @@ export function SeatsCheckout() {
           <Button
             size="lg"
             onClick={() => void submit()}
-            disabled={busy || !changed || quantity < floor}
+            disabled={busy || !changed || (quantity < floor && !toPro)}
             className="w-full cursor-pointer"
           >
             {busy ? <Loader2 className="size-4 animate-spin" /> : cta}
@@ -445,9 +467,17 @@ export function SeatsCheckout() {
       <ConfirmChargeDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
-        title={onPerSeat ? `Change to ${seatCount(quantity)}?` : 'Switch to Vicoa Team?'}
+        title={
+          toPro
+            ? 'Switch back to Pro?'
+            : onPerSeat
+              ? `Change to ${seatCount(quantity)}?`
+              : 'Switch to Vicoa Team?'
+        }
         description={
-          onPerSeat
+          toPro
+            ? `Your Vicoa Team subscription goes back to Pro for just you, starting now. ${proration}`
+            : onPerSeat
             ? `Your Vicoa Team subscription changes now. ${proration}`
             : `Your Pro subscription becomes Vicoa Team with ${seatCount(quantity)}, starting now. ${proration}`
         }

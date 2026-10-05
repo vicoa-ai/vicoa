@@ -25,6 +25,7 @@ import {
   Bot,
   Layers2,
   ArrowUpCircle,
+  CreditCard,
   User,
   X,
   Plus,
@@ -116,7 +117,7 @@ function DashboardSidebar({
   sidebarWidth: number;
   onSidebarWidthChange: (width: number) => void;
 }) {
-  const { api } = useAgentDashboard();
+  const { api, billingSubscription } = useAgentDashboard();
   const { data: user } = useSWR<AuthUser>('/api/supabase-user', fetcher);
   const showSideBar = !isCollapsed;
 
@@ -627,14 +628,24 @@ function DashboardSidebar({
                       <span>Settings</span>
                     </Link>
                   </DropdownMenuItem>
+                  {/* On Pro (your own, per seat, or a seat someone pays for)
+                      there is nothing to upgrade to; Billing is where seats
+                      and the subscription are managed. */}
                   <DropdownMenuItem
                     asChild
                     className="cursor-pointer px-4 py-2.5 text-xs text-foreground/80"
                   >
-                    <Link href="/dashboard/upgrade" className="flex w-full items-center gap-2">
-                      <ArrowUpCircle className="h-4 w-4" />
-                      <span>Upgrade plan</span>
-                    </Link>
+                    {billingSubscription?.plan_type === 'pro' ? (
+                      <Link href="/dashboard/settings?tab=billing" className="flex w-full items-center gap-2">
+                        <CreditCard className="h-4 w-4" />
+                        <span>Billing</span>
+                      </Link>
+                    ) : (
+                      <Link href="/dashboard/upgrade" className="flex w-full items-center gap-2">
+                        <ArrowUpCircle className="h-4 w-4" />
+                        <span>Upgrade plan</span>
+                      </Link>
+                    )}
                   </DropdownMenuItem>
 
                   <DropdownMenuItem

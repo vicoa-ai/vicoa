@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Plus, Loader2, LogIn, LogOut, PanelLeft, ListTodo, CalendarClock, BookOpen, Bot, Settings, ArrowUpCircle, Smartphone, Flag, Search } from 'lucide-react';
+import { Plus, Loader2, LogIn, LogOut, PanelLeft, ListTodo, CalendarClock, BookOpen, Bot, Settings, ArrowUpCircle, CreditCard, Smartphone, Flag, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -402,6 +402,7 @@ function LocalAccountArea() {
 
 /** Cloud (logged-in) mode: account email + sign out via the Electron bridge. */
 function CloudAccountArea() {
+  const { billingSubscription } = useAgentDashboard();
   const [email, setEmail] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
@@ -501,11 +502,20 @@ function CloudAccountArea() {
             <span>Settings</span>
           </Link>
         </DropdownMenuItem>
+        {/* On Pro (your own, per seat, or a seat someone pays for) there is
+            nothing to upgrade to; Billing manages seats and the subscription. */}
         <DropdownMenuItem asChild className="cursor-pointer gap-2 text-xs text-foreground/80">
-          <Link href="/dashboard/upgrade" className="flex w-full items-center gap-2">
-            <ArrowUpCircle className="h-4 w-4" />
-            <span>Upgrade plan</span>
-          </Link>
+          {billingSubscription?.plan_type === 'pro' ? (
+            <Link href="/dashboard/settings?tab=billing" className="flex w-full items-center gap-2">
+              <CreditCard className="h-4 w-4" />
+              <span>Billing</span>
+            </Link>
+          ) : (
+            <Link href="/dashboard/upgrade" className="flex w-full items-center gap-2">
+              <ArrowUpCircle className="h-4 w-4" />
+              <span>Upgrade plan</span>
+            </Link>
+          )}
         </DropdownMenuItem>
         <DropdownMenuItem
           className="cursor-pointer gap-2 text-xs text-foreground/80"

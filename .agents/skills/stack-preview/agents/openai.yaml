@@ -1,0 +1,5 @@
+# Codex: run only when invoked explicitly ($stack-preview). It publishes the
+# stack on a public URL, so it must not start on a guess. SKILL.md's
+# `disable-model-invocation: true` does the same for Claude Code.
+policy:
+  allow_implicit_invocation: false
