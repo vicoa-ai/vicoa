@@ -246,9 +246,10 @@ def list_public_sessions(
     grant: access.ShareGrant = Depends(resolve_grant),
     db: Session = Depends(get_db),
 ) -> PublicSessionsPage:
-    """The sessions this link covers, newest first, optionally narrowed by the
-    sidebar's status filter. A session link answers its one session; a project
-    link that does not carry `sessions` answers an empty page."""
+    """The sessions this link covers, latest activity first, optionally
+    narrowed by the sidebar's status filter. A session link answers its one
+    session; a project link that does not carry `sessions` answers an empty
+    page."""
     return share_queries.public_sessions(
         db, grant, limit=limit, offset=offset, status_filter=status_filter
     )

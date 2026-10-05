@@ -742,18 +742,28 @@ def public_sessions(
     offset: int,
     status_filter: PublicSessionStatusFilterLiteral | None = None,
 ) -> PublicSessionsPage:
-    """The project-sessions list, newest first. `status_filter` is the
+    """The project-sessions list, latest activity first. `status_filter` is the
     visitor's pick in the sidebar: it narrows what the link covers and never
     widens it, so "archived" under a default link (which leaves COMPLETED out)
     is the failed / killed / disconnected ones only."""
     limit = max(1, min(limit, MAX_PUBLIC_SESSION_PAGE))
+    # The dashboard sidebar's order: the newest message, or the start for a
+    # session with none yet — the same time each row shows. Sorted here, not
+    # in the page, so paging through a long list does not reshuffle it.
+    last_activity = func.coalesce(
+        select(func.max(Message.created_at))
+        .where(Message.agent_instance_id == AgentInstance.id)
+        .correlate(AgentInstance)
+        .scalar_subquery(),
+        AgentInstance.started_at,
+    )
     query = (
         db.query(AgentInstance)
         .options(
             joinedload(AgentInstance.agent_type), joinedload(AgentInstance.machine)
         )
         .filter(AgentInstance.id.in_(visible_instances_select(grant)))
-        .order_by(desc(AgentInstance.started_at))
+        .order_by(desc(last_activity), desc(AgentInstance.id))
     )
     if status_filter is not None:
         query = query.filter(_session_status_condition(status_filter))

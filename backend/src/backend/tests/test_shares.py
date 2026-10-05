@@ -989,6 +989,41 @@ class TestPublicProjectSessions:
         assert str(late.id) in ids and str(world.instance.id) in ids
         assert str(early.id) not in ids
 
+    def test_sessions_list_orders_by_latest_activity(self, client, world):
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        # Started first but talked to last: it leads, as in the dashboard.
+        revived = AgentInstance(
+            agent_type_id=world.agent_type.id,
+            user_id=world.owner.id,
+            project_id=world.project.id,
+            status=AgentStatus.ACTIVE,
+            name="Revived",
+            started_at=now - timedelta(days=3),
+        )
+        # No messages yet: its start is its activity.
+        fresh = AgentInstance(
+            agent_type_id=world.agent_type.id,
+            user_id=world.owner.id,
+            project_id=world.project.id,
+            status=AgentStatus.ACTIVE,
+            name="Fresh",
+            started_at=now - timedelta(hours=2),
+        )
+        world.db.add_all([revived, fresh])
+        world.db.flush()
+        world.instance.started_at = now - timedelta(days=1)
+        for minutes, msg in enumerate((world.m1, world.m2, world.m3)):
+            msg.created_at = now - timedelta(hours=10) + timedelta(minutes=minutes)
+        _message(world.db, revived, "later").created_at = now - timedelta(hours=1)
+        world.db.commit()
+        token = self._link(client, world)
+        page = client.get(f"/api/v1/public/shares/{token}/sessions").json()
+        assert [s["id"] for s in page["items"]] == [
+            str(revived.id),
+            str(fresh.id),
+            str(world.instance.id),
+        ]
+
     def test_board_is_not_exposed_on_a_sessions_link(self, client, world):
         token = self._link(client, world)
         assert client.get(f"/api/v1/public/shares/{token}/board").json() == NOT_FOUND

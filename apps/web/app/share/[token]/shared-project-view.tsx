@@ -60,7 +60,17 @@ function statusFilterFromParam(value: string | null): StatusFilter {
   return filters.find((f) => STATUS_PARAM[f] !== null && STATUS_PARAM[f] === value) ?? 'all';
 }
 
-/** The dashboard sidebar's time buckets (Today / Yesterday / Last 7 days / …), on the same clock. */
+/** The time a row shows and sorts by, as in the dashboard: its newest message, else its start. */
+function activityTime(session: PublicSessionSummary): number {
+  return parseUTCTimestamp(session.latest_message_at || session.started_at).getTime();
+}
+
+/**
+ * The dashboard sidebar's time buckets (Today / Yesterday / Last 7 days / …),
+ * on the same clock and in the same order: latest activity first. The server
+ * pages in that order too; this re-sort keeps it when a poll or the open
+ * session's own updates move a row.
+ */
 function groupByTime(sessions: PublicSessionSummary[]): { label: string; items: PublicSessionSummary[] }[] {
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -72,8 +82,9 @@ function groupByTime(sessions: PublicSessionSummary[]): { label: string; items: 
     { label: 'Older', from: Number.NEGATIVE_INFINITY },
   ];
   const groups = buckets.map((b) => ({ label: b.label, items: [] as PublicSessionSummary[] }));
-  for (const session of sessions) {
-    const t = parseUTCTimestamp(session.latest_message_at || session.started_at).getTime();
+  const sorted = [...sessions].sort((a, b) => activityTime(b) - activityTime(a));
+  for (const session of sorted) {
+    const t = activityTime(session);
     const index = buckets.findIndex((b) => t >= b.from);
     groups[index === -1 ? groups.length - 1 : index].items.push(session);
   }
@@ -208,7 +219,8 @@ function useSharedSessions(token: string | null, statusFilter: StatusFilter) {
 
 /**
  * The sidebar's filter menu (the dashboard's ListFilter dropdown) with the
- * one dimension a share page has: the session status.
+ * one dimension a share page has: the session status. Pulled right by the
+ * icon's inset in its 24px button, so the icon lines up with the row times.
  */
 function SessionFilterMenu({ value, onChange }: { value: StatusFilter; onChange: (value: StatusFilter) => void }) {
   return (
@@ -218,7 +230,7 @@ function SessionFilterMenu({ value, onChange }: { value: StatusFilter; onChange:
           type="button"
           title="View options"
           aria-label="View options"
-          className="-my-1 flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] hover:text-foreground dark:hover:bg-foreground/10"
+          className="-my-1 -mr-[5px] ml-auto flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-foreground/[0.06] hover:text-foreground dark:hover:bg-foreground/10"
         >
           <ListFilter className="h-3.5 w-3.5" />
         </button>
@@ -363,7 +375,6 @@ export function ProjectShare({
         <>
           <ProjectIcon project={{ id: project.id, name: project.name, icon: project.icon }} className="size-4" />
           <span className="truncate">{project.name}</span>
-          <span className="ml-auto shrink-0">{total || ''}</span>
           <SessionFilterMenu value={statusFilter} onChange={setStatusFilter} />
         </>
       }
@@ -381,7 +392,10 @@ export function ProjectShare({
           {groups.map((group) => (
             <div key={group.label} className="mb-2">
               <div className="px-2 pb-0.5 pt-1 text-[10px] text-muted-foreground/70">{group.label}</div>
-              <ul className="grid gap-px">
+              {/* grid-cols-1 is a minmax(0, 1fr) track: an implicit auto
+                  track grows to the longest title and pushes every row's
+                  time past the sidebar's edge. */}
+              <ul className="grid grid-cols-1 gap-px">
                 {group.items.map((session) => (
                   <li key={session.id}>
                     <SharedSessionRow session={session} selected={session.id === selectedId} onClick={() => select(session.id)} />
