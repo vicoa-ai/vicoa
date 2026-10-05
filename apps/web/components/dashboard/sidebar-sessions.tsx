@@ -1558,11 +1558,13 @@ export function SidebarSessions({
                 const followedShared =
                   dbProject !== undefined && isFollowedSharedProject(dbProject) ? dbProject : null;
                 const sharedBoard = followedShared?.scopes?.includes('tasks') ?? false;
-                // Every automation filed in the project that we may see: our
-                // own, and collaborators' when it is shared with that scope.
+                // A followed shared project's automations, beside its task
+                // board, like under "Shared with me". Your own project's menu
+                // manages the project instead; its tasks and automations are
+                // each a page with a project picker.
                 const projectAutomationsHref =
-                  dbProject && (dbProject.scopes ?? []).includes('automations')
-                    ? `/dashboard/automation?project=${encodeURIComponent(dbProject.id)}`
+                  followedShared && (followedShared.scopes ?? []).includes('automations')
+                    ? `/dashboard/automation?project=${encodeURIComponent(followedShared.id)}`
                     : null;
                 const projectHeader = label ? (
                   // Wrapper carries the drag handle and hover group so the
@@ -1616,8 +1618,7 @@ export function SidebarSessions({
                     {(projectSettingsHref ||
                       canArchiveProject ||
                       canShareProject ||
-                      followedShared ||
-                      projectAutomationsHref) && (
+                      followedShared) && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button
@@ -1637,15 +1638,6 @@ export function SidebarSessions({
                             >
                               <Settings className="h-3.5 w-3.5" />
                               Project settings
-                            </DropdownMenuItem>
-                          )}
-                          {projectAutomationsHref && (
-                            <DropdownMenuItem
-                              className="cursor-pointer gap-2 text-xs"
-                              onSelect={() => router.push(projectAutomationsHref)}
-                            >
-                              <CalendarClock className="h-3.5 w-3.5" />
-                              Automations
                             </DropdownMenuItem>
                           )}
                           {canShareProject && dbProject && (
@@ -1681,7 +1673,16 @@ export function SidebarSessions({
                               }
                             >
                               <ListTodo className="h-3.5 w-3.5" />
-                              Open task board
+                              Tasks
+                            </DropdownMenuItem>
+                          )}
+                          {projectAutomationsHref && (
+                            <DropdownMenuItem
+                              className="cursor-pointer gap-2 text-xs"
+                              onSelect={() => router.push(projectAutomationsHref)}
+                            >
+                              <CalendarClock className="h-3.5 w-3.5" />
+                              Automations
                             </DropdownMenuItem>
                           )}
                           {followedShared && (
@@ -1699,7 +1700,7 @@ export function SidebarSessions({
                               onSelect={() => setLeavingProject(followedShared)}
                             >
                               <LogOut className="h-3.5 w-3.5" />
-                              Leave project…
+                              Leave project
                             </DropdownMenuItem>
                           )}
                         </DropdownMenuContent>

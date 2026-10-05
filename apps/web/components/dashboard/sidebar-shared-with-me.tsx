@@ -281,7 +281,7 @@ export function SidebarSharedWithMe({
                           }
                         >
                           <ListTodo className="h-3.5 w-3.5" />
-                          Open task board
+                          Tasks
                         </DropdownMenuItem>
                       )}
                       {(project.scopes ?? []).includes('automations') && (
@@ -302,7 +302,7 @@ export function SidebarSharedWithMe({
                         onSelect={() => setLeaving(project)}
                       >
                         <LogOut className="h-3.5 w-3.5" />
-                        Leave project…
+                        Leave project
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
