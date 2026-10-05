@@ -527,21 +527,25 @@ function AutomationPageInner() {
 
   return (
     <main className="flex h-full overflow-hidden">
-      {/* List column — full width until an automation/panel is open. */}
+      {/* List column — full width until an automation/panel is open. A size
+          container: its width is the user's divider drag, not the window's, so
+          the header below adapts to it with container queries. */}
       <div
-        className="flex min-w-0 shrink-0 flex-col"
+        className="@container flex min-w-0 shrink-0 flex-col"
         style={panelOpen ? { width: listWidth } : { flex: 1 }}
       >
         {/* On desktop this header is the window titlebar: a drag region with the
             controls opting back out via NO_DRAG (and the collapsed-sidebar lead
-            clearing the macOS traffic lights). */}
+            clearing the macOS traffic lights). As the column narrows, labels
+            give way to icons and the title truncates; `overflow-hidden` is the
+            backstop that keeps it from ever painting into the detail panel. */}
         <div
           style={DRAG_REGION}
-          className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4"
+          className="flex h-11 shrink-0 items-center gap-2 overflow-hidden border-b border-border px-4"
         >
           <DesktopCollapsedLead />
           <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <h1 className="shrink-0 text-sm font-medium">Automations</h1>
+          <h1 className="min-w-0 truncate text-sm font-medium">Automations</h1>
           <div style={NO_DRAG} className="ml-auto flex min-w-0 items-center gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -549,13 +553,15 @@ function AutomationPageInner() {
                   variant="outline"
                   size="sm"
                   className="h-7 min-w-0 max-w-[220px] cursor-pointer gap-1.5 text-xs"
+                  title={pickerLabel}
+                  aria-label={pickerLabel}
                 >
                   {projectFilter === null ? (
                     <CalendarClock className="size-3.5 shrink-0 text-muted-foreground" />
                   ) : (
                     <ProjectIcon project={pickedProject} />
                   )}
-                  <span className="truncate">{pickerLabel}</span>
+                  <span className="truncate @max-xs:hidden">{pickerLabel}</span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent
@@ -595,9 +601,15 @@ function AutomationPageInner() {
             </DropdownMenu>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 shrink-0 cursor-pointer gap-1.5 text-xs"
+                  title={`Show: ${FILTER_LABELS[filter]}`}
+                  aria-label={`Show: ${FILTER_LABELS[filter]}`}
+                >
                   <ListFilter className="size-3.5 text-muted-foreground" />
-                  <span>{FILTER_LABELS[filter]}</span>
+                  <span className="@max-sm:hidden">{FILTER_LABELS[filter]}</span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-40 text-xs">
@@ -611,16 +623,14 @@ function AutomationPageInner() {
             </DropdownMenu>
             <Button
               size="sm"
-              className="h-7 cursor-pointer gap-1 text-xs"
+              className="h-7 shrink-0 cursor-pointer gap-1 text-xs"
               onClick={createHere}
               disabled={!api}
-              // With the panel open the list column is narrow; the label goes
-              // so the project picker and filter still fit beside the title.
               aria-label="New automation"
-              title={panelOpen ? 'New automation' : undefined}
+              title="New automation"
             >
               <Plus className="size-3.5" />
-              {!panelOpen && 'New automation'}
+              <span className="@max-lg:hidden">New automation</span>
             </Button>
           </div>
         </div>
@@ -691,6 +701,7 @@ function AutomationPageInner() {
               automation={selection === 'new' ? null : (selection as AutomationResponse)}
               template={selection === 'new' ? newTemplate : null}
               machines={machines}
+              projects={projects}
               catalog={catalog}
               onSaved={handleSaved}
               onClose={() => setSelection(null)}

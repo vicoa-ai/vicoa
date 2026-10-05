@@ -11,8 +11,9 @@ import type { ProjectResponse } from "@/lib/backend-api";
 import { getDesktopShellBridge } from "@/lib/desktop-shell";
 
 /**
- * Popover-anchored project/folder picker for the new-session page. Trigger
- * card renders the current value; the popover holds, top to bottom, the
+ * Popover-anchored project/folder picker for the new-session page and the
+ * automation editor. Trigger card renders the current value; the popover
+ * holds, top to bottom, the
  * projects linked to a folder on the selected machine (newest activity
  * first), a path input for any other folder — a project's subfolder, or a
  * brand-new one the backend mints a project for on the first spawn — and, on
@@ -36,9 +37,8 @@ export interface DirectoryPickerPopoverProps {
   projects?: DirectoryPickerProject[];
   /** The project `value` falls under, when any — its row shows the check. */
   selectedProjectId?: string | null;
-  /** Plain folders to offer instead of / besides projects — the automation
-   * editor and the project-directory link, where a project list is not the
-   * point. */
+  /** Plain folders to offer instead of / besides projects — the
+   * project-directory link, where a project list is not the point. */
   recentDirectories?: string[];
   disabled?: boolean;
   /** Card-style trigger rendered when the popover is closed. */

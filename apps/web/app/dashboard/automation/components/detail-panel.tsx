@@ -20,6 +20,7 @@ import type {
   AutomationResponse,
   getBackendAPI,
   MachineSummary,
+  ProjectResponse,
 } from '@/lib/backend-api';
 import {
   automationToDraft,
@@ -49,6 +50,7 @@ export function DetailPanel({
   automation,
   template = null,
   machines,
+  projects,
   catalog = AGENT_CATALOG_FALLBACK,
   onSaved,
   onClose,
@@ -60,6 +62,8 @@ export function DetailPanel({
   /** Seeds create mode (title/prompt/schedule); ignored when editing. */
   template?: AutomationTemplate | null;
   machines: MachineSummary[];
+  /** For the project-first folder picker. */
+  projects: ProjectResponse[];
   catalog?: AgentCatalog;
   onSaved: (a: AutomationResponse) => void;
   onClose: () => void;
@@ -211,10 +215,11 @@ export function DetailPanel({
     <div className="flex h-full flex-col">
       {/* Header */}
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
-        <span className="text-xs text-muted-foreground">
+        {/* The label gives way (truncates) before Save and close do. */}
+        <span className="min-w-0 truncate text-xs text-muted-foreground">
           {automation ? (automation.enabled ? 'Active' : 'Paused') : 'New automation'}
         </span>
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {(!automation || dirty) && (
             <Button
               size="sm"
@@ -262,6 +267,7 @@ export function DetailPanel({
 
         <DetailsSection
           machines={machines}
+          projects={projects}
           machineId={machineId}
           onMachineChange={onMachineChange}
           directory={directory}

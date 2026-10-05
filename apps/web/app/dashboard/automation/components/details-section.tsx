@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Check, ChevronDown, Circle, GitBranch, Folder } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -17,7 +17,13 @@ import { RpcError } from '@/lib/ws-client';
 import { isMachineOnline } from '@/lib/session-liveness';
 import { machineSupportsWorktree, type WorktreeMode } from '@/lib/worktree-selection';
 import type { AgentCatalog, SessionConfig } from '@/lib/agent-catalog';
-import type { AgentProfile, MachineSummary } from '@/lib/backend-api';
+import type { AgentProfile, MachineSummary, ProjectResponse } from '@/lib/backend-api';
+import {
+  directoryChipLabel,
+  projectsOnMachine,
+  resolveProjectForDirectory,
+} from '@/lib/project-paths';
+import { ProjectIcon } from '@/components/dashboard/task-ui';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import { agentPrincipal } from '@/lib/use-agent-profiles';
 import { FieldGroup, FieldRow } from './field-row';
@@ -35,10 +41,6 @@ function machineLabel(m: MachineSummary): string {
   return m.display_name || m.hostname || `Machine ${m.machine_id.slice(0, 6)}`;
 }
 
-function recentDirsFor(m: MachineSummary | undefined): string[] {
-  return m && Array.isArray(m.recent_directories) ? m.recent_directories : [];
-}
-
 function worktreeLabel(w: WorktreeDraft): string {
   if (w.mode === 'new') return 'New worktree each run';
   if (w.mode === 'existing') {
@@ -49,6 +51,7 @@ function worktreeLabel(w: WorktreeDraft): string {
 
 export function DetailsSection({
   machines,
+  projects,
   machineId,
   onMachineChange,
   directory,
@@ -63,6 +66,9 @@ export function DetailsSection({
   catalog,
 }: {
   machines: MachineSummary[];
+  /** Every project the user can see; the picker lists the ones linked to a
+   *  folder on the selected machine, like the new-session picker. */
+  projects: ProjectResponse[];
   machineId: string;
   onMachineChange: (id: string) => void;
   directory: string;
@@ -108,6 +114,20 @@ export function DetailsSection({
   }, [machineId, directory, online]);
 
   const selectedProfile = agentProfiles.find((p) => p.id === agentProfileId) ?? null;
+
+  // Project-first, as on the new-session page: the picker lists the projects
+  // linked to a folder on this machine, and the chip names the project the
+  // folder falls under (`vicoa · apps/web` for a subfolder), or the folder's
+  // own name when no project claims it yet.
+  const pickerProjects = useMemo(
+    () => (machineId ? projectsOnMachine(projects, machineId) : []),
+    [projects, machineId],
+  );
+  const directoryProject = useMemo(
+    () => resolveProjectForDirectory(directory, machineId, projects, selected?.home_dir),
+    [directory, machineId, projects, selected?.home_dir],
+  );
+  const directoryLabel = directoryChipLabel(directory, directoryProject);
 
   return (
     <FieldGroup title="Details">
@@ -165,23 +185,28 @@ export function DetailsSection({
 
       {/* Project — working folder + optional worktree. */}
       <FieldRow label="Project">
+        {/* Not gated on the machine being online (the new-session picker is):
+            the machine an automation targets is often asleep while it's set up. */}
         <DirectoryPickerPopover
           value={directory}
           onChange={onDirectoryChange}
-          recentDirectories={recentDirsFor(selected)}
+          projects={pickerProjects}
+          selectedProjectId={directoryProject?.project.id ?? null}
           disabled={!selected}
         >
           <button
             type="button"
-            title={directory.trim() || 'Working folder'}
+            title={directory.trim() || 'Project folder'}
             disabled={!selected}
             className={VALUE_TRIGGER}
           >
-            <Folder className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+            {directoryProject ? (
+              <ProjectIcon project={directoryProject.project} className="size-3.5" />
+            ) : (
+              <Folder className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+            )}
             <span className={cn('truncate', !directory.trim() && 'text-muted-foreground/60')}>
-              {directory.trim()
-                ? directory.replace(/\/+$/, '').split('/').pop() || directory
-                : 'Choose folder'}
+              {directoryLabel || 'Choose folder'}
             </span>
             <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
           </button>
