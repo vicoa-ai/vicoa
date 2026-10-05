@@ -55,6 +55,7 @@ from ..models import (
     PublicMessage,
     PublicMessagesPage,
     PublicProjectSummary,
+    PublicSessionStatusFilterLiteral,
     PublicSessionSummary,
     PublicSessionsPage,
     PublicShareResponse,
@@ -708,10 +709,41 @@ def public_share(
     )
 
 
+# What the dashboard sidebar counts as archived (web `CLOSED_STATUSES`).
+_ARCHIVED_SESSION_STATUSES = (
+    AgentStatus.COMPLETED,
+    AgentStatus.FAILED,
+    AgentStatus.KILLED,
+    AgentStatus.DISCONNECTED,
+    AgentStatus.DELETED,
+)
+
+
+def _session_status_condition(status_filter: PublicSessionStatusFilterLiteral):
+    """The dashboard sidebar's status buckets (web `groupSessions`) as SQL."""
+    if status_filter == "active":
+        return AgentInstance.status.notin_(_ARCHIVED_SESSION_STATUSES)
+    if status_filter == "in_progress":
+        return AgentInstance.status.in_((AgentStatus.ACTIVE, AgentStatus.STALE))
+    if status_filter == "in_review":
+        return AgentInstance.status == AgentStatus.AWAITING_INPUT
+    if status_filter == "done":
+        return AgentInstance.status == AgentStatus.REVIEWED
+    return AgentInstance.status.in_(_ARCHIVED_SESSION_STATUSES)
+
+
 def public_sessions(
-    db: Session, grant: access.ShareGrant, *, limit: int, offset: int
+    db: Session,
+    grant: access.ShareGrant,
+    *,
+    limit: int,
+    offset: int,
+    status_filter: PublicSessionStatusFilterLiteral | None = None,
 ) -> PublicSessionsPage:
-    """The project-sessions list, newest first."""
+    """The project-sessions list, newest first. `status_filter` is the
+    visitor's pick in the sidebar: it narrows what the link covers and never
+    widens it, so "archived" under a default link (which leaves COMPLETED out)
+    is the failed / killed / disconnected ones only."""
     limit = max(1, min(limit, MAX_PUBLIC_SESSION_PAGE))
     query = (
         db.query(AgentInstance)
@@ -721,6 +753,8 @@ def public_sessions(
         .filter(AgentInstance.id.in_(visible_instances_select(grant)))
         .order_by(desc(AgentInstance.started_at))
     )
+    if status_filter is not None:
+        query = query.filter(_session_status_condition(status_filter))
     total = query.order_by(None).count()
     rows = query.offset(offset).limit(limit).all()
     stats = _get_instance_message_stats(db, [r.id for r in rows])

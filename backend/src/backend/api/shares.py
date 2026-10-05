@@ -51,6 +51,7 @@ from ..models import (
     PublicBoardResponse,
     PublicMessagesPage,
     PublicSessionsPage,
+    PublicSessionStatusFilterLiteral,
     PublicSessionSummary,
     PublicShareResponse,
     ShareLinkResponse,
@@ -238,13 +239,18 @@ def get_public_share(
 def list_public_sessions(
     limit: int = Query(default=50, ge=1, le=share_queries.MAX_PUBLIC_SESSION_PAGE),
     offset: int = Query(default=0, ge=0),
+    status_filter: PublicSessionStatusFilterLiteral | None = Query(
+        default=None, alias="status"
+    ),
     grant: access.ShareGrant = Depends(resolve_grant),
     db: Session = Depends(get_db),
 ) -> PublicSessionsPage:
-    """The sessions this link covers, newest first. A session link answers its
-    one session; a project link that does not carry `sessions` answers an
-    empty page."""
-    return share_queries.public_sessions(db, grant, limit=limit, offset=offset)
+    """The sessions this link covers, newest first, optionally narrowed by the
+    sidebar's status filter. A session link answers its one session; a project
+    link that does not carry `sessions` answers an empty page."""
+    return share_queries.public_sessions(
+        db, grant, limit=limit, offset=offset, status_filter=status_filter
+    )
 
 
 @public_router.get(

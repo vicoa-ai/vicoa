@@ -12,9 +12,11 @@
 // Log in / Sign up in the header and a sign-up card at the bottom — that is
 // the growth loop. A project link that carries tasks turns the Tasks nav row
 // into this page's own — clicking it shows the shared board, and it is marked
-// current while you are there, the same way the dashboard marks it.
+// current while you are there, the same way the dashboard marks it. The
+// sidebar resizes by its right edge like the dashboard's, remembered per
+// browser.
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -23,12 +25,70 @@ import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { PrincipalAvatar, PrincipalAvatarSrcProvider } from '@/components/ui/principal-avatar';
+import { GithubIcon } from '@/components/github-icon';
+import { GITHUB_REPO_URL } from '@/lib/constants/links';
 import { type Principal, principalFromResponse } from '@/lib/principals';
 import { publicAvatarSrc } from '@/lib/public-share-api';
 import type { PublicShareResponse } from '@/lib/backend-api';
 import { cn } from '@/lib/utils';
 
-const SIDEBAR_WIDTH = 256; // matches the dashboard's w-64
+// The dashboard sidebar's default and drag range.
+const SIDEBAR_DEFAULT_WIDTH = 256; // w-64
+const SIDEBAR_MIN_WIDTH = 180;
+const SIDEBAR_MAX_WIDTH = 600;
+const SIDEBAR_WIDTH_KEY = 'share-sidebar-width';
+
+const clampSidebarWidth = (width: number) => Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width));
+
+/**
+ * The sidebar's width and its drag handle's mousedown. The default renders on
+ * the server; the saved width is read after mount, so the first client paint
+ * matches. A drag writes straight to the node and commits to state (and
+ * localStorage) on release, so the session list does not re-render per frame.
+ */
+function useResizableSidebar() {
+  const [width, setWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
+  const asideRef = useRef<HTMLElement>(null);
+  const liveWidthRef = useRef(width);
+
+  useEffect(() => {
+    const saved = Number.parseInt(window.localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? '', 10);
+    if (Number.isFinite(saved)) setWidth(clampSidebarWidth(saved));
+  }, []);
+
+  useEffect(() => {
+    liveWidthRef.current = width;
+  }, [width]);
+
+  const startResize = useCallback((event: React.MouseEvent) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = liveWidthRef.current;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const next = clampSidebarWidth(startWidth + (moveEvent.clientX - startX));
+      liveWidthRef.current = next;
+      if (asideRef.current) asideRef.current.style.width = `${next}px`;
+    };
+
+    const onMouseUp = () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      const final = liveWidthRef.current;
+      setWidth(final);
+      window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(final));
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, []);
+
+  return { width, asideRef, startResize };
+}
 
 /** Same selected-row treatment as the dashboard sidebar. */
 export const SHARE_ROW_SELECTED = 'bg-foreground/[0.08] dark:bg-foreground/10 text-foreground';
@@ -252,6 +312,7 @@ export function ShareShell({
   children: React.ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { width: sidebarWidth, asideRef, startResize } = useResizableSidebar();
   const openSidebar = useCallback(() => setMobileOpen(true), []);
   const closeSidebar = useCallback(() => setMobileOpen(false), []);
   const returnHref = useReturnHref();
@@ -277,11 +338,13 @@ export function ShareShell({
         )}
 
         <aside
+          ref={asideRef}
           className={cn(
-            'fixed inset-y-0 left-0 z-50 flex shrink-0 transform flex-col border-r border-border bg-surface-nav font-mono text-sm transition-[transform] duration-300 ease-in-out lg:relative lg:translate-x-0',
+            // max-w: a width dragged wide on a desktop must not swallow a phone as a drawer.
+            'fixed inset-y-0 left-0 z-50 flex max-w-[85vw] shrink-0 transform flex-col border-r border-border bg-surface-nav font-mono text-sm transition-[transform] duration-300 ease-in-out lg:relative lg:translate-x-0',
             mobileOpen ? 'translate-x-0' : '-translate-x-full',
           )}
-          style={{ width: SIDEBAR_WIDTH }}
+          style={{ width: sidebarWidth }}
         >
           {/* Brand row — the same slot the dashboard's logo sits in. */}
           <div className="flex items-center justify-between pb-3 pl-5 pr-3 pt-2">
@@ -345,6 +408,14 @@ export function ShareShell({
               </div>
             )}
           </div>
+
+          {/* Drag-to-resize handle on the right edge, as on the dashboard. Only
+              where the sidebar is a column; the phone drawer is fixed. */}
+          <div
+            onMouseDown={startResize}
+            className="absolute bottom-0 right-0 top-0 z-[60] hidden w-1 cursor-col-resize transition-colors hover:bg-primary/30 active:bg-primary/50 lg:block"
+            aria-hidden
+          />
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col">{children}</main>
@@ -356,10 +427,12 @@ export function ShareShell({
 
 /**
  * The main pane's header: the mobile sidebar toggle, the view's own identity
- * line (`children`), and the auth actions on the right — Log in / Sign up for
- * an anonymous visitor, "Open in Vicoa" for a signed-in one. `openHref` is
- * where that button goes when the viewer can see the target in their own
- * dashboard (the owner looking at their own session); otherwise the dashboard.
+ * line (`children`), and on the right the landing header's GitHub link, then
+ * the auth actions — Log in / Sign up for an anonymous visitor, "Open in
+ * Vicoa" for a signed-in one. `openHref` is where that button goes when the
+ * viewer can see the target in their own dashboard (the owner looking at their
+ * own session); otherwise the dashboard. The GitHub link steps aside on a
+ * phone, where the title already competes with the auth buttons for room.
  */
 export function ShareHeader({ children, openHref }: { children: React.ReactNode; openHref?: string | null }) {
   const { openSidebar, signedIn, returnHref } = useShareChrome();
@@ -377,6 +450,17 @@ export function ShareHeader({ children, openHref }: { children: React.ReactNode;
         <span className="sr-only">Open sidebar</span>
       </Button>
       <div className="min-w-0 flex-1">{children}</div>
+      <Button asChild variant="ghost" size="icon" className="hidden h-7 w-7 shrink-0 sm:inline-flex">
+        <a
+          href={GITHUB_REPO_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Vicoa on GitHub"
+          title="Vicoa is open source, star us on GitHub"
+        >
+          <GithubIcon className="h-4 w-4" />
+        </a>
+      </Button>
       {signedIn ? (
         <Button asChild size="sm" variant="outline" className="h-7 shrink-0 gap-1 text-xs">
           <Link href={openHref ?? '/dashboard'}>

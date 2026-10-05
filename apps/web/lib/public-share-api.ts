@@ -16,6 +16,7 @@
 import type {
   PublicBoardResponse,
   PublicMessagesPage,
+  PublicSessionStatusFilter,
   PublicSessionSummary,
   PublicSessionsPage,
   PublicShareResponse,
@@ -145,12 +146,13 @@ export function fetchPublicShare(
 
 export function fetchPublicSessions(
   token: string,
-  params: { limit?: number; offset?: number } = {},
+  params: { limit?: number; offset?: number; status?: PublicSessionStatusFilter | null } = {},
   options: RequestOptions = {},
 ): Promise<PublicSessionsPage> {
   const query = new URLSearchParams();
   if (params.limit) query.set('limit', String(params.limit));
   if (params.offset) query.set('offset', String(params.offset));
+  if (params.status) query.set('status', params.status);
   const suffix = query.size ? `?${query.toString()}` : '';
   return request<PublicSessionsPage>(`${basePath(token)}/sessions${suffix}`, options);
 }

@@ -1665,6 +1665,13 @@ class PublicShareResponse(BaseModel):
     project: PublicProjectSummary | None = None
 
 
+# The share page's sidebar status filter: the dashboard sidebar's options
+# (web `session-grouping.ts`), under the names a share URL carries.
+PublicSessionStatusFilterLiteral = Literal[
+    "active", "in_progress", "in_review", "done", "archived"
+]
+
+
 class PublicSessionsPage(BaseModel):
     items: list[PublicSessionSummary]
     total: int

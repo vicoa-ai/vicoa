@@ -927,6 +927,40 @@ class TestPublicProjectSessions:
         page = client.get(f"/api/v1/public/shares/{token}/sessions").json()
         assert [s["id"] for s in page["items"]] == [str(world.archived.id)]
 
+    def test_status_filter_narrows_and_never_widens(self, client, world):
+        waiting = AgentInstance(
+            agent_type_id=world.agent_type.id,
+            user_id=world.owner.id,
+            project_id=world.project.id,
+            status=AgentStatus.AWAITING_INPUT,
+            name="Waiting",
+        )
+        failed = AgentInstance(
+            agent_type_id=world.agent_type.id,
+            user_id=world.owner.id,
+            project_id=world.project.id,
+            status=AgentStatus.FAILED,
+            name="Broke",
+        )
+        world.db.add_all([waiting, failed])
+        world.db.commit()
+        token = self._link(client, world)
+        base = f"/api/v1/public/shares/{token}/sessions"
+
+        def ids(status: str) -> set[str]:
+            page = client.get(base, params={"status": status}).json()
+            assert page["total"] == len(page["items"])
+            return {s["id"] for s in page["items"]}
+
+        assert ids("active") == {str(world.instance.id), str(waiting.id)}
+        assert ids("in_progress") == {str(world.instance.id)}
+        assert ids("in_review") == {str(waiting.id)}
+        assert ids("done") == set()
+        # The default link leaves COMPLETED out, and the filter cannot bring
+        # it back; DELETED stays out under every filter.
+        assert ids("archived") == {str(failed.id)}
+        assert client.get(base, params={"status": "bogus"}).status_code == 422
+
     def test_new_sessions_appear_and_date_filter_is_live(self, client, world):
         token = self._link(
             client,

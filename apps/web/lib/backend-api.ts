@@ -1212,6 +1212,10 @@ export interface PublicShareResponse {
   project: PublicProjectSummary | null;
 }
 
+/** The share page's sidebar status filter (`?status=` on the public sessions
+ * list): the dashboard sidebar's options, under their URL names. */
+export type PublicSessionStatusFilter = 'active' | 'in_progress' | 'in_review' | 'done' | 'archived';
+
 export interface PublicSessionsPage {
   items: PublicSessionSummary[];
   total: number;
