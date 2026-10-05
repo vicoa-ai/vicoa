@@ -306,7 +306,8 @@ Find the right session quickly with advanced filtering:
 ## Share Sessions and Projects with a Link
 
 Share a session's transcript, or a whole project (its tasks, its sessions,
-or both) with anyone. No Vicoa account needed to read it.
+its automations, or any mix of them) with anyone. No Vicoa account needed to
+read it.
 
 **Where to find it:**
 - The **Share** button in a session's header, next to the files panel toggle
@@ -315,8 +316,9 @@ or both) with anyone. No Vicoa account needed to read it.
 - The Tasks page, with a project selected → **Share**
 
 A project is one link with a content selection: **What this link shares** has
-a switch for **Tasks** and one for **Sessions**, and where you opened the
-dialog only decides which one starts on. The dialog opens on the link itself:
+a switch each for **Tasks**, **Sessions** and **Automations**, and where you
+opened the dialog only decides which one starts on (**Automations** always
+starts off, so publishing them is a choice you make). The dialog opens on the link itself:
 the first time, pick what it carries, who can open it and when it expires,
 then press **Create link**; it is copied for you. Every time after that the
 existing link is right there with a **Copy link** button; use **New link**
@@ -328,6 +330,9 @@ for one with different settings. Links look like `vicoa.ai/share/…`.
   one opt-in is *Allow comments* on a link that carries tasks, which lets
   signed-in Vicoa users comment on tasks under their own name, whoever the
   link is for; a visitor who is not signed in is asked to sign in first.
+- **Show automations.** A link that carries them lists what each automation
+  asks the agent to do, which agent and model it uses, when it runs and how
+  its last run went. It never shows who wrote one or which machine it runs on.
 - **Audience:** *Anyone with the link* (no account) or *Vicoa users only*.
   Someone who opens a *Vicoa users only* link while signed out sees "This
   link isn't available" with a sign-in button; the link works once they sign
@@ -369,8 +374,8 @@ A link is for anyone. To give specific people access, open the same share
 dialog and switch to its **People** tab.
 
 **Share a project.** Enter an email address (or pick one of your teams), pick
-a role, choose whether they see the **Tasks**, the **Sessions** or both, then
-press **Invite**. The project appears in their sidebar under **Shared with
+a role, choose what they see (**Tasks**, **Sessions** and **Automations**; all
+three to start with), then press **Invite**. The project appears in their sidebar under **Shared with
 me**. If they don't have a Vicoa account yet, the access waits for them and
 attaches when they sign up with that address.
 
@@ -396,6 +401,20 @@ refresh on their own every few seconds. A board shared below editor shows
 its tasks but not the controls that change them. Someone who no longer
 wants a project in their sidebar can choose **Leave project…** from its **⋯**
 menu.
+
+**Automations.** People whose access includes **Automations** can read the
+automations that run in the project. The **Automations** page lists every
+automation you can see, grouped by project: yours, and other people's in the
+projects shared with you, each with its author's picture. Pick a project in the
+menu at the top (or choose **Automations** from the project's **⋯** menu in the
+sidebar) to see just that one. Opening someone else's shows what it asks the
+agent to do, which agent and model it uses, its schedule and its run history. An automation belongs to a project when its
+folder is inside the project's folder on the machine it runs on. Only the
+person who created an automation can edit, run, pause or delete it, because
+each run starts an agent on their machine. A session started by an automation
+names it in its header, and the `vicoa` CLI lists only your own automations.
+Access given before automations could be shared doesn't include them; add
+them from the **⋯** menu on that person's row.
 
 ### Teams
 

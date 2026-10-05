@@ -39,9 +39,14 @@ export const SESSION_ACCESS_OPTIONS: RoleOption<'READ' | 'WRITE'>[] = [
 export const SCOPE_LABELS: Record<GrantScope, string> = {
   tasks: 'Tasks',
   sessions: 'Sessions',
+  automations: 'Automations',
 };
 
-const SCOPE_ORDER: GrantScope[] = ['tasks', 'sessions'];
+/**
+ * Every scope, in the order they are always listed. A share link names the
+ * same parts of a project with the same words, so it reads this list too.
+ */
+export const SCOPE_ORDER: GrantScope[] = ['tasks', 'sessions', 'automations'];
 
 export function roleLabel(role: string): string {
   if (role === 'owner') return 'Owner';
@@ -52,11 +57,16 @@ export function roleLabel(role: string): string {
   );
 }
 
-/** "Tasks and sessions" / "Tasks" / "Sessions". */
-export function scopeSummary(scopes: GrantScope[]): string {
-  const ordered = SCOPE_ORDER.filter((s) => scopes.includes(s));
-  if (ordered.length === SCOPE_ORDER.length) return 'Tasks and sessions';
-  return ordered.map((s) => SCOPE_LABELS[s]).join(', ');
+/**
+ * The scopes as a phrase, in canonical order: "Tasks", "Tasks and sessions",
+ * "Tasks, sessions and automations". Empty for no scopes.
+ */
+export function scopeSummary(scopes: readonly GrantScope[]): string {
+  const words = SCOPE_ORDER.filter((s) => scopes.includes(s)).map((s, i) =>
+    i === 0 ? SCOPE_LABELS[s] : SCOPE_LABELS[s].toLowerCase(),
+  );
+  if (words.length <= 1) return words[0] ?? '';
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
 }
 
 /**
@@ -70,6 +80,30 @@ export function toggleScope(scopes: GrantScope[], scope: GrantScope): GrantScope
     : [...scopes, scope];
   if (next.length === 0) return scopes;
   return SCOPE_ORDER.filter((s) => next.includes(s));
+}
+
+export type GrantAction = 'invite' | 'change' | 'remove';
+
+/**
+ * What to say when a grant write is refused over `automations`, or null for
+ * any other failure. Automations joined the scopes after grants existed, so an
+ * admin whose own grant predates it administers tasks and sessions but not
+ * automations: the server answers 403 when they hand that scope out, or change
+ * or remove a grant that carries it. `scopes` are the ones the write touched
+ * (the grant's current scopes plus any it asked for). Its generic "Requires
+ * admin access" would read as though they could not manage people at all.
+ */
+export function automationsDeniedMessage(
+  err: unknown,
+  scopes: readonly GrantScope[],
+  action: GrantAction,
+): string | null {
+  if (!(err instanceof Error)) return null;
+  if ((err as { status?: unknown }).status !== 403) return null;
+  if (!scopes.includes('automations')) return null;
+  const lead = "Your access doesn't include this project's automations, so you can't";
+  if (action === 'invite') return `${lead} share them. Untick Automations and try again.`;
+  return `${lead} ${action} access that covers them.`;
 }
 
 /** Loose on purpose: the server is the judge, this only catches "forgot the @". */

@@ -15,7 +15,7 @@ import secrets
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import TypeAlias
+from typing import TypeAlias, cast
 from uuid import UUID
 
 from sqlalchemy import and_, case, delete, func, insert, or_, select
@@ -218,7 +218,18 @@ def require_team(
 _TEAM_RANK = {"viewer": 0, "member": 1, "admin": 2, "owner": 3}
 
 
-def _require_grant_admin(db: Session, user_id: UUID, project: Project) -> None:
+# The scopes every grant write needs admin over: the two a project had when
+# grants were introduced. A scope added since (`automations`) is required on
+# top only where the grant being written carries it — see
+# `_require_grant_admin` — so an admin whose grant predates it keeps managing
+# people, and still cannot hand out access they do not hold.
+_BASE_ADMIN_SCOPES = ("tasks", "sessions")
+_SCOPES_ERROR = "scopes must be a non-empty subset of " + "/".join(GRANT_SCOPES)
+
+
+def _require_grant_admin(
+    db: Session, user_id: UUID, project: Project, *, scopes: Iterable[str] = ()
+) -> None:
     """Managing grants needs admin on *every* scope, not just one.
 
     `project_role` answers per scope, so a grantee holding
@@ -227,12 +238,19 @@ def _require_grant_admin(db: Session, user_id: UUID, project: Project) -> None:
     `scopes=["sessions"]` and read every session on the board. That is the
     boundary the two-lens design rests on, so grant administration is not a
     per-scope power: you cannot hand out, list, or revoke access on a scope you
-    do not yourself administer. Owners and team members cover both scopes and
+    do not yourself administer. Owners and team members cover every scope and
     are unaffected.
+
+    `scopes` are the ones the write touches (granted, or held by the grant
+    being changed or revoked); admin is required over each of them on top of
+    `_BASE_ADMIN_SCOPES`.
     """
-    for scope in GRANT_SCOPES:
+    for scope in dict.fromkeys((*_BASE_ADMIN_SCOPES, *scopes)):
         access.require(
-            access.project_role(db, user_id, project, grant_scope=scope), "admin"
+            access.project_role(
+                db, user_id, project, grant_scope=cast(access.GrantScope, scope)
+            ),
+            "admin",
         )
 
 
@@ -1663,9 +1681,21 @@ def create_project_grant(
     _require_grant_admin(db, granter_user_id, project)
     if role not in GRANT_ROLES:
         raise GrantError("Unknown role")
-    scopes = list(scopes) if scopes is not None else list(GRANT_SCOPES)
+    if scopes is None:
+        # Everything the granter can hand out: all of it for an owner, the
+        # original two for an admin whose own grant predates `automations`.
+        scopes = [
+            s
+            for s in GRANT_SCOPES
+            if access.role_at_least(
+                access.project_role(db, granter_user_id, project, grant_scope=s),
+                "admin",
+            )
+        ]
+    scopes = list(scopes)
     if not scopes or any(s not in GRANT_SCOPES for s in scopes):
-        raise GrantError("scopes must be a non-empty subset of tasks/sessions")
+        raise GrantError(_SCOPES_ERROR)
+    _require_grant_admin(db, granter_user_id, project, scopes=scopes)
     # Normalise before the emptiness check below: `not "   "` is False, so a
     # whitespace-only address used to pass the guard and then be stored as ''
     # by `.strip()`, where `claim_pending_invites` would hand it to the next
@@ -1752,6 +1782,10 @@ def update_project_grant(
     reshape the access they already pay for."""
     _require_grant_admin(db, user_id, project)
     grant = _project_grant(db, project, grant_id)
+    # Standing over what it covered and over what it will cover.
+    _require_grant_admin(
+        db, user_id, project, scopes=[*(grant.scopes or []), *(scopes or [])]
+    )
     if role is not None:
         if role not in GRANT_ROLES:
             raise GrantError("Unknown role")
@@ -1772,7 +1806,7 @@ def update_project_grant(
         grant.lapsed_role = None
     if scopes is not None:
         if not scopes or any(s not in GRANT_SCOPES for s in scopes):
-            raise GrantError("scopes must be a non-empty subset of tasks/sessions")
+            raise GrantError(_SCOPES_ERROR)
         grant.scopes = [s for s in GRANT_SCOPES if s in scopes]
     notify_access_changed(
         db,
@@ -1794,6 +1828,7 @@ def delete_project_grant(
     )
     if grant is None:
         return False
+    _require_grant_admin(db, user_id, project, scopes=grant.scopes or [])
     notify_access_changed(
         db,
         principal_user_ids(db, grant.principal_type, grant.principal_id),

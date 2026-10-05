@@ -32,11 +32,12 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session, joinedload, subqueryload
 
 # Import Pydantic models for type-safe returns
-from backend.db import collab_queries
+from backend.db import automation_queries, collab_queries
 from backend.db.access_events import notify_access_changed, team_member_ids
 from backend.models import (
     AgentInstanceResponse,
     AgentInstanceDetail,
+    AutomationRefResponse,
     PrincipalResponse,
     AgentTypeOverview,
     MessageResponse,
@@ -1038,6 +1039,7 @@ def get_agent_instance_detail(
         rate_limit_resets_at=instance.rate_limited_until,
     )
     detail.participants = _participants_by_instance(db, [instance])[instance.id]
+    detail.automation = _started_by_automation(db, user_id, instance.id)
     if not is_owner:
         redact_for_grantee(
             detail,
@@ -1045,6 +1047,24 @@ def get_agent_instance_detail(
             _instance_role(db, user_id, instance),
         )
     return detail
+
+
+def _started_by_automation(
+    db: Session, user_id: UUID, instance_id: UUID
+) -> AutomationRefResponse | None:
+    """The automation that started this session, if the caller may see it.
+
+    Seeing the session is not enough: a collaborator reaches the automation
+    only through the project its folder files it under, which is usually,
+    but not always, the project the session landed in."""
+    automation = automation_queries.automation_for_instance(db, instance_id)
+    if automation is None:
+        return None
+    if automation.user_id != user_id and (
+        automation_queries.get_visible_automation(db, user_id, automation.id) is None
+    ):
+        return None
+    return AutomationRefResponse(id=automation.id, title=automation.title)
 
 
 def _participants_by_instance(

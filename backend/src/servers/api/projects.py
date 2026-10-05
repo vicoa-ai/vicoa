@@ -25,6 +25,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from shared.database import GRANT_SCOPES
 from shared.database.session import get_db
 from shared.database.task_models import Project
 
@@ -55,7 +56,7 @@ def _owner_response(project: Project, task_count: int | None = None) -> ProjectR
     the owner of everything it can see, so say so rather than under-report."""
     response = ProjectResponse.model_validate(project)
     response.role = "owner"
-    response.scopes = ["tasks", "sessions"]
+    response.scopes = list(GRANT_SCOPES)
     response.task_count = task_count
     return response
 

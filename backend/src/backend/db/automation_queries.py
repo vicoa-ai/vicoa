@@ -4,19 +4,31 @@ All queries are user-scoped. `next_run_at` is computed here (not in the router)
 from the schedule fields so create/update and the server-side scheduler agree on
 one clock. History rows (`automation_runs`) are written by `record_run` — from the
 manual "run now" path — and by the server scheduler directly.
+
+Everything that writes, and `list_automations` / `get_automation`, is the
+author's alone — the servers router (CLI, agent tools) reuses exactly those.
+The dashboard additionally *reads* collaborators' automations through the
+project their folder files them under (`list_project_automations`,
+`get_visible_automation`; collaboration §10.6), and a project share link
+carrying `automations` reads them all (`automations_filed_in`).
 """
 
 # `timezone` is aliased because create/update take a `timezone: str` parameter
 # that would otherwise shadow datetime.timezone.
+from dataclasses import dataclass
 from datetime import datetime, timezone as dt_timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import Select, exists, select
 from sqlalchemy.orm import Session
 
+from shared import access
+from shared.access import Role
 from shared.agent_profile_resolution import usable_profile_filter
 from shared.database import AgentInstance, Automation, AutomationRun, Machine
 from shared.database.agent_profile_models import AgentProfile
+from shared.database.project_matching import resolve_automation_project_ids
+from shared.database.task_models import Project, ProjectDirectory
 from shared.scheduling import compute_next_run, is_valid_frequency
 
 # Schedule-DEFINING fields that, when changed, force a `next_run_at` recompute
@@ -113,6 +125,142 @@ def get_automation(
     return (
         db.query(Automation)
         .filter(Automation.id == automation_id, Automation.user_id == user_id)
+        .first()
+    )
+
+
+@dataclass(frozen=True)
+class VisibleAutomation:
+    """An automation and the caller's standing on it. `project_id` is the
+    project it is filed under when the lookup already knows it (None = not
+    resolved yet, or filed nowhere); the router resolves the rest in one batch."""
+
+    automation: Automation
+    role: Role
+    project_id: UUID | None = None
+
+
+def _filed_in(
+    db: Session, project_ids: Select[tuple[UUID]] | list[UUID]
+) -> list[tuple[Automation, UUID]]:
+    """Every automation filed under one of `project_ids`, whoever wrote it,
+    newest first, with the project it is filed under. Candidates are narrowed
+    in SQL to authors with a folder linked to one of the projects on the
+    automation's machine; the exact folder → project answer (a deeper link may
+    claim it for another project) is `resolve_automation_project_ids`."""
+    wanted = (
+        set(project_ids)
+        if isinstance(project_ids, list)
+        else {row[0] for row in db.execute(project_ids).all()}
+    )
+    if not wanted:
+        return []
+    candidates = (
+        db.query(Automation)
+        .filter(
+            exists().where(
+                ProjectDirectory.user_id == Automation.user_id,
+                ProjectDirectory.machine_id == Automation.machine_id,
+                ProjectDirectory.project_id.in_(wanted),
+            )
+        )
+        .order_by(Automation.created_at.desc())
+        .all()
+    )
+    resolved = resolve_automation_project_ids(db, candidates)
+    return [
+        (a, project_id)
+        for a in candidates
+        if (project_id := resolved.get(a.id)) is not None and project_id in wanted
+    ]
+
+
+def list_project_automations(
+    db: Session, user_id: UUID, project_id: UUID
+) -> list[VisibleAutomation]:
+    """The automations filed in one project that `user_id` can see: their own,
+    and — when their standing covers the project's `automations` scope —
+    everyone else's, read-only (`access.foreign_automation_role`). A project
+    the caller cannot see yields only their own rows, which is none: their
+    automations cannot be filed under a project they lost."""
+    foreign_role = access.foreign_automation_role(
+        access.project_access(db, user_id, project_id)
+    )
+    out: list[VisibleAutomation] = []
+    for automation, pid in _filed_in(db, [project_id]):
+        if automation.user_id == user_id:
+            out.append(VisibleAutomation(automation, "owner", pid))
+        elif foreign_role is not None:
+            out.append(VisibleAutomation(automation, foreign_role, pid))
+    return out
+
+
+def list_visible_automations(db: Session, user_id: UUID) -> list[VisibleAutomation]:
+    """Everything `user_id` can see: all their own automations (filed anywhere
+    or nowhere), then collaborators' ones in every project whose standing
+    covers its `automations` scope, read-only. The dashboard groups them by
+    project."""
+    own = [VisibleAutomation(a, "owner") for a in list_automations(db, user_id)]
+    projects = access.visible_project_select(
+        user_id, scope="all", grant_scope="automations"
+    )
+    foreign = [(a, pid) for a, pid in _filed_in(db, projects) if a.user_id != user_id]
+    if not foreign:
+        return own
+    standings = access.project_accesses(
+        db,
+        user_id,
+        db.query(Project).filter(Project.id.in_({pid for _, pid in foreign})).all(),
+    )
+    for automation, pid in foreign:
+        role = access.foreign_automation_role(standings.get(pid))
+        if role is not None:
+            own.append(VisibleAutomation(automation, role, pid))
+    return own
+
+
+def automations_filed_in(db: Session, project_id: UUID) -> list[Automation]:
+    """Every automation filed in the project, for a share link that carries
+    them. The caller (the link) has already been resolved; no user lens."""
+    return [automation for automation, _ in _filed_in(db, [project_id])]
+
+
+def get_visible_automation(
+    db: Session, user_id: UUID, automation_id: UUID
+) -> VisibleAutomation | None:
+    """The automation with the caller's standing on it, or None when it is
+    invisible to them (which the router answers with the same 404 as a missing
+    id). The author is `owner`; anyone else resolves through the project the
+    automation's folder files it under."""
+    automation = db.get(Automation, automation_id)
+    if automation is None:
+        return None
+    if automation.user_id == user_id:
+        return VisibleAutomation(automation, "owner")
+    project_id = resolve_automation_project_ids(db, [automation]).get(automation.id)
+    if project_id is None:
+        return None
+    role = access.foreign_automation_role(
+        access.project_access(db, user_id, project_id)
+    )
+    if role is None:
+        return None
+    return VisibleAutomation(automation, role, project_id)
+
+
+def automation_for_instance(db: Session, instance_id: UUID) -> Automation | None:
+    """The automation whose run started this session, if one did. Runs link
+    their session only once it has registered (see `record_run`), so a run
+    that fired but never linked leaves its session looking hand-started."""
+    return (
+        db.query(Automation)
+        .join(AutomationRun, AutomationRun.automation_id == Automation.id)
+        .filter(
+            AutomationRun.agent_instance_id == instance_id,
+            # A run is its author's, and so is the session it started.
+            AutomationRun.user_id == Automation.user_id,
+        )
+        .order_by(AutomationRun.fired_at.asc())
         .first()
     )
 

@@ -344,6 +344,17 @@ export interface AgentInstanceDetail {
    * author headers show only when there is more than one (collaboration §8.2).
    */
   participants?: PrincipalResponse[];
+  /**
+   * The automation whose run started this session, when the caller may see
+   * that automation. Null for a session someone started by hand.
+   */
+  automation?: AutomationRef | null;
+}
+
+/** Just enough of an automation to name it and link to it. */
+export interface AutomationRef {
+  id: string;
+  title: string;
 }
 
 export interface UserMessageRequest {
@@ -605,7 +616,9 @@ export interface ProjectSummaryResponse {
 }
 
 export type ProjectRole = 'viewer' | 'commenter' | 'editor' | 'admin' | 'owner';
-export type GrantScope = 'tasks' | 'sessions';
+/** What a grant covers. `automations` came later: older grants hold only the
+ *  first two, and owners and team members cover all three. */
+export type GrantScope = 'tasks' | 'sessions' | 'automations';
 
 const PROJECT_ROLE_RANK: Record<ProjectRole, number> = {
   viewer: 1,
@@ -944,7 +957,9 @@ export interface AutomationResponse {
   id: string;
   title: string;
   prompt: string;
-  machine_id: string;
+  /** Null only on someone else's automation (see `owner`). */
+  machine_id: string | null;
+  /** On someone else's automation, the folder's name without its path. */
   directory: string;
   worktree: AutomationWorktree | null;
   /** SessionConfig shape (agent / model / effort / permission-mode). */
@@ -961,6 +976,16 @@ export interface AutomationResponse {
   last_run_status: AutomationRunStatus | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Set only on an automation someone else wrote, which reaches you through a
+   * project shared with you: its author and your standing (never `owner`).
+   * Such a row is read-only to you and carries nothing that locates the
+   * author's machine.
+   */
+  owner?: PrincipalResponse | null;
+  viewer_role?: ProjectRole | null;
+  /** The project the automation's folder files it under; null when none. */
+  project_id?: string | null;
 }
 
 // --- Workspace search (cmd+K palette) ------------------------------------
@@ -1065,8 +1090,8 @@ export interface ReferenceDetail {
 // --- Share links (collaboration §3.4, P4) -----------------------------------
 
 export type ShareKind = 'session' | 'project';
-/** Which halves of a project a link carries — the words a grant already uses. */
-export type ShareScope = 'tasks' | 'sessions';
+/** Which parts of a project a link carries — the words a grant already uses. */
+export type ShareScope = 'tasks' | 'sessions' | 'automations';
 export type ShareAudience = 'public' | 'authenticated';
 
 /** The `tasks` half of a project link's filters. Every list is optional and ANDed. */
@@ -2191,8 +2216,20 @@ class BackendAPI {
 
   // --- Automations --------------------------------------------------------
 
-  async listAutomations(): Promise<AutomationResponse[]> {
-    return this.request<AutomationResponse[]>('/api/v1/automations');
+  /**
+   * Default: your own automations, in every project. `scope: 'all'` adds
+   * collaborators' automations in projects shared with you; `projectId` lists
+   * one project's. Collaborators' rows are read-only, with `owner` set: edit,
+   * run and delete stay with their author.
+   */
+  async listAutomations(
+    options: { scope?: 'me' | 'all'; projectId?: string | null } = {},
+  ): Promise<AutomationResponse[]> {
+    const params = new URLSearchParams();
+    if (options.projectId) params.set('project_id', options.projectId);
+    else if (options.scope === 'all') params.set('scope', 'all');
+    const query = params.toString();
+    return this.request<AutomationResponse[]>(`/api/v1/automations${query ? `?${query}` : ''}`);
   }
 
   async getAutomation(id: string): Promise<AutomationResponse> {
@@ -2273,7 +2310,7 @@ class BackendAPI {
 
   // --- People: project grants and per-session shares (P5) -------------------
 
-  /** Owner row + every grant. Admin on both scopes; 403 otherwise. */
+  /** Owner row + every grant. Admin on tasks and sessions; 403 otherwise. */
   async listProjectPeople(projectId: string): Promise<ProjectPerson[]> {
     return this.request<ProjectPerson[]>(`/api/v1/projects/${projectId}/grants`);
   }

@@ -390,7 +390,8 @@ class TestProjectGrants:
             principal_id=other.id,
             role="admin",
         )
-        assert grant.scopes == ["tasks", "sessions"]
+        # An owner hands out every scope by default.
+        assert grant.scopes == ["tasks", "sessions", "automations"]
         # An admin grantee can grant too.
         third = _user(test_db, "third@example.com")
         collab_queries.create_project_grant(

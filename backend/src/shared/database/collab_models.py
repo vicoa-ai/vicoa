@@ -49,8 +49,13 @@ GRANT_PRINCIPAL_TYPES = ("user", "team")
 # The grantable ladder (§2). 'owner' exists as a *resolved* role in
 # `shared.access` but is never stored — ownership is a column, not a grant.
 GRANT_ROLES = ("viewer", "commenter", "editor", "admin")
-# What a grant can cover — the "share tasks / sessions / both" toggle.
-GRANT_SCOPES = ("tasks", "sessions")
+# What a grant can cover — the "share tasks / sessions / automations" toggle.
+# `automations` came later: grants made before it hold only the first two and
+# keep them (no backfill), so collaborators see a project's automations only
+# once someone who administers them says so. Ownership and team membership
+# cover every scope. Stored as JSONB with no CHECK on the values, so a new
+# scope needs no migration (the server default below is never used by the ORM).
+GRANT_SCOPES = ("tasks", "sessions", "automations")
 
 
 def all_grant_scopes() -> list[str]:

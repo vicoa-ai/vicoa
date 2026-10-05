@@ -16,8 +16,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { ProjectIcon } from '@/components/dashboard/task-ui';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { isMachineOnline, sortMachinesOnlineFirst } from '@/lib/session-liveness';
 import { getWsClient, RpcError } from '@/lib/ws-client';
@@ -28,7 +30,11 @@ import {
   type SessionConfig,
 } from '@/lib/agent-catalog';
 import { resolveWorktreeSpawn } from '@/lib/worktree-selection';
-import type { AutomationResponse, MachineSummary } from '@/lib/backend-api';
+import type {
+  AutomationResponse,
+  MachineSummary,
+  ProjectResponse,
+} from '@/lib/backend-api';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { DesktopCollapsedLead } from '@/components/desktop/window-chrome';
 import { AutomationList, type AutomationFilter } from './components/automation-list';
@@ -36,9 +42,29 @@ import { AutomationListSkeleton } from './components/automation-skeleton';
 import { AutomationEmptyState } from './components/empty-state';
 import { getAutomationCache, setAutomationCache } from './lib/automation-cache';
 import { DetailPanel } from './components/detail-panel';
+import { SharedDetailPanel } from './components/shared-detail-panel';
 import type { AutomationTemplate } from './lib/templates';
+import { NO_PROJECT } from './lib/group-by-project';
 
 type Selection = AutomationResponse | 'new' | null;
+
+/** Someone else's automation, reaching the viewer through a shared project. */
+function isShared(a: AutomationResponse): boolean {
+  return a.owner != null;
+}
+
+/** Replace a row in place, or put a new one on top. */
+function upsert(rows: AutomationResponse[], row: AutomationResponse): AutomationResponse[] {
+  return rows.some((a) => a.id === row.id)
+    ? rows.map((a) => (a.id === row.id ? row : a))
+    : [row, ...rows];
+}
+
+/** Projects whose automations the viewer may list: their own, team-owned, or
+ *  shared with a grant that covers automations. */
+function canListAutomations(p: ProjectResponse): boolean {
+  return !p.is_archived && !p.is_inbox && (p.scopes ?? []).includes('automations');
+}
 
 // Machine liveness (the "Runs on" online dot) is derived from `last_heartbeat_at`
 // vs. the wall clock, so a one-shot fetch goes stale and flips a live machine to
@@ -76,6 +102,12 @@ function AutomationPageInner() {
   const [machines, setMachines] = useState<MachineSummary[]>(
     () => getAutomationCache()?.machines ?? [],
   );
+  // `automations` is everything you can see: all of yours, plus your
+  // collaborators' (read-only) in projects shared with you. The project
+  // picker narrows it: null = "All automations", grouped by project; a
+  // project id = that project's alone; NO_PROJECT = yours filed nowhere.
+  const [projects, setProjects] = useState<ProjectResponse[]>([]);
+  const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<AgentCatalog>(
     () => getAutomationCache()?.catalog ?? AGENT_CATALOG_FALLBACK,
   );
@@ -100,12 +132,24 @@ function AutomationPageInner() {
   const refresh = useCallback(async () => {
     if (!api) return;
     const [automationList, machineList] = await Promise.all([
-      api.listAutomations(),
+      api.listAutomations({ scope: 'all' }),
       api.listMachines(),
     ]);
     setAutomations(automationList);
     setMachines(sortMachinesOnlineFirst(machineList));
     return automationList;
+  }, [api]);
+
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    api
+      .listProjects()
+      .then((list) => !cancelled && setProjects(list))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [api]);
 
   // Keep only the machine list warm so the "Runs on" online dot stays accurate
@@ -174,10 +218,29 @@ function AutomationPageInner() {
       return;
     }
     const target = automations.find((a) => a.id === automationId);
-    if (!target) return;
-    setSelection(target);
+    if (target) {
+      setSelection(target);
+      router.replace('/dashboard/automation', { scroll: false });
+      return;
+    }
+    // Not in the loaded list (cached rows from before it existed, say):
+    // fetch it rather than ignore the link.
+    if (!api || isLoading) return;
     router.replace('/dashboard/automation', { scroll: false });
-  }, [searchParams, automations, router, openCreate]);
+    api
+      .getAutomation(automationId)
+      .then(setSelection)
+      .catch(() => {});
+  }, [api, isLoading, searchParams, automations, router, openCreate]);
+
+  // `?project={id}` opens the list on one project (the sidebar's project
+  // menu links here), then strips the param like the deep link above.
+  useEffect(() => {
+    const projectId = searchParams?.get('project');
+    if (!projectId) return;
+    setProjectFilter(projectId);
+    router.replace('/dashboard/automation', { scroll: false });
+  }, [searchParams, router]);
 
   // "Repeat…" from a task: /dashboard/automation?automation=new&taskId={id}.
   // Fetch the task, seed the create form's title + prompt from it, and resolve
@@ -233,12 +296,7 @@ function AutomationPageInner() {
   }, [isLoading, automations, machines, catalog]);
 
   const handleSaved = useCallback((saved: AutomationResponse) => {
-    setAutomations((prev) => {
-      const exists = prev.some((a) => a.id === saved.id);
-      return exists
-        ? prev.map((a) => (a.id === saved.id ? saved : a))
-        : [saved, ...prev];
-    });
+    setAutomations((prev) => upsert(prev, saved));
     setSelection(saved);
   }, []);
 
@@ -283,7 +341,9 @@ function AutomationPageInner() {
   // local), then records the outcome so it shows in Run history.
   const runNow = useCallback(
     async (a: AutomationResponse) => {
-      if (!api) return;
+      // Only the author's own rows carry a machine; a shared row never runs.
+      const machineId = a.machine_id;
+      if (!api || !machineId) return;
       setBusyId(a.id);
       setError(null);
       // Open this automation's panel (if not already) so the run surfaces in
@@ -296,7 +356,7 @@ function AutomationPageInner() {
         selectedWorktreePath: a.worktree?.path,
       });
       try {
-        const result = await getWsClient().callRpc(a.machine_id, 'spawn-session', {
+        const result = await getWsClient().callRpc(machineId, 'spawn-session', {
           directory: spawn.directory,
           agent: config.agent,
           metadata: toSpawnMetadata(config, a.prompt),
@@ -360,6 +420,47 @@ function AutomationPageInner() {
   const selectedId = selection && selection !== 'new' ? selection.id : null;
   const panelOpen = selection !== null;
 
+  const pickableProjects = projects.filter(canListAutomations);
+  const pickedProject =
+    projectFilter && projectFilter !== NO_PROJECT
+      ? (projects.find((p) => p.id === projectFilter) ?? null)
+      : null;
+  const rows =
+    projectFilter === null
+      ? automations
+      : automations.filter((a) => (a.project_id ?? NO_PROJECT) === projectFilter);
+  const pickerLabel =
+    projectFilter === null
+      ? 'All automations'
+      : projectFilter === NO_PROJECT
+        ? 'No project'
+        : (pickedProject?.name ?? 'Project');
+
+  // "New automation" with a project picked starts in that project's folder on
+  // one of your machines (an online one first), when you have it checked out.
+  const createHere = useCallback(() => {
+    const links = (pickedProject?.directories ?? []).filter((d) =>
+      machines.some((m) => m.machine_id === d.machine_id),
+    );
+    const link =
+      links.find((d) =>
+        machines.some((m) => m.machine_id === d.machine_id && isMachineOnline(m)),
+      ) ?? links[0];
+    if (!pickedProject || !link) {
+      openCreate();
+      return;
+    }
+    openCreate({
+      id: `project-${pickedProject.id}`,
+      icon: CalendarClock,
+      title: '',
+      description: '',
+      prompt: '',
+      machineId: link.machine_id,
+      directory: link.local_path,
+    });
+  }, [machines, openCreate, pickedProject]);
+
   // Draggable divider between the list and the detail panel. Only meaningful
   // while the panel is open; persisted so the split survives navigation.
   const [listWidth, setListWidth] = useState(380);
@@ -412,7 +513,57 @@ function AutomationPageInner() {
           <DesktopCollapsedLead />
           <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
           <h1 className="shrink-0 text-sm font-medium">Automations</h1>
-          <div style={NO_DRAG} className="ml-auto flex items-center gap-2">
+          <div style={NO_DRAG} className="ml-auto flex min-w-0 items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 min-w-0 max-w-[220px] cursor-pointer gap-1.5 text-xs"
+                >
+                  {projectFilter === null ? (
+                    <CalendarClock className="size-3.5 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <ProjectIcon project={pickedProject} />
+                  )}
+                  <span className="truncate">{pickerLabel}</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="custom-scrollbar max-h-80 w-60 overflow-y-auto text-xs"
+              >
+                <DropdownMenuItem
+                  className="cursor-pointer gap-2"
+                  onSelect={() => setProjectFilter(null)}
+                >
+                  <CalendarClock className="mr-2 size-3.5 shrink-0 text-muted-foreground" />
+                  All automations
+                  {projectFilter === null && <Check className="ml-auto h-3 w-3" />}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {pickableProjects.map((p) => (
+                  <DropdownMenuItem
+                    key={p.id}
+                    className="cursor-pointer gap-2"
+                    onSelect={() => setProjectFilter(p.id)}
+                  >
+                    <ProjectIcon project={p} className="mr-2" />
+                    <span className="truncate">{p.name}</span>
+                    {projectFilter === p.id && <Check className="ml-auto h-3 w-3 shrink-0" />}
+                  </DropdownMenuItem>
+                ))}
+                {/* Yours that sit in no project, pinned last like the Tasks picker. */}
+                <DropdownMenuItem
+                  className="cursor-pointer gap-2"
+                  onSelect={() => setProjectFilter(NO_PROJECT)}
+                >
+                  <ProjectIcon project={null} className="mr-2" />
+                  No project
+                  {projectFilter === NO_PROJECT && <Check className="ml-auto h-3 w-3 shrink-0" />}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
@@ -431,12 +582,16 @@ function AutomationPageInner() {
             </DropdownMenu>
             <Button
               size="sm"
-              className="h-7 gap-1 text-xs"
-              onClick={() => openCreate()}
+              className="h-7 cursor-pointer gap-1 text-xs"
+              onClick={createHere}
               disabled={!api}
+              // With the panel open the list column is narrow; the label goes
+              // so the project picker and filter still fit beside the title.
+              aria-label="New automation"
+              title={panelOpen ? 'New automation' : undefined}
             >
               <Plus className="size-3.5" />
-              New automation
+              {!panelOpen && 'New automation'}
             </Button>
           </div>
         </div>
@@ -449,7 +604,7 @@ function AutomationPageInner() {
 
         {isLoading ? (
           <AutomationListSkeleton />
-        ) : automations.length === 0 ? (
+        ) : !projectFilter && automations.length === 0 ? (
           <AutomationEmptyState
             onPick={(t) => openCreate(t)}
             onScratch={() => openCreate()}
@@ -458,7 +613,13 @@ function AutomationPageInner() {
           />
         ) : (
           <AutomationList
-            automations={automations}
+            automations={rows}
+            groupProjects={projectFilter ? null : projects}
+            emptyLabel={
+              projectFilter && projectFilter !== NO_PROJECT
+                ? 'No automations in this project yet.'
+                : undefined
+            }
             filter={filter}
             selectedId={selectedId}
             onSelect={(a) => setSelection(a)}
@@ -480,6 +641,16 @@ function AutomationPageInner() {
             title="Drag to resize"
           />
           <div className="min-w-0 flex-1">
+            {selection !== 'new' && isShared(selection) ? (
+              <SharedDetailPanel
+                key={selection.id}
+                api={api!}
+                automation={selection}
+                project={projects.find((p) => p.id === selection.project_id) ?? null}
+                catalog={catalog}
+                onClose={() => setSelection(null)}
+              />
+            ) : (
             <DetailPanel
               key={
                 selection === 'new'
@@ -495,6 +666,7 @@ function AutomationPageInner() {
               onClose={() => setSelection(null)}
               runHistoryRefreshKey={historyKey}
             />
+            )}
           </div>
         </>
       )}

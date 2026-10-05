@@ -48,6 +48,7 @@ from ..db.share_queries import ShareShapeError, ShareTargetNotFoundError
 from ..models import (
     CreateShareLinkRequest,
     CreateTaskCommentRequest,
+    PublicAutomationsResponse,
     PublicBoardResponse,
     PublicMessagesPage,
     PublicSessionsPage,
@@ -251,6 +252,16 @@ def list_public_sessions(
     return share_queries.public_sessions(
         db, grant, limit=limit, offset=offset, status_filter=status_filter
     )
+
+
+@public_router.get("/{token}/automations", response_model=PublicAutomationsResponse)
+def list_public_automations(
+    grant: access.ShareGrant = Depends(resolve_grant),
+    db: Session = Depends(get_db),
+) -> PublicAutomationsResponse:
+    """The automations a project link carries, read-only. Empty unless the
+    link carries `automations`."""
+    return share_queries.public_automations(db, grant)
 
 
 @public_router.get(

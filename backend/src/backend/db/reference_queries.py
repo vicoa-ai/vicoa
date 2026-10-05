@@ -19,7 +19,6 @@ added (see `link_instance_to_task`).
 """
 
 import re
-from collections import defaultdict
 from uuid import UUID
 
 from sqlalchemy import case, func, or_
@@ -27,8 +26,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from shared.database import AgentInstance, Automation, Project, Task
 from shared.database.enums import AgentStatus
-from shared.database.project_matching import canonical_path, path_at_or_under
-from shared.database.task_models import ProjectDirectory
+from shared.database.project_matching import resolve_automation_project_ids
 
 from .queries import CLOSED_STATUSES
 from .search_queries import _escape_like
@@ -227,7 +225,7 @@ def _automation_candidates(
         )
 
     rows = query.limit(limit).all()
-    project_ids = _automation_project_ids(db, user_id, rows)
+    project_ids = resolve_automation_project_ids(db, rows)
     return [
         {
             "kind": "automation",
@@ -244,45 +242,6 @@ def _automation_candidates(
         }
         for automation in rows
     ]
-
-
-def _automation_project_ids(
-    db: Session, user_id: UUID, automations: list[Automation]
-) -> dict[UUID, UUID]:
-    """Folder → project for each automation, in one query.
-
-    An automation has no ``project_id`` column (a session gets one stamped at
-    registration; an automation is only a recipe for one), so this re-runs the
-    matcher's tier 2 by hand: the automation's directory at or under a
-    ``project_directories`` row on the same machine, longest path winning.
-    Deliberately *not* ``resolve_project_id_for_session`` per row — that is
-    several queries each, and this endpoint answers a keystroke.
-    """
-    if not automations:
-        return {}
-    rows = db.query(
-        ProjectDirectory.project_id,
-        ProjectDirectory.machine_id,
-        ProjectDirectory.local_path,
-    ).filter(ProjectDirectory.user_id == user_id)
-    by_machine: dict[UUID, list[tuple[str, UUID]]] = defaultdict(list)
-    for project_id, machine_id, local_path in rows:
-        by_machine[machine_id].append((canonical_path(local_path, None), project_id))
-    if not by_machine:
-        return {}
-
-    matched: dict[UUID, UUID] = {}
-    for automation in automations:
-        directory = canonical_path(automation.directory, None)
-        best: tuple[str, UUID] | None = None
-        for local_path, project_id in by_machine.get(automation.machine_id, ()):
-            if not path_at_or_under(directory, local_path):
-                continue
-            if best is None or len(local_path) > len(best[0]):
-                best = (local_path, project_id)
-        if best is not None:
-            matched[automation.id] = best[1]
-    return matched
 
 
 def _attach_projects(db: Session, items: list[dict]) -> None:

@@ -12,7 +12,8 @@
 // Log in / Sign up in the header and a sign-up card at the bottom — that is
 // the growth loop. A project link that carries tasks turns the Tasks nav row
 // into this page's own — clicking it shows the shared board, and it is marked
-// current while you are there, the same way the dashboard marks it. The
+// current while you are there, the same way the dashboard marks it. A link
+// that carries automations does the same with the Automations row. The
 // sidebar resizes by its right edge like the dashboard's, remembered per
 // browser.
 
@@ -165,7 +166,7 @@ function offsetToSidebarEdge(row: HTMLElement): number {
 }
 
 /** The nav rows a share page can stand in for. */
-export type ShareNav = 'tasks';
+export type ShareNav = 'tasks' | 'automations';
 
 /** A nav row the share page owns: it selects a view here instead of leaving. */
 export interface ShareNavTarget {
@@ -188,6 +189,7 @@ const NAV: { key?: ShareNav; label: string; icon: LucideIcon; href: string; pitc
     pitch: 'A backlog for you and your agents: file work, hand it to an agent, follow it to a pull request.',
   },
   {
+    key: 'automations',
     label: 'Automations',
     icon: CalendarClock,
     href: '/dashboard/automation',
@@ -206,16 +208,16 @@ const NAV: { key?: ShareNav; label: string; icon: LucideIcon; href: string; pitc
  * anonymous one gets a panel beside the sidebar that says what the tab is
  * and offers the two auth buttons — the same anchoring as the worktree PR
  * panel, so it overlays the content area instead of covering sibling rows.
- * A row the page owns (`tasksNav`) is neither: it selects a view in place.
+ * A row the page owns (`owned`) is neither: it selects a view in place.
  */
 function NavRows({
   signedIn,
   returnHref,
-  tasksNav,
+  owned,
 }: {
   signedIn: boolean;
   returnHref: string;
-  tasksNav?: ShareNavTarget;
+  owned: Partial<Record<ShareNav, ShareNavTarget>>;
 }) {
   const [openLabel, setOpenLabel] = useState<string | null>(null);
   const [sideOffset, setSideOffset] = useState(EDGE_GAP);
@@ -228,17 +230,18 @@ function NavRows({
             {label}
           </>
         );
-        if (key === 'tasks' && tasksNav) {
+        const target = key ? owned[key] : undefined;
+        if (target) {
           return (
             <Button
               key={label}
               variant="subtle"
-              aria-current={tasksNav.active ? 'page' : undefined}
-              onClick={tasksNav.onSelect}
+              aria-current={target.active ? 'page' : undefined}
+              onClick={target.onSelect}
               className={cn(
                 'h-auto w-full justify-start py-1.5 text-xs',
                 index > 0 && 'mt-1',
-                tasksNav.active && SHARE_ROW_SELECTED,
+                target.active && SHARE_ROW_SELECTED,
               )}
             >
               {row}
@@ -300,6 +303,7 @@ export function ShareShell({
   share,
   sidebar,
   tasksNav,
+  automationsNav,
   children,
 }: {
   /** The link token: it authorizes every image fetch under this shell. */
@@ -309,6 +313,8 @@ export function ShareShell({
   sidebar: React.ReactNode;
   /** Present when this page carries the shared tasks: the Tasks row selects them. */
   tasksNav?: ShareNavTarget;
+  /** Present when this page carries the shared automations: the Automations row selects them. */
+  automationsNav?: ShareNavTarget;
   children: React.ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -320,6 +326,10 @@ export function ShareShell({
   const chrome = useMemo<ShareChrome>(
     () => ({ share, signedIn, returnHref, openSidebar, closeSidebar }),
     [share, signedIn, returnHref, openSidebar, closeSidebar],
+  );
+  const owned = useMemo<Partial<Record<ShareNav, ShareNavTarget>>>(
+    () => ({ tasks: tasksNav, automations: automationsNav }),
+    [tasksNav, automationsNav],
   );
 
   const owner = principalFromResponse(share.owner);
@@ -357,7 +367,7 @@ export function ShareShell({
             </Button>
           </div>
 
-          <NavRows signedIn={signedIn} returnHref={returnHref} tasksNav={tasksNav} />
+          <NavRows signedIn={signedIn} returnHref={returnHref} owned={owned} />
 
           <div className="mx-2 my-2 h-px bg-muted/30" />
 

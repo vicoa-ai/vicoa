@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import type { ShareLinkResponse, ShareProjectFilters, ShareScope } from '@/lib/backend-api';
 import {
+  automationsRefusalMessage,
   buildShareFilters,
+  describeScopes,
   filterFieldsFromLink,
   formDiffersFromLink,
   KEEP_EXPIRY,
   linkSettingsKey,
   settingsKey,
+  type ShareFilterFields,
 } from '@/lib/share-link-settings';
 
 /**
@@ -58,7 +61,8 @@ function seed(from: ShareLinkResponse) {
 describe('a form seeded from a link differs from it in nothing', () => {
   const cases: [string, ShareLinkResponse][] = [
     ['a bare session link', link({ kind: 'session', scopes: [], project_id: null, agent_instance_id: 'a-1' })],
-    ['every switch on', link({ scopes: ['tasks', 'sessions'], audience: 'authenticated', allow_comments: true, show_owner: true, show_branch: true })],
+    ['every switch on', link({ scopes: ['tasks', 'sessions', 'automations'], audience: 'authenticated', allow_comments: true, show_owner: true, show_branch: true })],
+    ['automations alone', link({ scopes: ['automations'] })],
     ['a link that expires', link({ expires_at: '2026-03-03T12:00:00Z' })],
     [
       'task filters',
@@ -134,5 +138,68 @@ describe('settingsKey', () => {
     const { settings } = seed(expiring);
     expect(formDiffersFromLink(expiring, settings, KEEP_EXPIRY)).toBe(false);
     expect(formDiffersFromLink(expiring, settings, 'never')).toBe(true);
+  });
+});
+
+describe('automations', () => {
+  const fields: ShareFilterFields = {
+    statuses: ['todo'],
+    labelIds: ['l-1'],
+    includeArchived: true,
+    dateFrom: '2026-02-01',
+    dateTo: '',
+  };
+
+  it('has no filters of its own', () => {
+    // Every task and session filter is set; a link carrying only automations
+    // sends none of them, and one carrying tasks too sends only the tasks half.
+    expect(buildShareFilters({ ...fields, scopes: ['automations'] })).toBeNull();
+    expect(buildShareFilters({ ...fields, scopes: ['tasks', 'automations'] })).toEqual({
+      tasks: { statuses: ['todo'], label_ids: ['l-1'] },
+    });
+  });
+
+  it('counts as a change when ticked or unticked', () => {
+    const stored = link({ scopes: ['tasks'] });
+    const { settings, expiry } = seed(stored);
+    const withAutomations = { ...settings, scopes: ['tasks', 'automations'] as ShareScope[] };
+    expect(formDiffersFromLink(stored, withAutomations, expiry)).toBe(true);
+    const carrying = link({ scopes: ['tasks', 'automations'] });
+    expect(formDiffersFromLink(carrying, { ...seed(carrying).settings, scopes: ['tasks'] }, expiry)).toBe(true);
+  });
+
+  it('is named with the other scopes', () => {
+    expect(describeScopes(['automations', 'tasks', 'sessions'])).toBe('Tasks, sessions and automations');
+    expect(describeScopes(['sessions', 'automations'])).toBe('Sessions and automations');
+    expect(describeScopes(['tasks'])).toBe('Tasks');
+    expect(describeScopes([])).toBe('Nothing');
+  });
+});
+
+describe('automationsRefusalMessage', () => {
+  const notFound = Object.assign(new Error('Project not found'), { status: 404 });
+
+  it('explains the 404 a caller without admin over automations gets', () => {
+    expect(automationsRefusalMessage(notFound, ['tasks', 'automations'])).toMatch(/can publish them/);
+    // An edit to a link that already shares them needs that standing too,
+    // whatever the edit was.
+    expect(automationsRefusalMessage(notFound, ['tasks'], ['tasks', 'automations'])).toMatch(/can change it/);
+  });
+
+  it('leaves every other failure alone', () => {
+    expect(automationsRefusalMessage(notFound, ['tasks', 'sessions'], ['tasks'])).toBeNull();
+    const conflict = Object.assign(new Error('Bad filters'), { status: 422 });
+    expect(automationsRefusalMessage(conflict, ['automations'])).toBeNull();
+    expect(automationsRefusalMessage(null, ['automations'])).toBeNull();
+  });
+
+  it('has no em or en dashes', () => {
+    for (const msg of [
+      automationsRefusalMessage(notFound, ['automations']),
+      automationsRefusalMessage(notFound, [], ['automations']),
+      describeScopes(['tasks', 'sessions', 'automations']),
+    ]) {
+      expect(msg).not.toMatch(/[—–]/);
+    }
   });
 });

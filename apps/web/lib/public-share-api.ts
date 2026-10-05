@@ -14,6 +14,9 @@
  */
 
 import type {
+  AutomationFrequency,
+  AutomationRunStatus,
+  AutomationScheduleKind,
   PublicBoardResponse,
   PublicMessagesPage,
   PublicSessionStatusFilter,
@@ -25,6 +28,29 @@ import type {
 import { getBrowserAccessToken } from '@/lib/auth/browser-token';
 import type { Principal } from '@/lib/principals';
 import { getCloudApiBase, getDesktopConfig } from '@/lib/runtime-config';
+
+/**
+ * An automation as a link viewer sees it: what it asks the agent to do and
+ * when, never who wrote it or where it runs (no author, machine or folder).
+ * `session_config` holds the display keys only (agent, model, effort, mode).
+ */
+export interface PublicAutomation {
+  id: string;
+  title: string;
+  prompt: string;
+  session_config: Record<string, unknown> | null;
+  schedule_kind: AutomationScheduleKind;
+  frequency: AutomationFrequency | null;
+  timezone: string;
+  next_run_at: string | null;
+  enabled: boolean;
+  last_run_at: string | null;
+  last_run_status: AutomationRunStatus | null;
+}
+
+export interface PublicAutomationsResponse {
+  items: PublicAutomation[];
+}
 
 export class ShareNotFoundError extends Error {
   constructor() {
@@ -187,6 +213,14 @@ export function fetchPublicBoard(
   options: RequestOptions = {},
 ): Promise<PublicBoardResponse> {
   return request<PublicBoardResponse>(`${basePath(token)}/board`, options);
+}
+
+/** The automations a project link carries; empty unless it carries `automations`. */
+export function fetchPublicAutomations(
+  token: string,
+  options: RequestOptions = {},
+): Promise<PublicAutomationsResponse> {
+  return request<PublicAutomationsResponse>(`${basePath(token)}/automations`, options);
 }
 
 export function fetchPublicTaskTimeline(

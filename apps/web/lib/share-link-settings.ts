@@ -16,9 +16,42 @@ import type {
   ShareSessionsFilters,
   TaskStatus,
 } from '@/lib/backend-api';
+import { SCOPE_ORDER as GRANT_SCOPE_ORDER, scopeSummary } from '@/lib/share-people';
 
-/** The two halves of a project, in the order they are always listed. */
-export const SCOPE_ORDER: ShareScope[] = ['tasks', 'sessions'];
+/**
+ * The parts of a project a link can carry, in the order they are always
+ * listed: the same words, and the same order, a project grant uses.
+ */
+export const SCOPE_ORDER: ShareScope[] = GRANT_SCOPE_ORDER;
+
+/** "Tasks and sessions" / "Tasks, sessions and automations": what a project link carries, in words. */
+export function describeScopes(scopes: readonly ShareScope[]): string {
+  return scopeSummary(scopes) || 'Nothing';
+}
+
+/**
+ * What to say when the server refuses a link over `automations`, or null for
+ * any other failure. Publishing a project's automations needs admin over them,
+ * and the server answers a caller without it as it answers a missing project
+ * (404), which would read as the project having vanished. `wanted` is what the
+ * form asked the link to carry; `carried` what the link carried before (an
+ * edit needs standing over both).
+ */
+export function automationsRefusalMessage(
+  err: unknown,
+  wanted: readonly ShareScope[],
+  carried: readonly ShareScope[] = [],
+): string | null {
+  if (!(err instanceof Error)) return null;
+  if ((err as { status?: unknown }).status !== 404) return null;
+  if (carried.includes('automations')) {
+    return "This link shares the project's automations, and only someone who manages them can change it.";
+  }
+  if (wanted.includes('automations')) {
+    return "Only someone who manages this project's automations can publish them.";
+  }
+  return null;
+}
 
 /**
  * "Keep the deadline this link already has". `expires_at` is a date and the
@@ -72,7 +105,8 @@ export function filterFieldsFromLink(link: ShareLinkResponse | null): ShareFilte
 /**
  * The filters the form describes; `null` = no narrowing. Each half is dropped
  * unless the link carries that scope, which is also what the server does with
- * the value it is sent.
+ * the value it is sent. `automations` has no filters: a link that carries them
+ * carries every automation filed in the project.
  */
 export function buildShareFilters(
   form: ShareFilterFields & { scopes: ShareScope[] },

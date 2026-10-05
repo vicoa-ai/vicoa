@@ -1,15 +1,17 @@
 'use client';
 
-// A shared project: one link, one page, carrying whichever halves the link
+// A shared project: one link, one page, carrying whichever parts the link
 // says (`share.scopes`). Tasks are the sidebar's Tasks row — the dashboard's
-// own nav row, standing in for its page — and sessions are the list below it,
-// in the dashboard's time buckets, newest first. Both are deep-linkable
-// (`?view=tasks`, `?session=<id>`), and the page opens on something rather
-// than on a "pick one" pane: the tasks when it carries them, else the newest
-// session. The list takes the dashboard sidebar's status filter, also in the
+// own nav row, standing in for its page — automations likewise the
+// Automations row, and sessions are the list below them, in the dashboard's
+// time buckets, newest first. All are deep-linkable (`?view=tasks`,
+// `?view=automations&automation=<id>`, `?session=<id>`), and the page opens
+// on something rather than on a "pick one" pane: the tasks when it carries
+// them, else the newest session, else the automations (`resolveProjectView`).
+// The session list takes the dashboard sidebar's status filter, also in the
 // URL (`?status=in_review`) and applied server-side so the count and paging
-// stay true. The session list polls slowly: new sessions matter on the order
-// of minutes, not seconds.
+// stay true. It polls slowly: new sessions matter on the order of minutes,
+// not seconds.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -32,8 +34,10 @@ import type {
 import { ShareNotFoundError, fetchPublicSession, fetchPublicSessions } from '@/lib/public-share-api';
 import { cn } from '@/lib/utils';
 import { SHARE_ROW_SELECTED, ShareHeader, ShareShell, ShareSidebarSection, useShareChrome } from './share-shell';
+import { SharedAutomationsView } from './shared-automations-view';
 import { SharedBoardView } from './shared-board-view';
 import { SharedSessionView, isSessionLive } from './shared-session-view';
+import { resolveProjectView } from './share-view';
 import { POLL_IDLE_MS, useSharePoll } from '@/lib/use-share-poll';
 
 const PAGE_SIZE = 50;
@@ -249,10 +253,18 @@ export function ProjectShare({
   const searchParams = useSearchParams();
   const sharesTasks = share.scopes.includes('tasks');
   const sharesSessions = share.scopes.includes('sessions');
+  const sharesAutomations = share.scopes.includes('automations');
   const requestedId = sharesSessions ? searchParams.get('session') : null;
+  const requestedAutomation = sharesAutomations ? searchParams.get('automation') : null;
   // Tasks is the default view when the link carries them: it is the project's
   // overview, and the sessions are one click away in the same sidebar.
-  const viewingTasks = sharesTasks && (!sharesSessions || searchParams.get('view') === 'tasks' || !requestedId);
+  const view = resolveProjectView(share.scopes, {
+    view: searchParams.get('view'),
+    session: requestedId,
+    automation: requestedAutomation,
+  });
+  const viewingTasks = view === 'tasks';
+  const viewingAutomations = view === 'automations';
   const statusFilter = statusFilterFromParam(searchParams.get('status'));
   const { sessions, total, loadingMore, error, loadMore, patch } = useSharedSessions(
     sharesSessions ? token : null,
@@ -267,7 +279,7 @@ export function ProjectShare({
   useEffect(() => {
     if (defaultId === null && sessions && sessions.length > 0) setDefaultId(sessions[0].id);
   }, [defaultId, sessions]);
-  const selectedId = viewingTasks ? null : (requestedId ?? defaultId);
+  const selectedId = view === 'sessions' ? (requestedId ?? defaultId) : null;
 
   // The session behind `?session=` when it is not (or not yet) in the list.
   const [resolved, setResolved] = useState<PublicSessionSummary | null>(null);
@@ -299,6 +311,7 @@ export function ProjectShare({
     (id: string) => {
       const params = new URLSearchParams(searchParams.toString());
       params.delete('view');
+      params.delete('automation');
       params.set('session', id);
       router.replace(`${pathname}?${params.toString()}`, { scroll: false });
     },
@@ -308,6 +321,7 @@ export function ProjectShare({
   const selectTasks = useCallback(() => {
     const params = new URLSearchParams(searchParams.toString());
     params.delete('session');
+    params.delete('automation');
     params.set('view', 'tasks');
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }, [router, pathname, searchParams]);
@@ -324,6 +338,20 @@ export function ProjectShare({
     },
     [router, pathname, searchParams],
   );
+
+  /** The automations view, with one of them open beside the list or none. */
+  const selectAutomation = useCallback(
+    (id: string | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete('session');
+      params.set('view', 'automations');
+      if (id) params.set('automation', id);
+      else params.delete('automation');
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [router, pathname, searchParams],
+  );
+  const selectAutomations = useCallback(() => selectAutomation(null), [selectAutomation]);
 
   const groups = useMemo(() => groupByTime(sessions ?? []), [sessions]);
   const isOwner = share.viewer_is_owner;
@@ -382,13 +410,34 @@ export function ProjectShare({
     </ShareSidebarSection>
   );
 
-  const tasksNav = sharesTasks ? { active: viewingTasks, onSelect: selectTasks } : undefined;
+  const tasksNav = useMemo(
+    () => (sharesTasks ? { active: viewingTasks, onSelect: selectTasks } : undefined),
+    [sharesTasks, viewingTasks, selectTasks],
+  );
+  const automationsNav = useMemo(
+    () => (sharesAutomations ? { active: viewingAutomations, onSelect: selectAutomations } : undefined),
+    [sharesAutomations, viewingAutomations, selectAutomations],
+  );
   const openBoardHref = isOwner ? '/dashboard/tasks' : null;
 
   return (
-    <ShareShell token={token} share={share} sidebar={sidebar} tasksNav={tasksNav}>
+    <ShareShell token={token} share={share} sidebar={sidebar} tasksNav={tasksNav} automationsNav={automationsNav}>
       {viewingTasks ? (
         <SharedBoardView token={token} share={share} openHref={openBoardHref} />
+      ) : viewingAutomations ? (
+        <SharedAutomationsView
+          token={token}
+          project={project}
+          selectedId={requestedAutomation}
+          onSelect={selectAutomation}
+          openHref={
+            isOwner
+              ? requestedAutomation
+                ? `/dashboard/automation?automation=${encodeURIComponent(requestedAutomation)}`
+                : `/dashboard/automation?project=${encodeURIComponent(project.id)}`
+              : null
+          }
+        />
       ) : selected ? (
         <SharedSessionView
           key={selected.id}

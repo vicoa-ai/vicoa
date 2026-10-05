@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { ProjectPerson, ProjectGrantCreated, SessionShare } from './backend-api';
 import {
   GRANT_ROLE_OPTIONS,
+  SCOPE_LABELS,
+  SCOPE_ORDER,
   SESSION_ACCESS_OPTIONS,
+  automationsDeniedMessage,
   inviteOutcome,
   looksLikeEmail,
   personLines,
@@ -106,6 +109,13 @@ describe('toggleScope', () => {
 
   it('never leaves a grant with no scope', () => {
     expect(toggleScope(['tasks'], 'tasks')).toEqual(['tasks']);
+    expect(toggleScope(['automations'], 'automations')).toEqual(['automations']);
+  });
+
+  it('keeps automations last, wherever it was added', () => {
+    expect(toggleScope(['tasks', 'sessions'], 'automations')).toEqual(['tasks', 'sessions', 'automations']);
+    expect(toggleScope(['automations'], 'tasks')).toEqual(['tasks', 'automations']);
+    expect(toggleScope(['tasks', 'sessions', 'automations'], 'sessions')).toEqual(['tasks', 'automations']);
   });
 });
 
@@ -113,6 +123,39 @@ describe('scopeSummary', () => {
   it('reads naturally', () => {
     expect(scopeSummary(['sessions', 'tasks'])).toBe('Tasks and sessions');
     expect(scopeSummary(['sessions'])).toBe('Sessions');
+  });
+
+  it('lists three as a sentence, in canonical order', () => {
+    expect(scopeSummary(['automations', 'sessions', 'tasks'])).toBe('Tasks, sessions and automations');
+    expect(scopeSummary(['automations', 'tasks'])).toBe('Tasks and automations');
+    expect(scopeSummary(['automations'])).toBe('Automations');
+    expect(scopeSummary([])).toBe('');
+  });
+
+  it('offers every scope, automations included', () => {
+    expect(SCOPE_ORDER).toEqual(['tasks', 'sessions', 'automations']);
+    expect(SCOPE_LABELS.automations).toBe('Automations');
+  });
+});
+
+describe('automationsDeniedMessage', () => {
+  const forbidden = Object.assign(new Error('Requires admin access'), { status: 403 });
+
+  it('explains a refusal over automations in plain words', () => {
+    expect(automationsDeniedMessage(forbidden, ['tasks', 'sessions', 'automations'], 'invite')).toMatch(
+      /Untick Automations/,
+    );
+    expect(automationsDeniedMessage(forbidden, ['automations'], 'change')).toMatch(/change access/);
+    expect(automationsDeniedMessage(forbidden, ['tasks', 'automations'], 'remove')).toMatch(/remove access/);
+  });
+
+  it('leaves every other failure to the generic message', () => {
+    // A 403 on a write that never touched automations is a different refusal.
+    expect(automationsDeniedMessage(forbidden, ['tasks', 'sessions'], 'change')).toBeNull();
+    const conflict = Object.assign(new Error('Already shared'), { status: 409 });
+    expect(automationsDeniedMessage(conflict, ['automations'], 'invite')).toBeNull();
+    expect(automationsDeniedMessage(new Error('offline'), ['automations'], 'invite')).toBeNull();
+    expect(automationsDeniedMessage('nope', ['automations'], 'invite')).toBeNull();
   });
 });
 
@@ -146,10 +189,19 @@ describe('copy rules', () => {
     ...SESSION_ACCESS_OPTIONS.flatMap((o) => [o.label, o.description]),
     inviteOutcome({ ...person(), email_sent: false }),
     personLines(person({ pending: true })).secondary ?? '',
+    ...Object.values(SCOPE_LABELS),
+    scopeSummary(SCOPE_ORDER),
+    ...(['invite', 'change', 'remove'] as const).map(
+      (action) =>
+        automationsDeniedMessage(Object.assign(new Error(''), { status: 403 }), ['automations'], action) ?? '',
+    ),
   ];
 
-  it('has no em dashes in user-facing copy', () => {
-    for (const s of strings) expect(s).not.toContain('—');
+  it('has no em or en dashes in user-facing copy', () => {
+    for (const s of strings) {
+      expect(s).not.toContain('—');
+      expect(s).not.toContain('–');
+    }
   });
 
   it('labels roles', () => {

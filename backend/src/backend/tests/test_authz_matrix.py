@@ -35,6 +35,7 @@ from backend.main import app
 from shared import access, storage
 from shared.auth.tokens import TokenClaims
 from shared.database import (
+    GRANT_SCOPES,
     AgentInstance,
     AgentType,
     APIKey,
@@ -42,6 +43,7 @@ from shared.database import (
     Machine,
     Message,
     Project,
+    ProjectDirectory,
     ProjectGrant,
     SenderType,
     Task,
@@ -55,35 +57,39 @@ from shared.database.enums import AgentStatus, InstanceAccessLevel
 # ---------------------------------------------------------------------------
 # Subjects: every distinct standing a second user can have towards the owner.
 #
-# `tasks` / `sessions` are the effective role the subject should resolve to
-# in each area (None = invisible). `project` is the role for project-level
-# settings, which any grant scope confers.
+# `tasks` / `sessions` / `automations` are the effective role the subject
+# should resolve to in each area (None = invisible). `project` is the role for
+# project-level settings, which any grant scope confers.
 # ---------------------------------------------------------------------------
 
-Standing = tuple[str | None, str | None, str | None]  # (tasks, sessions, project)
+# (tasks, sessions, automations, project)
+Standing = tuple[str | None, str | None, str | None, str | None]
 
 SUBJECTS: dict[str, Standing] = {
-    "stranger": (None, None, None),
-    "viewer": ("viewer", "viewer", "viewer"),
-    "commenter": ("commenter", "commenter", "commenter"),
-    "editor": ("editor", "editor", "editor"),
-    "admin": ("admin", "admin", "admin"),
-    "owner": ("owner", "owner", "owner"),
+    "stranger": (None, None, None, None),
+    "viewer": ("viewer", "viewer", "viewer", "viewer"),
+    "commenter": ("commenter", "commenter", "commenter", "commenter"),
+    "editor": ("editor", "editor", "editor", "editor"),
+    "admin": ("admin", "admin", "admin", "admin"),
+    "owner": ("owner", "owner", "owner", "owner"),
     # A grant held by a team the subject is an ACTIVE member of.
-    "team_grant_editor": ("editor", "editor", "editor"),
+    "team_grant_editor": ("editor", "editor", "editor", "editor"),
     # The same grant, but the subject's membership is still pending / was removed.
-    "team_grant_editor_invited": (None, None, None),
-    "team_grant_editor_removed": (None, None, None),
+    "team_grant_editor_invited": (None, None, None, None),
+    "team_grant_editor_removed": (None, None, None, None),
     # The project is team-owned; the subject's team role maps onto it.
-    "team_project_member": ("editor", "editor", "editor"),
-    "team_project_admin": ("admin", "admin", "admin"),
-    "team_project_owner": ("owner", "owner", "owner"),
-    # Scoped grants: one area is invisible, the other resolves normally.
-    "sessions_only_editor": (None, "editor", "editor"),
-    "tasks_only_admin": ("admin", None, "admin"),
+    "team_project_member": ("editor", "editor", "editor", "editor"),
+    "team_project_admin": ("admin", "admin", "admin", "admin"),
+    "team_project_owner": ("owner", "owner", "owner", "owner"),
+    # Scoped grants: the areas left out are invisible, the rest resolve normally.
+    "sessions_only_editor": (None, "editor", None, "editor"),
+    "tasks_only_admin": ("admin", None, None, "admin"),
+    # An admin grant from before `automations` existed: it keeps administering
+    # people (over tasks + sessions) but never saw the automations.
+    "legacy_admin": ("admin", "admin", None, "admin"),
     # Legacy per-session share: READ ⇒ viewer on that session only, no project.
-    "session_share_read": (None, "viewer", None),
-    "session_share_write": (None, "editor", None),
+    "session_share_read": (None, "viewer", None, None),
+    "session_share_write": (None, "editor", None, None),
 }
 
 RANK = access.ROLE_RANK
@@ -174,7 +180,7 @@ def _grant(
         principal_type=principal_type,
         principal_id=principal_id,
         role=role,
-        scopes=scopes or ["tasks", "sessions"],
+        scopes=scopes or list(GRANT_SCOPES),
         granted_by_user_id=granted_by.id,
     )
     db.add(grant)
@@ -227,12 +233,22 @@ def world(test_db, test_user, request) -> World:
     db.add(queued)
 
     owner_machine = _machine(db, owner, "owner-box")
+    # The owner's checkout of the project, so the automation below files under
+    # it and collaborators on the project can read it.
+    db.add(
+        ProjectDirectory(
+            user_id=owner.id,
+            project_id=project.id,
+            machine_id=owner_machine.id,
+            local_path="/tmp/repo",
+        )
+    )
     automation = Automation(
         user_id=owner.id,
         title="nightly",
         prompt="do it",
         machine_id=owner_machine.id,
-        directory="/tmp",
+        directory="/tmp/repo",
         session_config={"agent": "claude"},
         schedule_kind="once",
     )
@@ -253,12 +269,16 @@ def world(test_db, test_user, request) -> World:
         granted_by_user_id=owner.id,
     )
     db.add(share)
+    # Without `automations`, so every grant administrator (the legacy admin
+    # included) may change or revoke it; the extra floor a grant carrying it
+    # adds is pinned in test_project_people.py.
     bystander_grant = _grant(
         db,
         project,
         principal_type="user",
         principal_id=bystander.id,
         role="viewer",
+        scopes=["tasks", "sessions"],
         granted_by=owner,
     )
 
@@ -285,6 +305,16 @@ def world(test_db, test_user, request) -> World:
             principal_id=subject.id,
             role="editor",
             scopes=["sessions"],
+            granted_by=owner,
+        )
+    elif subject_kind == "legacy_admin":
+        _grant(
+            db,
+            project,
+            principal_type="user",
+            principal_id=subject.id,
+            role="admin",
+            scopes=["tasks", "sessions"],
             granted_by=owner,
         )
     elif subject_kind == "tasks_only_admin":
@@ -398,7 +428,7 @@ def _quiet_side_effects(monkeypatch):
 @dataclass(frozen=True)
 class Endpoint:
     name: str
-    area: str  # 'tasks' | 'sessions' | 'project' | 'grants' | 'owner_only'
+    area: str  # 'tasks' | 'sessions' | 'project' | 'grants' | 'automations' | 'owner_only'
     minimum: str
     call: Callable[[TestClient, World], httpx.Response]
     # For list endpoints: extract the ids the response exposes so "invisible"
@@ -704,16 +734,65 @@ ENDPOINTS: list[Endpoint] = [
             f"/api/v1/agent-instances/{w.instance.id}/access/{w.share.id}"
         ),
     ),
-    # --- owner-only, permanently (§4 / §10.6) --------------------------------
-    # Automations, machines and API keys are never reachable through a grant
-    # of any kind — an automation is "run an agent with my credentials on my
-    # machine"; sharing it is an authorization trap.
+    # --- automations (§10.6) -------------------------------------------------
+    # Readable through the project the automation's folder files it under, by
+    # anyone whose standing covers its `automations` scope. Edit, delete and
+    # run-now are the
+    # author's alone: an automation runs an agent unattended on the author's
+    # machine with the author's credentials, so no grant of any kind — not
+    # even owning the project or the team — reaches them.
+    Endpoint(
+        "GET /automations?scope=all",
+        "automations",
+        "viewer",
+        lambda c, w: c.get("/api/v1/automations?scope=all"),
+        listed_ids=_ids(),
+    ),
+    Endpoint(
+        "GET /automations?project_id={id}",
+        "automations",
+        "viewer",
+        lambda c, w: c.get(f"/api/v1/automations?project_id={w.project.id}"),
+        listed_ids=_ids(),
+    ),
     Endpoint(
         "GET /automations/{id}",
-        "owner_only",
-        "owner",
+        "automations",
+        "viewer",
         lambda c, w: c.get(f"/api/v1/automations/{w.automation.id}"),
     ),
+    Endpoint(
+        "GET /automations/{id}/runs",
+        "automations",
+        "viewer",
+        lambda c, w: c.get(f"/api/v1/automations/{w.automation.id}/runs"),
+    ),
+    Endpoint(
+        "PATCH /automations/{id}",
+        "automations",
+        "owner",
+        lambda c, w: c.patch(
+            f"/api/v1/automations/{w.automation.id}", json={"title": "renamed"}
+        ),
+    ),
+    Endpoint(
+        "DELETE /automations/{id}",
+        "automations",
+        "owner",
+        lambda c, w: c.delete(f"/api/v1/automations/{w.automation.id}"),
+    ),
+    Endpoint(
+        "POST /automations/{id}/run",
+        "automations",
+        "owner",
+        lambda c, w: c.post(
+            f"/api/v1/automations/{w.automation.id}/run", json={"status": "failed"}
+        ),
+    ),
+    # --- owner-only, permanently (§4 / §10.6) --------------------------------
+    # The default list is your own automations only — what the CLI and mobile
+    # read. Machines and API keys are never reachable through a grant of any
+    # kind.
     Endpoint(
         "GET /automations",
         "owner_only",
@@ -807,12 +886,14 @@ _LISTED_OBJECT: dict[str, Callable[[World], str]] = {
     "GET /tasks": lambda w: str(w.task.id),
     "GET /agent-instances?scope=all": lambda w: str(w.instance.id),
     "GET /automations": lambda w: str(w.automation.id),
+    "GET /automations?project_id={id}": lambda w: str(w.automation.id),
+    "GET /automations?scope=all": lambda w: str(w.automation.id),
     "GET /references": lambda w: str(w.task.id),
 }
 
 
 def _standing_for(endpoint: Endpoint, standing: Standing) -> str | None:
-    tasks, sessions, project = standing
+    tasks, sessions, automations, project = standing
     if endpoint.area == "tasks":
         return tasks
     if endpoint.area == "sessions":
@@ -828,6 +909,14 @@ def _standing_for(endpoint: Endpoint, standing: Standing) -> str | None:
         if tasks is None or sessions is None:
             return "viewer"
         return tasks if RANK[tasks] <= RANK[sessions] else sessions
+    if endpoint.area == "automations":
+        # Through the project's `automations` scope only: a per-session share
+        # opens a transcript, never the schedule behind it. Owning the project
+        # or the team makes you an admin here, never the author — the literal
+        # author is resolved by the caller.
+        if automations is None:
+            return None
+        return "admin" if automations == "owner" else automations
     # owner_only: only the literal owner ever resolves — every grant-derived
     # standing, including team-project 'owner', is invisible here.
     return None
@@ -842,6 +931,8 @@ def test_authz_matrix(
     standing = SUBJECTS[subject_kind]
     if endpoint.area == "owner_only":
         role = "owner" if subject_kind == "owner" else None
+    elif endpoint.area == "automations" and subject_kind == "owner":
+        role = "owner"
     else:
         role = _standing_for(endpoint, standing)
     expected = expected_outcome(role, endpoint.minimum)
@@ -876,7 +967,7 @@ def test_every_dashboard_route_is_in_the_matrix_or_owner_only():
     }
     # Paths on the dashboard routers that carry a project/task/session id and
     # therefore need a standing decision. Anything new lands here → fails.
-    from backend.api import agents, project_grants, tasks
+    from backend.api import agents, automations, project_grants, tasks
 
     def paths(router):
         for route in router.routes:
@@ -910,6 +1001,9 @@ def test_every_dashboard_route_is_in_the_matrix_or_owner_only():
         # grantee, 409 for an owner or a team-derived standing. Not a
         # role floor, so it is exercised in test_project_people.py.
         ("POST", "/projects/{project_id}/leave"),
+        # Creating an automation targets the caller's own machine; there is
+        # no existing object to hold a standing on.
+        ("POST", "/automations"),
     }
     normalise = {
         "/projects/{project_id}": "/projects/{id}",
@@ -933,9 +1027,17 @@ def test_every_dashboard_route_is_in_the_matrix_or_owner_only():
         "/agent-instances/{instance_id}/access/{access_id}": "/agent-instances/{id}/access/{aid}",
         "/projects/{project_id}/grants": "/projects/{id}/grants",
         "/projects/{project_id}/grants/{grant_id}": "/projects/{id}/grants/{gid}",
+        "/automations/{automation_id}": "/automations/{id}",
+        "/automations/{automation_id}/runs": "/automations/{id}/runs",
+        "/automations/{automation_id}/run": "/automations/{id}/run",
     }
     missing = []
-    for router in (tasks.router, agents.router, project_grants.router):
+    for router in (
+        tasks.router,
+        agents.router,
+        project_grants.router,
+        automations.router,
+    ):
         for method, path in paths(router):
             if (method, path) in expected_uncovered:
                 continue
@@ -961,7 +1063,7 @@ class TestProjectResponseReportsTheCallersRealStanding:
         assert response.status_code == 200
         body = response.json()
         assert body["role"] == "admin"
-        assert sorted(body["scopes"]) == ["sessions", "tasks"]
+        assert sorted(body["scopes"]) == sorted(GRANT_SCOPES)
 
     @pytest.mark.parametrize("world", ["admin"], indirect=True)
     def test_list_and_detail_agree(self, subject_client, world):
@@ -989,4 +1091,4 @@ class TestProjectResponseReportsTheCallersRealStanding:
             f"/api/v1/projects/{world.project.id}", json={"name": "Renamed"}
         ).json()
         assert body["role"] == "owner"
-        assert sorted(body["scopes"]) == ["sessions", "tasks"]
+        assert sorted(body["scopes"]) == sorted(GRANT_SCOPES)

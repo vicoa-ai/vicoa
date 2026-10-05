@@ -68,6 +68,9 @@ stays unfiled ("No project") instead.
 
 Both the register hooks (servers routers) and the link-a-folder backfill
 (backend task_queries) call this one helper so the rule can never drift.
+
+Automations have no ``project_id`` of their own; ``resolve_automation_project_ids``
+derives one on read with the same tier-2 rule, from the automation's folder.
 """
 
 from __future__ import annotations
@@ -75,14 +78,21 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import or_, text
+from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
-from .models import AgentInstance
+from .automation_models import Automation
+from .models import AgentInstance, Machine
 from .task_models import Project, ProjectDirectory
+
+if TYPE_CHECKING:
+    from sqlalchemy import ColumnElement, Select
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +131,25 @@ def _path_at_or_under(session_path: str, local_path: str) -> bool:
     return session == base or session.startswith(base + "/")
 
 
+def _attachable_projects(
+    user_id: UUID,
+) -> tuple[Select[tuple[UUID]], Select[tuple[UUID]]]:
+    """The projects `user_id`'s work may be filed into, as (own, shared).
+
+    Own personal projects first, then the shared ones this user may contribute
+    to: `editor` or above for sessions. A viewer's work never attaches to
+    someone else's project — attaching is contributing.
+    """
+    # Lazy import: `shared.access` imports this package's models.
+    from shared.access import visible_project_select
+
+    own = visible_project_select(user_id, scope="me")
+    shared = visible_project_select(
+        user_id, scope="shared", grant_scope="sessions", min_role="editor"
+    )
+    return own, shared
+
+
 @dataclass(frozen=True)
 class _Match:
     project: Project
@@ -143,14 +172,7 @@ def _match_project(
     Deliberately does not exclude ``is_archived`` rows: activity in an archived
     project must re-match it so the caller can un-archive rather than duplicate.
     """
-    # Own personal projects, then the shared ones this user may contribute to.
-    # Lazy import: `shared.access` imports this package's models.
-    from shared.access import visible_project_select
-
-    own = visible_project_select(user_id, scope="me")
-    shared = visible_project_select(
-        user_id, scope="shared", grant_scope="sessions", min_role="editor"
-    )
+    own, shared = _attachable_projects(user_id)
 
     # Tier 1 — canonical git remote (dormant until the daemon reports a remote).
     if git_remote_url:
@@ -493,9 +515,81 @@ def backfill_project_id_for_directory(
     return len(adopt)
 
 
-# Public aliases of the two comparison helpers above. The `#` reference picker
-# resolves an *automation's* folder to a project — automations carry no
-# `project_id` column, so they re-run tier 2 by hand — and it must not drift
-# from the rules a session is matched by.
-canonical_path = _normalize_path
-path_at_or_under = _path_at_or_under
+def resolve_automation_project_ids(
+    db: Session, automations: Iterable[Automation]
+) -> dict[UUID, UUID]:
+    """Folder → project for each automation, by the session matcher's tier 2.
+
+    An automation carries no ``project_id`` (a session gets one stamped at
+    registration; an automation is only a recipe for one), so its project is
+    derived on read: its ``directory`` at or under one of its *owner's*
+    ``project_directories`` rows on the automation's machine, longest path
+    winning — where a session started from it would be filed. Like the matcher,
+    a row only counts while the owner may still attach work to that project
+    (:func:`_attachable_projects`): a viewer's automation never lands on someone
+    else's project, and a revoked grant stops filing it there at once. Paths are
+    compared canonically, ``~`` expanded with the machine's ``home_dir``.
+
+    Derived rather than stored so it can't go stale: the first run of an
+    automation in a fresh folder is what auto-creates the project and its
+    directory row, and a column stamped at create time would have missed it.
+
+    Feeds the dashboard's shared automation lists (who may see an automation
+    follows from this project) and the ``#`` picker's project icon. Three
+    queries for the whole batch, whatever its size or mix of owners.
+    """
+    rows = list(automations)
+    if not rows:
+        return {}
+    machine_ids = {a.machine_id for a in rows}
+    per_owner: list[ColumnElement[bool]] = []
+    for owner_id in {a.user_id for a in rows}:
+        own, shared = _attachable_projects(owner_id)
+        per_owner.append(
+            and_(
+                ProjectDirectory.user_id == owner_id,
+                or_(
+                    ProjectDirectory.project_id.in_(own),
+                    ProjectDirectory.project_id.in_(shared),
+                ),
+            )
+        )
+    homes: dict[UUID, str | None] = {
+        machine_id: home_dir
+        for machine_id, home_dir in db.query(Machine.id, Machine.home_dir).filter(
+            Machine.id.in_(machine_ids)
+        )
+    }
+    links: dict[tuple[UUID, UUID], list[tuple[str, UUID]]] = defaultdict(list)
+    for user_id, machine_id, local_path, project_id in db.query(
+        ProjectDirectory.user_id,
+        ProjectDirectory.machine_id,
+        ProjectDirectory.local_path,
+        ProjectDirectory.project_id,
+    ).filter(ProjectDirectory.machine_id.in_(machine_ids), or_(*per_owner)):
+        links[(user_id, machine_id)].append(
+            (_normalize_path(local_path, homes.get(machine_id)), project_id)
+        )
+
+    matched: dict[UUID, UUID] = {}
+    for automation in rows:
+        directory = _normalize_path(
+            automation.directory, homes.get(automation.machine_id)
+        )
+        best: tuple[str, UUID] | None = None
+        for local, project_id in links.get(
+            (automation.user_id, automation.machine_id), ()
+        ):
+            if not _path_at_or_under(directory, local):
+                continue
+            # Longest link wins; two projects linked to the very same folder on
+            # one machine tie-break on id, so the answer never flickers.
+            if (
+                best is None
+                or len(local) > len(best[0])
+                or (len(local) == len(best[0]) and str(project_id) < str(best[1]))
+            ):
+                best = (local, project_id)
+        if best is not None:
+            matched[automation.id] = best[1]
+    return matched

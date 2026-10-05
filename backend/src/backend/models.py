@@ -104,7 +104,14 @@ class PrincipalResponse(BaseModel):
 
 ProjectRoleLiteral = Literal["viewer", "commenter", "editor", "admin", "owner"]
 GrantRoleLiteral = Literal["viewer", "commenter", "editor", "admin"]
-GrantScopeLiteral = Literal["tasks", "sessions"]
+GrantScopeLiteral = Literal["tasks", "sessions", "automations"]
+
+
+class AutomationRefResponse(BaseModel):
+    """Just enough of an automation to name it and link to it."""
+
+    id: UUID
+    title: str
 
 
 # ============================================================================
@@ -321,6 +328,10 @@ class AgentInstanceDetail(BaseModel):
     # Clients draw the avatar stack and "Prompted by" only when there is more
     # than one, so a solo session renders exactly as before.
     participants: list[PrincipalResponse] = []
+    # The automation whose run started this session, when the caller may see
+    # that automation (its author, or a collaborator on the project it is
+    # filed under). None for a hand-started session.
+    automation: AutomationRefResponse | None = None
 
     @model_validator(mode="after")
     def _extract_worktree_name(self) -> "AgentInstanceDetail":
@@ -672,9 +683,8 @@ class ProjectGrantCreateRequest(BaseModel):
     email: str | None = Field(default=None, max_length=255)
     team_id: UUID | None = None
     role: GrantRoleLiteral = "viewer"
-    scopes: list[GrantScopeLiteral] = Field(
-        default_factory=lambda: ["tasks", "sessions"], min_length=1
-    )
+    # Omitted ⇒ every scope the granter administers (an owner: all of them).
+    scopes: list[GrantScopeLiteral] | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def _one_principal(self) -> "ProjectGrantCreateRequest":
@@ -1166,7 +1176,9 @@ class AutomationResponse(BaseModel):
     id: UUID
     title: str
     prompt: str
-    machine_id: UUID
+    # None only on someone else's automation (see `owner` below): the row is
+    # read-only to them and carries nothing that locates the author's machine.
+    machine_id: UUID | None
     directory: str
     worktree: dict | None = None
     session_config: dict
@@ -1183,6 +1195,17 @@ class AutomationResponse(BaseModel):
     last_run_status: AutomationRunStatusLiteral | None = None
     created_at: datetime
     updated_at: datetime
+    # Set only on an automation someone else wrote (listed by `?project_id=`,
+    # or a GET by a collaborator): its author and the caller's standing (never
+    # `owner`). Such a row is stripped the way a shared session row is: no
+    # machine id, the folder's name without its path, no worktree path, the
+    # display subset of `session_config`, no agent reference.
+    owner: PrincipalResponse | None = None
+    viewer_role: ProjectRoleLiteral | None = None
+    # The project the automation's folder files it under, derived on read
+    # (`resolve_automation_project_ids`). Set on every dashboard row; None
+    # when it is filed nowhere, and on the CLI's owner-only surface.
+    project_id: UUID | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1387,9 +1410,10 @@ class ReferenceDetail(BaseModel):
 # ============================================================================
 
 ShareKindLiteral = Literal["session", "project"]
-# What a project link carries. The same two words a project *grant* uses
-# (`GrantScopeLiteral`), because they name the same halves of a project.
-ShareScopeLiteral = Literal["tasks", "sessions"]
+# What a project link carries. The same words a project *grant* uses
+# (`GrantScopeLiteral`), because they name the same parts of a project.
+ShareScopeLiteral = Literal["tasks", "sessions", "automations"]
+SHARE_SCOPE_ORDER = ("tasks", "sessions", "automations")
 ShareAudienceLiteral = Literal["public", "authenticated"]
 
 
@@ -1477,17 +1501,18 @@ def normalise_share_selection(
     else:
         # De-duplicate but keep the caller's order out of the stored value:
         # scopes are a set, and a stable order makes rows comparable.
-        scopes = [s for s in ("tasks", "sessions") if s in scopes]
+        scopes = [s for s in SHARE_SCOPE_ORDER if s in scopes]
         if not scopes:
             raise ValueError("a project link must carry at least one scope")
         if filters is not None:
             # Validate against the per-scope schema; store the normalised
             # form, and drop the half of it the link does not carry.
             parsed = ShareProjectFilters.model_validate(filters)
+            # `automations` has no filters of its own.
             filters = {
-                scope: getattr(parsed, scope).model_dump(mode="json", exclude_none=True)
+                scope: value.model_dump(mode="json", exclude_none=True)
                 for scope in scopes
-                if getattr(parsed, scope) is not None
+                if (value := getattr(parsed, scope, None)) is not None
             } or None
     if allow_comments and "tasks" not in scopes:
         raise ValueError("Comments need a link that carries tasks")
@@ -1678,6 +1703,29 @@ class PublicSessionsPage(BaseModel):
     limit: int
     offset: int
     has_more: bool
+
+
+class PublicAutomation(BaseModel):
+    """One automation a project link carries: what it asks the agent to do,
+    with which agent and model, and when. Never who wrote it, which machine it
+    runs on or where its folder is — the line a collaborator's redacted row
+    draws, minus the author and the folder's name."""
+
+    id: UUID
+    title: str
+    prompt: str
+    session_config: dict | None = None
+    schedule_kind: AutomationScheduleKindLiteral
+    frequency: dict | None = None
+    timezone: str
+    next_run_at: datetime | None = None
+    enabled: bool
+    last_run_at: datetime | None = None
+    last_run_status: AutomationRunStatusLiteral | None = None
+
+
+class PublicAutomationsResponse(BaseModel):
+    items: list[PublicAutomation]
 
 
 class PublicBoardResponse(BaseModel):

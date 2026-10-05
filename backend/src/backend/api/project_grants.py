@@ -18,7 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from shared.database import Project, ProjectGrant, Team, TeamMember, User
+from shared.database import GRANT_SCOPES, Project, ProjectGrant, Team, TeamMember, User
 from shared.database.session import get_db
 
 from ..auth.dependencies import get_current_user
@@ -35,7 +35,8 @@ from ..models import (
 
 router = APIRouter(tags=["sharing"])
 
-_BOTH_SCOPES = ["tasks", "sessions"]
+# The owner and a team that owns the project hold every scope.
+_ALL_SCOPES = list(GRANT_SCOPES)
 
 
 def _visible_project(db: Session, user_id: UUID, project_id: UUID) -> Project:
@@ -127,7 +128,7 @@ def _people(
             ProjectPersonResponse(
                 principal=_team_principal(owner_team),
                 role="owner",
-                scopes=_BOTH_SCOPES,  # type: ignore[arg-type]
+                scopes=_ALL_SCOPES,  # type: ignore[arg-type]
                 member_count=counts.get(owner_team.id, 0),
                 is_owner=True,
             )
@@ -138,7 +139,7 @@ def _people(
                 principal=_user_principal(owner_user),
                 email=owner_user.email or None,
                 role="owner",
-                scopes=_BOTH_SCOPES,  # type: ignore[arg-type]
+                scopes=_ALL_SCOPES,  # type: ignore[arg-type]
                 is_owner=True,
                 is_self=owner_user.id == caller_id,
             )
@@ -156,7 +157,7 @@ def _person(
     counts: dict[UUID, int],
     caller_id: UUID,
 ) -> ProjectPersonResponse:
-    scopes = [s for s in _BOTH_SCOPES if s in (grant.scopes or [])]
+    scopes = [s for s in _ALL_SCOPES if s in (grant.scopes or [])]
     if grant.principal_type == "team":
         team = teams.get(grant.principal_id) if grant.principal_id else None
         principal = (
@@ -204,7 +205,7 @@ def list_project_people(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[ProjectPersonResponse]:
-    """The owner and every grant. Admin on both scopes — the same floor as
+    """The owner and every grant. Admin on tasks and sessions — the same floor as
     granting, so the addresses on this list only reach people who could add
     them in the first place (§10.4)."""
     project = _visible_project(db, current_user.id, project_id)
@@ -234,7 +235,7 @@ def create_project_grant_endpoint(
             principal_id=request.team_id,
             invited_email=request.email,
             role=request.role,
-            scopes=list(request.scopes),
+            scopes=list(request.scopes) if request.scopes is not None else None,
         )
     except GrantError as exc:
         raise _grant_error(exc) from exc

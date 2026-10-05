@@ -20,11 +20,12 @@
 // for the eye or for the click.
 //
 // One dialog shares one subject: a session, or a project. A project link is
-// one URL with a content selection — "Tasks" and "Sessions", the same two
-// halves a project grant names — rather than one link per kind of content,
-// which made sharing a project twice produce two URLs that had to explain
-// themselves to each other. Where the dialog was opened only decides which
-// half starts ticked. Sharing is never a page.
+// one URL with a content selection — "Tasks", "Sessions" and "Automations",
+// the same parts a project grant names — rather than one link per kind of
+// content, which made sharing a project twice produce two URLs that had to
+// explain themselves to each other. Where the dialog was opened only decides
+// which part starts ticked (tasks or sessions: a link is public, so publishing
+// automation prompts is left to a deliberate tick). Sharing is never a page.
 //
 // `ShareLinkPanel` is the body without the Dialog chrome, for any other host.
 //
@@ -76,13 +77,16 @@ import type {
 } from '@/lib/backend-api';
 import { shareUrl } from '@/lib/public-share-api';
 import {
+  automationsRefusalMessage,
   buildShareFilters,
+  describeScopes,
   filterFieldsFromLink,
   formDiffersFromLink,
   KEEP_EXPIRY,
   SCOPE_ORDER,
   settingsKey,
 } from '@/lib/share-link-settings';
+import { SCOPE_LABELS } from '@/lib/share-people';
 import { useCopyToClipboard } from '@/lib/hooks/use-session-operations';
 import { DatePickerPill, STATUS_CONFIG, STATUS_ORDER } from '@/components/dashboard/task-ui';
 import { cn } from '@/lib/utils';
@@ -117,14 +121,6 @@ const AUDIENCE_LABEL: Record<ShareAudience, string> = {
   public: 'Anyone with the link',
   authenticated: 'Vicoa users only',
 };
-
-const SCOPE_LABEL: Record<ShareScope, string> = { tasks: 'Tasks', sessions: 'Sessions' };
-
-/** "Tasks and sessions" / "Tasks" — what a project link carries, in words. */
-function describeScopes(scopes: ShareScope[]): string {
-  const named = SCOPE_ORDER.filter((s) => scopes.includes(s)).map((s) => SCOPE_LABEL[s]);
-  return named.length === 2 ? 'Tasks and sessions' : (named[0] ?? 'Nothing');
-}
 
 /** How long a burst of changes collects before it becomes one PATCH. */
 const LIVE_SAVE_DELAY_MS = 450;
@@ -623,11 +619,14 @@ export function ShareLinkPanel({ api, target }: { api: BackendAPI | null; target
       // One click: the new link is on the clipboard before the panel re-renders.
       void copy(shareUrl(link.token), link.id);
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to create link');
+      setFormError(
+        automationsRefusalMessage(err, isProject ? scopes : []) ??
+          (err instanceof Error ? err.message : 'Failed to create link'),
+      );
     } finally {
       setCreating(false);
     }
-  }, [api, target, expiry, kind, scopes, sharesTasks, buildFilters, audience, allowComments, showOwner, showBranch, showsTranscripts, copy]);
+  }, [api, target, expiry, kind, isProject, scopes, sharesTasks, buildFilters, audience, allowComments, showOwner, showBranch, showsTranscripts, copy]);
 
   /** What the form says, as the fields a PATCH would carry. */
   const formSettings = useMemo(
@@ -682,7 +681,10 @@ export function ShareLinkPanel({ api, target }: { api: BackendAPI | null; target
       // link actually says rather than leaving a lie on screen.
       seedForm(current);
       lastSaved.current = null;
-      setSaveError(err instanceof Error ? err.message : 'the request did not go through');
+      setSaveError(
+        (isProject ? automationsRefusalMessage(err, formSettings.scopes, current.scopes) : null) ??
+          (err instanceof Error ? err.message : 'the request did not go through'),
+      );
     } finally {
       setSaving(false);
     }
@@ -758,10 +760,17 @@ export function ShareLinkPanel({ api, target }: { api: BackendAPI | null; target
                 onCheckedChange={() => toggleScope(scope)}
                 disabled={lockLastScope && scopes.includes(scope)}
               >
-                {SCOPE_LABEL[scope]}
+                {SCOPE_LABELS[scope]}
               </SwitchOption>
             ))}
           </div>
+          {/* A prompt can say more than its author meant to publish, so say
+              what ticking this puts on the page. */}
+          {scopes.includes('automations') && (
+            <span className="text-[11px] leading-snug text-muted-foreground">
+              Automations: what each one asks the agent to do, and when it runs.
+            </span>
+          )}
         </div>
       )}
 

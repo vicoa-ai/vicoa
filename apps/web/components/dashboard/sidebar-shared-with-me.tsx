@@ -19,7 +19,14 @@
 
 import { useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { ChevronRight, ListTodo, LogOut, MoreHorizontal, PanelLeftOpen } from 'lucide-react';
+import {
+  CalendarClock,
+  ChevronRight,
+  ListTodo,
+  LogOut,
+  MoreHorizontal,
+  PanelLeftOpen,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -275,6 +282,19 @@ export function SidebarSharedWithMe({
                         >
                           <ListTodo className="h-3.5 w-3.5" />
                           Open task board
+                        </DropdownMenuItem>
+                      )}
+                      {(project.scopes ?? []).includes('automations') && (
+                        <DropdownMenuItem
+                          className="cursor-pointer gap-2 text-xs"
+                          onSelect={() =>
+                            router.push(
+                              `/dashboard/automation?project=${encodeURIComponent(project.id)}`,
+                            )
+                          }
+                        >
+                          <CalendarClock className="h-3.5 w-3.5" />
+                          Automations
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuItem

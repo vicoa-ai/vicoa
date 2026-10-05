@@ -6,7 +6,7 @@
 // who then find the project under "Shared with me" in their own sidebar.
 //
 // Notion-shaped: one composer row on top (an address or a team, a role, for a
-// project which halves it covers, Invite), then the list. The owner row is
+// project which parts it covers, Invite), then the list. The owner row is
 // pinned first and read-only. Every other row changes role, scopes or goes
 // away from its `⋯` menu, and each change is applied as it is made — like the
 // Link tab, there is no Save.
@@ -56,7 +56,9 @@ import { principalFromResponse, type Principal } from '@/lib/principals';
 import {
   GRANT_ROLE_OPTIONS,
   SCOPE_LABELS,
+  SCOPE_ORDER,
   SESSION_ACCESS_OPTIONS,
+  automationsDeniedMessage,
   inviteOutcome,
   looksLikeEmail,
   personLines,
@@ -84,7 +86,8 @@ export type PeopleTarget =
 const FOCUS_RING = 'outline-none focus-visible:ring-1 focus-visible:ring-ring';
 const SELECT_TRIGGER =
   'h-9 text-xs focus:ring-0 focus:ring-offset-0 focus-visible:ring-2 focus-visible:ring-ring';
-const ALL_SCOPES: GrantScope[] = ['tasks', 'sessions'];
+/** What a new grant covers until the inviter unticks something: everything. */
+const ALL_SCOPES: GrantScope[] = SCOPE_ORDER;
 
 /** Failure state shared by both variants: a seat limit, or anything else. */
 interface Failure {
@@ -92,9 +95,12 @@ interface Failure {
   message: string | null;
 }
 
-function failureFrom(err: unknown, fallback: string): Failure {
+/** `denied` is the plain-words reason for a refusal the caller recognised
+ *  (see `automationsDeniedMessage`); it wins over the server's generic text. */
+function failureFrom(err: unknown, fallback: string, denied: string | null = null): Failure {
   const seat = seatLimitFromError(err);
   if (seat) return { seat: { detail: seat.detail }, message: null };
+  if (denied) return { seat: null, message: denied };
   return { seat: null, message: err instanceof Error ? err.message : fallback };
 }
 
@@ -143,6 +149,7 @@ function PeopleComposer<R extends string>({
   roleOptions,
   defaultRole,
   withScopes,
+  defaultScopes = ALL_SCOPES,
   busy,
   onSubmit,
 }: {
@@ -150,6 +157,8 @@ function PeopleComposer<R extends string>({
   roleOptions: RoleOption<R>[];
   defaultRole: R;
   withScopes: boolean;
+  /** The scopes ticked to start with; all of them unless the caller can't share some. */
+  defaultScopes?: GrantScope[];
   busy: boolean;
   /** Resolves true when the invite landed, so the fields can clear. */
   onSubmit: (value: ComposerSubmit<R>) => Promise<boolean>;
@@ -157,7 +166,7 @@ function PeopleComposer<R extends string>({
   const [text, setText] = useState('');
   const [team, setTeam] = useState<TeamSummary | null>(null);
   const [role, setRole] = useState<R>(defaultRole);
-  const [scopes, setScopes] = useState<GrantScope[]>(ALL_SCOPES);
+  const [scopes, setScopes] = useState<GrantScope[]>(defaultScopes);
   const [hint, setHint] = useState<string | null>(null);
 
   const ready = team !== null || text.trim().length > 0;
@@ -279,7 +288,7 @@ function PeopleComposer<R extends string>({
         {roleOptions.find((o) => o.value === role)?.description}
       </p>
       {withScopes && (
-        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
           <span>Can see</span>
           {ALL_SCOPES.map((scope) => {
             const on = scopes.includes(scope);
@@ -431,6 +440,27 @@ function ProjectPeople({
   const [notice, setNotice] = useState<string | null>(null);
   const [inviting, setInviting] = useState(false);
   const [pendingRow, setPendingRow] = useState<string | null>(null);
+  // What the caller may hand out: the scopes their own standing covers (all
+  // of them for the owner or the owning team). An admin whose grant predates
+  // automations starts without it ticked, which is also the server's default.
+  const [shareable, setShareable] = useState<GrantScope[]>(ALL_SCOPES);
+
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    api
+      .listProjects()
+      .then((list) => {
+        const own = list.find((p) => p.id === projectId)?.scopes;
+        if (!cancelled && own && own.length > 0) {
+          setShareable(ALL_SCOPES.filter((s) => own.includes(s)));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [api, projectId]);
 
   const load = useCallback(async () => {
     if (!api) return;
@@ -468,7 +498,9 @@ function ProjectPeople({
       onChanged?.();
       return true;
     } catch (err) {
-      setFailure(failureFrom(err, 'Failed to share.'));
+      setFailure(
+        failureFrom(err, 'Failed to share.', automationsDeniedMessage(err, value.scopes, 'invite')),
+      );
       return false;
     } finally {
       setInviting(false);
@@ -485,7 +517,11 @@ function ProjectPeople({
       setPeople((rows) => rows?.map((r) => (r.id === next.id ? next : r)) ?? rows);
       onChanged?.();
     } catch (err) {
-      setFailure(failureFrom(err, 'Failed to update access.'));
+      // Standing is checked over what the grant covered and what it will cover.
+      const touched = [...person.scopes, ...(data.scopes ?? [])];
+      setFailure(
+        failureFrom(err, 'Failed to update access.', automationsDeniedMessage(err, touched, 'change')),
+      );
     } finally {
       setPendingRow(null);
     }
@@ -501,7 +537,9 @@ function ProjectPeople({
       setPeople((rows) => rows?.filter((r) => r.id !== person.id) ?? rows);
       onChanged?.();
     } catch (err) {
-      setFailure(failureFrom(err, 'Failed to remove access.'));
+      setFailure(
+        failureFrom(err, 'Failed to remove access.', automationsDeniedMessage(err, person.scopes, 'remove')),
+      );
     } finally {
       setPendingRow(null);
     }
@@ -510,10 +548,13 @@ function ProjectPeople({
   return (
     <div className="grid gap-4">
       <PeopleComposer
+        // Remount once the caller's own scopes are known, so the defaults follow.
+        key={shareable.join(',')}
         teams={teams}
         roleOptions={GRANT_ROLE_OPTIONS}
         defaultRole="viewer"
         withScopes
+        defaultScopes={shareable}
         busy={inviting}
         onSubmit={invite}
       />

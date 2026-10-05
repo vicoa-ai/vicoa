@@ -92,7 +92,7 @@ export function DetailPanel({
     if (automation) {
       setTitle(automation.title);
       setPrompt(automation.prompt);
-      setMachineId(automation.machine_id);
+      setMachineId(automation.machine_id ?? '');
       setDirectory(automation.directory);
       setWorktree({
         mode: automation.worktree?.mode ?? 'none',

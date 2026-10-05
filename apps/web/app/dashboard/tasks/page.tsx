@@ -654,6 +654,7 @@ function TasksPageInner() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52 text-xs">
             <DropdownMenuItem onSelect={() => updateActiveView({ projectFilter: 'all' })}>
+              <ListTodo className="mr-2 size-3.5 text-muted-foreground" />
               All projects
               {projectFilter === 'all' && <Check className="ml-auto h-3 w-3" />}
             </DropdownMenuItem>

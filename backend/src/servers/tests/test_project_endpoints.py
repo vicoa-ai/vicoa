@@ -70,7 +70,11 @@ class TestList:
         assert by_id[str(empty.id)]["task_count"] == 0
         # Owner-only surface: the caller owns everything it can see.
         assert by_id[str(vicoa.id)]["role"] == "owner"
-        assert sorted(by_id[str(vicoa.id)]["scopes"]) == ["sessions", "tasks"]
+        assert sorted(by_id[str(vicoa.id)]["scopes"]) == [
+            "automations",
+            "sessions",
+            "tasks",
+        ]
 
     def test_archived_hidden_unless_asked(self, client, test_db, test_user):
         _project(test_db, test_user.id, "Live")

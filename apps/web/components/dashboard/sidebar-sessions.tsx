@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import {
+  CalendarClock,
   Loader2,
   ListFilter,
   Archive,
@@ -1557,6 +1558,12 @@ export function SidebarSessions({
                 const followedShared =
                   dbProject !== undefined && isFollowedSharedProject(dbProject) ? dbProject : null;
                 const sharedBoard = followedShared?.scopes?.includes('tasks') ?? false;
+                // Every automation filed in the project that we may see: our
+                // own, and collaborators' when it is shared with that scope.
+                const projectAutomationsHref =
+                  dbProject && (dbProject.scopes ?? []).includes('automations')
+                    ? `/dashboard/automation?project=${encodeURIComponent(dbProject.id)}`
+                    : null;
                 const projectHeader = label ? (
                   // Wrapper carries the drag handle and hover group so the
                   // collapse toggle, actions menu, and "+" can be sibling buttons
@@ -1606,7 +1613,11 @@ export function SidebarSessions({
                         )}
                       />
                     </button>
-                    {(projectSettingsHref || canArchiveProject || canShareProject || followedShared) && (
+                    {(projectSettingsHref ||
+                      canArchiveProject ||
+                      canShareProject ||
+                      followedShared ||
+                      projectAutomationsHref) && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button
@@ -1626,6 +1637,15 @@ export function SidebarSessions({
                             >
                               <Settings className="h-3.5 w-3.5" />
                               Project settings
+                            </DropdownMenuItem>
+                          )}
+                          {projectAutomationsHref && (
+                            <DropdownMenuItem
+                              className="cursor-pointer gap-2 text-xs"
+                              onSelect={() => router.push(projectAutomationsHref)}
+                            >
+                              <CalendarClock className="h-3.5 w-3.5" />
+                              Automations
                             </DropdownMenuItem>
                           )}
                           {canShareProject && dbProject && (

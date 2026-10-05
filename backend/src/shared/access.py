@@ -8,6 +8,9 @@ where ownership is `projects.team_id` (NULL ⇒ `projects.user_id` owns it, SET 
 the team does), a project grant is a `project_grants` row held by the user or
 by one of their active teams, a session grant is the pre-existing
 `user_instance_access` / `team_instance_access`, and the link capability is P4.
+Automations are read-only to everyone but their author, through the project
+their folder files them under and its `automations` scope
+(`foreign_automation_role`).
 
 Lives in `shared/` because both server processes need it, and it depends only
 on the models. Two lenses run through it:
@@ -47,7 +50,7 @@ from shared.database.share_models import ShareLink
 from shared.database.task_models import Project, Task
 
 Role = Literal["viewer", "commenter", "editor", "admin", "owner"]
-GrantScope = Literal["tasks", "sessions"]
+GrantScope = Literal["tasks", "sessions", "automations"]
 OwnershipScope = Literal["me", "shared", "all"]
 
 ROLE_RANK: dict[str, int] = {
@@ -593,6 +596,26 @@ def shared_instance_select(user_id: UUID) -> Select[tuple[UUID]]:
         AgentInstance.user_id != user_id,
         AgentInstance.status != AgentStatus.DELETED,
     )
+
+
+# --- automations --------------------------------------------------------------
+
+
+def foreign_automation_role(standing: ProjectAccess | None) -> Role | None:
+    """A collaborator's role on someone else's automation, given their standing
+    on the project the automation's folder files it under (§10.6).
+
+    Only the 'automations' scope counts — its own toggle on a grant, so whoever
+    shares a project decides whether its automations go with it (owners and
+    team members always cover it). A per-session share confers nothing here; it
+    opens one transcript, not the schedule behind it. Capped at 'admin' like a
+    session: 'owner' of an automation means its author, and editing, running
+    and deleting stay the author's alone, because an automation runs an agent
+    unattended on the author's machine with the author's credentials.
+    """
+    if standing is None or not standing.covers("automations"):
+        return None
+    return _foreign_session_role(standing.role)
 
 
 # --- share links (P4) ---------------------------------------------------------

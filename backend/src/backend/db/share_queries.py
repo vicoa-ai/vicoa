@@ -31,7 +31,7 @@ from uuid import UUID
 from sqlalchemy import desc, false, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
-from shared import access
+from shared import access, grantee_view
 from shared.database import (
     AgentInstance,
     AgentStatus,
@@ -50,7 +50,10 @@ from shared.database.agent_profile_models import AgentProfile
 from shared.database.session import SessionLocal
 
 from ..models import (
+    SHARE_SCOPE_ORDER,
     PrincipalResponse,
+    PublicAutomation,
+    PublicAutomationsResponse,
     PublicBoardResponse,
     PublicMessage,
     PublicMessagesPage,
@@ -66,6 +69,7 @@ from ..models import (
     UpdateShareLinkRequest,
     normalise_share_selection,
 )
+from . import automation_queries
 from .queries import (
     DISPLAY_SESSION_CONFIG_KEYS,
     _get_instance_message_stats,
@@ -408,9 +412,7 @@ def update_share_link(
             project_id=link.project_id,
             # Union: standing over what it showed and over what it will show.
             scopes=[
-                s
-                for s in ("tasks", "sessions")
-                if s in {*stored_scopes, *wanted_scopes}
+                s for s in SHARE_SCOPE_ORDER if s in {*stored_scopes, *wanted_scopes}
             ],
         )
     except ShareTargetNotFoundError:
@@ -768,6 +770,44 @@ def public_sessions(
         limit=limit,
         offset=offset,
         has_more=offset + len(rows) < total,
+    )
+
+
+# A project rarely runs more than a handful; this only bounds a pathological one.
+MAX_PUBLIC_AUTOMATIONS = 200
+
+
+def public_automations(
+    db: Session, grant: access.ShareGrant
+) -> PublicAutomationsResponse:
+    """The automations a project link carries: every one filed in the project,
+    whoever wrote it — the same set the project's sessions come from — read-only
+    and stripped to what it does and when. Empty for a session link and for a
+    project link without the `automations` scope."""
+    if (
+        grant.kind != "project"
+        or grant.project_id is None
+        or not grant.covers("automations")
+    ):
+        return PublicAutomationsResponse(items=[])
+    rows = automation_queries.automations_filed_in(db, grant.project_id)
+    return PublicAutomationsResponse(
+        items=[
+            PublicAutomation(
+                id=a.id,
+                title=a.title,
+                prompt=a.prompt,
+                session_config=grantee_view.display_session_config(a.session_config),
+                schedule_kind=a.schedule_kind,  # type: ignore[arg-type]
+                frequency=a.frequency,
+                timezone=a.timezone,
+                next_run_at=a.next_run_at,
+                enabled=a.enabled,
+                last_run_at=a.last_run_at,
+                last_run_status=a.last_run_status,  # type: ignore[arg-type]
+            )
+            for a in rows[:MAX_PUBLIC_AUTOMATIONS]
+        ]
     )
 
 

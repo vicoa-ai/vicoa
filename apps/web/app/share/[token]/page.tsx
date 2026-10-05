@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { getSupabaseToken } from '@/lib/auth/supabase-helpers';
 import { fetchPublicShare } from '@/lib/public-share-api';
 import type { PublicShareResponse } from '@/lib/backend-api';
+import { scopeSummary } from '@/lib/share-people';
 import { ShareViewer } from './share-viewer';
 
 // The token is the capability and the target is live — nothing here may be
@@ -25,12 +26,9 @@ async function loadShare(token: string): Promise<PublicShareResponse | null> {
   }
 }
 
-/** "Tasks", "Sessions", "Tasks and sessions" — what a project link carries. */
+/** "Tasks", "Tasks and sessions", "Tasks, sessions and automations": what a project link carries. */
 function scopeWords(share: PublicShareResponse): string {
-  const tasks = share.scopes.includes('tasks');
-  const sessions = share.scopes.includes('sessions');
-  if (tasks && sessions) return 'Tasks and sessions';
-  return tasks ? 'Tasks' : 'Sessions';
+  return scopeSummary(share.scopes) || 'Sessions';
 }
 
 function shareTitle(share: PublicShareResponse): string {

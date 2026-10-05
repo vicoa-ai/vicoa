@@ -10,7 +10,8 @@ import { messageAuthorResolver, transcriptBylines } from '@/lib/session-people';
 import { useCurrentUserId } from '@/lib/hooks/use-current-user-id';
 import { agentPrincipal, useAgentProfiles } from '@/lib/use-agent-profiles';
 import { Button } from '@/components/ui/button';
-import { X, ArrowDown, Pin, Loader2, Menu, PanelLeft, Folder, FolderPlus, MessageCircle, FileCode, Share } from 'lucide-react';
+import { X, ArrowDown, Pin, Loader2, Menu, PanelLeft, Folder, FolderPlus, MessageCircle, FileCode, Share, CalendarClock } from 'lucide-react';
+import Link from 'next/link';
 import { useDesktopChrome } from '@/components/dashboard/desktop-chrome-context';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { attachSelectionDragFix } from '@/lib/selection-drag-fix';
@@ -2397,6 +2398,29 @@ function AgentInstanceContent() {
               viewerRole={isOwner ? null : instance.viewer_role}
               canPrompt={canPrompt}
             />
+            {/* Provenance: the automation whose run started this session. The
+                backend sends it only when the viewer may open that automation,
+                its own row or a read-only shared one. */}
+            {instance.automation && (
+              <>
+                <span className="text-muted-foreground flex-shrink-0">·</span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Link
+                      href={`/dashboard/automation?automation=${instance.automation.id}`}
+                      style={NO_DRAG}
+                      className="flex min-w-0 max-w-[14vw] cursor-pointer items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+                    >
+                      <CalendarClock className="h-3.5 w-3.5 flex-shrink-0" />
+                      <span className="truncate">{instance.automation.title}</span>
+                    </Link>
+                  </TooltipTrigger>
+                  <TooltipContent align="start">
+                    <p>Started by the automation &ldquo;{instance.automation.title}&rdquo;</p>
+                  </TooltipContent>
+                </Tooltip>
+              </>
+            )}
             {instance.project && (
               <>
                 <span className="text-muted-foreground flex-shrink-0">·</span>
