@@ -25,9 +25,10 @@
 // content, which made sharing a project twice produce two URLs that had to
 // explain themselves to each other. Where the dialog was opened only decides
 // which part starts ticked (tasks or sessions: a link is public, so publishing
-// automation prompts is left to a deliberate tick). Sharing is never a page.
+// automation prompts is left to a deliberate tick).
 //
-// `ShareLinkPanel` is the body without the Dialog chrome, for any other host.
+// `ShareLinkPanel` is the body without the Dialog chrome, for any other host:
+// Project settings → Sharing lays it out beside the People panel.
 //
 // Beside the Link tab sits People (P5, `share-people-panel.tsx`): the same
 // subject shared with named people or teams instead of with a URL. The dialog

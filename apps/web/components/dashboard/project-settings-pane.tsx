@@ -8,6 +8,8 @@
  *   General         Display (name / icon) · Folders (one row per machine) ·
  *                   Owner (personal or a team's; move) · Danger zone
  *                   (archive / delete)
+ *   Sharing         People (named grants) · Link; the share dialog's two
+ *                   panels, for whoever administers the project
  *   Git & Worktree  Worktree hooks, bound to one linked folder
  *   Tasks           Task key prefix · pointer to the labels
  *
@@ -53,6 +55,8 @@ import { DirectoryPickerPopover } from '@/components/dashboard/directory-picker-
 import { MoveProjectDialog } from '@/components/dashboard/move-project-dialog';
 import { ProjectDisplaySection } from '@/components/dashboard/project-display-section';
 import { ConfirmDeleteDialog } from '@/components/dashboard/session-dialogs';
+import { ShareLinkPanel } from '@/components/dashboard/share-link-dialog';
+import { SharePeoplePanel } from '@/components/dashboard/share-people-panel';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
 import { WorktreeSetupSection } from '@/components/dashboard/worktree-setup-section';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
@@ -161,10 +165,22 @@ export function ProjectSettingsPane({
     );
   }
 
+  // Same gate as the sidebar's "Share project…": sharing is administering, and
+  // the logged-out desktop has no account to share from.
+  const canShare = !isDesktopLocal() && projectRoleAtLeast(project.role, 'admin');
+  const sections = PROJECT_SETTINGS_SECTIONS.filter((entry) => entry.id !== 'sharing' || canShare);
+  const shown: ProjectSettingsSection = section === 'sharing' && !canShare ? 'general' : section;
+  const isEmoji = !project.icon_image_uri && Boolean(project.icon);
+
   return (
     <section className="flex flex-col gap-6">
       <div className="flex items-center gap-3">
-        <ProjectIcon project={project} className="size-8 rounded-md" />
+        <ProjectIcon
+          project={project}
+          // An emoji is a glyph, so it takes its size from the font, not the
+          // box: without this it keeps the sidebar's text-xs in a 32px slot.
+          className={cn('size-8 rounded-md', isEmoji && 'text-2xl')}
+        />
         <h1 className="min-w-0 truncate text-2xl font-light tracking-tight text-foreground">
           {project.name}
         </h1>
@@ -176,8 +192,8 @@ export function ProjectSettingsPane({
       </div>
 
       <div role="tablist" className="flex gap-1 border-b border-border/60">
-        {PROJECT_SETTINGS_SECTIONS.map((entry) => {
-          const active = entry.id === section;
+        {sections.map((entry) => {
+          const active = entry.id === shown;
           return (
             <button
               key={entry.id}
@@ -198,7 +214,7 @@ export function ProjectSettingsPane({
         })}
       </div>
 
-      {section === 'general' ? (
+      {shown === 'general' ? (
         <GeneralTab
           project={project}
           machines={machines}
@@ -208,7 +224,9 @@ export function ProjectSettingsPane({
             onProjectDeleted();
           }}
         />
-      ) : section === 'worktree' ? (
+      ) : shown === 'sharing' ? (
+        <SharingTab project={project} />
+      ) : shown === 'worktree' ? (
         <WorktreeTab
           project={project}
           machines={machines}
@@ -591,6 +609,55 @@ function DangerZone({
           onDeleted();
         }}
       />
+    </div>
+  );
+}
+
+// --- Sharing ------------------------------------------------------------------
+
+/**
+ * Who can reach the project, in one place: named people and teams (grants),
+ * then the project's share link. These are the share dialog's own panels, so
+ * the sidebar's "Share project…" and this tab can never disagree.
+ */
+function SharingTab({ project }: { project: ProjectResponse }) {
+  // One instance for the tab's life: both panels refetch when `api` changes.
+  const api = useMemo(() => getBackendAPI(true), []);
+
+  return (
+    <div className="flex flex-col gap-8">
+      <div className="space-y-3">
+        <SectionHeading
+          title="People"
+          description="Give specific people or a team access to this project. They find it under Shared with me, with the role you pick."
+        />
+        <SectionCard>
+          <div className="p-4">
+            <SharePeoplePanel
+              key={project.id}
+              api={api}
+              target={{ kind: 'project', projectId: project.id, name: project.name }}
+            />
+          </div>
+        </SectionCard>
+      </div>
+
+      <div className="space-y-3">
+        <SectionHeading
+          title="Link"
+          description="One link to this project. Pick what it carries; whoever opens it follows along live, new tasks and sessions included, until you revoke it."
+        />
+        <SectionCard>
+          <div className="p-4">
+            <ShareLinkPanel
+              key={project.id}
+              api={api}
+              // Same starting half as the sidebar's "Share project…".
+              target={{ kind: 'project', projectId: project.id, name: project.name, initialScope: 'sessions' }}
+            />
+          </div>
+        </SectionCard>
+      </div>
     </div>
   );
 }

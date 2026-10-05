@@ -59,7 +59,7 @@ export function ProjectDisplaySection({
           triggerClassName={cn('h-9 w-9', isEmoji && 'border border-border')}
           // Larger shared radius on the big Display icon; sidebar/nav keep the
           // small default. Emoji's frame radius comes from the trigger.
-          iconClassName={isEmoji ? 'size-9 text-xl' : 'size-9 rounded-md'}
+          iconClassName={isEmoji ? 'size-9 text-2xl' : 'size-9 rounded-md'}
           onUploadImage={async (file) => {
             onUpdated(await api.uploadProjectIcon(project.id, file));
           }}

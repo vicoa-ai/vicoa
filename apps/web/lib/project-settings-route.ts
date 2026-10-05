@@ -7,13 +7,18 @@
 
 export const PROJECT_SETTINGS_SECTIONS = [
   { id: 'general', label: 'General' },
+  { id: 'sharing', label: 'Sharing' },
   { id: 'worktree', label: 'Git & Worktree' },
   { id: 'tasks', label: 'Tasks' },
 ] as const;
 
 export type ProjectSettingsSection = (typeof PROJECT_SETTINGS_SECTIONS)[number]['id'];
 
-/** Resolve the `?section=` param to a known tab (general is the default). */
+/**
+ * Resolve the `?section=` param to a known tab (general is the default). The
+ * pane still falls back to General for a tab this project does not offer
+ * (Sharing, for anyone who cannot administer it).
+ */
 export function projectSettingsSection(param: string | null): ProjectSettingsSection {
   return PROJECT_SETTINGS_SECTIONS.some((section) => section.id === param)
     ? (param as ProjectSettingsSection)
