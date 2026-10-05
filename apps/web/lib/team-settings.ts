@@ -168,7 +168,7 @@ export interface MemberActions {
   changeRoleLockedReason: string | null;
   /** "Remove" (someone else) or "Leave team" (yourself), or null for none. */
   remove: 'remove' | 'leave' | null;
-  /** "Make owner…": the owner handing the team to another active member. */
+  /** "Make owner": the owner handing the team to another active member. */
   makeOwner: boolean;
 }
 

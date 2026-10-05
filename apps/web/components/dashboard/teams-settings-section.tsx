@@ -197,7 +197,7 @@ function TeamOwnOffer({ className }: { className?: string }) {
       <p className="font-medium">Teams need Pro or Vicoa Team</p>
       <p className="mt-0.5 text-muted-foreground">
         With Vicoa Team you pay a seat for everyone who edits. With Pro, you edit alongside teammates who have
-        their own Pro. Viewers are always free.
+        their own Pro. Viewers are free.
       </p>
       <div className="mt-2.5 flex flex-wrap gap-2">
         <Button asChild size="sm" className="h-8 cursor-pointer text-xs">
@@ -702,7 +702,8 @@ function TeamDetailView({ teamId }: { teamId: string }) {
             <DangerRow
               title="Delete team"
               description="Its projects, agents and labels move back to whoever created them, and anyone who had access through this team loses it."
-              action="Delete team…"
+              action="Delete team"
+              icon={Trash2}
               onClick={() => {
                 setDangerError(null);
                 setConfirm({ kind: 'delete' });
@@ -712,7 +713,8 @@ function TeamDetailView({ teamId }: { teamId: string }) {
             <DangerRow
               title="Leave team"
               description="You lose access to anything shared with this team until someone invites you again."
-              action="Leave team…"
+              action="Leave team"
+              icon={LogOut}
               disabled={!myMember}
               onClick={() => {
                 setDangerError(null);
@@ -1177,7 +1179,7 @@ function MemberRow({
           <Pill tone="warning">Seat lapsed</Pill>
         </span>
       )}
-      <Pill tone={invited ? 'warning' : 'success'}>{invited ? 'Invited' : 'Active'}</Pill>
+      {invited && <Pill tone="warning">Invited</Pill>}
       <span className="w-14 shrink-0 text-right text-xs text-muted-foreground">{TEAM_ROLE_LABEL[member.role]}</span>
       {hasMemberActions(actions) ? (
         <DropdownMenu>
@@ -1190,7 +1192,7 @@ function MemberRow({
               <MoreHorizontal className="h-4 w-4" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-64 font-mono text-xs">
+          <DropdownMenuContent align="end" className="w-56 font-mono text-xs">
             {actions.showChangeRole &&
               (actions.changeRoleLockedReason ? (
                 <DropdownMenuSub>
@@ -1235,7 +1237,7 @@ function MemberRow({
             {actions.makeOwner && (
               <DropdownMenuItem onSelect={onMakeOwner} className="cursor-pointer gap-2 text-xs">
                 <Crown className="h-3.5 w-3.5 text-muted-foreground" />
-                Make owner…
+                Make owner
               </DropdownMenuItem>
             )}
             {(actions.showChangeRole || actions.makeOwner) && actions.remove && <DropdownMenuSeparator />}
@@ -1250,7 +1252,7 @@ function MemberRow({
                 ) : (
                   <UserMinus className="h-3.5 w-3.5" />
                 )}
-                {actions.remove === 'leave' ? 'Leave team…' : invited ? 'Cancel invitation…' : 'Remove…'}
+                {actions.remove === 'leave' ? 'Leave team' : invited ? 'Cancel invitation' : 'Remove'}
               </DropdownMenuItem>
             )}
           </DropdownMenuContent>
@@ -1425,12 +1427,14 @@ function DangerRow({
   title,
   description,
   action,
+  icon: Icon,
   disabled = false,
   onClick,
 }: {
   title: string;
   description: string;
   action: string;
+  icon: typeof LogOut;
   disabled?: boolean;
   onClick: () => void;
 }) {
@@ -1446,8 +1450,9 @@ function DangerRow({
         variant="outline"
         disabled={disabled}
         onClick={onClick}
-        className="h-8 shrink-0 text-xs text-destructive hover:text-destructive disabled:cursor-not-allowed"
+        className="h-8 shrink-0 gap-1.5 text-xs text-destructive hover:text-destructive disabled:cursor-not-allowed"
       >
+        <Icon className="h-3.5 w-3.5" />
         {action}
       </Button>
     </div>
