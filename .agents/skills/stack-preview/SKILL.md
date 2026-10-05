@@ -69,7 +69,12 @@ those:
   This runs the same code the reviewer will use.
 - Write rows directly only for things no endpoint creates (agent sessions and
   their messages, automation runs). A `.py` seed can import the models from
-  `shared.database`.
+  `shared.database`. On a branch older than the fix that registers
+  `AgentProfile` there, flushing an `Automation` or `AgentInstance` fails with
+  `NoReferencedTableError: agent_profiles`; add
+  `import shared.database.agent_profile_models`.
+- Session status `COMPLETED` means archived: default lists and share links
+  hide it. For a session that looks finished, use `AWAITING_INPUT`.
 - Run `stack-preview.sh seed FILE`. A `.py` runs in the backend venv with
   `PYTHONPATH` set; anything else runs under bash. Seeds get `PREVIEW_URL`,
   `PREVIEW_BACKEND`, `DATABASE_URL`, `OWNER_EMAIL/PASSWORD/TOKEN` and the

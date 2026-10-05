@@ -11,7 +11,6 @@ that can read a file can use these.
 |---|---|
 | [`vicoa-cli/`](vicoa-cli/) | Operate Vicoa from the terminal with the `vicoa` CLI — sessions and transcripts across machines, the task backlog, projects and labels, share links, scheduled automations. |
 | [`live-preview/`](live-preview/) | Start (or reuse) the project's dev server, expose it through a Cloudflare or ngrok tunnel, and return the public URL for the Vicoa app's Live Preview. Runs only when invoked as `/live-preview`. |
-| [`stack-preview/`](stack-preview/) | For working on Vicoa itself: run the whole stack from a checkout (throwaway Postgres, backend, realtime server, web dashboard) behind one tunnel URL, seed review accounts, and check it end to end, so a branch can be reviewed from another machine. Runs only when invoked as `/stack-preview`. |
 
 ## Install
 

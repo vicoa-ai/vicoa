@@ -31,6 +31,7 @@ vicoa/
 │   ├── desktop/          # Electron shell — bundles apps/web + the backend daemon
 │   └── mobile/           # Flutter app (iOS/Android)
 ├── skills/               # agent skills that teach a coding agent to drive Vicoa
+├── .agents/skills/       # skills for working on this repo (linked from .claude/skills)
 └── .github/workflows/    # CI + release workflows, path-filtered per component
 ```
 
@@ -135,6 +136,18 @@ local-first with background sync.
 3. Update the API clients (web / mobile / daemon).
 4. Then the UI.
 5. Each component has its own test suite — run the relevant ones.
+
+## Previewing a branch
+
+To let someone review a branch from another machine (or in the Vicoa app),
+`.agents/skills/stack-preview/` runs the whole stack from the checkout behind
+one public tunnel URL. Invoke it as `/stack-preview` in Claude Code or
+`$stack-preview` in Codex; any other agent can follow its `SKILL.md`. It never
+starts on its own.
+
+Skills for working on this repo live in `.agents/skills/`, where Codex reads
+them; each gets a relative symlink in `.claude/skills/` for Claude Code.
+`skills/` is the separate catalog published for Vicoa users.
 
 ## House rules
 

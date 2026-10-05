@@ -21,7 +21,10 @@ secrets/
 *service-account*.json
 credentials.json
 
-.claude/
+# Claude Code's local state stays out, except the shared project skills: each
+# entry in .claude/skills is a symlink into .agents/skills, which Codex reads.
+**/.claude/*
+!/.claude/skills/
 .temp/
 
 # Local Netlify folder
