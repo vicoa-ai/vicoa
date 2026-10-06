@@ -10,7 +10,8 @@ Auth is a per-launch nonce:
 * WebSocket — offered subprotocols must carry ``vicoa-local.<nonce>`` (the
   renderer) or ``vicoa-key.<nonce>`` (the headless child's session WS client,
   which received the nonce as its ``VICOA_API_KEY``); bad credential closes
-  4401. A present ``Origin`` header must equal the allowed origin.
+  4401. A present ``Origin`` header must equal the allowed origin for
+  ``vicoa-local.``, and be a loopback origin for ``vicoa-key.``.
 * REST — ``Authorization: Bearer <nonce>`` on everything except ``/healthz``.
 
 Nonce comparisons are constant-time (``hmac.compare_digest``).
@@ -111,6 +112,16 @@ def _loopback_origin_variants(origin: str) -> list[str]:
         f"{parts.scheme}://{'[::1]' if host == '::1' else host}{port}"
         for host in _LOOPBACK_HOSTNAMES
     ]
+
+
+def _is_loopback_origin(origin: str) -> bool:
+    """Whether ``origin`` is http(s) on a loopback host, at any port."""
+    try:
+        parts = urlsplit(origin)
+        _ = parts.port  # raises ValueError on a malformed port
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and parts.hostname in _LOOPBACK_HOSTNAMES
 
 
 # Stable pseudo user id for the single local user (server_info parity — the
@@ -1001,17 +1012,25 @@ def create_local_app(
             logger.info("local WS handshake rejected: bad or missing nonce")
             await _safe_close(websocket, code=_CLOSE_UNAUTHORIZED)
             return
-        # Enforce the Origin allowlist ONLY for the renderer (`vicoa-local.`),
-        # which runs in a browser context and sends a truthful, unspoofable
-        # Origin. The headless agent / SDK connect with `vicoa-key.` from a
-        # non-browser process: websocket-client stamps a loopback Origin
-        # (http://127.0.0.1:<port>) that a remote page cannot forge, and the
-        # per-launch nonce is the real credential — so those connections are
-        # Origin-exempt (mirrors the cloud server, where daemons send no Origin).
-        if kind == "local":
-            origin = websocket.headers.get("origin")
-            if origin is not None and origin not in allowed_origins:
-                logger.info("local WS rejected: origin %r not allowed", origin)
+        # A browser always sends a truthful Origin that a page cannot forge, so
+        # a present Origin says which site is driving this socket:
+        # * `vicoa-local.` (the Electron renderer) must come from the renderer's
+        #   own origin.
+        # * `vicoa-key.` (the headless agent / SDK) connects from a non-browser
+        #   process: websocket-client stamps `http://<host>:<port>` of the URL
+        #   it dialled (loopback here), and the `websockets` library sends no
+        #   Origin at all. So no Origin or a loopback one passes, and any other
+        #   Origin is a web page replaying a leaked nonce through this prefix.
+        origin = websocket.headers.get("origin")
+        if origin is not None:
+            if kind == "local":
+                origin_ok = origin in allowed_origins
+            else:
+                origin_ok = _is_loopback_origin(origin)
+            if not origin_ok:
+                logger.info(
+                    "local WS rejected: origin %r not allowed for %s", origin, kind
+                )
                 await _safe_close(websocket, code=_CLOSE_FORBIDDEN)
                 return
 

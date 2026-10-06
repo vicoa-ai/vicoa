@@ -3,8 +3,9 @@
 Mirrors the cloud handshake tests (tests/test_ws_endpoint.py) but against the
 desktop local server: credentials ride the subprotocol list
 (``vicoa-local.<nonce>`` for the renderer, ``vicoa-key.<nonce>`` for the
-headless child), Origin is pinned when present, and rpc-calls route into the
-local dispatcher without a machine-routing hop.
+headless child), a present Origin must be the renderer's own for
+``vicoa-local.`` and loopback for ``vicoa-key.``, and rpc-calls route into
+the local dispatcher without a machine-routing hop.
 """
 
 import base64
@@ -141,20 +142,77 @@ def test_accepts_allowed_origin(client: TestClient) -> None:
         assert _handshake(ws)["type"] == "server_info"
 
 
-def test_agent_vicoa_key_is_exempt_from_origin_check(client: TestClient) -> None:
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://127.0.0.1:8931",
+        "http://localhost:8931",
+        "http://[::1]:8931",
+        "https://127.0.0.1:8931",
+        "http://127.0.0.1",
+    ],
+)
+def test_agent_vicoa_key_accepts_any_loopback_origin(
+    client: TestClient, origin: str
+) -> None:
     """The headless agent connects with ``vicoa-key.`` and a loopback Origin
     that ``websocket-client`` stamps automatically (``http://127.0.0.1:<port>``,
-    which never matches the renderer origin). It must NOT be rejected — the
-    nonce is the credential; only the browser renderer (``vicoa-local.``) is
-    Origin-checked. Regression for the local-mode "agent never replies" bug
-    (its session WS was 403'd, so user messages never reached Claude)."""
+    which never matches the renderer origin). It must NOT be rejected — any
+    loopback Origin passes for ``vicoa-key.``; only the renderer
+    (``vicoa-local.``) is pinned to its exact origin. Regression for the
+    local-mode "agent never replies" bug (its session WS was 403'd, so user
+    messages never reached Claude)."""
     with client.websocket_connect(
         "/ws",
         subprotocols=["vicoa-ws", f"vicoa-key.{NONCE}"],
-        headers={"Origin": "http://127.0.0.1:8931"},
+        headers={"Origin": origin},
     ) as ws:
         info = _handshake(ws, scope="session-scoped", instance_id="abc")
         assert info["type"] == "server_info"
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://evil.example",
+        "https://evil.example:8931",
+        "http://127.0.0.1.evil.example",
+        "http://localhost.evil.example:3000",
+        "null",
+        "file://",
+        "chrome-extension://abcdefghijklmnop",
+        "http://localhost:not-a-port",
+    ],
+)
+def test_agent_vicoa_key_rejects_non_loopback_origin(
+    client: TestClient, origin: str
+) -> None:
+    """A web page that got hold of the nonce must not be able to replay it
+    from the user's browser under the ``vicoa-key.`` prefix: the browser
+    stamps the page's real Origin, which is not loopback."""
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with client.websocket_connect(
+            "/ws",
+            subprotocols=["vicoa-ws", f"vicoa-key.{NONCE}"],
+            headers={"Origin": origin},
+        ) as ws:
+            ws.receive_json()
+    assert excinfo.value.code == 4403
+
+
+def test_renderer_vicoa_local_still_pinned_to_its_own_origin(
+    client: TestClient,
+) -> None:
+    """A loopback Origin is enough for ``vicoa-key.``, not for the renderer:
+    another local page (some dev server on a different port) is not it."""
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with client.websocket_connect(
+            "/ws",
+            subprotocols=GOOD_SUBPROTOCOLS,
+            headers={"Origin": "http://127.0.0.1:8931"},
+        ) as ws:
+            ws.receive_json()
+    assert excinfo.value.code == 4403
 
 
 def test_rejects_malformed_hello(client: TestClient) -> None:

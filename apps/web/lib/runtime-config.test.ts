@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getDesktopWindowChrome } from './runtime-config';
+import { getDesktopTelemetryConfig, getDesktopWindowChrome } from './runtime-config';
 
 /** Stub the preload-injected globals for one assertion. */
 function stubWindow(injected: Record<string, unknown>) {
@@ -43,5 +43,33 @@ describe('getDesktopWindowChrome', () => {
   it('is the macOS shape on plain web (no platform signal)', () => {
     stubWindow({});
     expect(getDesktopWindowChrome()).toBe('mac');
+  });
+});
+
+describe('getDesktopTelemetryConfig', () => {
+  it('never carries the daemon nonce', () => {
+    stubWindow({
+      __VICOA_DESKTOP__: {
+        mode: 'local',
+        wsUrl: 'ws://127.0.0.1:43118/ws',
+        apiBase: 'http://127.0.0.1:43118',
+        token: 'per-launch-secret-nonce',
+        cloudApiBase: 'https://vicoa.example.com',
+      },
+    });
+    const config = getDesktopTelemetryConfig();
+    expect(config).toEqual({
+      mode: 'local',
+      wsUrl: 'ws://127.0.0.1:43118/ws',
+      apiBase: 'http://127.0.0.1:43118',
+      cloudApiBase: 'https://vicoa.example.com',
+      cloudWsUrl: undefined,
+    });
+    expect(JSON.stringify(config)).not.toContain('per-launch-secret-nonce');
+  });
+
+  it('is null on plain web', () => {
+    stubWindow({});
+    expect(getDesktopTelemetryConfig()).toBeNull();
   });
 });

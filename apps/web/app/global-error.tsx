@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import posthog from 'posthog-js';
+import { getDesktopTelemetryConfig } from '@/lib/runtime-config';
 
 /**
  * Last-resort error boundary. `global-error.tsx` replaces the root layout, so it
@@ -11,8 +12,8 @@ import posthog from 'posthog-js';
  * desktop app's worst failure mode, since a packaged build has no console.
  *
  * It renders its own <html>/<body> (the layout is bypassed) and, on desktop,
- * reports the error to PostHog with the runtime config snapshot so a Windows-only
- * failure is diagnosable without a local repro.
+ * reports the error to PostHog with the runtime config snapshot (minus the daemon
+ * nonce) so a Windows-only failure is diagnosable without a local repro.
  */
 export default function GlobalError({
   error,
@@ -23,17 +24,14 @@ export default function GlobalError({
 }) {
   useEffect(() => {
     try {
-      const desktop =
-        typeof window !== 'undefined'
-          ? (window as unknown as { __VICOA_DESKTOP__?: unknown }).__VICOA_DESKTOP__
-          : undefined;
       posthog.capture('desktop_render_error', {
         boundary: 'global',
         message: error?.message,
         digest: error?.digest,
         stack: error?.stack?.slice(0, 2000),
         pathname: typeof window !== 'undefined' ? window.location?.pathname : undefined,
-        desktop_config: desktop,
+        // Redacted: the raw config carries the daemon nonce.
+        desktop_config: getDesktopTelemetryConfig() ?? undefined,
       });
     } catch {
       // never let error reporting throw from an error boundary

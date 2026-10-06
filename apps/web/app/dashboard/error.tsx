@@ -4,13 +4,15 @@ import { useEffect } from 'react';
 import { RotateCw } from 'lucide-react';
 import posthog from 'posthog-js';
 import { Button } from '@/components/ui/button';
+import { getDesktopTelemetryConfig } from '@/lib/runtime-config';
 
 /**
  * Error boundary for the authenticated dashboard segment (`/dashboard/*`). This
  * is where the desktop app lands after sign-in + paywall, and where the reported
  * Windows "blank main page" surfaces. A throw here used to bubble to nothing and
  * paint white; now it shows a recoverable card and reports the error to PostHog
- * with the desktop runtime config so a Windows-only failure is diagnosable.
+ * with the desktop runtime config (minus the daemon nonce) so a Windows-only
+ * failure is diagnosable.
  *
  * (A pure client-segment HANG — an empty Suspense fallback that never resolves —
  * is not a throw and won't reach here; that path is addressed by the visible
@@ -25,17 +27,14 @@ export default function DashboardError({
 }) {
   useEffect(() => {
     try {
-      const desktop =
-        typeof window !== 'undefined'
-          ? (window as unknown as { __VICOA_DESKTOP__?: unknown }).__VICOA_DESKTOP__
-          : undefined;
       posthog.capture('desktop_render_error', {
         boundary: 'dashboard',
         message: error?.message,
         digest: error?.digest,
         stack: error?.stack?.slice(0, 2000),
         pathname: typeof window !== 'undefined' ? window.location?.pathname : undefined,
-        desktop_config: desktop,
+        // Redacted: the raw config carries the daemon nonce.
+        desktop_config: getDesktopTelemetryConfig() ?? undefined,
       });
     } catch {
       // never let error reporting throw from an error boundary

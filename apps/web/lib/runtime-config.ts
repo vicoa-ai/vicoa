@@ -80,6 +80,31 @@ export function getDesktopConfig(): DesktopRuntimeConfig | null {
   return window.__VICOA_DESKTOP__ ?? null;
 }
 
+/** The desktop config fields that are safe to send off the machine. */
+export type DesktopTelemetryConfig = Pick<
+  DesktopRuntimeConfig,
+  'mode' | 'wsUrl' | 'apiBase' | 'cloudApiBase' | 'cloudWsUrl'
+>;
+
+/**
+ * The desktop config for telemetry (`desktop_render_error`), or `null` on plain
+ * web / SSR. `token` is the per-launch nonce that authenticates to the local
+ * daemon, so it must never reach PostHog. Fields are copied from an allowlist
+ * rather than spread-minus-token, so a secret added to the config later stays
+ * out until someone opts it in here.
+ */
+export function getDesktopTelemetryConfig(): DesktopTelemetryConfig | null {
+  const config = getDesktopConfig();
+  if (config === null) return null;
+  return {
+    mode: config.mode,
+    wsUrl: config.wsUrl,
+    apiBase: config.apiBase,
+    cloudApiBase: config.cloudApiBase,
+    cloudWsUrl: config.cloudWsUrl,
+  };
+}
+
 /** True only in logged-out desktop mode (everything served by the local daemon). */
 export function isDesktopLocal(): boolean {
   return getDesktopConfig()?.mode === 'local';
