@@ -14,7 +14,16 @@ import {
   parseCloudStatus,
   resolveDaemonCommand,
 } from './daemon-manager';
-import { mergeDaemonPath, mergePathEntries, readLoginShellPath } from './resolve-path';
+import {
+  mergeDaemonPath,
+  mergePathEntries,
+  parseEnvBlock,
+  readLoginShellEnv,
+  readLoginShellPath,
+  readSavedShellPath,
+  resolveDaemonEnv,
+  shellVarsForDaemon,
+} from './resolve-path';
 
 // --- resolveDaemonCommand ---------------------------------------------------
 assert.deepEqual(resolveDaemonCommand({}), ['vicoa'], 'default command is vicoa on PATH');
@@ -154,6 +163,22 @@ assert.equal(parseCloudStatus('not json'), undefined, 'malformed body -> undefin
   );
   assert.equal(env.PATH, '/usr/bin', 'empty pathOverride leaves PATH intact');
 }
+{
+  // Login-shell vars layer over the inherited env; the contract vars still win.
+  const env = buildSpawnEnv(
+    { PATH: '/usr/bin', HOME: '/home/u', LANG: 'C' },
+    {
+      nonce: 'n',
+      origin: 'o',
+      pathOverride: '/shell/bin:/usr/bin',
+      shellVars: { JAVA_HOME: '/jdk', LANG: 'en_US.UTF-8', VICOA_LOCAL_NONCE: 'shell' },
+    },
+  );
+  assert.equal(env.JAVA_HOME, '/jdk', 'shell-only var reaches the daemon');
+  assert.equal(env.LANG, 'en_US.UTF-8', 'shell value wins over launchd');
+  assert.equal(env.VICOA_LOCAL_NONCE, 'n', 'contract var is not overridable');
+  assert.equal(env.PATH, '/shell/bin:/usr/bin', 'PATH still comes from pathOverride');
+}
 
 // --- mergePathEntries (PATH merge/de-dup pure fn) -----------------------------
 assert.equal(
@@ -201,6 +226,34 @@ assert.equal(
   assert.equal(noShell.path, null, 'nothing new over the inherited PATH -> leave PATH alone');
 }
 
+// --- parseEnvBlock / shellVarsForDaemon -----------------------------------------
+{
+  const mark = '__M__';
+  const block = `Welcome!\n${mark}PATH=/a:/b\0NOTE=x=y\0MULTI=one\ntwo\0${mark}bye\n`;
+  assert.deepEqual(
+    parseEnvBlock(block, mark),
+    { PATH: '/a:/b', NOTE: 'x=y', MULTI: 'one\ntwo' },
+    'only the fenced block; values keep "=" and newlines',
+  );
+  assert.equal(parseEnvBlock(`${mark}PATH=/a\0`, mark), null, 'unterminated fence -> null');
+  assert.equal(parseEnvBlock('PATH=/a\0', mark), null, 'no fence -> null');
+  assert.equal(parseEnvBlock(`${mark}HOME=/h\0${mark}`, mark), null, 'no PATH -> null');
+
+  assert.deepEqual(
+    shellVarsForDaemon({
+      PATH: '/a',
+      JAVA_HOME: '/jdk',
+      SHLVL: '2',
+      PWD: '/x',
+      _: '/usr/bin/env',
+      VICOA_API_URL: 'http://pinned',
+      ELECTRON_RUN_AS_NODE: '1',
+    }),
+    { JAVA_HOME: '/jdk' },
+    'PATH, shell bookkeeping, VICOA_* and ELECTRON_* never reach the daemon',
+  );
+}
+
 // --- credentials.json (mirror of backend/src/vicoa/credentials_state.py) ------
 {
   const hosted = 'https://agents.vicoa.ai';
@@ -245,42 +298,92 @@ assert.equal(
   assert.equal(withoutWriteKey(perDeployment, selfHost), null, 'nothing to remove -> null (no write)');
 }
 
-// --- readLoginShellPath (async; the probe must never block or reject) ------------
+// --- readLoginShellEnv / resolveDaemonEnv (async; never block or reject) --------
+/** A stand-in "shell": ignores its flags, runs the probe command (its last arg) with `body` around it. */
+function writeFakeShell(dir: string, name: string, body: string): string {
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, `#!/bin/sh\nfor a; do last="$a"; done\n${body}\n`, { mode: 0o755 });
+  return file;
+}
+
 async function checkLoginShellProbe(): Promise<void> {
   if (process.platform === 'win32') {
     return; // POSIX shells only
   }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vicoa-check-'));
+  const base = { PATH: '/usr/bin:/bin', HOME: '/nonexistent-home' };
   try {
-    // A stand-in "shell" that ignores its -lic flags and prints a PATH: the
-    // probe must hand it back verbatim, trimmed.
-    const fakeShell = path.join(tmp, 'fake-shell');
-    fs.writeFileSync(fakeShell, '#!/bin/sh\nprintf "%s\\n" "/fake/one:/fake/two"\n', { mode: 0o755 });
-    assert.equal(
-      await readLoginShellPath({ SHELL: fakeShell, PATH: '/usr/bin:/bin' }),
-      '/fake/one:/fake/two',
-      'probe returns the shell-printed PATH',
+    // Output around the fenced block (a banner, a goodbye) is ignored, and the
+    // probe flag is visible to the profile.
+    const goodShell = writeFakeShell(
+      tmp,
+      'good-shell',
+      'echo "Welcome!"\nPATH=/fake/one:/fake/two MULTI="one\ntwo" VICOA_API_URL=http://pinned /bin/sh -c "$last"\necho bye',
     );
+    const good = await readLoginShellEnv({ ...base, SHELL: goodShell });
+    assert.ok(good.ok, 'probe answers');
+    if (good.ok) {
+      assert.equal(good.mode, 'interactive', 'first attempt is the interactive login shell');
+      assert.equal(good.env.PATH, '/fake/one:/fake/two', 'PATH from the fenced env block');
+      assert.equal(good.env.MULTI, 'one\ntwo', 'multi-line values survive');
+      assert.equal(good.env.VICOA_RESOLVING_ENVIRONMENT, '1', 'profile can tell it is being probed');
+    }
+    assert.equal(await readLoginShellPath({ ...base, SHELL: goodShell }), '/fake/one:/fake/two');
 
-    // A shell that never answers must resolve null at the 2s deadline, not hang
-    // the boot (this used to be a synchronous spawn on the main thread).
-    const hungShell = path.join(tmp, 'hung-shell');
-    fs.writeFileSync(hungShell, '#!/bin/sh\nsleep 10\n', { mode: 0o755 });
-    const started = Date.now();
-    assert.equal(
-      await readLoginShellPath({ SHELL: hungShell, PATH: '/usr/bin:/bin' }),
-      null,
-      'hung shell -> null',
+    // An interactive shell that prints nothing (an rc that execs tmux) -> the
+    // non-interactive login shell answers instead.
+    const noInteractive = writeFakeShell(
+      tmp,
+      'no-interactive-shell',
+      '[ "$2" = "-i" ] && exit 0\nPATH=/fake/login /bin/sh -c "$last"',
     );
+    const login = await readLoginShellEnv({ ...base, SHELL: noInteractive });
+    assert.ok(login.ok && login.mode === 'login' && login.env.PATH === '/fake/login', 'falls back to -l -c');
+
+    // A shell that answers but keeps stdout open (a background job the profile
+    // started) is done at the closing marker, not when the pipe closes.
+    const lingering = writeFakeShell(tmp, 'lingering-shell', 'PATH=/fake/one /bin/sh -c "$last"\nexec sleep 3');
+    let started = Date.now();
+    const lingered = await readLoginShellEnv({ ...base, SHELL: lingering });
+    assert.ok(lingered.ok, 'lingering shell still answers');
+    assert.ok(Date.now() - started < 2_000, `done at the marker (${Date.now() - started}ms)`);
+
+    // A shell that never answers resolves a timeout at the budget, not a hang.
+    const hungShell = writeFakeShell(tmp, 'hung-shell', 'exec sleep 10');
+    started = Date.now();
+    const hung = await readLoginShellEnv({ ...base, SHELL: hungShell }, 1_500);
     const elapsed = Date.now() - started;
-    assert.ok(elapsed >= 1_500 && elapsed < 4_000, `hung shell cut off at the deadline (${elapsed}ms)`);
+    assert.ok(!hung.ok && hung.reason === 'timeout', 'hung shell -> timeout');
+    assert.ok(elapsed >= 1_200 && elapsed < 4_000, `hung shell cut off at the budget (${elapsed}ms)`);
 
-    // A missing shell binary resolves null (spawn ENOENT), never throws.
-    assert.equal(
-      await readLoginShellPath({ SHELL: path.join(tmp, 'nonexistent'), PATH: '/usr/bin:/bin' }),
-      null,
-      'missing shell -> null',
+    // A missing shell binary fails fast, never throws.
+    const missing = path.join(tmp, 'nonexistent');
+    const gone = await readLoginShellEnv({ ...base, SHELL: missing });
+    assert.ok(!gone.ok && gone.reason === 'spawn-error', 'missing shell -> spawn-error');
+
+    // A good probe saves its PATH; a later failed one stands on it.
+    const savedPathFile = path.join(tmp, 'state', 'login-shell-path.json');
+    const fromShell = await resolveDaemonEnv({ ...base, SHELL: goodShell }, { savedPathFile });
+    assert.equal(fromShell.source, 'shell');
+    assert.ok(fromShell.path?.startsWith('/fake/one:/fake/two:/usr/bin:/bin'), 'shell PATH first');
+    assert.equal(fromShell.shellVars.MULTI, 'one\ntwo', 'shell vars carried');
+    assert.equal(fromShell.shellVars.VICOA_API_URL, undefined, 'VICOA_* dropped');
+    assert.equal(readSavedShellPath(savedPathFile), '/fake/one:/fake/two', 'good PATH saved');
+
+    const fromSaved = await resolveDaemonEnv({ ...base, SHELL: missing }, { savedPathFile });
+    assert.equal(fromSaved.source, 'saved', 'failed probe -> saved PATH');
+    assert.equal(fromSaved.detail, 'spawn-error');
+    assert.ok(fromSaved.path?.startsWith('/fake/one:/fake/two:'), 'saved PATH first');
+    assert.deepEqual(fromSaved.shellVars, {}, 'no shell vars without a probe');
+
+    const fromNothing = await resolveDaemonEnv(
+      { ...base, SHELL: missing },
+      { savedPathFile: path.join(tmp, 'absent.json') },
     );
+    assert.equal(fromNothing.source, 'inherited', 'no probe, nothing saved -> inherited + fallbacks');
+
+    fs.writeFileSync(path.join(tmp, 'garbage.json'), 'not json');
+    assert.equal(readSavedShellPath(path.join(tmp, 'garbage.json')), null, 'unreadable saved file -> null');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

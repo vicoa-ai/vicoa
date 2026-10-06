@@ -45,7 +45,7 @@ import {
   type DesktopConfig,
 } from './config';
 import { DaemonManager, daemonCommandAvailable, type DaemonState } from './daemon-manager';
-import { resolveDaemonPath } from './resolve-path';
+import { resolveDaemonEnv } from './resolve-path';
 import { startRendererServer, type RendererServer } from './renderer-server';
 import { createMainWindow, windowChrome } from './window';
 import { createTray, destroyTray, updateTrayDaemonState } from './tray';
@@ -327,13 +327,13 @@ function redactDeepLink(url: string): string {
 }
 
 /**
- * Append-only handoff diagnostics (userData/deep-link.log, truncated at
- * 256KB). Deep links + setApiKey outcomes — the exact trail needed when a
- * sign-in "did nothing", since packaged apps have no visible console.
+ * Append a timestamped line to userData/<fileName>, deleting the file once it
+ * passes 256KB. A packaged app has no visible console, so these files are the
+ * only trail when something goes wrong on a user's machine. Never throws.
  */
-function logDeepLinkEvent(message: string): void {
+function appendUserDataLog(fileName: string, message: string): void {
   try {
-    const logPath = path.join(app.getPath('userData'), 'deep-link.log');
+    const logPath = path.join(app.getPath('userData'), fileName);
     try {
       if (fs.existsSync(logPath) && fs.statSync(logPath).size > 256 * 1024) {
         fs.unlinkSync(logPath);
@@ -348,26 +348,36 @@ function logDeepLinkEvent(message: string): void {
 }
 
 /**
+ * Append-only handoff diagnostics (userData/deep-link.log). Deep links +
+ * setApiKey outcomes — the exact trail needed when a sign-in "did nothing".
+ */
+function logDeepLinkEvent(message: string): void {
+  appendUserDataLog('deep-link.log', message);
+}
+
+/**
  * Persist the bundled standalone renderer server's stdout/stderr to
- * userData/renderer-server.log (rotated at 256KB). A packaged app has no visible
- * console, so an SSR error that answers a route with a 500 — the usual cause of
- * a blank WHITE screen — is otherwise invisible. Server-side complement to the
- * renderer.log capture in window.ts.
+ * userData/renderer-server.log. An SSR error that answers a route with a 500 —
+ * the usual cause of a blank WHITE screen — is otherwise invisible.
+ * Server-side complement to the renderer.log capture in window.ts.
  */
 function logRendererServer(message: string): void {
-  try {
-    const logPath = path.join(app.getPath('userData'), 'renderer-server.log');
-    try {
-      if (fs.existsSync(logPath) && fs.statSync(logPath).size > 256 * 1024) {
-        fs.unlinkSync(logPath);
-      }
-    } catch {
-      // best-effort rotation
-    }
-    fs.appendFileSync(logPath, `${new Date().toISOString()} ${message}\n`);
-  } catch {
-    // diagnostics must never break boot
-  }
+  appendUserDataLog('renderer-server.log', message);
+}
+
+/**
+ * Where the daemon's environment came from on each (re)start (userData/
+ * daemon-env.log): login shell, the saved PATH, or bare launchd. The answer to
+ * "my agent / worktree setup says command not found".
+ */
+function logDaemonEnv(message: string): void {
+  console.log(`[daemon] ${message}`);
+  appendUserDataLog('daemon-env.log', message);
+}
+
+/** The last good login-shell PATH, kept across launches (see resolveDaemonEnv). */
+function savedShellPathFile(): string {
+  return path.join(app.getPath('userData'), 'login-shell-path.json');
 }
 
 /**
@@ -1067,12 +1077,12 @@ function setDockIcon(): void {
 // Bootstrap
 // ---------------------------------------------------------------------------
 async function bootstrap(): Promise<void> {
-  // Probe the login shell for the daemon's PATH right away. Sourcing a real
+  // Probe the login shell for the daemon's env right away. Sourcing a real
   // zsh/bash profile takes ~1-1.5s; started here it overlaps Electron's own
   // init and the renderer-server boot instead of sitting between "renderer
   // ready" and "daemon spawned" (it used to be a synchronous spawn there,
   // stalling the main thread for that long). DaemonManager awaits it on spawn.
-  const daemonPathResolution = resolveDaemonPath(process.env);
+  const daemonEnvResolution = resolveDaemonEnv(process.env, { savedPathFile: savedShellPathFile() });
   await app.whenReady();
   applySelfHostEnv();
   setDockIcon();
@@ -1156,7 +1166,9 @@ async function bootstrap(): Promise<void> {
     origin: new URL(effectiveRendererUrl).origin,
     bundledDaemonPath: isBundled() ? bundledDaemonPath() : null,
     managedDaemonPath: managedDaemonPathForManager(),
-    pathResolution: daemonPathResolution,
+    envResolution: daemonEnvResolution,
+    savedShellPathFile: savedShellPathFile(),
+    envLog: logDaemonEnv,
   });
   daemonManager.onState(onDaemonState);
 

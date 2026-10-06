@@ -14,7 +14,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
-import { resolveDaemonPath, type ResolvedDaemonPath } from './resolve-path';
+import { describeDaemonEnv, resolveDaemonEnv, type ResolvedDaemonEnv } from './resolve-path';
 
 export type DaemonStatus =
   | 'idle' // never started
@@ -57,14 +57,18 @@ export interface DaemonManagerOptions {
    */
   managedDaemonPath?: string | null;
   /**
-   * An already-started login-shell PATH resolution (resolve-path.ts). The shell
+   * An already-started login-shell env resolution (resolve-path.ts). The shell
    * probe takes ~1s+ on a real profile, so the boot path kicks it off first thing
    * and lets it overlap the renderer-server start; the first spawn awaits it.
    * Absent → resolved lazily on the first spawn.
    */
-  pathResolution?: Promise<ResolvedDaemonPath>;
+  envResolution?: Promise<ResolvedDaemonEnv>;
+  /** Where a re-probe keeps the last good login-shell PATH (see resolveDaemonEnv). */
+  savedShellPathFile?: string;
   env?: NodeJS.ProcessEnv;
   log?: (line: string) => void;
+  /** Where the env-resolution outcome goes; defaults to `log`. */
+  envLog?: (line: string) => void;
 }
 
 const HEALTHZ_TIMEOUT_MS = 30_000;
@@ -186,17 +190,21 @@ export function parseCloudStatus(body: string): CloudStatus | undefined {
 }
 
 /**
- * Inherited env + the two contract variables. When `pathOverride` is a
- * non-empty string it replaces PATH for the daemon child ONLY (the login-shell
- * PATH resolved at startup so the daemon can exec user-installed `claude` /
- * `codex`). Omitted/empty leaves the inherited PATH untouched.
+ * Inherited env + the login shell's variables + the two contract variables, for
+ * the daemon child ONLY. `shellVars` (resolved at startup) carry what the user's
+ * terminal has and launchd's env lacks — JAVA_HOME, PNPM_HOME, NVM_DIR, … —
+ * for the agents and setup commands the daemon runs. When `pathOverride` is a
+ * non-empty string it replaces PATH (the merged login-shell PATH, so the daemon
+ * can exec user-installed `claude` / `codex`); omitted/empty leaves the
+ * inherited PATH untouched.
  */
 export function buildSpawnEnv(
   base: NodeJS.ProcessEnv,
-  options: { nonce: string; origin: string; pathOverride?: string },
+  options: { nonce: string; origin: string; pathOverride?: string; shellVars?: Record<string, string> },
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...base,
+    ...options.shellVars,
     VICOA_LOCAL_NONCE: options.nonce,
     VICOA_LOCAL_ORIGIN: options.origin,
   };
@@ -249,15 +257,16 @@ export class DaemonManager {
   private readonly bundledDaemonPath: string | null;
   private readonly managedDaemonPath: string | null;
   private readonly baseEnv: NodeJS.ProcessEnv;
+  private readonly savedShellPathFile: string | undefined;
   private readonly log: (line: string) => void;
+  private readonly envLog: (line: string) => void;
 
   private child: ChildProcess | null = null;
   private status: DaemonStatus = 'idle';
   private localOnly = true;
-  /** Login-shell PATH for the daemon child; resolved once (async), then cached. */
-  private daemonPath: string | null = null;
-  private daemonPathResolved = false;
-  private pathResolution: Promise<ResolvedDaemonPath> | null;
+  /** Login-shell env for the daemon child; resolved async, then cached (see start()). */
+  private daemonEnv: ResolvedDaemonEnv | null = null;
+  private envResolution: Promise<ResolvedDaemonEnv> | null;
   private cloudStatus: CloudStatus | undefined;
   private cloudPollTimer: NodeJS.Timeout | null = null;
   private lastError: string | undefined;
@@ -277,9 +286,11 @@ export class DaemonManager {
     this.origin = options.origin;
     this.bundledDaemonPath = options.bundledDaemonPath ?? null;
     this.managedDaemonPath = options.managedDaemonPath ?? null;
-    this.pathResolution = options.pathResolution ?? null;
+    this.envResolution = options.envResolution ?? null;
+    this.savedShellPathFile = options.savedShellPathFile;
     this.baseEnv = options.env ?? process.env;
     this.log = options.log ?? ((line) => console.log(`[daemon] ${line}`));
+    this.envLog = options.envLog ?? this.log;
   }
 
   get state(): DaemonState {
@@ -297,31 +308,39 @@ export class DaemonManager {
   }
 
   /**
-   * Resolve (once) the login-shell PATH to hand the daemon child so it can find
-   * user-installed `claude` / `codex` even when launched from Finder with a
-   * minimal launchd PATH. Cached; safe across restarts. Never throws. Awaits
-   * the boot-time probe when one was handed in, so the main thread never
-   * blocks on the shell.
+   * Resolve the login-shell env to hand the daemon child so it (and the agents
+   * and setup commands it runs) finds the user's tools even when launched from
+   * Finder with a minimal launchd env. Cached; never throws. Awaits the
+   * boot-time probe when one was handed in, so the main thread never blocks on
+   * the shell.
    */
-  private async ensureDaemonPath(): Promise<void> {
-    if (this.daemonPathResolved) {
+  private async ensureDaemonEnv(): Promise<void> {
+    if (this.daemonEnv !== null) {
       return;
     }
-    if (this.pathResolution === null) {
-      this.pathResolution = resolveDaemonPath(this.baseEnv);
+    if (this.envResolution === null) {
+      this.envResolution = resolveDaemonEnv(this.baseEnv, { savedPathFile: this.savedShellPathFile });
     }
+    const resolution = this.envResolution;
+    let resolved: ResolvedDaemonEnv;
     try {
-      const resolved = await this.pathResolution;
-      this.daemonPath = resolved.path;
-      this.log(
-        `resolved PATH (${resolved.entryCount} entries; ` +
-          `claude=${resolved.claudePath !== null ? 'found' : 'not-found'})`,
-      );
+      resolved = await resolution;
     } catch (err) {
-      this.daemonPath = null;
-      this.log(`PATH resolution failed, using inherited PATH: ${errorMessage(err)}`);
+      // resolveDaemonEnv never rejects; keep the inherited env if it somehow does.
+      resolved = {
+        path: null,
+        entryCount: 0,
+        claudePath: null,
+        shellVars: {},
+        source: 'inherited',
+        detail: errorMessage(err),
+        durationMs: 0,
+      };
     }
-    this.daemonPathResolved = true;
+    if (this.daemonEnv === null && this.envResolution === resolution) {
+      this.daemonEnv = resolved;
+      this.envLog(describeDaemonEnv(resolved));
+    }
   }
 
   get isLocalOnly(): boolean {
@@ -343,6 +362,13 @@ export class DaemonManager {
     this.localOnly = localOnly;
     this.consecutiveRapidFailures = 0;
     this.lastError = undefined;
+    // A deliberate (re)start after a failed probe asks the shell again, so the
+    // tray's "Restart daemon" recovers a stripped env without relaunching the
+    // app. Crash-restarts reuse what they have instead of each waiting on a shell.
+    if (this.daemonEnv !== null && this.daemonEnv.source !== 'shell') {
+      this.daemonEnv = null;
+      this.envResolution = null;
+    }
     return this.spawnAndAwaitReady();
   }
 
@@ -376,12 +402,12 @@ export class DaemonManager {
     const generation = this.generation;
     this.clearCloudPoll();
     this.cloudStatus = undefined;
-    // 'starting' before the (possibly still running) PATH probe so the tray
+    // 'starting' before the (possibly still running) env probe so the tray
     // reflects the boot as soon as it is requested, not once the shell answers.
     this.setState('starting');
-    await this.ensureDaemonPath();
+    await this.ensureDaemonEnv();
     if (generation !== this.generation) {
-      return false; // stopped/restarted while the PATH probe was still running
+      return false; // stopped/restarted while the env probe was still running
     }
 
     const [cmd, ...leadingArgs] = this.resolvedCommand();
@@ -409,7 +435,8 @@ export class DaemonManager {
         env: buildSpawnEnv(this.baseEnv, {
           nonce: this.nonce,
           origin: this.origin,
-          pathOverride: this.daemonPath ?? undefined,
+          pathOverride: this.daemonEnv?.path ?? undefined,
+          shellVars: this.daemonEnv?.shellVars,
         }),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
