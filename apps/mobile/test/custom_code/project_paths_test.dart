@@ -141,6 +141,34 @@ void main() {
     });
   });
 
+  group('projects that take my sessions', () {
+    const someone = {'type': 'user', 'id': 'u2', 'name': 'Someone'};
+    final link = [
+      {'machine_id': 'm1', 'local_path': '~/src/alpha'}
+    ];
+    final unfollowed = {
+      ...project('unfollowed', link),
+      'owner': someone,
+      'followed': false,
+    };
+    final followed = {...project('followed', link), 'owner': someone, 'followed': true};
+    final team = {...project('team', link), 'owner': someone, 'is_team_member': true};
+
+    test('skips a shared project the user does not follow', () {
+      // The backend would file the session into the user's own project instead.
+      expect(resolveProjectForDirectory('~/src/alpha', 'm1', [unfollowed], home), isNull);
+      expect(projectsOnMachine([unfollowed], 'm1'), isEmpty);
+    });
+
+    test('offers followed shared projects and team projects', () {
+      expect(
+        resolveProjectForDirectory('~/src/alpha', 'm1', [followed], home)?.projectName,
+        'followed',
+      );
+      expect(projectsOnMachine([team, unfollowed], 'm1').map((r) => r.name).toList(), ['team']);
+    });
+  });
+
   group('directoryChipLabel', () {
     final vicoa = project('vicoa', [{'machine_id': 'm1', 'local_path': '~/src/vicoa'}]);
 

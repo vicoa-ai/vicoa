@@ -86,6 +86,17 @@ List<Map<String, dynamic>> _directoriesOf(dynamic project) {
   return raw.whereType<Map>().map((d) => Map<String, dynamic>.from(d)).toList();
 }
 
+/// Whether the backend files the user's own sessions into [project]: their
+/// own projects and their team's always, a project someone else shared with
+/// them only once they follow it ("Add to sidebar"). Mirrors the session
+/// matcher, so the picker never shows a project the session would not land
+/// in. Same rule as the web's `takesMySessions`.
+bool takesMySessions(Map project) {
+  return project['owner'] == null ||
+      project['is_team_member'] == true ||
+      project['followed'] == true;
+}
+
 /// The project [directory] belongs to on [machineId]: the project whose
 /// linked folder on that machine is the longest prefix of [directory].
 /// `null` when no project claims it — a freshly typed folder; the backend
@@ -101,7 +112,7 @@ ProjectDirectoryMatch? resolveProjectForDirectory(
   }
   ProjectDirectoryMatch? best;
   for (final project in projects) {
-    if (project is! Map) continue;
+    if (project is! Map || !takesMySessions(project)) continue;
     for (final link in _directoriesOf(project)) {
       if (link['machine_id']?.toString() != machineId) continue;
       final localPath = link['local_path']?.toString() ?? '';
@@ -139,7 +150,7 @@ List<ProjectPickerEntry> projectsOnMachine(
   if (machineId == null || machineId.isEmpty) return const [];
   final rows = <ProjectPickerEntry>[];
   for (final project in projects) {
-    if (project is! Map) continue;
+    if (project is! Map || !takesMySessions(project)) continue;
     if (project['is_archived'] == true) continue;
     for (final link in _directoriesOf(project)) {
       if (link['machine_id']?.toString() != machineId) continue;

@@ -61,6 +61,17 @@ export interface ProjectDirectoryMatch {
 }
 
 /**
+ * Whether the backend files the caller's own sessions into `project`: their
+ * own projects and their team's always, a project someone else shared with
+ * them only once they follow it ("Add to sidebar"). Mirrors the session
+ * matcher (`shared/database/project_matching.py`), so the picker never shows
+ * a project the session would not land in.
+ */
+export function takesMySessions(project: ProjectResponse): boolean {
+  return project.owner == null || project.is_team_member === true || project.followed === true;
+}
+
+/**
  * The project `directory` belongs to on `machineId`: the project whose linked
  * folder on that machine is the longest prefix of `directory`. `null` when no
  * project claims it — a freshly typed folder; the backend mints a project for
@@ -75,6 +86,7 @@ export function resolveProjectForDirectory(
   if (!directory.trim() || !machineId) return null;
   let best: ProjectDirectoryMatch | null = null;
   for (const project of projects) {
+    if (!takesMySessions(project)) continue;
     for (const link of project.directories) {
       if (link.machine_id !== machineId) continue;
       const subpath = relativeSubpath(directory, link.local_path, homeDir);
@@ -96,7 +108,7 @@ export function projectsOnMachine(
 ): { project: ProjectResponse; path: string }[] {
   const rows: { project: ProjectResponse; path: string }[] = [];
   for (const project of projects) {
-    if (project.is_archived) continue;
+    if (project.is_archived || !takesMySessions(project)) continue;
     const link = project.directories.find((d) => d.machine_id === machineId);
     if (link) rows.push({ project, path: link.local_path });
   }

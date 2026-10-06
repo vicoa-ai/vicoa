@@ -632,6 +632,12 @@ def set_project_directory(
         )
     else:
         existing.local_path = local_path
+    # Linking my folder to someone else's project says "my work here belongs
+    # there": the same opt-in as following it, and what the session matcher
+    # requires before it files my sessions into a shared project.
+    owned = project.team_id is None and project.user_id == user_id
+    if not owned and db.get(ProjectFollow, (user_id, project.id)) is None:
+        db.add(ProjectFollow(user_id=user_id, project_id=project.id))
     # Attach sessions that already ran under this path (or whose worktree's repo
     # root is this path) but predate the link. Only fills NULLs, never steals.
     backfill_project_id_for_directory(

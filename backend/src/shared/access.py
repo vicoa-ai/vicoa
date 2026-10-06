@@ -222,6 +222,27 @@ def _roles_at_least(minimum: str) -> list[str]:
     return [r for r, rank in ROLE_RANK.items() if rank >= ROLE_RANK[minimum]]
 
 
+def team_project_select(
+    user_id: UUID, *, min_role: str = "viewer"
+) -> Select[tuple[UUID]]:
+    """Ids of projects owned by a team `user_id` is an active member of, at a
+    team role that confers at least `min_role` on the team's projects."""
+    team_roles = [
+        t
+        for t, role in TEAM_ROLE_TO_PROJECT_ROLE.items()
+        if ROLE_RANK[role] >= ROLE_RANK[min_role]
+    ]
+    return select(Project.id).where(
+        Project.team_id.in_(
+            select(TeamMember.team_id).where(
+                TeamMember.user_id == user_id,
+                TeamMember.status == "active",
+                TeamMember.role.in_(team_roles),
+            )
+        )
+    )
+
+
 def visible_project_select(
     user_id: UUID,
     *,
@@ -244,20 +265,7 @@ def visible_project_select(
     if scope == "me":
         return own
 
-    team_roles = [
-        t
-        for t, role in TEAM_ROLE_TO_PROJECT_ROLE.items()
-        if ROLE_RANK[role] >= ROLE_RANK[min_role]
-    ]
-    team_owned = select(Project.id).where(
-        Project.team_id.in_(
-            select(TeamMember.team_id).where(
-                TeamMember.user_id == user_id,
-                TeamMember.status == "active",
-                TeamMember.role.in_(team_roles),
-            )
-        )
-    )
+    team_owned = team_project_select(user_id, min_role=min_role)
     grant_filters = [
         _grant_principal_predicate(
             user_id, editing=ROLE_RANK[min_role] > ROLE_RANK[_TEAM_VIEWER_CAP]

@@ -14,8 +14,11 @@ from shared.database import (
     Machine,
     Project,
     ProjectDirectory,
+    ProjectFollow,
     ProjectGrant,
     Task,
+    Team,
+    TeamMember,
     User,
 )
 from shared.database.enums import AgentStatus
@@ -1871,6 +1874,8 @@ class TestProjectRemoteBackfill:
                 local_path="~/team",
             )
         )
+        # Linking a folder to someone else's project follows it.
+        test_db.add(ProjectFollow(user_id=test_user.id, project_id=team_project.id))
         test_db.commit()
 
         pid = resolve_or_create_project_id_for_session(
@@ -2140,12 +2145,14 @@ class TestProjectLinkAdoption:
 
 
 class TestSharedProjectMatching:
-    """A member's session lands on the project shared with them, not on a
-    private twin — and never on one they may only view."""
+    """A member's session lands on a shared project they opted into (their
+    team's, or one they follow), not on a private twin. Never on one they may
+    only view, and never on one merely granted to them: a grant takes effect
+    without the grantee's say, so it must not pull their sessions in."""
 
     REMOTE = "git@github.com:vicoa-ai/alpha.git"
 
-    def _shared_project(self, db, owner_id, member_id, role):
+    def _shared_project(self, db, owner_id, member_id, role, *, follow=True):
         project = Project(user_id=owner_id, name="alpha", git_remote_url=self.REMOTE)
         db.add(project)
         db.flush()
@@ -2158,6 +2165,28 @@ class TestSharedProjectMatching:
                 scopes=["tasks", "sessions"],
             )
         )
+        if follow:
+            db.add(ProjectFollow(user_id=member_id, project_id=project.id))
+        db.commit()
+        return project
+
+    def _team_project(self, db, owner_id, member, role="member"):
+        team = Team(name="T", slug=f"t-{uuid4().hex[:8]}")
+        db.add(team)
+        db.flush()
+        db.add(
+            TeamMember(
+                team_id=team.id,
+                user_id=member.id,
+                invited_email=member.email,
+                role=role,
+                status="active",
+            )
+        )
+        project = Project(
+            user_id=owner_id, team_id=team.id, name="alpha", git_remote_url=self.REMOTE
+        )
+        db.add(project)
         db.commit()
         return project
 
@@ -2178,7 +2207,7 @@ class TestSharedProjectMatching:
         db.commit()
         return pid
 
-    def test_editor_clone_on_own_machine_joins_the_shared_project(
+    def test_editor_clone_on_own_machine_joins_a_followed_project(
         self, test_db, test_user, other_user
     ):
         shared = self._shared_project(test_db, test_user.id, other_user.id, "editor")
@@ -2205,6 +2234,46 @@ class TestSharedProjectMatching:
         # Second session: the path tier now hits the member's own row.
         again = self._register(test_db, other_user.id, machine.id, "/home/bob/alpha/x")
         assert again == shared.id
+
+    def test_a_grant_alone_does_not_pull_sessions_in(
+        self, test_db, test_user, other_user
+    ):
+        """The attack: share a project carrying someone's remote with them, and
+        their next session there would be filed into it, readable and
+        promptable by the sharer. Until they follow it, it gets nothing."""
+        shared = self._shared_project(
+            test_db, test_user.id, other_user.id, "editor", follow=False
+        )
+        machine = _make_machine(test_db, other_user.id, "bob-laptop")
+
+        pid = self._register(test_db, other_user.id, machine.id)
+
+        assert pid is not None and pid != shared.id
+        assert test_db.get(Project, pid).user_id == other_user.id
+        assert (
+            test_db.query(ProjectDirectory)
+            .filter(ProjectDirectory.project_id == shared.id)
+            .count()
+            == 0
+        )
+
+    def test_team_member_clone_joins_the_team_project_without_following(
+        self, test_db, test_user, other_user
+    ):
+        team_project = self._team_project(test_db, test_user.id, other_user)
+        machine = _make_machine(test_db, other_user.id, "bob-laptop")
+
+        assert self._register(test_db, other_user.id, machine.id) == team_project.id
+
+    def test_team_viewer_gets_a_private_project(self, test_db, test_user, other_user):
+        team_project = self._team_project(
+            test_db, test_user.id, other_user, role="viewer"
+        )
+        machine = _make_machine(test_db, other_user.id, "bob-laptop")
+
+        pid = self._register(test_db, other_user.id, machine.id)
+
+        assert pid is not None and pid != team_project.id
 
     def test_own_project_beats_a_shared_one_with_the_same_remote(
         self, test_db, test_user, other_user
@@ -2248,4 +2317,69 @@ class TestSharedProjectMatching:
                 test_db, other_user.id, machine.id, "/home/bob/alpha/sub"
             )
             is None
+        )
+
+    def test_unfollowing_stops_the_path_tier_from_attaching(
+        self, test_db, test_user, other_user
+    ):
+        """The member's folder row outlives the follow; it must stop counting,
+        or an unfollow (or a row a since-dropped rule created) would keep
+        filing sessions there."""
+        shared = self._shared_project(test_db, test_user.id, other_user.id, "editor")
+        machine = _make_machine(test_db, other_user.id, "bob-laptop")
+        assert self._register(test_db, other_user.id, machine.id) == shared.id
+
+        test_db.query(ProjectFollow).filter(
+            ProjectFollow.project_id == shared.id
+        ).delete()
+        test_db.commit()
+
+        from shared.database.project_matching import resolve_project_id_for_session
+
+        assert (
+            resolve_project_id_for_session(
+                test_db, other_user.id, machine.id, "/home/bob/alpha/sub"
+            )
+            is None
+        )
+
+    def test_linking_a_folder_follows_the_shared_project(
+        self, test_db, test_user, other_user
+    ):
+        from backend.db import task_queries
+
+        shared = self._shared_project(
+            test_db, test_user.id, other_user.id, "editor", follow=False
+        )
+        machine = _make_machine(test_db, other_user.id, "bob-laptop")
+
+        task_queries.set_project_directory(
+            test_db,
+            other_user.id,
+            shared.id,
+            machine.id,
+            "/home/bob/alpha",
+            sharing=True,
+        )
+
+        assert test_db.get(ProjectFollow, (other_user.id, shared.id)) is not None
+        assert self._register(test_db, other_user.id, machine.id) == shared.id
+
+    def test_linking_an_own_project_adds_no_follow(self, test_db, test_user):
+        from backend.db import task_queries
+
+        mine = Project(user_id=test_user.id, name="alpha")
+        test_db.add(mine)
+        test_db.commit()
+        machine = _make_machine(test_db, test_user.id)
+
+        task_queries.set_project_directory(
+            test_db, test_user.id, mine.id, machine.id, "/home/me/alpha"
+        )
+
+        assert (
+            test_db.query(ProjectFollow)
+            .filter(ProjectFollow.user_id == test_user.id)
+            .count()
+            == 0
         )

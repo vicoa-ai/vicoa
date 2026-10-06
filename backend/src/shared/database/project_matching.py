@@ -54,12 +54,16 @@ Match order (identity strength, high → low):
      than not. Longest path wins, ties go to the oldest project.
 
 Within each tier the user's **own** projects win, then projects **shared with
-them** at ``editor`` or above for sessions (team-owned boards they are a member
-of, grants): a member who clones the team's repo on their own laptop lands on
-the shared project instead of minting a private twin, and their sessions show
-up on the board. A viewer's session never attaches to someone else's project —
-attaching is contributing. Auto-create, when nothing matches, always mints a
-*personal* project.
+them** at ``editor`` or above for sessions that they have opted into: their
+team's projects, or a shared project they follow (see ``_attachable_projects``).
+A member who clones the team's repo on their own laptop lands on the team's
+project instead of minting a private twin, and their sessions show up on the
+board. A bare grant does not attract sessions until its grantee follows the
+project: grants need no acceptance, so otherwise anyone could pull a
+stranger's sessions into their project by sharing it with them. A viewer's
+session never attaches to someone else's project — attaching is
+contributing. Auto-create, when nothing matches, always mints a *personal*
+project.
 
 Auto-create is skipped for a machine-less session with no remote: such a
 project could never get a directory row, so nothing would ever match it again
@@ -84,12 +88,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import and_, or_, text
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.orm import Session
 
 from .automation_models import Automation
 from .models import AgentInstance, Machine
-from .task_models import Project, ProjectDirectory
+from .task_models import Project, ProjectDirectory, ProjectFollow
 
 if TYPE_CHECKING:
     from sqlalchemy import ColumnElement, Select
@@ -137,15 +141,31 @@ def _attachable_projects(
     """The projects `user_id`'s work may be filed into, as (own, shared).
 
     Own personal projects first, then the shared ones this user may contribute
-    to: `editor` or above for sessions. A viewer's work never attaches to
-    someone else's project — attaching is contributing.
+    to (`editor` or above for sessions) AND has opted into: their team's
+    projects (joining a team takes their acceptance), or a shared project they
+    follow ("Add to sidebar"; linking a folder to it follows it too). A grant
+    alone is not enough: it takes effect without the grantee's say, so anyone
+    could grant one on a project carrying the grantee's git remote and have the
+    grantee's sessions filed there, where its owner reads and prompts them. A
+    viewer's work never attaches to someone else's project — attaching is
+    contributing.
     """
     # Lazy import: `shared.access` imports this package's models.
-    from shared.access import visible_project_select
+    from shared.access import team_project_select, visible_project_select
 
     own = visible_project_select(user_id, scope="me")
-    shared = visible_project_select(
-        user_id, scope="shared", grant_scope="sessions", min_role="editor"
+    shared = select(Project.id).where(
+        Project.id.in_(
+            visible_project_select(
+                user_id, scope="shared", grant_scope="sessions", min_role="editor"
+            )
+        ),
+        or_(
+            Project.id.in_(team_project_select(user_id, min_role="editor")),
+            Project.id.in_(
+                select(ProjectFollow.project_id).where(ProjectFollow.user_id == user_id)
+            ),
+        ),
     )
     return own, shared
 
@@ -194,8 +214,8 @@ def _match_project(
     # machine when the session has one; on any of the user's machines when it
     # doesn't (see the module docstring). The rows are the user's own (a member
     # links their own machine), but the project behind one may be shared — and
-    # a since-revoked grant must not keep attaching sessions to it, hence the
-    # access filter on the project.
+    # a since-revoked grant or an unfollowed project must not keep attaching
+    # sessions to it, hence the access filter on the project.
     candidates = [_normalize_path(p, home_dir) for p in (project_path, repo_root) if p]
     if not candidates:
         return None

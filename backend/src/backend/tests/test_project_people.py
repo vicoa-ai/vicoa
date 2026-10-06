@@ -723,9 +723,11 @@ class TestTeamInviteEmail:
 
     def test_project_grant_is_mailed_too(self, as_user, owner, project, monkeypatch):
         sent: list[tuple] = []
+        hints: list[bool] = []
 
-        async def fake_send(*args):
+        async def fake_send(*args, can_file_sessions=False):
             sent.append(args)
+            hints.append(can_file_sessions)
             return True
 
         monkeypatch.setattr(
@@ -741,3 +743,33 @@ class TestTeamInviteEmail:
         assert response.json()["email_sent"] is True
         assert sent[0][0] == "fresh@example.com"
         assert sent[0][2] == "alpha"
+        # A viewer's sessions never file into the project: no follow hint.
+        assert hints == [False]
+
+        as_user(owner).post(
+            f"/api/v1/projects/{project.id}/grants",
+            json={
+                "email": "dev@example.com",
+                "role": "editor",
+                "scopes": ["tasks", "sessions"],
+            },
+        )
+        assert hints == [False, True]
+
+    async def test_project_invite_body_names_the_follow_step(self, monkeypatch):
+        """Access needs no accept, but filing the grantee's sessions does: an
+        editor's invite says how to opt in, a viewer's says nothing about it."""
+        from backend import email_service
+
+        bodies: list[str] = []
+
+        async def fake_send(to_email, subject, body):
+            bodies.append(body)
+            return True
+
+        monkeypatch.setattr(email_service, "_send", fake_send)
+        args = ("dev@example.com", "Ann", "alpha", "editor", "https://x/dashboard")
+        await email_service.send_project_invite_email(*args, can_file_sessions=True)
+        await email_service.send_project_invite_email(*args)
+        assert "Add to sidebar" in bodies[0]
+        assert "Add to sidebar" not in bodies[1]

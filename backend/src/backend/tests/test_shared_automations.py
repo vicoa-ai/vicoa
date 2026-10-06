@@ -33,6 +33,7 @@ from shared.database import (
     Machine,
     Project,
     ProjectDirectory,
+    ProjectFollow,
     ProjectGrant,
     User,
     UserInstanceAccess,
@@ -83,7 +84,18 @@ def _project(db, owner: User, name: str = "Shared Board") -> Project:
     return project
 
 
-def _link(db, user: User, project: Project, machine: Machine, path: str) -> None:
+def _link(
+    db,
+    user: User,
+    project: Project,
+    machine: Machine,
+    path: str,
+    *,
+    follow: bool = True,
+) -> None:
+    """`user` links their folder to `project`. Like the link endpoint, linking
+    someone else's project follows it (`follow=False` leaves a bare row, as an
+    older matcher did when a grant alone pulled work in)."""
     db.add(
         ProjectDirectory(
             user_id=user.id,
@@ -92,6 +104,8 @@ def _link(db, user: User, project: Project, machine: Machine, path: str) -> None
             local_path=path,
         )
     )
+    if follow and project.user_id != user.id:
+        db.add(ProjectFollow(user_id=user.id, project_id=project.id))
     db.flush()
 
 
@@ -405,6 +419,20 @@ class TestWhichProjectFilesAnAutomation:
             test_db.delete(grant)
             test_db.commit()
             # The editor's folder link outlives the grant; it must stop counting.
+            assert _ids(c.get(f"/api/v1/automations?project_id={project.id}")) == []
+
+    def test_an_unfollowed_project_does_not_file_it(self, client, test_db, test_user):
+        """A grant alone never pulls the grantee's work in: their folder row
+        only counts once they follow the project (linking follows it)."""
+        owner, editor = test_user, _user(test_db, "Editor")
+        project = _project(test_db, owner)
+        editor_box = _machine(test_db, editor)
+        _link(test_db, editor, project, editor_box, "/src/repo", follow=False)
+        _grant(test_db, project, editor, "editor", by=owner)
+        _automation(test_db, editor, editor_box, "/src/repo")
+        test_db.commit()
+
+        with _as(client, owner) as c:
             assert _ids(c.get(f"/api/v1/automations?project_id={project.id}")) == []
 
     def test_the_deepest_link_wins(self, client, test_db, test_user):

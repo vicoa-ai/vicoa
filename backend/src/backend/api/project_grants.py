@@ -18,6 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from shared import access
 from shared.database import GRANT_SCOPES, Project, ProjectGrant, Team, TeamMember, User
 from shared.database.session import get_db
 
@@ -252,6 +253,8 @@ def create_project_grant_endpoint(
             project.name,
             grant.role,
             web_url("/dashboard"),
+            can_file_sessions=access.role_at_least(grant.role, "editor")
+            and "sessions" in (grant.scopes or []),
         )
         email_sent = True
     return ProjectGrantCreateResponse(**person.model_dump(), email_sent=email_sent)

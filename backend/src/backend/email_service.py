@@ -136,17 +136,34 @@ async def send_team_invite_email(
 
 
 async def send_project_invite_email(
-    to_email: str, inviter_name: str, project_name: str, role: str, open_url: str
+    to_email: str,
+    inviter_name: str,
+    project_name: str,
+    role: str,
+    open_url: str,
+    *,
+    can_file_sessions: bool = False,
 ) -> bool:
     """Tell someone a project was shared with them. Unlike a team there is no
-    accept step: the project is already in their "Shared with me" list, or
-    will be the moment they sign up with this address."""
+    accept step for access: the project is already in their "Shared with me"
+    list, or will be the moment they sign up with this address. Their own
+    sessions are only filed into it once they follow it ("Add to sidebar"),
+    which `can_file_sessions` (an editor-or-above grant covering sessions)
+    tells them about."""
     inviter = _one_line(inviter_name) or "Someone"
     project = _one_line(project_name)
     subject = f"{inviter} shared {project} with you"
+    detail = (
+        "Sign in with this email address to open it. It is listed under Shared with me."
+    )
+    if can_file_sessions:
+        detail += (
+            " Choose Add to sidebar from its menu to have your own sessions in"
+            " this repository filed under it."
+        )
     body = _invite_body(
         f"{inviter} shared the project {project} with you as {role}.",
-        "Sign in with this email address to open it. It is listed under Shared with me.",
+        detail,
         "Open project",
         open_url,
     )
