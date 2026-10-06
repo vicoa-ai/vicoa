@@ -75,7 +75,7 @@ export interface MentionTextareaProps
   /**
    * Enable the `#` trigger: a picker over the user's own sessions, tasks and
    * automations. Off by default — only the surfaces that can act on a pick
-   * (today, the session composer) turn it on.
+   * (today, the session composer and the new-session prompt) turn it on.
    */
   referencesEnabled?: boolean;
   /** Session doing the referencing; dropped from the candidates. */

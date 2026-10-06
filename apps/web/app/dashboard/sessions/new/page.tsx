@@ -17,12 +17,22 @@ import {
   ArrowUp,
   Check,
   Folder,
+  Link2,
   ListTodo,
   Monitor,
   X,
 } from 'lucide-react';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
-import type { AgentProfile, MachineSummary, ProjectResponse, TaskResponse, TeamSummary } from '@/lib/backend-api';
+import type { AgentProfile, MachineSummary, ProjectResponse, ReferenceCandidate, TaskResponse, TeamSummary } from '@/lib/backend-api';
+import {
+  activeReferences,
+  addReference,
+  candidateToComposerReference,
+  composeOutgoingMessage,
+  taskLinkForSend,
+  toComposerReference,
+  type ComposerReference,
+} from '@/lib/composer-references';
 import { groupAgentsByOwner } from '@/lib/agent-owners';
 import { TEAMS_KEY } from '@/lib/use-team-invitations';
 import { TaskPickerPopover } from '@/components/dashboard/task-picker-popover';
@@ -485,6 +495,12 @@ function NewSessionContent() {
   );
   // Bumped by the Add-to-chat "+" menu's "Mention files" action.
   const [mentionSignal, setMentionSignal] = useState(0);
+  // Same, for the menu's "Reference a session or task" row and "#".
+  const [referenceSignal, setReferenceSignal] = useState(0);
+  // `#` picks for the first message, as in the chat input: only the ones whose
+  // token is still in the prompt attach (see `activeReferences`), and they are
+  // not persisted with the prompt draft.
+  const [pendingRefs, setPendingRefs] = useState<ComposerReference[]>([]);
 
   // Images attached to the first message. Held locally (File + object-URL
   // preview) and uploaded only once the session exists — see `handleSubmit`.
@@ -1378,6 +1394,43 @@ function NewSessionContent() {
     setMentionSignal((n) => n + 1);
   }, []);
 
+  // Add-to-chat "+" → "Reference a session or task": the same trick with "#".
+  const handleInsertReference = useCallback(() => {
+    setShowSlashCommands(false);
+    setReferenceSignal((n) => n + 1);
+  }, []);
+
+  // A `#` row was picked: record the panel's one-line fallback now, upgrade it
+  // to the full block when the expansion lands (mirrors the chat input).
+  const handleReferencePick = useCallback((item: ReferenceCandidate) => {
+    setPendingRefs((prev) => addReference(prev, candidateToComposerReference(item)));
+    api
+      ?.getReference(item.kind, item.id)
+      .then((detail) => {
+        setPendingRefs((prev) =>
+          prev.map((r) =>
+            r.kind === detail.kind && r.id === detail.id
+              ? toComposerReference(detail)
+              : r,
+          ),
+        );
+      })
+      .catch(() => {
+        /* Keep the panel's own line; see candidateToComposerReference. */
+      });
+  }, [api]);
+
+  // The task a `#` reference would file the new session under. The Task chip
+  // wins when set (it already links), so this only fires without one, and is
+  // surfaced for the same reason as in the chat input: it writes to the board.
+  const pendingTaskLink = useMemo(() => {
+    const refs = activeReferences(pendingRefs, prompt.trim());
+    const taskId = taskLinkForSend(refs, selectedTask?.id);
+    return taskId
+      ? (refs.find((r) => r.kind === 'task' && r.id === taskId) ?? null)
+      : null;
+  }, [pendingRefs, prompt, selectedTask]);
+
   // Add-to-chat "+" → "Add folder": desktop only. Native OS folder picker →
   // add the chosen folder as a chip (deduped); it becomes an @path/ reference
   // in the prompt on submit. Hidden on web (no real filesystem paths).
@@ -1548,7 +1601,19 @@ function NewSessionContent() {
       const folderText = pendingFolderRefs
         .map((p) => `@${folderPathToMention(p, projectPath)}`)
         .join(' ');
-      const typedPrompt = [composedPrompt, folderText].filter(Boolean).join(' ');
+      // `#` references whose token survived editing ride below the prompt, as
+      // in the chat input. A reference to the chip's own task is dropped: the
+      // chip has already put that task on top.
+      const refs = activeReferences(pendingRefs, trimmedPrompt).filter(
+        (r) => !(r.kind === 'task' && r.id === selectedTask?.id),
+      );
+      const typedPrompt = composeOutgoingMessage(
+        [composedPrompt, folderText].filter(Boolean).join(' '),
+        refs,
+      );
+      // The task this session is filed under: the chip's, else the first
+      // `#`-referenced one (`taskLinkForSend`, the chat input's rule).
+      const linkTaskId = selectedTask?.id ?? taskLinkForSend(refs, null);
       // A fork opens with the source transcript above whatever the user typed,
       // so the new agent reads the history first and the instruction last.
       const finalPrompt = forkContext
@@ -1623,6 +1688,7 @@ function NewSessionContent() {
       images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
       setPendingImages([]);
       setPendingFolderRefs([]);
+      setPendingRefs([]);
 
       // `source` deliberately omitted: the super property registered in
       // instrumentation-client.ts supplies it, and event properties OVERRIDE
@@ -1678,16 +1744,16 @@ function NewSessionContent() {
       // and the backend re-evaluates the status linkage on this PATCH, so an
       // already-ACTIVE session still moves the task to in_progress. Failure
       // here must not strand the session — worst case the task stays unlinked.
-      if (selectedTask && newInstanceId) {
+      if (linkTaskId && newInstanceId) {
         try {
-          await api.updateAgentInstance(newInstanceId, { task_id: selectedTask.id });
+          await api.updateAgentInstance(newInstanceId, { task_id: linkTaskId });
         } catch (error) {
           console.error('Failed to link the session to its task:', error);
         }
         // Advance the chosen sub-tasks in step with the parent (the link above
         // flips it to in_progress). Best-effort per child — a failed PATCH must
         // not strand the already-created session.
-        if (subtasks.length > 0) {
+        if (selectedTask && subtasks.length > 0) {
           await Promise.all(
             subtasks.map((sub) =>
               api
@@ -1755,7 +1821,7 @@ function NewSessionContent() {
       setErrorMessage(message);
       setIsSubmitting(false);
     }
-  }, [api, selectedMachineId, directory, sessionConfig, prompt, selectedTask, subtasks, pendingImages, pendingFolderRefs, forkContext, machines, isSubmitting, worktreeMode, selectedWorktreePath, newWorktreeName, repoListing, projects, selectedProfile, selectedProfileId, persistSelection, refreshData, router]);
+  }, [api, selectedMachineId, directory, sessionConfig, prompt, selectedTask, subtasks, pendingImages, pendingFolderRefs, pendingRefs, forkContext, machines, isSubmitting, worktreeMode, selectedWorktreePath, newWorktreeName, repoListing, projects, selectedProfile, selectedProfileId, persistSelection, refreshData, router]);
 
   // Insert the highlighted command into the prompt (vs. the chat input, which
   // sends immediately — starting a session is heavier, so we let the user
@@ -2285,6 +2351,16 @@ function NewSessionContent() {
                 <div className="mb-2 text-[11px] text-destructive">{attachmentError}</div>
               )}
 
+              {/* Starting will file this session under a referenced task. */}
+              {pendingTaskLink && (
+                <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <Link2 className="h-3 w-3 flex-shrink-0" />
+                  <span className="truncate">
+                    Starting files this session under {pendingTaskLink.label}
+                  </span>
+                </div>
+              )}
+
               {/* Pending attachments — previews only; these upload after the
                   session exists (see handleSubmit). Folder chips reference a
                   path and fold into the prompt on submit. */}
@@ -2372,10 +2448,13 @@ function NewSessionContent() {
                   machine={currentMachine}
                   mentionsEnabled={!!directory.trim() && isOnline}
                   openMentionSignal={mentionSignal}
+                  referencesEnabled={!!api}
+                  onReferencePick={handleReferencePick}
+                  openReferenceSignal={referenceSignal}
                   onMentionOpenChange={(open) => { if (open) setShowSlashCommands(false); }}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
-                  placeholder="Type messages, @files, /skills or commands"
+                  placeholder="Type messages, @files, #sessions or tasks, /skills or commands"
                   rows={1}
                   disabled={isSubmitting}
                   className="w-full bg-transparent border-0 py-2 px-2 text-sm resize-none focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50 leading-5 placeholder:text-muted-foreground/30"
@@ -2396,6 +2475,7 @@ function NewSessionContent() {
                     onAddFiles={handleAddFiles}
                     onAddFolder={getDesktopShellBridge() && !!directory.trim() && isOnline ? handleInsertFolder : undefined}
                     onMentionFiles={handleInsertMention}
+                    onReference={api ? handleInsertReference : undefined}
                     onCommands={handleInsertSlash}
                     hasSkills={hasSkills}
                     disabled={isSubmitting || !canSubmit}
