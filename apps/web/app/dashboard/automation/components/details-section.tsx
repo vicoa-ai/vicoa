@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import useSWR from 'swr';
 import { Check, ChevronDown, Circle, GitBranch, Folder } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -17,15 +18,20 @@ import { RpcError } from '@/lib/ws-client';
 import { isMachineOnline } from '@/lib/session-liveness';
 import { machineSupportsWorktree, type WorktreeMode } from '@/lib/worktree-selection';
 import type { AgentCatalog, SessionConfig } from '@/lib/agent-catalog';
-import type { AgentProfile, MachineSummary, ProjectResponse } from '@/lib/backend-api';
+import {
+  getBackendAPI,
+  type AgentProfile,
+  type MachineSummary,
+  type ProjectResponse,
+  type TeamSummary,
+} from '@/lib/backend-api';
+import { TEAMS_KEY } from '@/lib/use-team-invitations';
 import {
   directoryChipLabel,
   projectsOnMachine,
   resolveProjectForDirectory,
 } from '@/lib/project-paths';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
-import { PrincipalAvatar } from '@/components/ui/principal-avatar';
-import { agentPrincipal } from '@/lib/use-agent-profiles';
 import { FieldGroup, FieldRow } from './field-row';
 
 export interface WorktreeDraft {
@@ -113,7 +119,14 @@ export function DetailsSection({
     };
   }, [machineId, directory, online]);
 
-  const selectedProfile = agentProfiles.find((p) => p.id === agentProfileId) ?? null;
+  // Names the team groups in the Agent dropdown; only fetched once a team's
+  // agent is listed, like the new-session picker.
+  const hasTeamAgents = agentProfiles.some((p) => p.team_id);
+  const { data: teams } = useSWR<TeamSummary[]>(
+    hasTeamAgents ? TEAMS_KEY : null,
+    () => getBackendAPI(true).listTeams(),
+    { shouldRetryOnError: false },
+  );
 
   // Project-first, as on the new-session page: the picker lists the projects
   // linked to a folder on this machine, and the chip names the project the
@@ -235,71 +248,23 @@ export function DetailsSection({
         )}
       </FieldRow>
 
-      {/* Agent — reuses the new-session config chips. When a saved agent is
-          referenced the chips go read-only: an automation resolves its agent at
-          dispatch, so the config shown must be the agent's, and "what will this
-          run with?" needs exactly one answer. Unlinking is explicit rather than
-          "editing any chip silently unlinks", which would quietly drop the live
-          link the moment someone poked a value to see what it did. */}
+      {/* Agent — the new-session chips, saved agents included. Picking a saved
+          agent hides the other chips: an automation resolves its agent at
+          dispatch, so the run uses the agent's config as it is then and there is
+          nothing here to set. Picking a plain agent again brings them back. */}
       <FieldRow label="Agent" align="start">
-        <div className="flex min-w-0 flex-col gap-1.5">
-          {agentProfiles.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="flex h-6 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground dark:hover:bg-foreground/10"
-                  >
-                    {selectedProfile ? (
-                      <>
-                        <PrincipalAvatar
-                          principal={agentPrincipal(selectedProfile)}
-                          size="xs"
-                        />
-                        <span className="min-w-0 truncate">{selectedProfile.name}</span>
-                      </>
-                    ) : (
-                      <span>Use a saved agent</span>
-                    )}
-                    <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-56">
-                  {agentProfiles.map((profile) => (
-                    <DropdownMenuItem
-                      key={profile.id}
-                      onSelect={() => onAgentProfileChange(profile)}
-                    >
-                      {profile.name}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-              {selectedProfile && (
-                <button
-                  type="button"
-                  onClick={() => onAgentProfileChange(null)}
-                  className="cursor-pointer rounded-lg px-2 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                >
-                  Unlink to customize
-                </button>
-              )}
-            </div>
-          )}
-          <SessionConfigEditor
-            value={sessionConfig}
-            onChange={onSessionConfigChange}
-            catalog={catalog}
-            disabled={!!agentProfileId}
-          />
-          {selectedProfile && (
-            <p className="text-xs text-muted-foreground">
-              Follows {selectedProfile.name}. Editing that agent changes what the next
-              run does.
-            </p>
-          )}
-        </div>
+        <SessionConfigEditor
+          value={sessionConfig}
+          onChange={onSessionConfigChange}
+          catalog={catalog}
+          savedAgents={{
+            profiles: agentProfiles,
+            teams,
+            selectedId: agentProfileId,
+            machine: selected,
+            onSelect: onAgentProfileChange,
+          }}
+        />
       </FieldRow>
     </FieldGroup>
   );

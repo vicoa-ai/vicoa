@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useMemo, Suspense, Fragment } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
 import useSWR from 'swr';
 import { preload } from 'react-dom';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -33,12 +33,12 @@ import {
   toComposerReference,
   type ComposerReference,
 } from '@/lib/composer-references';
-import { groupAgentsByOwner } from '@/lib/agent-owners';
 import { TEAMS_KEY } from '@/lib/use-team-invitations';
 import { TaskPickerPopover } from '@/components/dashboard/task-picker-popover';
 import { MentionTextarea } from '@/components/mention-textarea';
 import { AgentTypeIcon, getAgentLogoSrc } from '@/components/dashboard/agent-type-icon';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { SavedAgentItems } from '@/components/dashboard/saved-agent-items';
 import { agentPrincipal, agentProfileBlockedReason } from '@/lib/use-agent-profiles';
 import { ChipDropdown, ModeIcon, PERMISSION_LIST_WIDTH_CLASS, TickItem, modelListWidthClass, modelSublabel } from '@/components/dashboard/session-config-dropdown';
 import { rpcGitStatus, rpcGitWorktreeListWithMain, type WorktreeListing } from '@/components/files-git-panel/rpc';
@@ -2507,42 +2507,14 @@ function NewSessionContent() {
                     >
                       {(close) => (
                         <>
-                          {/* Saved presets first, then the raw providers. The
-                              section only renders when the user has agents, so
-                              nobody pays for a feature they haven't used. */}
-                          {groupAgentsByOwner(agentProfiles, teams).map((group) => (
-                            <Fragment key={group.key}>
-                              <div className="px-2 pt-1 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                                {group.team ? group.label : 'My agents'}
-                              </div>
-                              {group.profiles.map((profile) => {
-                                // Instructions need a daemon new enough to carry
-                                // them; an older one drops the metadata silently,
-                                // so offer the profile as unavailable rather than
-                                // let it spawn a quietly de-fanged agent.
-                                const blocked = agentProfileBlockedReason(profile, currentMachine);
-                                return (
-                                <TickItem
-                                  key={profile.id}
-                                  label={profile.name}
-                                  sublabel={blocked ? 'Update required' : undefined}
-                                  disabled={!!blocked}
-                                  leading={
-                                    <PrincipalAvatar
-                                      principal={agentPrincipal(profile)}
-                                      size="xs"
-                                      plain
-                                    />
-                                  }
-                                  isSelected={profile.id === selectedProfileId}
-                                  isPending={false}
-                                  onClick={() => { applyAgentProfile(profile); close(); }}
-                                />
-                                );
-                              })}
-                              <div className="my-1 h-px bg-border" />
-                            </Fragment>
-                          ))}
+                          {/* Saved presets first, then the raw providers. */}
+                          <SavedAgentItems
+                            profiles={agentProfiles}
+                            teams={teams}
+                            selectedId={selectedProfileId}
+                            machine={currentMachine}
+                            onPick={(profile) => { applyAgentProfile(profile); close(); }}
+                          />
                           {agentEntries.map((a) => (
                             <TickItem
                               key={a.id}
