@@ -13,10 +13,11 @@
 #   stack-preview.sh down [--purge]       # --purge also deletes the database and the state dir
 #
 #   --repo DIR   checkout to preview (default: the git checkout of the current directory)
-#   --auth       builtin (default): seeded email/password accounts in the preview DB.
-#                supabase: sign in with a hosted Supabase project (SUPABASE_URL and
-#                SUPABASE_ANON_KEY from the environment), for the mobile app, which
-#                only signs in with Supabase. Identity only; data stays in the preview DB.
+#   --auth       builtin (default, every `up` without the flag): seeded email/password
+#                accounts in the preview DB.
+#                supabase: only for reviewing the mobile app, which can only sign in
+#                with Supabase. Signs in with a hosted Supabase project (SUPABASE_URL
+#                and SUPABASE_ANON_KEY from the environment); data stays in the preview DB.
 #
 #   Postgres (Docker) -> backend + server (uvicorn) -> web (next dev)
 #     -> proxy.mjs (one origin) -> cloudflared or ngrok (one public URL)
@@ -507,11 +508,9 @@ cmd_up() {
     cmd_status
     return 0
   fi
-  if [ -z "$AUTH" ]; then
-    AUTH=builtin
-    # shellcheck disable=SC1091
-    [ -f "$STATE/auth" ] && . "$STATE/auth"
-  fi
+  # Builtin unless asked for: a mobile review must not leave the next `up` on
+  # hosted sign-in. `restart` keeps the running preview's mode (load_state).
+  AUTH=${AUTH:-builtin}
   if [ "$AUTH" = supabase ] && { [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; }; then
     # shellcheck disable=SC1091
     [ -f "$STATE/supabase.env" ] && . "$STATE/supabase.env"
