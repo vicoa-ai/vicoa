@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 
 import '/app_state.dart';
 import '/backend/agent_catalog.dart';
+import '/components/principal_avatar/principal_avatar.dart';
 import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/utils/automation_utils.dart' as autils;
 import '/custom_code/utils/keyboard_utils.dart';
@@ -83,6 +84,14 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
   late String _directory;
   late SessionConfig _sessionConfig;
   late autils.AutomationScheduleDraft _draft;
+
+  // The saved agent the automation follows (null = a plain agent). Sent on
+  // save only when it changed, so an edit made here can't drop a link to an
+  // agent this app couldn't list.
+  String? _agentProfileId;
+  String? _initialAgentProfileId;
+  List<dynamic> _agentProfiles = const [];
+  Map<String, String> _teamNames = const {};
   bool _titleError = false;
 
   // Live machine list, seeded from the passed-in snapshot then kept fresh via
@@ -123,6 +132,8 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
           SessionConfig.fromJson(autils.automationSessionConfig(a))
               .reconcileAgainst(widget.catalog);
       _draft = autils.automationToDraft(a);
+      _agentProfileId = autils.automationAgentProfileId(a);
+      _initialAgentProfileId = _agentProfileId;
     } else {
       final defaultMachine = _machines.firstWhere(
         (m) => isMachineOnlineFromMap(m),
@@ -134,6 +145,34 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
       _draft = autils.AutomationScheduleDraft();
     }
     _startMachineRealtime();
+    _loadAgentProfiles();
+  }
+
+  /// The caller's saved agents for the Agent picker, plus team names when a
+  /// team's agent is among them. Additive: the plain agents work without it.
+  Future<void> _loadAgentProfiles() async {
+    final profiles = await actions.apiListAgentProfiles();
+    if (!mounted || profiles == null) return;
+    setState(() => _agentProfiles = profiles);
+    final hasTeamAgents = profiles.any(
+        (p) => p is Map && (p['team_id']?.toString() ?? '').isNotEmpty);
+    if (!hasTeamAgents) return;
+    final teams = await actions.apiListTeams();
+    if (!mounted || teams == null) return;
+    setState(() => _teamNames = {
+          for (final t in teams)
+            if (t is Map && t['id'] != null)
+              t['id'].toString(): t['name']?.toString() ?? '',
+        });
+  }
+
+  dynamic get _selectedAgentProfile {
+    final id = _agentProfileId;
+    if (id == null) return null;
+    for (final p in _agentProfiles) {
+      if (p is Map && p['id']?.toString() == id) return p;
+    }
+    return null;
   }
 
   @override
@@ -237,6 +276,8 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
       'machine_id': _machineId,
       'directory': _directory.trim(),
       'session_config': _sessionConfig.toJson(),
+      if (_agentProfileId != _initialAgentProfileId)
+        'agent_profile_id': _agentProfileId,
       ..._draft.toScheduleApi(),
     });
   }
@@ -256,14 +297,55 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
 
   Future<void> _pickAgentConfig() async {
     dismissKeyboard();
-    final picked = await showAgentConfigSheet(
+    final picked = await showAutomationAgentSheet(
       context: context,
       catalog: widget.catalog,
       initial: _sessionConfig,
+      savedAgents: _agentProfiles,
+      initialAgentProfileId: _agentProfileId,
+      teamNames: _teamNames,
+      machineSupportsInstructions: machineSupportsSystemPrompt(_machine),
       availableAgents: parseAvailableAgents(_machine),
     );
     if (picked == null) return;
-    setState(() => _sessionConfig = picked);
+    setState(() {
+      _sessionConfig = picked.config;
+      _agentProfileId = picked.agentProfileId;
+    });
+  }
+
+  /// A linked automation's Agent row shows the saved agent, not its config:
+  /// the run uses the agent's settings as they are at the time.
+  Widget? _savedAgentValue(FlutterFlowTheme theme) {
+    final p = _selectedAgentProfile;
+    if (p == null) return null;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        PrincipalAvatar(
+          type: PrincipalType.agent,
+          id: p['id']?.toString(),
+          name: p['name']?.toString(),
+          avatarImageUri: p['avatar_image_uri']?.toString(),
+          emoji: p['emoji']?.toString(),
+          updatedAt: p['updated_at']?.toString(),
+          size: PrincipalAvatarSize.xs,
+        ),
+        const SizedBox(width: 6.0),
+        Flexible(
+          child: Text(
+            p['name']?.toString() ?? '',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.bodyMedium.override(
+              font: GoogleFonts.sourceSans3(),
+              letterSpacing: 0.0,
+              color: theme.secondaryText,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   Icon _repeatIcon(String mode) {
@@ -710,6 +792,7 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
       AutomationFieldRow(
         label: l10n.automationsAgent,
         value: sessionConfigSummary(widget.catalog, _sessionConfig),
+        valueWidget: _savedAgentValue(theme),
         onTap: _pickAgentConfig,
       ),
     ];

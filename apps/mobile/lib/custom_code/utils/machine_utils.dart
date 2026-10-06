@@ -140,6 +140,17 @@ bool machineSupportsWorktree(dynamic machine) {
   return raw.any((c) => c?.toString() == 'worktree');
 }
 
+/// Whether the machine's daemon can carry a saved agent's instructions
+/// (`metadata.capabilities` includes `system-prompt`). Missing reads as
+/// unsupported for the same reason as [machineSupportsWorktree]: an older
+/// daemon silently drops the instructions, and the agent runs without them.
+bool machineSupportsSystemPrompt(dynamic machine) {
+  final meta = machineMetadata(machine);
+  final raw = meta?['capabilities'];
+  if (raw is! List) return false;
+  return raw.any((c) => c?.toString() == 'system-prompt');
+}
+
 /// Normalize a machine map (REST or WS-envelope shape) into the canonical REST
 /// shape (`machine_id`, `metadata`). Merging a raw WS update (`id`,
 /// `machine_metadata`) into a REST-fetched row would otherwise leave the stale

@@ -746,6 +746,24 @@ abstract class AppLocalizations {
   /// **'Model'**
   String get agentConfigModel;
 
+  /// No description provided for @agentConfigMyAgents.
+  ///
+  /// In en, this message translates to:
+  /// **'My agents'**
+  String get agentConfigMyAgents;
+
+  /// No description provided for @agentConfigTeam.
+  ///
+  /// In en, this message translates to:
+  /// **'Team'**
+  String get agentConfigTeam;
+
+  /// No description provided for @agentConfigUpdateRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Update required'**
+  String get agentConfigUpdateRequired;
+
   /// No description provided for @agentConfigNotInstalled.
   ///
   /// In en, this message translates to:

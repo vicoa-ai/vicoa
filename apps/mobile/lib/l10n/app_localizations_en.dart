@@ -371,6 +371,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get agentConfigModel => 'Model';
 
   @override
+  String get agentConfigMyAgents => 'My agents';
+
+  @override
+  String get agentConfigTeam => 'Team';
+
+  @override
+  String get agentConfigUpdateRequired => 'Update required';
+
+  @override
   String get agentConfigNotInstalled => 'Not installed';
 
   @override

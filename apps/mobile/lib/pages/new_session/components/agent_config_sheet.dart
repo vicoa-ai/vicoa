@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '/backend/agent_catalog.dart';
 import '/components/agent_type_icon/agent_type_icon_widget.dart';
+import '/components/principal_avatar/principal_avatar.dart';
 import '/flutter_flow/flutter_flow_icon_button.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/l10n/app_localizations.dart';
@@ -52,6 +53,51 @@ Future<SessionConfig?> showAgentConfigSheet({
   );
 }
 
+/// What [showAutomationAgentSheet] returns: the config, and the saved agent
+/// the automation follows (null for a plain agent).
+class AgentPick {
+  const AgentPick(this.config, this.agentProfileId);
+  final SessionConfig config;
+  final String? agentProfileId;
+}
+
+/// The automation editor's Agent sheet: [showAgentConfigSheet] with the
+/// caller's saved agents ([savedAgents], `/api/v1/agents` rows) at the top of
+/// the Agent dropdown, as on the web. Picking one hides the Model / Effort /
+/// Permission rows, since each run uses that agent's own config; picking a
+/// plain agent brings them back.
+///
+/// [teamNames] names the team groups (team id → name). Pass
+/// [machineSupportsInstructions] = false for a daemon too old to carry a
+/// saved agent's instructions: agents that have some are then offered as
+/// unavailable rather than left to run without them.
+Future<AgentPick?> showAutomationAgentSheet({
+  required BuildContext context,
+  required AgentCatalog catalog,
+  required SessionConfig initial,
+  required List<dynamic> savedAgents,
+  String? initialAgentProfileId,
+  Map<String, String> teamNames = const {},
+  bool machineSupportsInstructions = true,
+  Map<String, bool>? availableAgents,
+}) async {
+  return showModalBottomSheet<AgentPick>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: false,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => _AgentConfigSheet(
+      catalog: catalog,
+      initial: initial,
+      availableAgents: availableAgents,
+      savedAgents: savedAgents,
+      initialAgentProfileId: initialAgentProfileId,
+      teamNames: teamNames,
+      machineSupportsInstructions: machineSupportsInstructions,
+    ),
+  );
+}
+
 class _AgentConfigSheet extends StatefulWidget {
   const _AgentConfigSheet({
     required this.catalog,
@@ -64,6 +110,10 @@ class _AgentConfigSheet extends StatefulWidget {
     this.freezeOpencodeMode = false,
     this.footerNote,
     this.availableAgents,
+    this.savedAgents,
+    this.initialAgentProfileId,
+    this.teamNames = const {},
+    this.machineSupportsInstructions = true,
   });
   final AgentCatalog catalog;
   final SessionConfig initial;
@@ -81,12 +131,41 @@ class _AgentConfigSheet extends StatefulWidget {
   /// daemon) → show the full catalog.
   final Map<String, bool>? availableAgents;
 
+  /// Set only by [showAutomationAgentSheet]: saved agents to offer, and the
+  /// sheet then returns an [AgentPick] instead of a bare [SessionConfig].
+  final List<dynamic>? savedAgents;
+  final String? initialAgentProfileId;
+  final Map<String, String> teamNames;
+  final bool machineSupportsInstructions;
+
   @override
   State<_AgentConfigSheet> createState() => _AgentConfigSheetState();
 }
 
+// Dropdown values for the saved-agent part of the Agent picker. Plain agents
+// use their catalog id, which never carries a colon.
+const String _profileValuePrefix = 'profile:';
+const String _headerValuePrefix = 'header:';
+const String _dividerValue = 'divider:';
+
+String? _profileId(dynamic profile) =>
+    profile is Map ? profile['id']?.toString() : null;
+
+SessionConfig _profileConfig(dynamic profile, AgentCatalog catalog) {
+  final raw = profile is Map ? profile['config'] : null;
+  return SessionConfig.fromJson({
+    if (raw is Map) ...Map<String, dynamic>.from(raw),
+    'agent': (profile as Map)['agent']?.toString() ?? 'claude',
+  }).reconcileAgainst(catalog);
+}
+
 class _AgentConfigSheetState extends State<_AgentConfigSheet> {
   late SessionConfig _config;
+
+  /// The saved agent selected in the picker. Kept as given when it isn't in
+  /// [_AgentConfigSheet.savedAgents] (archived, or the list didn't load), so
+  /// confirming without touching the picker never unlinks it by accident.
+  String? _agentProfileId;
 
   /// Set to the id of an uninstalled agent the user just tapped, so we can
   /// show an inline "not installed" explanation under the Agent dropdown.
@@ -96,6 +175,14 @@ class _AgentConfigSheetState extends State<_AgentConfigSheet> {
   void initState() {
     super.initState();
     _config = widget.initial.reconcileAgainst(widget.catalog);
+    _agentProfileId = widget.initialAgentProfileId;
+    final profile = _selectedProfile;
+    if (profile != null) {
+      // Open on the agent as it is now, so switching back to its provider
+      // starts from the agent's current settings.
+      _config = _profileConfig(profile, widget.catalog);
+      return;
+    }
     // If the initial agent isn't available on this machine, land on the
     // first one that is — never open pointing at an agent the daemon
     // would reject.
@@ -105,6 +192,21 @@ class _AgentConfigSheetState extends State<_AgentConfigSheet> {
         _config = SessionConfig.defaultsFor(widget.catalog, agents.first.id);
       }
     }
+  }
+
+  dynamic get _selectedProfile {
+    final id = _agentProfileId;
+    if (id == null) return null;
+    for (final p in widget.savedAgents ?? const []) {
+      if (_profileId(p) == id) return p;
+    }
+    return null;
+  }
+
+  /// Instructions need a daemon new enough to carry them.
+  bool _profileBlocked(dynamic profile) {
+    final prompt = profile is Map ? profile['system_prompt']?.toString() : null;
+    return (prompt ?? '').trim().isNotEmpty && !widget.machineSupportsInstructions;
   }
 
   bool _isAgentAvailable(String agentId) {
@@ -157,6 +259,11 @@ class _AgentConfigSheetState extends State<_AgentConfigSheet> {
   /// config for that agent. Plan §3.5: per-agent memory is per-AGENT, not
   /// global, so we don't carry [model] etc. across agent boundaries.
   void _switchAgent(String nextAgentId) {
+    if (_agentProfileId != null) {
+      // Leaving a saved agent. Same provider: keep its settings as the
+      // starting point rather than resetting them.
+      setState(() => _agentProfileId = null);
+    }
     if (_config.agent == nextAgentId) return;
     setState(() => _config = SessionConfig.defaultsFor(widget.catalog, nextAgentId));
   }
@@ -226,7 +333,87 @@ class _AgentConfigSheetState extends State<_AgentConfigSheet> {
 
   void _confirm() {
     HapticFeedback.lightImpact();
-    Navigator.of(context).pop(_config);
+    if (widget.savedAgents != null) {
+      Navigator.of(context).pop(AgentPick(_config, _agentProfileId));
+    } else {
+      Navigator.of(context).pop(_config);
+    }
+  }
+
+  /// Saved agents grouped by owner (yours, then each team's by name), each
+  /// group under a header, then a divider before the plain agents. Empty when
+  /// there are none, so the picker is unchanged for people who have none.
+  List<DropdownMenuItem<String>> _savedAgentItems(AppLocalizations l10n) {
+    final profiles = widget.savedAgents ?? const [];
+    if (profiles.isEmpty) return const [];
+    final personal = <dynamic>[];
+    final byTeam = <String, List<dynamic>>{};
+    for (final p in profiles) {
+      final teamId = p is Map ? p['team_id']?.toString() : null;
+      if (teamId == null || teamId.isEmpty) {
+        personal.add(p);
+      } else {
+        byTeam.putIfAbsent(teamId, () => []).add(p);
+      }
+    }
+    final teamName = {
+      for (final id in byTeam.keys) id: widget.teamNames[id] ?? l10n.agentConfigTeam,
+    };
+    final groups = <(String, String, List<dynamic>)>[
+      if (personal.isNotEmpty) ('personal', l10n.agentConfigMyAgents, personal),
+      ...(byTeam.keys.toList()..sort((a, b) => teamName[a]!.compareTo(teamName[b]!)))
+          .map((id) => (id, teamName[id]!, byTeam[id]!)),
+    ];
+    return [
+      for (final (key, label, members) in groups) ...[
+        DropdownMenuItem<String>(
+          value: '$_headerValuePrefix$key',
+          enabled: false,
+          child: Text(label),
+        ),
+        for (final p in members)
+          DropdownMenuItem<String>(
+            value: '$_profileValuePrefix${_profileId(p)}',
+            child: _OptionRow(
+              label: (p as Map)['name']?.toString() ?? '',
+              leading: PrincipalAvatar(
+                type: PrincipalType.agent,
+                id: _profileId(p),
+                name: p['name']?.toString(),
+                avatarImageUri: p['avatar_image_uri']?.toString(),
+                emoji: p['emoji']?.toString(),
+                updatedAt: p['updated_at']?.toString(),
+                size: PrincipalAvatarSize.sm,
+              ),
+              trailing: _profileBlocked(p) ? l10n.agentConfigUpdateRequired : null,
+              dimmed: _profileBlocked(p),
+            ),
+          ),
+      ],
+      const DropdownMenuItem<String>(
+        value: _dividerValue,
+        enabled: false,
+        child: SizedBox.shrink(),
+      ),
+    ];
+  }
+
+  void _pickSavedAgent(String id) {
+    dynamic profile;
+    for (final p in widget.savedAgents ?? const []) {
+      if (_profileId(p) == id) profile = p;
+    }
+    if (profile == null || _profileBlocked(profile)) return;
+    final agentId = (profile as Map)['agent']?.toString() ?? '';
+    if (!_isAgentAvailable(agentId)) {
+      setState(() => _unavailableNoticeAgentId = agentId);
+      return;
+    }
+    setState(() {
+      _unavailableNoticeAgentId = null;
+      _agentProfileId = id;
+      _config = _profileConfig(profile, widget.catalog);
+    });
   }
 
   @override
@@ -285,7 +472,9 @@ class _AgentConfigSheetState extends State<_AgentConfigSheet> {
         for (final a in allAgents)
           if (!_isAgentAvailable(a.id)) a.id,
       };
+      final l10n = AppLocalizations.of(context);
       final items = [
+        ..._savedAgentItems(l10n),
         for (final a in allAgents)
           DropdownMenuItem<String>(
             value: a.id,
@@ -313,10 +502,16 @@ class _AgentConfigSheetState extends State<_AgentConfigSheet> {
         _sectionLabel(context, AppLocalizations.of(context).agentConfigAgent),
         const SizedBox(height: 8),
         _StyledDropdown<String>(
-          value: _config.agent,
+          value: _selectedProfile != null
+              ? '$_profileValuePrefix$_agentProfileId'
+              : _config.agent,
           items: items,
           onChanged: (v) {
             if (v == null) return;
+            if (v.startsWith(_profileValuePrefix)) {
+              _pickSavedAgent(v.substring(_profileValuePrefix.length));
+              return;
+            }
             // Tapping an uninstalled agent doesn't switch to it — instead we
             // surface an inline explanation telling the user to install it and
             // restart the daemon. Selecting an installed agent clears it.
@@ -336,6 +531,10 @@ class _AgentConfigSheetState extends State<_AgentConfigSheet> {
         const SizedBox(height: 20),
       ]);
     }
+
+    // A saved agent brings its own model, effort and permission, and each run
+    // uses them as they are then, so there is nothing more to set here.
+    if (_selectedProfile != null) return widgets;
 
     final agent = widget.catalog.agentById(_config.agent);
     if (agent == null) {
@@ -614,6 +813,8 @@ class _StyledDropdown<T> extends StatelessWidget {
   // Fixed item height + known menu top padding lets us compute the offset that
   // lands the selected item directly on top of the trigger (spinner behavior).
   static const double _itemHeight = 48.0; // kMinInteractiveDimension
+  static const double _headerHeight = 32.0;
+  static const double _dividerHeight = 16.0;
   static const double _menuPaddingTop = 8.0; // kMaterialListPadding.top
   static const AnimationStyle _menuAnimation = AnimationStyle(
     duration: Duration(milliseconds: 240),
@@ -628,10 +829,24 @@ class _StyledDropdown<T> extends StatelessWidget {
     final itemStyle = theme.bodyMedium.override(font: GoogleFonts.sourceSans3(), fontSize: 16.0);
     final selectedIndex = items.indexWhere((i) => i.value == value);
     final selected = selectedIndex >= 0 ? items[selectedIndex] : null;
-    // Anchor over the trigger and shift up by (selectedIndex * itemHeight + menu top padding)
+    // A disabled item is a group header (the saved-agent sections), or a
+    // divider when its child is empty; both are shorter than an option row.
+    bool isDivider(DropdownMenuItem<T> item) =>
+        !item.enabled && item.child is SizedBox;
+    double heightOf(DropdownMenuItem<T> item) => item.enabled
+        ? _itemHeight
+        : (isDivider(item) ? _dividerHeight : _headerHeight);
+    // Anchor over the trigger and shift up by (the rows above the selected one + menu top padding)
     // so the selected row replaces the trigger in place — no "appear-then-reposition" jump.
     // Flutter's _fitInsideScreen still nudges the menu if it would clip; that's an acceptable fallback.
-    final selectedOffset = selectedIndex >= 0 ? -(selectedIndex * _itemHeight + _menuPaddingTop) : 0.0;
+    final selectedOffset = selectedIndex >= 0
+        ? -(items.take(selectedIndex).fold<double>(0, (sum, i) => sum + heightOf(i)) + _menuPaddingTop)
+        : 0.0;
+    final headerStyle = theme.labelSmall.override(
+      font: GoogleFonts.sourceSans3(),
+      fontSize: 13.0,
+      color: theme.secondaryText,
+    );
     // PopupMenuButton (not DropdownButtonFormField) so we can put a border on the popup PANEL via `shape`.
     // LayoutBuilder measures the trigger width so the popup panel matches it exactly.
     return LayoutBuilder(builder: (context, constraints) {
@@ -647,11 +862,18 @@ class _StyledDropdown<T> extends StatelessWidget {
         position: PopupMenuPosition.over,
         offset: Offset(0, selectedOffset),
         popUpAnimationStyle: _menuAnimation,
-        itemBuilder: (context) => items.map((item) => PopupMenuItem<T>(
-          value: item.value,
-          height: _itemHeight,
-          child: DefaultTextStyle(style: itemStyle, child: item.child),
-        )).toList(),
+        itemBuilder: (context) => items.map<PopupMenuEntry<T>>((item) {
+          if (isDivider(item)) return const PopupMenuDivider(height: _dividerHeight);
+          return PopupMenuItem<T>(
+            value: item.value,
+            enabled: item.enabled,
+            height: heightOf(item),
+            child: DefaultTextStyle(
+              style: item.enabled ? itemStyle : headerStyle,
+              child: item.child,
+            ),
+          );
+        }).toList(),
         onSelected: onChanged,
         child: Container(
           decoration: BoxDecoration(

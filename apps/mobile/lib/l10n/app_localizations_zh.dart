@@ -360,6 +360,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get agentConfigModel => '模型';
 
   @override
+  String get agentConfigMyAgents => '我的 Agent';
+
+  @override
+  String get agentConfigTeam => '团队';
+
+  @override
+  String get agentConfigUpdateRequired => '需要更新';
+
+  @override
   String get agentConfigNotInstalled => '未安装';
 
   @override

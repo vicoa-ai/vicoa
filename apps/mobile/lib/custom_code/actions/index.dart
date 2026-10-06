@@ -63,6 +63,7 @@ export 'api_automations.dart'
         apiDeleteAutomation,
         apiGetAutomationRuns,
         apiRecordAutomationRun;
+export 'api_agent_profiles.dart' show apiListAgentProfiles, apiListTeams;
 export 'api_get_machines.dart' show apiGetMachines;
 export 'api_get_activity.dart' show apiGetActivity;
 export 'api_get_machine_by_id.dart' show apiGetMachineById;

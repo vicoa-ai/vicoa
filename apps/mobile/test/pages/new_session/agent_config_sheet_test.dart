@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:vicoa/backend/agent_catalog.dart';
+import 'package:vicoa/l10n/app_localizations.dart';
 import 'package:vicoa/pages/new_session/components/agent_config_sheet.dart';
 
 /// Two-agent catalog: one installed, one not — enough to exercise the
@@ -34,6 +35,8 @@ Future<void> _openSheet(
   final catalog = _catalog();
   await tester.pumpWidget(
     MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: Builder(
           builder: (context) => ElevatedButton(
@@ -108,6 +111,8 @@ void main() {
       });
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: Builder(
               builder: (context) => ElevatedButton(
@@ -169,6 +174,8 @@ void main() {
       });
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: Builder(
               builder: (context) => ElevatedButton(
@@ -208,6 +215,8 @@ void main() {
       });
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             body: Builder(
               builder: (context) => ElevatedButton(
@@ -237,5 +246,184 @@ void main() {
       expect(find.text('Claude Code (Beta)'), findsNothing);
       expect(find.text('Codex (Beta)'), findsNothing);
     });
+  });
+
+  group('automation agent sheet', _automationSheetTests);
+}
+
+/// The automation editor's mode: the caller's saved agents at the top of the
+/// Agent dropdown, and an [AgentPick] back instead of a bare config.
+const _reviewer = {
+  'id': 'p-reviewer',
+  'name': 'Reviewer',
+  'agent': 'claude',
+  'config': {'agent': 'claude', 'model': 'm2'},
+  'system_prompt': 'Review carefully.',
+  'team_id': null,
+};
+
+AgentCatalog _twoModelCatalog() => AgentCatalog.fromJson({
+      'version': 'test',
+      'agents': [
+        {
+          'id': 'claude',
+          'label': 'Claude Code',
+          'models': [
+            {'id': 'm1', 'label': 'Model One', 'is_default': true},
+            {'id': 'm2', 'label': 'Model Two'},
+          ],
+        },
+        {
+          'id': 'codex',
+          'label': 'Codex',
+          'models': [
+            {'id': 'c1', 'label': 'Codex One', 'is_default': true},
+          ],
+        },
+      ],
+    });
+
+/// Opens the automation sheet and returns a getter for what it popped.
+Future<AgentPick? Function()> _openAutomationSheet(
+  WidgetTester tester, {
+  required SessionConfig initial,
+  String? initialAgentProfileId,
+  List<dynamic> savedAgents = const [_reviewer],
+  bool machineSupportsInstructions = true,
+}) async {
+  AgentPick? picked;
+  await tester.pumpWidget(
+    MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () async {
+              picked = await showAutomationAgentSheet(
+                context: context,
+                catalog: _twoModelCatalog(),
+                initial: initial,
+                savedAgents: savedAgents,
+                initialAgentProfileId: initialAgentProfileId,
+                machineSupportsInstructions: machineSupportsInstructions,
+              );
+            },
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.tap(find.text('open'));
+  await tester.pumpAndSettle();
+  return () => picked;
+}
+
+Future<void> _confirm(WidgetTester tester) async {
+  await tester.tap(find.byIcon(Icons.check_rounded));
+  await tester.pumpAndSettle();
+}
+
+void _automationSheetTests() {
+  testWidgets('lists saved agents under "My agents", above the plain agents',
+      (tester) async {
+    await _openAutomationSheet(tester, initial: SessionConfig(agent: 'claude'));
+    await tester.tap(find.text('Claude Code').last);
+    await tester.pumpAndSettle();
+
+    final values = tester
+        .widgetList<PopupMenuItem<String>>(find.byType(PopupMenuItem<String>))
+        .map((i) => i.value)
+        .toList();
+    expect(
+        values, ['header:personal', 'profile:p-reviewer', 'claude', 'codex']);
+    expect(find.text('My agents'), findsOneWidget);
+  });
+
+  testWidgets('picking a saved agent hides the model and returns its id',
+      (tester) async {
+    final result = await _openAutomationSheet(tester,
+        initial: SessionConfig(agent: 'claude'));
+    expect(find.text('Model'), findsOneWidget);
+
+    await tester.tap(find.text('Claude Code').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reviewer').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Model'), findsNothing);
+    await _confirm(tester);
+    expect(result()!.agentProfileId, 'p-reviewer');
+    expect(result()!.config.model, 'm2');
+  });
+
+  testWidgets('switching back to the same provider keeps the agent\'s settings',
+      (tester) async {
+    final result = await _openAutomationSheet(
+      tester,
+      initial: SessionConfig(agent: 'claude', model: 'm1'),
+      initialAgentProfileId: 'p-reviewer',
+    );
+    expect(find.text('Model'), findsNothing);
+
+    await tester.tap(find.text('Reviewer').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Claude Code').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Model'), findsOneWidget);
+    await _confirm(tester);
+    expect(result()!.agentProfileId, isNull);
+    expect(result()!.config.model, 'm2');
+  });
+
+  testWidgets('another provider starts from its defaults', (tester) async {
+    final result = await _openAutomationSheet(
+      tester,
+      initial: SessionConfig(agent: 'claude'),
+      initialAgentProfileId: 'p-reviewer',
+    );
+    await tester.tap(find.text('Reviewer').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Codex').last);
+    await tester.pumpAndSettle();
+
+    await _confirm(tester);
+    expect(result()!.agentProfileId, isNull);
+    expect(result()!.config.agent, 'codex');
+    expect(result()!.config.model, 'c1');
+  });
+
+  testWidgets('a link to an agent not in the list survives a plain confirm',
+      (tester) async {
+    // Archived, or the list failed to load: the picker can't show it, but
+    // confirming without touching the picker must not unlink it.
+    final result = await _openAutomationSheet(
+      tester,
+      initial: SessionConfig(agent: 'claude', model: 'm1'),
+      initialAgentProfileId: 'p-gone',
+    );
+    expect(find.text('Model'), findsOneWidget);
+    await _confirm(tester);
+    expect(result()!.agentProfileId, 'p-gone');
+  });
+
+  testWidgets('an agent with instructions is unavailable on an old daemon',
+      (tester) async {
+    final result = await _openAutomationSheet(
+      tester,
+      initial: SessionConfig(agent: 'claude'),
+      machineSupportsInstructions: false,
+    );
+    await tester.tap(find.text('Claude Code').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Update required'), findsOneWidget);
+    await tester.tap(find.text('Reviewer').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Model'), findsOneWidget);
+    await _confirm(tester);
+    expect(result()!.agentProfileId, isNull);
   });
 }

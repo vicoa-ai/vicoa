@@ -148,6 +148,9 @@
   },
   "agentConfigMode": "Mode",
   "agentConfigModel": "Model",
+  "agentConfigMyAgents": "My agents",
+  "agentConfigTeam": "Team",
+  "agentConfigUpdateRequired": "Update required",
   "agentConfigNotInstalled": "Not installed",
   "agentConfigNotInstalledPrefix": "{label} is not installed on this machine. Install it, then restart ",
   "@agentConfigNotInstalledPrefix": {
