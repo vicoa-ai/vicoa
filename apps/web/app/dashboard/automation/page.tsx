@@ -29,6 +29,7 @@ import {
   type AgentCatalog,
   type SessionConfig,
 } from '@/lib/agent-catalog';
+import { useAgentProfiles } from '@/lib/use-agent-profiles';
 import { resolveWorktreeSpawn } from '@/lib/worktree-selection';
 import type {
   AutomationResponse,
@@ -93,6 +94,7 @@ function AutomationPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { api } = useAgentDashboard();
+  const { profiles: agentProfiles } = useAgentProfiles();
 
   // Seed from the in-memory cache (lib/automation-cache.ts) so revisiting the
   // tab paints the last-loaded list instantly; a cold visit starts empty +
@@ -378,7 +380,17 @@ function AutomationPageInner() {
       // Open this automation's panel (if not already) so the run surfaces in
       // its Run history.
       setSelection((sel) => (sel !== 'new' && sel?.id === a.id ? sel : a));
-      const config = a.session_config as unknown as SessionConfig;
+      // A linked automation runs its saved agent as it is now, the same as a
+      // scheduled fire: the agent's current config, and its id, from which the
+      // server adds the agent's instructions and stamps the session as that
+      // agent. The stored snapshot is only the fallback (agent not loaded here,
+      // or archived — the server then ignores the id too).
+      const profile = a.agent_profile_id
+        ? agentProfiles.find((p) => p.id === a.agent_profile_id && !p.is_archived)
+        : undefined;
+      const config = profile
+        ? ({ ...profile.config, agent: profile.agent } as unknown as SessionConfig)
+        : (a.session_config as unknown as SessionConfig);
       const spawn = resolveWorktreeSpawn({
         mode: a.worktree?.mode ?? 'none',
         baseDirectory: a.directory,
@@ -390,6 +402,7 @@ function AutomationPageInner() {
           agent: config.agent,
           metadata: toSpawnMetadata(config, a.prompt),
           ...(spawn.worktree ? { worktree: spawn.worktree } : {}),
+          ...(a.agent_profile_id ? { agent_profile_id: a.agent_profile_id } : {}),
         });
         if (result.error) {
           await api
@@ -443,7 +456,7 @@ function AutomationPageInner() {
         setBusyId(null);
       }
     },
-    [api, refresh],
+    [api, refresh, agentProfiles],
   );
 
   const selectedId = selection && selection !== 'new' ? selection.id : null;

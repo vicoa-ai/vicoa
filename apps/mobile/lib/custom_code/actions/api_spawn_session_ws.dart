@@ -18,6 +18,9 @@ import 'ws_client.dart' show RpcException;
 /// the path and returns it as `worktreePath`/`branch`. Omit for today's
 /// spawn-in-[directory] behavior.
 ///
+/// Pass [agentProfileId] to run a saved agent: the server resolves its
+/// instructions from the id and stamps the session as that agent.
+///
 /// Returns `{success: true, agentInstanceId, machineId, worktreePath?, branch?}`
 /// on success, or `{success: false, error}` on failure.
 Future<Map<String, dynamic>> apiSpawnSession(
@@ -27,6 +30,7 @@ Future<Map<String, dynamic>> apiSpawnSession(
   String prompt = '',
   Map<String, dynamic>? extraMetadata,
   Map<String, dynamic>? worktree,
+  String? agentProfileId,
 }) async {
   try {
     final trimmedPrompt = prompt.trim();
@@ -52,6 +56,7 @@ Future<Map<String, dynamic>> apiSpawnSession(
         'agent': agent,
         'metadata': metadata,
         if (worktree != null) 'worktree': worktree,
+        if (agentProfileId != null) 'agent_profile_id': agentProfileId,
       },
     );
 

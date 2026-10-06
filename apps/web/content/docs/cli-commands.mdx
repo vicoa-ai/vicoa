@@ -493,7 +493,7 @@ vicoa task delete VIC-42 -y
 
 | Flag (create / update) | Meaning |
 |---|---|
-| `--description <text>` | Longer body |
+| `--description <text>` | Longer body; `-` reads it from stdin (`--description - < plan.md`) |
 | `--project <KEY\|NAME\|ID\|none>` | Project to file under / move to (`none` = No project) |
 | `--status <status>` | Task status (enum above) |
 | `--priority <priority>` | Task priority (enum above) |
@@ -585,6 +585,7 @@ Give it a session config with the convenience flags, or a full JSON blob:
 | `--effort <level>` | Reasoning/thinking effort — **claude & codex only** |
 | `--permission-mode <mode>` | Agent permission mode, e.g. `plan`, `acceptEdits` |
 | `--session-config-json <JSON>` | Full config object; overrides the above; must include `"agent"` |
+| `--agent-profile <NAME>` | Run a saved agent (`vicoa agent ls`) instead of the flags above. Each run uses the agent as it is at that time, and its session shows as that agent. On `update`, `none` unlinks it |
 
 ### Where it runs
 

@@ -334,7 +334,8 @@ vicoa automation ls
 vicoa automation get <AUTOMATION_UUID>
 vicoa automation runs <AUTOMATION_UUID>        # run history
 
-# Create: pass exactly one schedule + a session config (--agent or --session-config-json)
+# Create: pass exactly one schedule + a session config (--agent, --session-config-json,
+# or --agent-profile <NAME> to run a saved agent)
 vicoa automation create "Nightly triage" \
   --prompt "Triage new GitHub issues and label them" \
   --agent claude --daily --time 22:00 --timezone America/New_York
@@ -371,7 +372,8 @@ the target box first (it auto-registers and becomes the default), or pass
 Rarely what a question is about, but worth knowing they exist:
 
 - `vicoa agent ls|add|rm` — saved agent profiles (provider + model + config +
-  instructions) that `session start --agent-profile` and the dashboard reuse.
+  instructions) that `session start --agent-profile`, `automation create/update
+  --agent-profile` and the dashboard reuse.
 - `vicoa provider` — add and check the ACP coding agents this machine can run.
 - `vicoa plugin` — install and manage local Vicoa plugins (themes, sidebar,
   composer).

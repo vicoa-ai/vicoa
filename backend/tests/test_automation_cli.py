@@ -224,3 +224,147 @@ class TestGlobalAgentDefaultLeak:
             ]
         )
         assert A._session_config(ns, required=True) == {"agent": "codex"}
+
+
+_AUTOMATION_ID = "11111111-1111-1111-1111-111111111111"
+_PROFILE = {
+    "id": "22222222-2222-2222-2222-222222222222",
+    "name": "Reviewer",
+    "agent": "claude",
+    "config": {"model": "opus", "thinking_effort": "high"},
+}
+
+
+@pytest.fixture
+def api(monkeypatch):
+    """Record what the handlers send instead of hitting the server; the profile
+    lookup answers with `_PROFILE`, and a GET answers with `api.current`."""
+    sent: list[tuple[str, str, dict | None]] = []
+
+    def fake_request(args, api_key, method, path, json=None):
+        sent.append((method, path, json))
+        if method == "GET":
+            return api.current
+        return {"id": _AUTOMATION_ID, "title": "T", "schedule_kind": "once"}
+
+    import vicoa.commands.agent as agent_cmd
+
+    monkeypatch.setattr(A, "request", fake_request)
+    monkeypatch.setattr(A, "_resolve_machine_id", lambda args: "machine-1")
+    monkeypatch.setattr(
+        agent_cmd, "resolve_profile_by_name", lambda args, key, name: _PROFILE
+    )
+    api = SimpleNamespace(sent=sent, current={"agent_profile_id": None})
+    return api
+
+
+def _run(argv):
+    ns = _cli_like_parser().parse_args(argv)
+    return A._HANDLERS[ns.automation_command](ns, "key")
+
+
+class TestAgentProfileFlag:
+    def test_create_links_the_saved_agent_and_snapshots_its_config(self, api):
+        code = _run(
+            [
+                "automation",
+                "create",
+                "T",
+                "--prompt",
+                "p",
+                "--daily",
+                "--agent-profile",
+                "Reviewer",
+            ]
+        )
+        assert code == 0
+        ((method, _, body),) = api.sent
+        assert method == "POST"
+        assert body["agent_profile_id"] == _PROFILE["id"]
+        assert body["session_config"] == {
+            "agent": "claude",
+            "model": "opus",
+            "thinking_effort": "high",
+        }
+
+    def test_create_refuses_session_flags_next_to_a_saved_agent(self, api, capsys):
+        code = _run(
+            [
+                "automation",
+                "create",
+                "T",
+                "--prompt",
+                "p",
+                "--daily",
+                "--agent-profile",
+                "Reviewer",
+                "--model",
+                "sonnet",
+            ]
+        )
+        assert code == 2
+        assert api.sent == []
+        assert "--model" in capsys.readouterr().err
+
+    def test_update_relinks(self, api):
+        assert (
+            _run(
+                ["automation", "update", _AUTOMATION_ID, "--agent-profile", "Reviewer"]
+            )
+            == 0
+        )
+        ((method, _, body),) = api.sent
+        assert method == "PATCH"
+        assert body["agent_profile_id"] == _PROFILE["id"]
+        assert body["session_config"]["model"] == "opus"
+
+    def test_update_none_unlinks_and_may_set_a_config(self, api):
+        assert (
+            _run(
+                [
+                    "automation",
+                    "update",
+                    _AUTOMATION_ID,
+                    "--agent-profile",
+                    "none",
+                    "--session-config-json",
+                    '{"agent": "codex"}',
+                ]
+            )
+            == 0
+        )
+        ((method, _, body),) = api.sent
+        assert method == "PATCH"
+        assert body == {"agent_profile_id": None, "session_config": {"agent": "codex"}}
+
+    def test_update_refuses_a_config_a_linked_automation_would_ignore(
+        self, api, capsys
+    ):
+        api.current = {"agent_profile_id": _PROFILE["id"]}
+        code = _run(
+            [
+                "automation",
+                "update",
+                _AUTOMATION_ID,
+                "--session-config-json",
+                '{"agent": "codex"}',
+            ]
+        )
+        assert code == 2
+        assert [m for m, _, _ in api.sent] == ["GET"]
+        assert "--agent-profile none" in capsys.readouterr().err
+
+    def test_update_config_on_an_unlinked_automation_goes_through(self, api):
+        assert (
+            _run(
+                [
+                    "automation",
+                    "update",
+                    _AUTOMATION_ID,
+                    "--session-config-json",
+                    '{"agent": "codex"}',
+                ]
+            )
+            == 0
+        )
+        assert [m for m, _, _ in api.sent] == ["GET", "PATCH"]

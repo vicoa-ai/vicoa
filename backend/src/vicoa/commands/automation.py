@@ -187,6 +187,46 @@ def _session_config(args, *, required: bool) -> Optional[dict]:
     return config
 
 
+_SESSION_FLAGS = (
+    ("agent", "--agent"),
+    ("model", "--model"),
+    ("effort", "--effort"),
+    ("permission_mode", "--permission-mode"),
+    ("session_config_json", "--session-config-json"),
+)
+
+
+def _agent_profile(args, api_key: str) -> tuple[bool, Optional[dict]]:
+    """Resolve ``--agent-profile``: ``(False, None)`` when it wasn't passed,
+    ``(True, None)`` for ``none`` (unlink), ``(True, profile)`` for a name.
+
+    A linked automation runs the saved agent's own config at every fire, so a
+    session flag next to a name would be silently ignored — refuse it instead.
+    """
+    raw = getattr(args, "agent_profile", None)
+    if raw is None:
+        return False, None
+    if raw.strip().lower() == "none":
+        return True, None
+    passed = [flag for attr, flag in _SESSION_FLAGS if getattr(args, attr, None)]
+    if passed:
+        raise ValueError(
+            f"--agent-profile runs the saved agent's own config; drop "
+            f"{', '.join(passed)} (or leave out --agent-profile to configure "
+            "the run yourself)"
+        )
+    from vicoa.commands.agent import resolve_profile_by_name
+
+    return True, resolve_profile_by_name(args, api_key, raw)
+
+
+def _profile_snapshot(profile: dict) -> dict:
+    """The saved agent's config as a ``session_config``. The server keeps it as
+    the fallback a run uses if the agent is later archived, and refreshes it
+    from the live agent on every fire."""
+    return {**(profile.get("config") or {}), "agent": profile.get("agent")}
+
+
 def _worktree(args) -> Optional[dict]:
     raw = getattr(args, "worktree_json", None)
     if not raw:
@@ -289,6 +329,7 @@ def _print_automation_detail(a: dict) -> None:
         f"next_run_at:     {a.get('next_run_at') or '—'}",
         f"last_run_at:     {a.get('last_run_at') or '—'}",
         f"last_run_status: {a.get('last_run_status') or '—'}",
+        f"agent_profile_id: {a.get('agent_profile_id') or '—'}",
         f"session_config:  {_json.dumps(a.get('session_config'))}",
         f"created_at:      {a.get('created_at')}",
         f"updated_at:      {a.get('updated_at')}",
@@ -351,7 +392,12 @@ def _cmd_create(args, api_key: str) -> int:
                 file=sys.stderr,
             )
             return 2
-        session_config = _session_config(args, required=True)
+        _, profile = _agent_profile(args, api_key)
+        session_config = (
+            _profile_snapshot(profile)
+            if profile is not None
+            else _session_config(args, required=True)
+        )
         worktree = _worktree(args)
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -374,6 +420,8 @@ def _cmd_create(args, api_key: str) -> int:
         "session_config": session_config,
         "enabled": not getattr(args, "disabled", False),
     }
+    if profile is not None:
+        body["agent_profile_id"] = profile["id"]
     if worktree is not None:
         body["worktree"] = worktree
     body.update(schedule)
@@ -392,11 +440,33 @@ def _cmd_create(args, api_key: str) -> int:
 def _cmd_update(args, api_key: str) -> int:
     try:
         body: dict[str, Any] = dict(_schedule_fields(args))
-        session_config = _session_config(args, required=False)
+        relink, profile = _agent_profile(args, api_key)
+        session_config = (
+            _profile_snapshot(profile)
+            if profile is not None
+            else _session_config(args, required=False)
+        )
         worktree = _worktree(args)
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
+
+    if relink:
+        body["agent_profile_id"] = profile["id"] if profile is not None else None
+    elif session_config is not None:
+        # A linked automation takes its config from the saved agent at every
+        # fire, so a new session config here would be stored and never used.
+        current = request(
+            args, api_key, "GET", f"/api/v1/automations/{args.automation_id}"
+        )
+        if current.get("agent_profile_id"):
+            print(
+                "This automation follows a saved agent, which supplies its "
+                "config. Pass --agent-profile none to unlink it and use this "
+                "config instead.",
+                file=sys.stderr,
+            )
+            return 2
 
     for flag, field in (
         ("title", "title"),
@@ -623,6 +693,15 @@ def add_automation_subparser(subparsers) -> None:
         help="Full session config as JSON (overrides --agent/--model/…); must include 'agent'",
     )
     automation_create.add_argument(
+        "--agent-profile",
+        dest="agent_profile",
+        metavar="NAME",
+        help=(
+            "Run a saved agent (`vicoa agent ls`) instead of --agent/--model/…: "
+            "its provider, config and instructions, as they are at each run"
+        ),
+    )
+    automation_create.add_argument(
         "--disabled",
         action="store_true",
         help="Create paused (enabled=false); default is enabled",
@@ -643,6 +722,15 @@ def add_automation_subparser(subparsers) -> None:
         "--session-config-json",
         metavar="JSON",
         help="Replace the session config wholesale (JSON object including 'agent')",
+    )
+    automation_update.add_argument(
+        "--agent-profile",
+        dest="agent_profile",
+        metavar="NAME|none",
+        help=(
+            "Run a saved agent (`vicoa agent ls`) from now on, or 'none' to unlink "
+            "and keep its last config (or pass --session-config-json with it)"
+        ),
     )
     automation_enable = automation_update.add_mutually_exclusive_group()
     automation_enable.add_argument(

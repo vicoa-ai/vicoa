@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from shared.database.agent_profile_models import AgentProfile
 from shared.database.models import Machine, User
 from shared.database.session import get_db
 from servers.api.auth import get_current_user_id
@@ -165,6 +166,27 @@ class TestAutomationCrud:
         ).json()
         assert client.delete(f"/api/v1/automations/{created['id']}").status_code == 204
         assert client.get(f"/api/v1/automations/{created['id']}").status_code == 404
+
+    def test_create_links_a_saved_agent(self, client, test_db, test_user, test_machine):
+        """`vicoa automation create --agent-profile` sends the id on create; it
+        used to be accepted and then dropped, so only a later PATCH linked it."""
+        profile = AgentProfile(
+            id=uuid4(),
+            user_id=test_user.id,
+            name="Reviewer",
+            agent="claude",
+            config={"agent": "claude", "model": "opus"},
+        )
+        test_db.add(profile)
+        test_db.commit()
+
+        resp = client.post(
+            "/api/v1/automations",
+            json=_daily_body(test_machine, agent_profile_id=str(profile.id)),
+        )
+
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["agent_profile_id"] == str(profile.id)
 
 
 class TestAutomationRuns:

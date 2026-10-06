@@ -7,6 +7,7 @@ growth`` — and the bulk ``task update`` loop with its ``VIC-20 → VIC2-2``
 rename line and keep-going-on-404 behaviour.
 """
 
+import io
 import json
 import types
 
@@ -386,3 +387,39 @@ class TestOldServerGuard:
     def test_no_filters_is_a_no_op(self):
         rows = [{"project_id": None}]
         assert T._apply_filters_locally(rows, None, []) is rows
+
+
+class TestDescriptionFromStdin:
+    """``--description -`` reads stdin, like ``task comment -`` does; it used to
+    store a literal "-"."""
+
+    def test_create_reads_stdin(self, server, monkeypatch):
+        monkeypatch.setattr("sys.stdin", io.StringIO("# Plan\n\n- one\n- two\n"))
+        T._cmd_create(
+            _args(
+                title="New",
+                description="-",
+                project=None,
+                status=None,
+                priority=None,
+                parent=None,
+                label=None,
+                start=None,
+                due=None,
+            ),
+            "k",
+        )
+        assert server.sent[-1][3]["description"] == "# Plan\n\n- one\n- two"
+
+    def test_bulk_update_reads_stdin_once(self, server, monkeypatch):
+        monkeypatch.setattr("sys.stdin", io.StringIO("Same for both\n"))
+        assert (
+            T._cmd_update(_update_args("VIC-20", "VIC-21", description="-"), "k") == 0
+        )
+        bodies = [s[3] for s in server.sent if s[0] == "PATCH"]
+        assert bodies == [{"description": "Same for both"}] * 2
+
+    def test_plain_text_is_left_alone(self, server):
+        assert T._cmd_update(_update_args("VIC-20", description="- a bullet"), "k") == 0
+        bodies = [s[3] for s in server.sent if s[0] == "PATCH"]
+        assert bodies == [{"description": "- a bullet"}]

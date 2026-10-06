@@ -278,10 +278,20 @@ def _cmd_get(args, api_key: str) -> int:
     return 0
 
 
+def _description_arg(value: Optional[str]) -> Optional[str]:
+    """``--description -`` reads stdin, the same as ``task comment -``: a
+    description is usually multi-line markdown, which an agent would otherwise
+    have to fight its shell's quoting to pass."""
+    if value == "-":
+        return sys.stdin.read().strip()
+    return value
+
+
 def _cmd_create(args, api_key: str) -> int:
     body: dict[str, Any] = {"title": args.title}
-    if getattr(args, "description", None) is not None:
-        body["description"] = args.description
+    description = _description_arg(getattr(args, "description", None))
+    if description is not None:
+        body["description"] = description
     project_ref = getattr(args, "project", None)
     if project_ref:
         project_id = resolve_project_ref(args, api_key, project_ref)
@@ -336,6 +346,8 @@ def _cmd_update(args, api_key: str) -> int:
         ("due", "due_date"),
     ):
         value = getattr(args, flag, None)
+        if flag == "description":
+            value = _description_arg(value)
         if value is None:
             continue
         body[field] = (

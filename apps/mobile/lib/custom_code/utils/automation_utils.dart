@@ -35,6 +35,12 @@ Map<String, dynamic> automationSessionConfig(dynamic a) {
   return c is Map ? Map<String, dynamic>.from(c) : <String, dynamic>{};
 }
 
+/// The saved agent the automation runs, or null when it runs a plain config.
+String? automationAgentProfileId(dynamic a) {
+  final id = a is Map ? a['agent_profile_id'] : null;
+  return id is String && id.isNotEmpty ? id : null;
+}
+
 /// 'once' | 'recurring'
 String automationScheduleKind(dynamic a) =>
     (a is Map ? a['schedule_kind'] : null)?.toString() ?? 'recurring';

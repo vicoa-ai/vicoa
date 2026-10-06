@@ -1854,7 +1854,9 @@ Examples:
         "create", parents=[task_common], help="Create a task"
     )
     task_create.add_argument("title", help="Task title")
-    task_create.add_argument("--description", help="Longer description")
+    task_create.add_argument(
+        "--description", help="Longer description ('-' reads it from stdin)"
+    )
     task_create.add_argument(
         "--project",
         metavar="PROJECT",
@@ -1896,7 +1898,9 @@ Examples:
         help="Task identifier (VIC-42) or full UUID; several apply the same change to each",
     )
     task_update.add_argument("--title", help="New title")
-    task_update.add_argument("--description", help="New description")
+    task_update.add_argument(
+        "--description", help="New description ('-' reads it from stdin)"
+    )
     task_update.add_argument(
         "--project",
         metavar="PROJECT",

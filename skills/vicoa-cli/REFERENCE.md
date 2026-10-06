@@ -308,7 +308,7 @@ start/due dates, timestamps, description). `--json` supported.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--description <text>` | — | Longer body |
+| `--description <text>` | — | Longer body; `-` reads it from stdin |
 | `--project <REF>` | No project | Project to file under — key, name, or id; `none` is explicit |
 | `--status <status>` | `backlog` | Initial status |
 | `--priority <priority>` | `none` | Priority |
@@ -325,7 +325,7 @@ flags you pass change (PATCH with exclude-unset); passing none is an error.
 
 | Flag | Meaning |
 |---|---|
-| `--title` / `--description` | New title / body |
+| `--title` / `--description` | New title / body (`--description -` reads stdin) |
 | `--project <REF>` | Move to this project (`none` = No project). A move **reassigns the identifier** — printed as `VIC-20 → VIC2-2` |
 | `--status` / `--priority` | New status / priority (enums above) |
 | `--parent <TASK>` | New parent task |
@@ -450,6 +450,7 @@ to recurring schedules — sending it alone on update re-times the next run).
 | `--effort <level>` | Reasoning/thinking effort — **claude & codex only** (maps to `thinking_effort` / `reasoning_effort`) |
 | `--permission-mode <mode>` | Agent permission mode (e.g. `plan`, `acceptEdits`) |
 | `--session-config-json <JSON>` | Full config object; overrides the above; must include `"agent"` |
+| `--agent-profile <NAME>` | Run a saved agent (`vicoa agent ls`) instead: its provider, config and instructions as they are at each run, and the session shows as that agent. Can't be combined with the flags above |
 
 **Target** (where it runs):
 
@@ -475,7 +476,9 @@ Accepts all `create` flags (schedule, session config, target) plus `--title`,
 
 `--enable`/`--disable` are mutually exclusive. Note: `update` has no `--agent`
 convenience flag — change the agent via `--session-config-json` (which replaces
-the config wholesale).
+the config wholesale). `--agent-profile <NAME>` switches it to a saved agent and
+`--agent-profile none` unlinks it; while it is linked, a `--session-config-json`
+on its own is refused, since the saved agent's config is what runs.
 
 ## `vicoa worktree setup [path]`
 
@@ -528,6 +531,6 @@ in a `--json` pipe — don't merge the streams with `2>&1` before parsing.
 
 | Command | Meaning |
 |---|---|
-| `vicoa agent ls\|add\|rm` | Saved agent profiles (provider + model + config + instructions) reused by `session start --agent-profile` and the dashboard |
+| `vicoa agent ls\|add\|rm` | Saved agent profiles (provider + model + config + instructions) reused by `session start --agent-profile`, `automation create/update --agent-profile` and the dashboard |
 | `vicoa provider ...` | Add, check and manage the ACP coding agents this machine can run |
 | `vicoa plugin ...` | Install and manage local Vicoa plugins (themes, sidebar, composer) |

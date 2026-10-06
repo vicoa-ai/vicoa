@@ -15,6 +15,7 @@ from uuid import uuid4
 import pytest
 
 import servers.shared.db.queries as queries_module
+from servers import profile_provenance
 from servers.api import ws_handler
 from shared.database.agent_profile_models import AgentProfile
 from shared.database.enums import AgentStatus
@@ -185,7 +186,7 @@ async def test_stamp_waits_for_a_slow_agent_to_register(
     is already there when the spawn returns."""
     # Compress the schedule so the test doesn't sleep for minutes, but keep more
     # attempts than the row needs, which is the property under test.
-    monkeypatch.setattr(ws_handler, "_STAMP_DELAYS", (0.05,) * 20)
+    monkeypatch.setattr(profile_provenance, "STAMP_DELAYS", (0.05,) * 20)
 
     instance_id = uuid4()
     conn = _connection(user.id)
@@ -209,7 +210,7 @@ async def test_stamp_task_is_held_until_it_finishes(
 ):
     """The event loop references a detached task only weakly, so a minutes-long
     one can be collected mid-wait. It has to be held somewhere."""
-    monkeypatch.setattr(ws_handler, "_STAMP_DELAYS", (0.2,) * 5)
+    monkeypatch.setattr(profile_provenance, "STAMP_DELAYS", (0.2,) * 5)
     instance_id = uuid4()
 
     await _spawn(
@@ -219,8 +220,8 @@ async def test_stamp_task_is_held_until_it_finishes(
         instance_id,
     )
 
-    assert ws_handler._stamp_tasks, "stamp task was left unreferenced"
-    for task in list(ws_handler._stamp_tasks):
+    assert profile_provenance._tasks, "stamp task was left unreferenced"
+    for task in list(profile_provenance._tasks):
         task.cancel()
 
 

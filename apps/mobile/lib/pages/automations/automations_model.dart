@@ -163,6 +163,9 @@ class AutomationsModel extends FlutterFlowModel<AutomationsWidget> {
         prompt: autils.automationPrompt(automation),
         extraMetadata: cfg.toSpawnMetadata(),
         worktree: spawn.worktree,
+        // A linked automation runs its saved agent, the same as a scheduled
+        // fire: the server adds the agent's instructions and stamps the session.
+        agentProfileId: autils.automationAgentProfileId(automation),
       );
       String status;
       String? detail;

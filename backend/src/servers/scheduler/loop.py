@@ -16,6 +16,7 @@ from shared.config import settings
 from shared.database import Automation, AgentInstance, AutomationRun
 from shared.database.session import SessionLocal
 from shared.scheduling import compute_next_run
+from servers.profile_provenance import stamp_agent_profile_in_background
 
 from .dispatch import DispatchResult, dispatch_automation
 
@@ -74,6 +75,11 @@ def _claim_due_blocking() -> list[dict]:
                     "worktree": dict(row.worktree) if row.worktree else None,
                     "session_config": resolved.session_config,
                     "system_prompt": resolved.system_prompt,
+                    # Only when the live profile answered: a run that fell back
+                    # to the snapshot is not that agent's run.
+                    "agent_profile_id": (
+                        row.agent_profile_id if resolved.from_profile else None
+                    ),
                     "prompt": row.prompt,
                     "planned_at": row.next_run_at,
                 }
@@ -186,6 +192,16 @@ class AutomationScheduler:
         )
         linked = None
         if result.status == "fired" and result.agent_instance_id:
+            # Stamp the session with the agent it ran as, the same as a spawn
+            # from the new-session picker does. Without it the session reads as
+            # a plain one: no agent on the session page, no Run history entry,
+            # and its task comments signed by the user instead of the agent.
+            if row.get("agent_profile_id"):
+                stamp_agent_profile_in_background(
+                    str(row["user_id"]),
+                    result.agent_instance_id,
+                    str(row["agent_profile_id"]),
+                )
             linked = await self._await_instance(result.agent_instance_id)
         await asyncio.to_thread(_record_run_blocking, row, result, linked)
 
