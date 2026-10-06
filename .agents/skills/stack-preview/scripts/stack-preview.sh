@@ -3,6 +3,7 @@
 # so a branch can be reviewed from another machine or from the Vicoa app.
 #
 #   stack-preview.sh up [--env-file FILE] [--allow-signup] [--provider cloudflare|ngrok]
+#                       [--auth builtin|supabase]
 #   stack-preview.sh status
 #   stack-preview.sh env                  # shell exports for seed scripts and curl
 #   stack-preview.sh token owner|viewer   # bearer token for a seeded account
@@ -12,6 +13,10 @@
 #   stack-preview.sh down [--purge]       # --purge also deletes the database and the state dir
 #
 #   --repo DIR   checkout to preview (default: the git checkout of the current directory)
+#   --auth       builtin (default): seeded email/password accounts in the preview DB.
+#                supabase: sign in with a hosted Supabase project (SUPABASE_URL and
+#                SUPABASE_ANON_KEY from the environment), for the mobile app, which
+#                only signs in with Supabase. Identity only; data stays in the preview DB.
 #
 #   Postgres (Docker) -> backend + server (uvicorn) -> web (next dev)
 #     -> proxy.mjs (one origin) -> cloudflared or ngrok (one public URL)
@@ -48,7 +53,7 @@ set -E
 trap '[ "$UP_IN_PROGRESS" != 1 ] || die "command failed at line $LINENO"' ERR
 
 usage() {
-  sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -56,7 +61,7 @@ usage() {
 
 CMD=${1:-}
 [ $# -gt 0 ] && shift
-REPO="" ENV_FILE="" ALLOW_SIGNUP=0 PROVIDER="" PURGE=0
+REPO="" ENV_FILE="" ALLOW_SIGNUP=0 PROVIDER="" PURGE=0 AUTH=""
 ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
@@ -64,6 +69,7 @@ while [ $# -gt 0 ]; do
     --env-file) ENV_FILE=${2:?--env-file needs a file}; shift 2 ;;
     --allow-signup) ALLOW_SIGNUP=1; shift ;;
     --provider) PROVIDER=${2:?--provider needs cloudflare or ngrok}; shift 2 ;;
+    --auth) AUTH=${2:?--auth needs builtin or supabase}; shift 2 ;;
     --purge) PURGE=1; shift ;;
     -h | --help) usage ;;
     --) shift; ARGS+=("$@"); break ;;
@@ -72,6 +78,7 @@ while [ $# -gt 0 ]; do
 done
 case $CMD in up | status | env | token | seed | run | restart | down) ;; -h | --help | help) usage ;; *) usage 2 ;; esac
 case $PROVIDER in "" | cloudflare | ngrok) ;; *) die "unknown --provider $PROVIDER (cloudflare or ngrok)" ;; esac
+case $AUTH in "" | builtin | supabase) ;; *) die "unknown --auth $AUTH (builtin or supabase)" ;; esac
 
 if [ -z "$REPO" ]; then
   REPO=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git checkout; pass --repo"
@@ -173,6 +180,9 @@ load_state() {
   [ -f "$STATE/public" ] && . "$STATE/public"
   # shellcheck disable=SC1091
   [ -f "$STATE/accounts" ] && . "$STATE/accounts"
+  # shellcheck disable=SC1091
+  [ -f "$STATE/auth" ] && . "$STATE/auth"
+  AUTH=${AUTH:-builtin}
   DATABASE_URL="postgresql://vicoa:vicoa@127.0.0.1:$PG_PORT/vicoa"
   PUBLIC_URL=${PUBLIC_URL:-}
 }
@@ -259,6 +269,10 @@ preflight() {
   # from backend/src/shared.
   [ ! -e "$REPO/backend/src/shared/.env" ] ||
     die "$REPO/backend/src/shared/.env exists; alembic would load it. Move it aside first."
+  if [ "$AUTH" = supabase ]; then
+    [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_ANON_KEY:-}" ] ||
+      die "--auth supabase needs SUPABASE_URL and SUPABASE_ANON_KEY in the environment"
+  fi
   if [ -n "$ENV_FILE" ]; then
     [ -f "$ENV_FILE" ] || die "--env-file $ENV_FILE does not exist"
     ENV_FILE=$(cd "$(dirname "$ENV_FILE")" && pwd -P)/$(basename "$ENV_FILE")
@@ -356,7 +370,7 @@ write_backend_env() { # true|false — BUILTIN_ALLOW_SIGNUP
     umask 077
     cat >"$STATE/backend.env" <<EOF
 ENVIRONMENT='preview'
-AUTH_PROVIDER='builtin'
+AUTH_PROVIDER='$AUTH'
 BUILTIN_ALLOW_SIGNUP='$1'
 DATABASE_URL='$DATABASE_URL'
 JWT_PRIVATE_KEY_FILE='$STATE/keys/jwt_private.pem'
@@ -369,6 +383,9 @@ INTERNAL_BROADCAST_TOKEN='$BROADCAST_TOKEN'
 CLIENT_IP_HEADER='$CLIENT_IP_HEADER'
 PYTHONPATH="$REPO/backend/src\${PYTHONPATH:+:\$PYTHONPATH}"
 EOF
+    if [ "$AUTH" = supabase ]; then
+      printf "SUPABASE_URL='%s'\nSUPABASE_ANON_KEY='%s'\n" "$SUPABASE_URL" "$SUPABASE_ANON_KEY" >>"$STATE/backend.env"
+    fi
   )
 }
 
@@ -417,12 +434,20 @@ start_web() {
   done
   web_env+=(
     "NEXT_TELEMETRY_DISABLED=1"
-    "NEXT_PUBLIC_AUTH_PROVIDER=builtin"
+    "NEXT_PUBLIC_AUTH_PROVIDER=$AUTH"
     "NEXT_PUBLIC_BACKEND_API_URL=$PUBLIC_URL"
     "NEXT_PUBLIC_VICOA_WS_URL=$WS_URL"
     "BACKEND_INTERNAL_URL=http://127.0.0.1:$BACKEND_PORT"
     "BASE_URL=$PUBLIC_URL"
   )
+  if [ "$AUTH" = supabase ]; then
+    web_env+=(
+      "NEXT_PUBLIC_SUPABASE_URL=$SUPABASE_URL"
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY"
+      "SUPABASE_URL=$SUPABASE_URL"
+      "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY"
+    )
+  fi
   (cd "$REPO/apps/web" &&
     launch web "$STATE" env -i "HOME=$HOME" "PATH=$(dirname "$node"):$BASE_PATH" \
       "LANG=${LANG:-en_US.UTF-8}" "TMPDIR=${TMPDIR:-/tmp}" "${web_env[@]}" \
@@ -482,6 +507,15 @@ cmd_up() {
     cmd_status
     return 0
   fi
+  if [ -z "$AUTH" ]; then
+    AUTH=builtin
+    # shellcheck disable=SC1091
+    [ -f "$STATE/auth" ] && . "$STATE/auth"
+  fi
+  if [ "$AUTH" = supabase ] && { [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; }; then
+    # shellcheck disable=SC1091
+    [ -f "$STATE/supabase.env" ] && . "$STATE/supabase.env"
+  fi
   preflight
   local others
   others=$(other_next_dev)
@@ -514,6 +548,13 @@ cmd_up() {
   WS_URL="wss://${PUBLIC_URL#https://}/ws"
   printf "PUBLIC_URL='%s'\nTUNNEL_PROVIDER='%s'\n" "$PUBLIC_URL" "$TUNNEL_PROVIDER" >"$STATE/public"
   printf '%s' "$ENV_FILE" >"$STATE/env_file"
+  printf "AUTH='%s'\n" "$AUTH" >"$STATE/auth"
+  if [ "$AUTH" = supabase ]; then
+    (
+      umask 077
+      printf "SUPABASE_URL='%s'\nSUPABASE_ANON_KEY='%s'\n" "$SUPABASE_URL" "$SUPABASE_ANON_KEY" >"$STATE/supabase.env"
+    )
+  fi
   log "tunnel: $PUBLIC_URL ($TUNNEL_PROVIDER)"
 
   local first_seed=0 signup=true
@@ -527,8 +568,9 @@ cmd_up() {
   start_web
   wait_http server "http://127.0.0.1:$SERVER_PORT/health" 90
   wait_http backend "http://127.0.0.1:$BACKEND_PORT/health" 90
-  seed_accounts
-  if [ "$signup" = true ] && [ "$ALLOW_SIGNUP" = 0 ]; then
+  # Hosted sign-in has no accounts to seed: people sign in with their own.
+  [ "$AUTH" = builtin ] && seed_accounts
+  if [ "$AUTH" = builtin ] && [ "$signup" = true ] && [ "$ALLOW_SIGNUP" = 0 ]; then
     # Accounts exist now; close sign-up so the public URL can't mint more.
     write_backend_env false
     stop backend
@@ -541,6 +583,22 @@ cmd_up() {
   log "checking the stack through the public URL"
   local page_code api_out api_code token ws_code
   page_code=$(public_probe /sign-in)
+  if [ "$AUTH" = supabase ]; then
+    # No password to sign in with here: a 401 from an authenticated route
+    # proves the API answers through the tunnel and enforces auth; the
+    # websocket waits for a real session.
+    api_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$PUBLIC_URL/api/v1/auth/me" 2>/dev/null || true)
+    curl -s -o /dev/null --max-time 180 "$PUBLIC_URL/dashboard" 2>/dev/null || true
+    UP_IN_PROGRESS=0
+    local status=ok message="Full stack up on one URL, signing in with hosted Supabase. The websocket is checked once someone signs in."
+    if [ "$page_code" != 200 ] || [ "$api_code" != 401 ]; then
+      status=error
+      message="Started, but the public check failed: page $page_code, api $api_code (401 expected). Logs: $STATE"
+    fi
+    print_result "$status" "$message"
+    [ "$status" = ok ]
+    return
+  fi
   api_out=$(curl -s -w '\n%{http_code}' --max-time 30 -X POST "$PUBLIC_URL/api/v1/auth/builtin/sign-in" \
     -H 'content-type: application/json' \
     -d "{\"email\":\"$OWNER_EMAIL\",\"password\":\"$OWNER_PASSWORD\"}" 2>/dev/null || true)
@@ -574,8 +632,9 @@ print_result() { # STATUS MESSAGE
     "* pid: $(pid_of proxy)" \
     "* message: $2" \
     "* public_url: ${PUBLIC_URL:-null}" \
-    "* owner: $OWNER_EMAIL / ${OWNER_PASSWORD:-?}" \
-    "* viewer: $VIEWER_EMAIL / ${VIEWER_PASSWORD:-?}" \
+    "* auth: ${AUTH:-builtin}" \
+    "* owner: $([ "${AUTH:-builtin}" = builtin ] && echo "$OWNER_EMAIL / ${OWNER_PASSWORD:-?}" || echo "none (sign in with a hosted Supabase account)")" \
+    "* viewer: $([ "${AUTH:-builtin}" = builtin ] && echo "$VIEWER_EMAIL / ${VIEWER_PASSWORD:-?}" || echo none)" \
     "* signup: $signup" \
     "* state: $STATE" \
     "* stop: $SCRIPT_DIR/stack-preview.sh down --repo $REPO"
@@ -624,7 +683,8 @@ cmd_seed() {
   [ -f "$file" ] || die "$file does not exist"
   alive backend || die "the preview backend is not running"
   while IFS= read -r pair; do vars+=("$pair"); done < <(preview_vars)
-  vars+=("OWNER_TOKEN=$(token_for owner)" "VIEWER_TOKEN=$(token_for viewer)")
+  # Hosted sign-in has no seeded passwords: seeds write rows directly.
+  [ "$AUTH" = builtin ] && vars+=("OWNER_TOKEN=$(token_for owner)" "VIEWER_TOKEN=$(token_for viewer)")
   # Same clean environment as the services: from the empty run dir, so
   # importing the backend's settings loads no checkout .env.
   case $file in
@@ -659,6 +719,8 @@ cmd_restart() {
   if [ ! -f "$STATE/public" ] || ! alive tunnel; then die "no running preview to restart (run: stack-preview.sh up)"; fi
   ENV_FILE=$(cat "$STATE/env_file" 2>/dev/null || true)
   WS_URL="wss://${PUBLIC_URL#https://}/ws"
+  # shellcheck disable=SC1091
+  [ "$AUTH" = supabase ] && [ -f "$STATE/supabase.env" ] && . "$STATE/supabase.env"
   local svc
   [ ${#ARGS[@]} -gt 0 ] || ARGS=(server backend)
   for svc in "${ARGS[@]}"; do
