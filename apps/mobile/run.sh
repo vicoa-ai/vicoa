@@ -29,4 +29,10 @@ case "${1:-}" in
   * ) SUB="$1"; shift ;;
 esac
 
+# `run` points debug builds at a local dev stack (localhost:8000 / :8080) by
+# editing vicoa_api_config.dart; DEBUG_BACKEND=prod ./run.sh keeps production.
+if [ "$SUB" = run ]; then
+  python3 "$DIR/scripts/backend_toggle.py" "${DEBUG_BACKEND:-local}"
+fi
+
 exec flutter "$SUB" --dart-define-from-file="$ENV_FILE" "$@"

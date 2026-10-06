@@ -44,6 +44,10 @@ extra arguments straight through:
 ./run.sh build apk         # any other flutter subcommand works too
 ```
 
+Before `run`, the wrapper points debug builds at a local dev stack
+(`scripts/backend_toggle.py local`, an edit to `vicoa_api_config.dart`); use
+`DEBUG_BACKEND=prod ./run.sh` to stay on production.
+
 Or invoke Flutter directly with the flag:
 
 ```bash

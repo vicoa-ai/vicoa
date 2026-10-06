@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Flip the debug-mode backend in vicoa_api_config.dart between the hosted
 backend and a local dev stack — the same edit as commenting/uncommenting the
-two `return` lines by hand, scripted so a fresh worktree can start on local.
+two `return` lines by hand, scripted so `./run.sh` can start on local.
 
   scripts/backend_toggle.py local   # debug builds -> http://localhost:8000 + ws://localhost:8080/ws
   scripts/backend_toggle.py prod    # debug builds -> production (the committed state)
