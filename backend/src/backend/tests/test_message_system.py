@@ -119,12 +119,15 @@ class TestMessageSystem:
         )
         assert response3.status_code == 200
 
-        # Verify all messages were created
+        # Verify all messages were created. Ordered the way the API reads a
+        # transcript: an unordered SELECT returns heap order, which a reused
+        # page or an updated row can shuffle.
         messages = (
             test_db.query(Message)
             .filter_by(
                 agent_instance_id=test_agent_instance.id, sender_type=SenderType.USER
             )
+            .order_by(Message.created_at.asc(), Message.id.asc())
             .all()
         )
         assert len(messages) == 3
