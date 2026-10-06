@@ -1,15 +1,24 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/auth/supabase-server';
+import {
+  authedRedirectAllowedOrigins,
+  resolveAuthedRedirect,
+} from '@/lib/auth/redirect-target';
 import { captureServerEvent } from '@/lib/posthog-server';
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
-  const next = requestUrl.searchParams.get('next') ?? '/dashboard';
   const baseOrigin =
     process.env.NODE_ENV !== 'development' && process.env.BASE_URL
       ? process.env.BASE_URL
       : requestUrl.origin;
+  // `next` rides the query string, so anyone can put a link here: only a
+  // same-site path or an allowlisted origin may come out the other side.
+  const next = resolveAuthedRedirect(
+    requestUrl.searchParams.get('next'),
+    authedRedirectAllowedOrigins(baseOrigin)
+  );
 
   if (code) {
     const supabase = await createClient();

@@ -25,6 +25,10 @@ import {
   builtinSignIn,
   builtinSignUp,
 } from '@/lib/auth/builtin-client';
+import {
+  authedRedirectAllowedOrigins,
+  resolveAuthedRedirect,
+} from '@/lib/auth/redirect-target';
 
 type View = 'credentials' | 'forgot' | 'reset';
 
@@ -69,7 +73,12 @@ export function BuiltinLogin({ mode = 'signin' }: { mode?: 'signin' | 'signup' }
       }
       // A full navigation, not router.push: the session cookie was just set
       // client-side and the middleware has to see it on the next request.
-      window.location.href = redirect || '/dashboard';
+      // `redirect` is validated first: a raw `javascript:` value assigned here
+      // would run as script on this origin.
+      window.location.href = resolveAuthedRedirect(
+        redirect,
+        authedRedirectAllowedOrigins(window.location.origin)
+      );
     });
   };
 

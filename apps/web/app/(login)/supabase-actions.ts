@@ -5,6 +5,10 @@ import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { createClient } from '@/lib/auth/supabase-server';
 import { validatedAction } from '@/lib/auth/supabase-helpers';
+import {
+  authedRedirectAllowedOrigins,
+  resolveAuthedRedirect,
+} from '@/lib/auth/redirect-target';
 import { getBackendAPI } from '@/lib/backend-api';
 import { captureServerEvent } from '@/lib/posthog-server';
 
@@ -48,8 +52,7 @@ export const supabaseSignIn = validatedAction(signInSchema, async (data) => {
     await captureServerEvent(authData.user.id, 'login_completed', { method: 'email' });
   }
 
-  const redirectTo = data.redirect || '/dashboard';
-  redirect(redirectTo);
+  redirect(safeRedirectTarget(data.redirect, await resolveOrigin()));
 });
 
 export const supabaseSignUp = validatedAction(signUpSchema, async (data) => {
@@ -63,7 +66,8 @@ export const supabaseSignUp = validatedAction(signUpSchema, async (data) => {
   let emailRedirectTo: string | undefined;
   if (data.redirect) {
     const origin = await resolveOrigin();
-    emailRedirectTo = `${origin}/api/auth/callback?next=${encodeURIComponent(data.redirect)}`;
+    const next = safeRedirectTarget(data.redirect, origin);
+    emailRedirectTo = `${origin}/api/auth/callback?next=${encodeURIComponent(next)}`;
   }
 
   const { data: authData, error } = await supabase.auth.signUp({
@@ -88,8 +92,7 @@ export const supabaseSignUp = validatedAction(signUpSchema, async (data) => {
         if (signInData.user) {
           await captureServerEvent(signInData.user.id, 'login_completed', { method: 'email' });
         }
-        const redirectTo = data.redirect || '/dashboard';
-        redirect(redirectTo);
+        redirect(safeRedirectTarget(data.redirect, await resolveOrigin()));
       }
 
       return {
@@ -118,8 +121,7 @@ export const supabaseSignUp = validatedAction(signUpSchema, async (data) => {
       if (signInData.user) {
         await captureServerEvent(signInData.user.id, 'login_completed', { method: 'email' });
       }
-      const redirectTo = data.redirect || '/dashboard';
-      redirect(redirectTo);
+      redirect(safeRedirectTarget(data.redirect, await resolveOrigin()));
     }
 
     return {
@@ -160,7 +162,7 @@ export const supabaseSignUp = validatedAction(signUpSchema, async (data) => {
       method: 'email',
       $set_once: { signup_origin: 'web' },
     });
-    const dest = data.redirect || '/dashboard';
+    const dest = safeRedirectTarget(data.redirect, await resolveOrigin());
     redirect(dest + (dest.includes('?') ? '&' : '?') + 'new_user=1');
   }
 
@@ -231,11 +233,20 @@ async function resolveOrigin() {
   return process.env.BASE_URL || headerOrigin || 'http://localhost:3000';
 }
 
+/**
+ * Where a post-login `redirect` param may send the user: a same-site path or an
+ * allowlisted origin (`origin`, this site, included), else /dashboard. The param
+ * comes from the sign-in page's query string, so anyone can craft it.
+ */
+function safeRedirectTarget(param: string | null | undefined, origin: string): string {
+  return resolveAuthedRedirect(param, authedRedirectAllowedOrigins(origin));
+}
+
 export async function supabaseSignInWithGoogle(redirectPath?: string) {
   const supabase = await createClient();
   const origin = await resolveOrigin();
 
-  const next = redirectPath || '/dashboard';
+  const next = safeRedirectTarget(redirectPath, origin);
   const redirectTo = `${origin}/api/auth/callback?next=${encodeURIComponent(next)}`;
 
   const { data, error } = await supabase.auth.signInWithOAuth({
@@ -260,7 +271,7 @@ export async function supabaseSignInWithApple(redirectPath?: string) {
   const supabase = await createClient();
   const origin = await resolveOrigin();
 
-  const next = redirectPath || '/dashboard';
+  const next = safeRedirectTarget(redirectPath, origin);
   const redirectTo = `${origin}/api/auth/callback?next=${encodeURIComponent(next)}`;
 
   const { data, error } = await supabase.auth.signInWithOAuth({
