@@ -1067,6 +1067,72 @@ def test_git_show_file_outside_project_is_rejected(committed_repo: Path):
     assert result == {"error": "outside_project"}
 
 
+def test_git_show_file_option_shaped_ref_does_not_reach_git(
+    committed_repo: Path, tmp_path_factory: pytest.TempPathFactory
+):
+    """`ref` opens the `<ref>:<path>` argv word, so `--output=<file>` would be
+    parsed by git as an option and write a file anywhere the daemon can."""
+    from vicoa.rpc.git_ops import git_show_file
+
+    target_dir = tmp_path_factory.mktemp("injection")
+    result = git_show_file(
+        cwd=str(committed_repo),
+        path="seed.txt",
+        ref=f"--output={target_dir}/pwned",
+    )
+    assert result == {"error": "invalid_ref"}
+    assert list(target_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize("ref", ["-p", "--stat", "-"])
+def test_git_show_file_rejects_any_dash_leading_ref(committed_repo: Path, ref: str):
+    from vicoa.rpc.git_ops import git_show_file
+
+    result = git_show_file(cwd=str(committed_repo), path="seed.txt", ref=ref)
+    assert result == {"error": "invalid_ref"}
+
+
+def test_git_show_file_rejects_non_string_ref(committed_repo: Path):
+    from vicoa.rpc.git_ops import git_show_file
+
+    result = git_show_file(
+        cwd=str(committed_repo),
+        path="seed.txt",
+        ref=None,  # type: ignore[arg-type]  # RPC params are untyped JSON
+    )
+    assert result == {"error": "invalid_ref"}
+
+
+def test_git_show_file_still_accepts_revision_expressions(committed_repo: Path):
+    """The guard is only on a leading dash: `HEAD~0`, a branch name and a
+    commit id still read the blob."""
+    from vicoa.rpc.git_ops import git_show_file
+
+    head = _git(committed_repo, "rev-parse", "HEAD").stdout.decode().strip()
+    for ref in ("HEAD~0", "main", head):
+        result = git_show_file(cwd=str(committed_repo), path="seed.txt", ref=ref)
+        assert result["content"] == "seed\n", ref
+
+
+def test_git_diff_dash_leading_path_is_a_path_not_an_option(committed_repo: Path):
+    """`path` sits after `--`, so a file literally named like an option is
+    diffed as that file instead of steering git."""
+    from vicoa.rpc.git_ops import git_diff
+
+    name = "--output=pwned"
+    (committed_repo / name).write_text("one\n")
+    _git(committed_repo, "add", "--", name)
+    _git(committed_repo, "commit", "-q", "-m", "dash-named file")
+    (committed_repo / name).write_text("one\ntwo\n")
+
+    result = git_diff(cwd=str(committed_repo), path=name)
+    assert result["path"] == name
+    assert [
+        ln["content"] for ln in result["hunks"][0]["lines"] if ln["type"] == "add"
+    ] == ["two"]
+    assert not (committed_repo / "pwned").exists()
+
+
 # --- git_stage / git_unstage / git_commit ----------------------------------------
 
 

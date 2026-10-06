@@ -701,6 +701,14 @@ def git_show_file(cwd: str, path: str, ref: str = "HEAD") -> dict[str, Any]:
     file, or an unborn HEAD in a fresh repo — returns `{"not_in_ref": True}`,
     which the client renders as an empty original (an all-added diff).
     """
+    # `ref` reaches git as the start of an argv word (`<ref>:<path>`), so a
+    # leading `-` would be parsed as an option (`--output=<file>` writes a
+    # file). No revision starts with one, and there is no portable separator
+    # to put before a revision (`--` makes it a path; `--end-of-options`
+    # needs git 2.24+), so refuse it here.
+    if not isinstance(ref, str) or ref.startswith("-"):
+        return {"error": "invalid_ref"}
+
     project_root = Path(os.path.expanduser(cwd))
     try:
         resolve_inside_project(project_root, path)
