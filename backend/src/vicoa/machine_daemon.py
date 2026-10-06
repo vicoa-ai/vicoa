@@ -202,26 +202,47 @@ def _pid_exists(pid: int) -> bool:
     return True
 
 
+def _vicoa_subcommand(command: str) -> str | None:
+    """Return the subcommand a ``vicoa`` command line runs, or ``None``.
+
+    The subcommand is the token right after the vicoa entry point:
+      /path/to/vicoa daemon ...                (frozen binary)
+      /path/to/python /path/to/vicoa daemon    (entry-point script)
+      /path/to/python -m vicoa.cli daemon ...
+    ``ps`` joins argv with spaces, so an executable under a path with a space
+    (``~/Library/Application Support/Vicoa/daemon/<version>/vicoa``) arrives
+    split across tokens; its last piece still ends in ``/vicoa``.
+
+    Only the program part is searched for the entry point. Everything after
+    an option is arguments, and a headless session carries its whole initial
+    prompt there (``--prompt <text>``), so a prompt that says "vicoa daemon"
+    must never make the session look like a daemon.
+    """
+    parts = command.lower().split()
+    if not parts:
+        return None
+    is_python = os.path.basename(parts[0]).startswith("python")
+    for idx, part in enumerate(parts):
+        is_entry = os.path.basename(part) in ("vicoa", "vicoa.exe") or (
+            part == "vicoa.cli" and idx > 0 and parts[idx - 1] == "-m"
+        )
+        if is_entry:
+            return parts[idx + 1] if idx + 1 < len(parts) else None
+        # Only a Python interpreter takes options (`-u`, `-m`) before the
+        # entry point; any other option means we are already in the args.
+        if part.startswith("-") and not (is_python and not part.startswith("--")):
+            return None
+    return None
+
+
 def _command_looks_like_vicoa_daemon(command: str) -> bool:
-    normalized = " ".join(command.lower().split())
-    # python -m vicoa.cli daemon ...
-    if "vicoa.cli daemon" in normalized:
-        return True
-    # /path/to/vicoa daemon ... (frozen binary or entry-point script invoked directly)
-    # ps shows: /path/to/python /path/to/vicoa daemon ...
     # Exclude processes where Node.js is the interpreter (first token). The npm
     # wrapper launches as `node <script>`, while the frozen binary and Python
     # entry-point are invoked directly — their argv[0] is never `node`.
-    parts = normalized.split()
-    if not parts:
+    parts = command.lower().split()
+    if parts and (parts[0] == "node" or parts[0].endswith("/node")):
         return False
-    interpreter = parts[0]
-    is_node_interpreter = interpreter == "node" or interpreter.endswith("/node")
-    has_daemon = "daemon" in parts
-    has_vicoa = any("vicoa" in p for p in parts)
-    if has_daemon and has_vicoa and not is_node_interpreter:
-        return True
-    return False
+    return _vicoa_subcommand(command) == "daemon"
 
 
 def _read_process_command(pid: int) -> str | None:

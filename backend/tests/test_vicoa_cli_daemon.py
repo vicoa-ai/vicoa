@@ -6,8 +6,11 @@ from pathlib import Path
 import signal
 from typing import Any
 
+import pytest
+
 from vicoa import cli
 from vicoa import machine_daemon
+from vicoa.constants import DEFAULT_API_URL
 
 
 def test_ensure_background_daemon_running_skips_when_existing(monkeypatch, tmp_path):
@@ -421,6 +424,84 @@ def test_stop_background_daemon_clears_saved_pid(monkeypatch, tmp_path):
     entry = saved_state["daemons"]["https://api.vicoa.ai"]
     assert "daemon_pid" not in entry
     assert entry["machine_id"] == "mac-123"
+
+
+# --- telling the daemon apart from everything else in `ps` -------------------
+#
+# A headless session carries its initial prompt (or a fork's whole chat
+# history) on argv as `--prompt <text>`. When that text contained the word
+# "daemon", the takeover scan picked the session as "the old daemon" and
+# SIGTERMed it, which ends the session as COMPLETED.
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python -m vicoa.cli daemon --api-key SECRET --base-url http://localhost:8080",
+        "/usr/bin/python3 -u -m vicoa.cli daemon",
+        "/repo/.venv/bin/python /repo/.venv/bin/vicoa daemon --api-key SECRET",
+        "/Applications/Vicoa.app/Contents/Resources/daemon/vicoa daemon "
+        "--local-listener --local-port 61427 --takeover",
+        # ps joins argv with spaces, so this path arrives split in two.
+        "/Users/me/Library/Application Support/Vicoa/daemon/1.9.8/vicoa daemon "
+        "--local-listener --local-port 4123",
+        "/usr/lib/node_modules/@vicoa/cli/node_modules/@vicoa/cli-linux-x64/bin/vicoa "
+        "daemon --api-key SECRET",
+        "vicoa daemon",
+    ],
+)
+def test_command_looks_like_vicoa_daemon_accepts_daemons(command: str) -> None:
+    assert machine_daemon._command_looks_like_vicoa_daemon(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/Applications/Vicoa.app/Contents/Resources/daemon/vicoa headless "
+        "--api-key SECRET --base-url https://agents.vicoa.ai --cwd /repo "
+        "--prompt why does the vicoa daemon restart twice?",
+        "/repo/.venv/bin/python -m vicoa.cli headless --api-key SECRET "
+        "--prompt run python -m vicoa.cli daemon and check the log",
+        "/repo/.venv/bin/python /repo/.venv/bin/vicoa --name fix the daemon",
+        # The npm wrapper; its native child is the real daemon.
+        "node /usr/local/bin/vicoa daemon",
+        "claude -p restart vicoa daemon",
+        "/usr/bin/sshd -D",
+        "",
+    ],
+)
+def test_command_looks_like_vicoa_daemon_rejects_others(command: str) -> None:
+    assert not machine_daemon._command_looks_like_vicoa_daemon(command)
+
+
+def test_takeover_scan_skips_headless_session_whose_prompt_says_daemon(
+    monkeypatch, tmp_path
+):
+    """The old daemon already exited, so its saved PID is dead and lookup
+    falls back to scanning `ps`. A headless session with a lower PID whose
+    prompt mentions the daemon must not be mistaken for it."""
+    state_path = tmp_path / "daemon_state.json"
+    state_path.write_text(
+        json.dumps({"daemons": {DEFAULT_API_URL: {"daemon_pid": 111}}})
+    )
+    # Neither line has --base-url, so both land in the default URL's bucket
+    # and only the command check can tell them apart.
+    ps_output = (
+        "  222 /Applications/Vicoa.app/Contents/Resources/daemon/vicoa headless "
+        "--api-key SECRET --prompt the vicoa daemon keeps restarting\n"
+        "  333 /Applications/Vicoa.app/Contents/Resources/daemon/vicoa daemon "
+        "--local-listener --local-port 61427 --takeover\n"
+    )
+
+    def fake_run(*_args: Any, **_kwargs: Any) -> Any:
+        return Namespace(stdout=ps_output, returncode=0)
+
+    monkeypatch.setattr(machine_daemon.subprocess, "run", fake_run)
+    monkeypatch.setattr(machine_daemon, "_pid_exists", lambda pid: pid != 111)
+
+    pid = machine_daemon.find_running_daemon_pid(DEFAULT_API_URL, state_path=state_path)
+
+    assert pid == 333
 
 
 # --- backward-compat tests for users upgrading from the single-daemon CLI ----
