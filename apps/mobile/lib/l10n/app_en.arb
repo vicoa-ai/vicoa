@@ -59,6 +59,7 @@
   "addToChatChooseFiles": "Files",
   "addToChatCommands": "Commands",
   "addToChatPhotoLibrary": "Photo",
+  "addToChatReference": "Reference a session or task",
   "addToChatSkillsOrCommands": "Skills or Commands",
   "addToChatTakePhoto": "Camera",
   "agentCatalogReasoningLabel": "Reasoning - {label}",
@@ -233,6 +234,16 @@
   "chatInputModelConfig": "Model Config",
   "chatInputOpenWebPreview": "Open web preview",
   "chatInputPlaceholder": "Type messages, @files, /skills or commands",
+  "chatInputReferenceLinkOnSend": "Sending files this session under {label}",
+  "@chatInputReferenceLinkOnSend": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "chatInputReferencesNoMatches": "No sessions, tasks or automations match",
+  "chatInputReferencesSearching": "Searching…",
   "chatInputSessionConfig": "Session Config",
   "chatInputSessionEnded": "Session archived. Tap the menu in the top right and choose Resume.",
   "chatInputSessionReadOnly": "Session is archived. Configs are read-only.",
@@ -635,6 +646,14 @@
   "messageSelectionSheetTitle": "Select Messages",
   "messageSelectionSheetYou": "You",
   "newSessionAddToChat": "Add to chat",
+  "newSessionReferenceLinkOnStart": "Starting files this session under {label}",
+  "@newSessionReferenceLinkOnStart": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
   "newSessionAgent": "Agent",
   "newSessionAgentDidNotStart": "{label} didn't start on this machine.\n\nMake sure it's installed there and your Vicoa daemon is up to date, then try again.",
   "@newSessionAgentDidNotStart": {

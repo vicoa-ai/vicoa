@@ -452,6 +452,12 @@ abstract class AppLocalizations {
   /// **'Photo'**
   String get addToChatPhotoLibrary;
 
+  /// No description provided for @addToChatReference.
+  ///
+  /// In en, this message translates to:
+  /// **'Reference a session or task'**
+  String get addToChatReference;
+
   /// No description provided for @addToChatSkillsOrCommands.
   ///
   /// In en, this message translates to:
@@ -1075,6 +1081,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Type messages, @files, /skills or commands'**
   String get chatInputPlaceholder;
+
+  /// No description provided for @chatInputReferenceLinkOnSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending files this session under {label}'**
+  String chatInputReferenceLinkOnSend(String label);
+
+  /// No description provided for @chatInputReferencesNoMatches.
+  ///
+  /// In en, this message translates to:
+  /// **'No sessions, tasks or automations match'**
+  String get chatInputReferencesNoMatches;
+
+  /// No description provided for @chatInputReferencesSearching.
+  ///
+  /// In en, this message translates to:
+  /// **'Searching…'**
+  String get chatInputReferencesSearching;
 
   /// No description provided for @chatInputSessionConfig.
   ///
@@ -2623,6 +2647,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Add to chat'**
   String get newSessionAddToChat;
+
+  /// No description provided for @newSessionReferenceLinkOnStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting files this session under {label}'**
+  String newSessionReferenceLinkOnStart(String label);
 
   /// No description provided for @newSessionAgent.
   ///

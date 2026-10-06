@@ -189,6 +189,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get addToChatPhotoLibrary => 'Photo';
 
   @override
+  String get addToChatReference => 'Reference a session or task';
+
+  @override
   String get addToChatSkillsOrCommands => 'Skills or Commands';
 
   @override
@@ -549,6 +552,18 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get chatInputPlaceholder =>
       'Type messages, @files, /skills or commands';
+
+  @override
+  String chatInputReferenceLinkOnSend(String label) {
+    return 'Sending files this session under $label';
+  }
+
+  @override
+  String get chatInputReferencesNoMatches =>
+      'No sessions, tasks or automations match';
+
+  @override
+  String get chatInputReferencesSearching => 'Searching…';
 
   @override
   String get chatInputSessionConfig => 'Session Config';
@@ -1403,6 +1418,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get newSessionAddToChat => 'Add to chat';
+
+  @override
+  String newSessionReferenceLinkOnStart(String label) {
+    return 'Starting files this session under $label';
+  }
 
   @override
   String get newSessionAgent => 'Agent';

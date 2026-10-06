@@ -3,6 +3,7 @@ import '/flutter_flow/flutter_flow_util.dart';
 import '/flutter_flow/custom_functions.dart' as functions;
 import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/actions/rpc_git.dart';
+import '/custom_code/utils/composer_references.dart';
 import '/custom_code/utils/file_mention_utils.dart';
 import '/custom_code/utils/fork_transcript.dart';
 import '/custom_code/utils/machine_utils.dart';
@@ -22,8 +23,13 @@ import 'dart:async';
 import 'dart:convert';
 
 class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
-    with FileMentionMixin, SlashCommandMixin {
-  NewSessionModel({this.forkContext});
+    with FileMentionMixin, SlashCommandMixin, ComposerReferenceMixin {
+  NewSessionModel({this.forkContext, this.seedTaskId});
+
+  /// The task this session was started from (Tasks → Start session). Its title
+  /// and description already top the prompt and the session is linked to it,
+  /// so it wins over any `#`-referenced task.
+  final String? seedTaskId;
 
   /// The conversation a fork carried in from an earlier session: prepended to
   /// the first message at submit, shown as a removable chip until then, and
@@ -136,10 +142,25 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
   /// through here — the prompt bundled into the spawn command, and the
   /// deferred send used when attachments are waiting on an instance id.
   String composeFirstMessage() {
-    final typed = promptController.text.trim();
+    final typed = composeOutgoingMessage(promptController.text.trim(), firstMessageReferences());
     final history = forkContext?.text.trim() ?? '';
     if (history.isEmpty) return typed;
     return typed.isEmpty ? history : '$history\n\n$typed';
+  }
+
+  /// The `#` references the first message carries: the picks whose token is
+  /// still in the prompt, minus one to the seeding task (already on top).
+  List<ComposerReference> firstMessageReferences() => [
+        for (final ref in liveReferences(promptController.text))
+          if (!(ref.kind == 'task' && ref.id == seedTaskId)) ref,
+      ];
+
+  /// The task the new session is filed under: the seeding task, else the
+  /// first `#`-referenced one (the chat composer's rule).
+  String? get linkTaskId {
+    final seed = seedTaskId;
+    if (seed != null && seed.isNotEmpty) return seed;
+    return taskLinkForSend(firstMessageReferences(), null);
   }
 
   /// Drop the forked conversation: the session starts from a clean slate.
@@ -151,6 +172,7 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
   void clearDraftPrompt() {
     promptController.clear();
     FFAppState().clearChatDraft(_draftPromptKey);
+    clearPendingReferences();
   }
 
   /// Agents offered by the new-session UI — the catalog, so a new built-in
@@ -219,6 +241,12 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
   TextEditingController get fileMentionTextController => promptController;
   @override
   VoidCallback? get fileMentionOnStateChanged => onStateChanged;
+
+  // ComposerReferenceMixin requirements
+  @override
+  TextEditingController get referenceTextController => promptController;
+  @override
+  VoidCallback? get referenceOnStateChanged => onStateChanged;
 
   // SlashCommandMixin requirements
   @override
@@ -552,6 +580,7 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
       ..text = combined.trim()
       ..selection = TextSelection.fromPosition(TextPosition(offset: combined.trim().length));
     filterFileMentions(promptController.text);
+    filterReferences(promptController.text);
   }
 
   void _resetVoiceDictationState() {
@@ -1105,6 +1134,7 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
     _instanceStreamSubscription?.cancel();
     _directoryDebounceTimer?.cancel();
     disposeFileMentionMixin();
+    disposeComposerReferenceMixin();
     _voiceElapsedTimer?.cancel();
     directoryController.dispose();
     directoryFocusNode.dispose();

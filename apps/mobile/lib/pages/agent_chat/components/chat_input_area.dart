@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '/backend/agent_catalog.dart';
 import '/custom_code/actions/index.dart' as actions;
+import '/custom_code/widgets/reference_suggestions.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/l10n/app_localizations.dart';
 import '/pages/agent_chat/agent_chat_model.dart';
@@ -113,6 +114,13 @@ class ChatInputArea extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Sending will file this session under a `#`-referenced task.
+          ReferenceLinkHint(
+            mixin: model,
+            currentTaskId: () => model.currentTaskId,
+            message: AppLocalizations.of(context).chatInputReferenceLinkOnSend,
+            padding: const EdgeInsetsDirectional.fromSTEB(8.0, 2.0, 8.0, 6.0),
+          ),
           if (model.pendingAttachments.isNotEmpty) ...[
             PendingAttachmentStrip(
               attachments: model.pendingAttachments,
@@ -155,6 +163,7 @@ class ChatInputArea extends StatelessWidget {
                 onChanged: (text) {
                   model.filterSlashCommands(text);
                   model.filterFileMentions(text);
+                  model.filterReferences(text);
                 },
                 decoration: InputDecoration(
                   // A stopped agent gets its own copy — "session ended" would
@@ -182,9 +191,9 @@ class ChatInputArea extends StatelessWidget {
           const SizedBox(height: 4.0),
           Row(children: [
             // "+" button sits at the leftmost slot — opens the Add-to-chat
-            // sheet whose options insert "@" / "/" into the message box so
-            // the chat input's onChanged runs filterFileMentions /
-            // filterSlashCommands. Wrapped in its own IgnorePointer+Opacity
+            // sheet whose options insert "@" / "#" / "/" into the message box
+            // so the chat input's onChanged runs filterFileMentions /
+            // filterReferences / filterSlashCommands. Wrapped in its own IgnorePointer+Opacity
             // because the gear pill (next in the row) is intentionally
             // tappable when !canSend, so we can't share the inner-row
             // IgnorePointer that disables the rest of the controls.
@@ -212,6 +221,7 @@ class ChatInputArea extends StatelessWidget {
                         focusNode: model.messageFocusNode,
                         fileMention: model,
                         slashCommand: model,
+                        reference: model,
                         hasSkills: hasSkills,
                         onPhotoLibrary: () => model.pickImageFromLibrary(),
                         onTakePhoto: () => model.takePhotoAndAttach(),

@@ -8,6 +8,7 @@ import '/custom_code/utils/rpc_error_messages.dart';
 import '/backend/posthog/posthog_analytics.dart';
 import '/custom_code/utils/fork_transcript.dart';
 import '/custom_code/widgets/file_mention_suggestions.dart';
+import '/custom_code/widgets/reference_suggestions.dart';
 import '/pages/agent_chat/components/slash_commands.dart';
 import '/pages/agent_chat/components/add_to_chat_actions.dart';
 import '/pages/agent_chat/components/pending_attachment.dart';
@@ -73,7 +74,7 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _model = createModel(context, () => NewSessionModel(forkContext: widget.forkContext));
+    _model = createModel(context, () => NewSessionModel(forkContext: widget.forkContext, seedTaskId: widget.taskId));
     _model.onStateChanged = () {
       if (mounted) setState(() {});
     };
@@ -587,6 +588,10 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
           margin: const EdgeInsets.fromLTRB(16.0, 0.0, 16.0, 8.0),
           onFileSelected: (_) => setState(() {}),
         ),
+        ReferenceSuggestions(
+          mixin: _model,
+          margin: const EdgeInsets.fromLTRB(16.0, 0.0, 16.0, 8.0),
+        ),
         _model.isVoiceDictationVisible
             ? VoiceDictationBar(
                 state: _model.voiceDictationUiState!,
@@ -626,6 +631,13 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
               fork: _model.forkContext!,
               onRemove: _model.removeForkContext,
             ),
+          // Starting will file this session under a `#`-referenced task.
+          ReferenceLinkHint(
+            mixin: _model,
+            currentTaskId: () => _model.seedTaskId,
+            message: AppLocalizations.of(context).newSessionReferenceLinkOnStart,
+            padding: const EdgeInsetsDirectional.fromSTEB(8.0, 2.0, 8.0, 6.0),
+          ),
           if (_model.pendingAttachments.isNotEmpty) ...[
             PendingAttachmentStrip(
               attachments: _model.pendingAttachments,
@@ -647,6 +659,7 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
               onChanged: (text) {
                 _model.filterSlashCommands(text);
                 _model.filterFileMentions(text);
+                _model.filterReferences(text);
                 setState(() {});
               },
               decoration: InputDecoration(
@@ -760,6 +773,7 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
             focusNode: _model.promptFocusNode,
             fileMention: _model,
             slashCommand: _model,
+            reference: _model,
             hasSkills: hasSkills,
             onPhotoLibrary: () => _model.pickImageFromLibrary(),
             onTakePhoto: () => _model.takePhotoAndAttach(),
@@ -793,6 +807,9 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
     // together with the files as the first message once the instance registers.
     final hasAttachments = _model.pendingAttachments.isNotEmpty;
     final promptText = _model.composeFirstMessage();
+    // The task to file the session under (seeding task, else a `#` one), read
+    // now for the same reason: the prompt is cleared before the link runs.
+    final linkTaskId = _model.linkTaskId;
     try {
       final result =
           await _model.startSession(includePromptInSpawn: !hasAttachments);
@@ -914,15 +931,16 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
               attachmentIds: ids);
         }
       }
-      // Launched from a task: link the spawned session to it and advance the
-      // task to in_progress (mirrors the web new-session flow). Best-effort —
-      // the session already exists, so a failed link must not block navigation.
-      if (widget.taskId != null && widget.taskId!.isNotEmpty) {
+      // Launched from a task, or a task referenced with `#`: link the spawned
+      // session to it and advance the task to in_progress (mirrors the web
+      // new-session flow). Best-effort — the session already exists, so a
+      // failed link must not block navigation.
+      if (linkTaskId != null) {
         try {
           await actions.apiUpdateAgentInstance(
-              agentInstanceId, {'task_id': widget.taskId});
+              agentInstanceId, {'task_id': linkTaskId});
           await actions.apiUpdateTask(
-              widget.taskId!, {'status': 'in_progress'});
+              linkTaskId, {'status': 'in_progress'});
           for (final subId in widget.subtaskIds ?? const <String>[]) {
             await actions.apiUpdateTask(subId, {'status': 'in_progress'});
           }

@@ -7,6 +7,7 @@ import '/custom_code/actions/ws_protocol.dart' as ws_protocol;
 import '/backend/agent_catalog.dart' show AgentCatalog, agentCatalogFallback, normalizeModelLabel;
 import '/backend/posthog/posthog_analytics.dart';
 import '/custom_code/utils/text_sanitizer.dart';
+import '/custom_code/utils/composer_references.dart';
 import '/custom_code/utils/file_mention_utils.dart';
 import '/custom_code/utils/slash_command_utils.dart';
 import '/index.dart';
@@ -58,7 +59,7 @@ const List<String> _webPreviewLinkKeywords = ['trycloudflare.com', 'ngrok'];
 final RegExp _webUrlRegex = RegExp(r'''https?://[^\s<>"'`]+''', caseSensitive: false);
 
 class AgentChatModel extends FlutterFlowModel<AgentChatWidget>
-    with FileMentionMixin, SlashCommandMixin {
+    with FileMentionMixin, SlashCommandMixin, ComposerReferenceMixin {
   final Map<String, DebugDataField> debugGeneratorVariables = {};
   final Map<String, DebugDataField> debugBackendQueries = {};
   final Map<String, FlutterFlowModel> widgetBuilderComponents = {};
@@ -142,6 +143,19 @@ String? latestWebPreviewUrl;
   TextEditingController get fileMentionTextController => messageController;
   @override
   VoidCallback? get fileMentionOnStateChanged => onStateChanged;
+
+  // ComposerReferenceMixin requirements
+  @override
+  TextEditingController get referenceTextController => messageController;
+  @override
+  VoidCallback? get referenceOnStateChanged => onStateChanged;
+  // `#` lists the viewer's own things and a task link files this session, so
+  // it is the owner's alone, as on the web. `is_owner` arrives with the
+  // details, so only an explicit false turns it off.
+  @override
+  bool get referencesEnabled => !isWelcomeDemoInstance(instanceId) && (instanceData is! Map || instanceData['is_owner'] != false);
+  @override
+  String? get referenceExcludeSessionId => instanceId;
 
   // SlashCommandMixin requirements
   @override
@@ -415,6 +429,7 @@ String? latestWebPreviewUrl;
       ..selection = TextSelection.fromPosition(TextPosition(offset: combined.trim().length));
     filterSlashCommands(messageController.text);
     filterFileMentions(messageController.text);
+    filterReferences(messageController.text);
   }
 
   void _resetVoiceDictationState() {
@@ -1339,6 +1354,7 @@ String? latestWebPreviewUrl;
         clearDraftMessage();
         filterSlashCommands('');
         filterFileMentions('');
+        clearPendingReferences();
       }
       appendDemoMessage(<String, dynamic>{
         'id': 'demo-nudge-$stamp',
@@ -1359,6 +1375,11 @@ String? latestWebPreviewUrl;
       isSendingMessage = false;
       return;
     }
+
+    // `#` references whose token survived editing ride below the text, the
+    // same block the web sends; an option click is not composer text.
+    final refs = isOptionClick ? const <ComposerReference>[] : liveReferences(content);
+    final outgoing = composeOutgoingMessage(content, refs);
 
     isSendingMessage = true;
     isWaitingForAgentResponse = true;
@@ -1386,7 +1407,7 @@ String? latestWebPreviewUrl;
 
     // Show the message immediately — no need to wait for the round-trip.
     final optimisticId = 'opt_${DateTime.now().millisecondsSinceEpoch}';
-    _addOptimisticMessage(optimisticId, content, attachments: sendAttachments);
+    _addOptimisticMessage(optimisticId, outgoing, attachments: sendAttachments);
     if (!isOptionClick) {
       messageController.clear();
       clearDraftMessage();
@@ -1394,7 +1415,12 @@ String? latestWebPreviewUrl;
       // file-mention overlay would linger over the chat after send.
       filterSlashCommands('');
       filterFileMentions('');
+      clearPendingReferences();
     }
+    // Referencing a task files the session under it: the same late link the
+    // Tasks board draws. Never re-files a session that already has a task.
+    final linkTaskId = taskLinkForSend(refs, currentTaskId);
+    if (linkTaskId != null) unawaited(_linkReferencedTask(linkTaskId));
     // The composer is free from here. The POST runs in the background and
     // the bubble's own `_send_status` carries its state (spinner after 2s,
     // red ! on failure) — see message_queue_status.dart.
@@ -1404,7 +1430,7 @@ String? latestWebPreviewUrl;
 
     final delivered = await _deliver(
       optimisticId: optimisticId,
-      content: content,
+      content: outgoing,
       attachmentIds: attachmentIds,
       isOptionClick: isOptionClick,
     );
@@ -1413,6 +1439,28 @@ String? latestWebPreviewUrl;
     if (!delivered && context.mounted) {
       await _afterFailedSend(context, isOptionClick: isOptionClick, refund: gate.charged);
     }
+  }
+
+  /// The task this session is filed under, if any (`task_id` on the details).
+  String? get currentTaskId {
+    final data = instanceData;
+    final id = data is Map ? data['task_id']?.toString() : null;
+    return id == null || id.isEmpty ? null : id;
+  }
+
+  /// PATCH the session's `task_id` for a `#`-referenced task. Best-effort: the
+  /// reference's context rides the message either way. Recorded up front so
+  /// a quick second send doesn't try again, and undone if the PATCH fails.
+  Future<void> _linkReferencedTask(String taskId) async {
+    final id = instanceId;
+    final data = instanceData;
+    if (id == null || data is! Map) return;
+    data['task_id'] = taskId;
+    final result = await actions.apiUpdateAgentInstance(id, {'task_id': taskId});
+    if (result == null && data['task_id'] == taskId) {
+      data['task_id'] = null;
+    }
+    onStateChanged?.call();
   }
 
   /// The UI side of a failed send, kept out of the background POST so it can
@@ -2517,6 +2565,7 @@ String? latestWebPreviewUrl;
     _realtimeDegradedDebounceTimer?.cancel();
     _realtimeDegradedDebounceTimer = null;
     disposeFileMentionMixin();
+    disposeComposerReferenceMixin();
     _voiceElapsedTimer?.cancel();
     _sendingTimeoutTimer?.cancel();
     _sendingTimeoutTimer = null;

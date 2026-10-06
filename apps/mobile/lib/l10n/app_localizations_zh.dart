@@ -186,6 +186,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get addToChatPhotoLibrary => '照片';
 
   @override
+  String get addToChatReference => '引用任务或待办';
+
+  @override
   String get addToChatSkillsOrCommands => '技能、工具';
 
   @override
@@ -529,6 +532,17 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get chatInputPlaceholder => '发消息、@文件、/技能或命令';
+
+  @override
+  String chatInputReferenceLinkOnSend(String label) {
+    return '发送后，此任务会归到待办「$label」下';
+  }
+
+  @override
+  String get chatInputReferencesNoMatches => '没有匹配的任务、待办或自动化';
+
+  @override
+  String get chatInputReferencesSearching => '搜索中…';
 
   @override
   String get chatInputSessionConfig => '设置';
@@ -1346,6 +1360,11 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get newSessionAddToChat => '添加到对话';
+
+  @override
+  String newSessionReferenceLinkOnStart(String label) {
+    return '开始后，此任务会归到待办「$label」下';
+  }
 
   @override
   String get newSessionAgent => 'Agent';

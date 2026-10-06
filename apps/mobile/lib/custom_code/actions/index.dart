@@ -49,6 +49,7 @@ export 'api_delete_agent.dart' show apiDeleteAgent;
 export 'api_get_all_agent_instances.dart' show apiGetAllAgentInstances;
 export 'api_get_tasks.dart' show apiGetTasks;
 export 'api_search_workspace.dart' show apiSearchWorkspace;
+export 'api_references.dart' show apiListReferences, apiGetReference;
 export 'api_create_task.dart' show apiCreateTask;
 export 'api_update_task.dart' show apiUpdateTask;
 export 'api_delete_task.dart' show apiDeleteTask;

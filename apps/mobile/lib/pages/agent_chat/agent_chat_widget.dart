@@ -14,6 +14,7 @@ import '/pages/share_options_sheet/share_options_sheet_widget.dart';
 import '/pages/share_session_sheet/share_session_sheet_widget.dart';
 import '/pages/agent_chat/components/slash_commands.dart';
 import '/pages/agent_chat/components/file_mentions.dart';
+import '/custom_code/widgets/reference_suggestions.dart';
 import '/constants/slash_commands.dart';
 import '/pages/agent_chat/components/chat_input_area.dart';
 import '/pages/agent_chat/components/ask_user_question_panel.dart';
@@ -147,6 +148,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
   int _previousSlashCommandCount = 0;
   bool _previousShowFileMentions = false;
   int _previousFileMentionRevision = 0;
+  int _previousReferenceRevision = 0;
   int _previousAttachmentsRevision = 0;
   int _previousMessageMetadataRevision = 0;
   bool _previousVoiceDictationVisible = false;
@@ -821,6 +823,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
         _model.filteredSlashCommands.length != _previousSlashCommandCount;
     final fileMentionStateChanged = _model.showFileMentionSuggestions != _previousShowFileMentions ||
         _model.fileMentionSuggestionsRevision != _previousFileMentionRevision;
+    final referenceStateChanged = _model.referenceRevision != _previousReferenceRevision;
     final attachmentsStateChanged =
         _model.pendingAttachmentsRevision != _previousAttachmentsRevision;
     final messageMetadataStateChanged =
@@ -840,6 +843,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
         permissionModeChanged ||
         slashCommandStateChanged ||
         fileMentionStateChanged ||
+        referenceStateChanged ||
         attachmentsStateChanged ||
         messageMetadataStateChanged ||
         voiceStateChanged;
@@ -852,6 +856,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     _previousSlashCommandCount = _model.filteredSlashCommands.length;
     _previousShowFileMentions = _model.showFileMentionSuggestions;
     _previousFileMentionRevision = _model.fileMentionSuggestionsRevision;
+    _previousReferenceRevision = _model.referenceRevision;
     _previousAttachmentsRevision = _model.pendingAttachmentsRevision;
     _previousMessageMetadataRevision = _model.messageMetadataRevision;
     _previousVoiceDictationVisible = _model.isVoiceDictationVisible;
@@ -2067,6 +2072,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     );
     _model.filterSlashCommands(controller.text);
     _model.filterFileMentions(controller.text);
+    _model.filterReferences(controller.text);
     safeSetState(() {});
     _model.messageFocusNode.requestFocus();
     await _cancelQueuedMessage(messageId);
@@ -3406,6 +3412,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
                               mixin: _model,
                               onFileSelected: (_) {},
                             ),
+                            ReferenceSuggestions(mixin: _model),
                           ],
                         ),
                       ),

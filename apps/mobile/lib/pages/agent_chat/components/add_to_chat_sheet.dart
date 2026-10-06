@@ -7,9 +7,10 @@ import '/flutter_flow/flutter_flow_theme.dart';
 import '/l10n/app_localizations.dart';
 
 /// Bottom sheet surfaced by the "+" button next to the gear pill in the chat
-/// input area. Each option inserts a trigger character ("@" / "/") into the
-/// message box and closes the sheet — the chat input's onChanged then runs
-/// `filterFileMentions` / `filterSlashCommands` to surface the panel.
+/// input area. Each option inserts a trigger character ("@" / "#" / "/") into
+/// the message box and closes the sheet — the chat input's onChanged then runs
+/// `filterFileMentions` / `filterReferences` / `filterSlashCommands` to surface
+/// the panel.
 ///
 /// Header shape mirrors `agent_config_sheet.dart` (handle + close + centred
 /// title) so the sheet reads as a sibling surface. Body is intrinsic-height
@@ -18,6 +19,7 @@ Future<void> showAddToChatSheet({
   required BuildContext context,
   required VoidCallback onMentionFiles,
   required VoidCallback onCommands,
+  VoidCallback? onReference,
   VoidCallback? onPhotoLibrary,
   VoidCallback? onTakePhoto,
   VoidCallback? onChooseFiles,
@@ -31,6 +33,7 @@ Future<void> showAddToChatSheet({
     builder: (ctx) => _AddToChatSheet(
       onMentionFiles: onMentionFiles,
       onCommands: onCommands,
+      onReference: onReference,
       onPhotoLibrary: onPhotoLibrary,
       onTakePhoto: onTakePhoto,
       onChooseFiles: onChooseFiles,
@@ -43,6 +46,7 @@ class _AddToChatSheet extends StatelessWidget {
   const _AddToChatSheet({
     required this.onMentionFiles,
     required this.onCommands,
+    required this.onReference,
     required this.onPhotoLibrary,
     required this.onTakePhoto,
     required this.onChooseFiles,
@@ -51,6 +55,9 @@ class _AddToChatSheet extends StatelessWidget {
 
   final VoidCallback onMentionFiles;
   final VoidCallback onCommands;
+  // "#": reference a session, task or automation. Null hides the row (the
+  // composer has references off, or the backend has no `/references`).
+  final VoidCallback? onReference;
   // Attachment entries — null hides the row (e.g. surfaces that haven't wired
   // the picker yet).
   final VoidCallback? onPhotoLibrary;
@@ -108,6 +115,22 @@ class _AddToChatSheet extends StatelessWidget {
                       onMentionFiles();
                     },
                   ),
+                  if (onReference != null) ...[
+                    const SizedBox(height: 8.0),
+                    _AddToChatOption(
+                      leading: Icon(
+                        Icons.tag,
+                        color: theme.secondaryText,
+                        size: 20.0,
+                      ),
+                      label: AppLocalizations.of(context).addToChatReference,
+                      onTap: () {
+                        HapticFeedback.lightImpact();
+                        Navigator.pop(context);
+                        onReference!();
+                      },
+                    ),
+                  ],
                   const SizedBox(height: 8.0),
                   _AddToChatOption(
                     // Mirrors the bordered "/" glyph from SlashCommandTrigger
