@@ -69,7 +69,7 @@ def _patch_popen(monkeypatch: pytest.MonkeyPatch, calls: dict, *, fail: bool = F
     def fake_popen(command, *args, **kw):
         # Only intercept the daemon's agent launch: it alone detaches stdio to
         # DEVNULL in its own session. git's subprocess.run calls, and the setup
-        # engine's `bash -lc` children (own session too, but piped stdout), must
+        # engine's `bash -c` children (own session too, but piped stdout), must
         # reach the real implementation.
         if (
             not kw.get("start_new_session")

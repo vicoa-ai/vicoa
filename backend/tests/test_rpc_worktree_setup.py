@@ -74,6 +74,20 @@ class TestRunCommands:
         assert "feat/x" in out
         assert "proj-123" in out
 
+    def test_keeps_the_callers_path_order(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A login bash re-runs /etc/profile, and macOS's path_helper there moves
+        # /usr/bin ahead of the daemon's PATH, so `python3` became the system one.
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        stub = bin_dir / "python3"
+        stub.write_text("#!/bin/sh\necho stub\n")
+        stub.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+        result = _run(["command -v python3"], worktree=tmp_path)
+        assert result.results[0].output.strip() == str(stub)
+
     def test_worktree_env_vars_expands_and_normalises_paths(self) -> None:
         env = ws.worktree_env_vars(
             worktree_path="~/wt//",

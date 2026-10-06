@@ -11,10 +11,12 @@ closed: a per-command wall-clock timeout and a cooperative abort (session stop /
 worktree removal), both enforced with a process-group tree-kill so a hung
 ``npm ci`` can't wedge the worktree forever.
 
-Cross-platform: commands run under ``bash -lc`` on POSIX (a login shell so the
-user's PATH — nvm/pyenv/homebrew — is present, which is what makes ``npm ci``
-"just work") and PowerShell on Windows. Keep this module free of POSIX-only
-top-level imports; Vicoa ships a Windows daemon.
+Cross-platform: commands run under a plain ``bash -c`` on POSIX and PowerShell
+on Windows, with the daemon's own environment. That environment is where the
+user's PATH (nvm/pyenv/homebrew/pnpm, which is what makes ``npm ci`` "just
+work") comes from: the desktop app resolves it from the login shell when it
+spawns the daemon, and a terminal-started daemon inherits it. Keep this module
+free of POSIX-only top-level imports; Vicoa ships a Windows daemon.
 """
 
 from __future__ import annotations
@@ -142,9 +144,13 @@ class _BoundedOutput:
 def _shell_invocation(command: str) -> list[str]:
     """Build the argv that runs ``command`` under a stable script shell.
 
-    POSIX: a login bash so the interactive PATH is present. Windows: PowerShell
-    with profile/execution-policy neutralized, so project commands run the same
-    regardless of the machine's shell config.
+    POSIX: a non-login bash, so the environment is exactly the one the caller
+    built. A login bash would not help a zsh user (it never reads ``.zshrc`` /
+    ``.zprofile``) and would hurt everyone on macOS: ``/etc/profile`` runs
+    ``path_helper``, which moves the system dirs to the front of PATH, so
+    ``python3`` resolved to ``/usr/bin/python3`` instead of the user's.
+    Windows: PowerShell with profile/execution-policy neutralized, so project
+    commands run the same regardless of the machine's shell config.
     """
     if os.name == "nt":
         return [
@@ -156,7 +162,7 @@ def _shell_invocation(command: str) -> list[str]:
             "-Command",
             command,
         ]
-    return ["bash", "-lc", command]
+    return ["bash", "-c", command]
 
 
 def worktree_env_vars(

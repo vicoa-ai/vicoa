@@ -621,7 +621,7 @@ vicoa worktree setup --trust         # …and let the daemon auto-run this repo'
 }
 ```
 
-Each command is echoed, then run in the worktree under a login shell with `$VICOA_WORKTREE_PATH`, `$VICOA_ROOT_PATH` (the main checkout the config came from) and `$VICOA_BRANCH_NAME` set; the run stops at the first failure and the command's exit code is returned. The config is always read from the **source** repository's working tree, so a linked worktree runs the same setup as the checkout it was forked from. Use it to re-run after a failed automatic setup, to try a config while you are editing it, or — from an agent — to bring up a worktree whose setup did not run.
+Each command is echoed, then run in the worktree with `bash` (PowerShell on Windows) and `$VICOA_WORKTREE_PATH`, `$VICOA_ROOT_PATH` (the main checkout the config came from) and `$VICOA_BRANCH_NAME` set; the run stops at the first failure and the command's exit code is returned. Commands see the environment of whatever runs them: your terminal's for `vicoa worktree setup`, and the daemon's for automatic setup (the terminal it was started from, or, under the desktop app, your login shell read at launch). So a tool your terminal can run works in setup too; if automatic setup says `command not found` anyway, `daemon-env.log` in the desktop app's data folder (`~/Library/Application Support/Vicoa` on macOS) shows where the daemon's environment came from. The config is always read from the **source** repository's working tree, so a linked worktree runs the same setup as the checkout it was forked from. Use it to re-run after a failed automatic setup, to try a config while you are editing it, or — from an agent — to bring up a worktree whose setup did not run.
 
 | Flag | Meaning |
 |---|---|
