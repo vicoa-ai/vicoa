@@ -15,6 +15,7 @@ import {
   CornerDownRight,
   CornerUpRight,
   Folder,
+  FolderOpen,
   MoreHorizontal,
   Pencil,
   Play,
@@ -394,11 +395,13 @@ export function PriorityIcon({
  * defaults are line icons, like the status/priority/date glyphs on the
  * neighbouring pills, so only a chosen image or emoji reads as an identity.
  * "No project" isn't a dashed circle because that's the Backlog status.
+ * `open` draws that default folder open, for an expanded sidebar group.
  * `className` sizes the box (default `size-3.5`); the image fills it, so a
  * larger box just needs a bigger `size-*`.
  */
 export function ProjectIcon({
   project,
+  open = false,
   className,
 }: {
   project?: {
@@ -408,6 +411,7 @@ export function ProjectIcon({
     icon_image_uri?: string | null;
     updated_at?: string;
   } | null;
+  open?: boolean;
   className?: string;
 }) {
   const box = cn('size-3.5 shrink-0', className);
@@ -443,7 +447,8 @@ export function ProjectIcon({
   }
 
   if (project) {
-    return <Folder aria-hidden="true" className={cn('text-muted-foreground', box)} />;
+    const Glyph = open ? FolderOpen : Folder;
+    return <Glyph aria-hidden="true" className={cn('text-muted-foreground', box)} />;
   }
 
   return <SquareDashed aria-hidden="true" className={cn('text-muted-foreground', box)} />;

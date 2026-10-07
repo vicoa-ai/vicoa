@@ -102,14 +102,17 @@ function SharedSessionRow({
 export function ProjectIconWithOwner({
   project,
   owner,
+  open = false,
 }: {
   project: Pick<ProjectResponse, 'id' | 'name'> & Partial<ProjectResponse>;
   owner: PrincipalResponse | null | undefined;
+  /** Expanded sidebar group: the default folder draws open. */
+  open?: boolean;
 }) {
   const principal = principalFromResponse(owner ?? null);
   return (
     <span className="relative inline-flex shrink-0">
-      <ProjectIcon project={project} className="size-4" />
+      <ProjectIcon project={project} open={open} className="size-4" />
       {principal && (
         <PrincipalAvatar
           principal={principal}
@@ -239,6 +242,7 @@ export function SidebarSharedWithMe({
                     <ProjectIconWithOwner
                       project={project ?? { id: group.key, name: group.label }}
                       owner={group.owner}
+                      open={!isCollapsed}
                     />
                   )}
                   <span className="truncate text-[0.8rem] font-normal text-muted-foreground">

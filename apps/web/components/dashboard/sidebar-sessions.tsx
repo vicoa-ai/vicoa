@@ -1597,15 +1597,20 @@ export function SidebarSessions({
                       aria-expanded={!isGroupCollapsed}
                       className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                     >
-                      {/* Project groups show the DB project's image/emoji
-                          (or the folder glyph); time/status groups have no
-                          project identity, so no icon (§5a). */}
+                      {/* Project groups show the DB project's image/emoji, or a
+                          folder that opens with the group; time/status groups
+                          have no project identity, so no icon (§5a). */}
                       {groupBy === 'project' &&
                         (dbProject?.owner ? (
-                          <ProjectIconWithOwner project={dbProject} owner={dbProject.owner} />
+                          <ProjectIconWithOwner
+                            project={dbProject}
+                            owner={dbProject.owner}
+                            open={!isGroupCollapsed}
+                          />
                         ) : (
                           <ProjectIcon
                             project={dbProject ?? { id: key, name: label }}
+                            open={!isGroupCollapsed}
                             className="size-4"
                           />
                         ))}
