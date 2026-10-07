@@ -21,12 +21,13 @@ Kept in its own file to avoid bloating ``routers.py``.
 # ``-> None`` on the 204 DELETE, which FastAPI then resolves to ``NoneType``
 # (truthy) and rejects as "204 must not have a response body".
 
-from typing import Annotated
+from typing import Annotated, NamedTuple
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from shared.database.actor import Actor, set_session_actor
 from shared.database.models import AgentInstance
 from shared.database.session import get_db
 
@@ -41,14 +42,14 @@ from backend.db.task_queries import (
 )
 from backend.models import (
     CreateAgentTaskCommentRequest,
+    CreateAgentTaskRequest,
     CreateTaskLabelRequest,
-    CreateTaskRequest,
     TaskLabelResponse,
     TaskPriorityLiteral,
     TaskResponse,
     TaskStatusLiteral,
     TaskTimelineResponse,
-    UpdateTaskRequest,
+    UpdateAgentTaskRequest,
 )
 
 from .auth import get_current_user_id
@@ -95,11 +96,13 @@ def list_tasks_endpoint(
     task_status: TaskStatusLiteral | None = Query(default=None, alias="status"),
     task_priority: TaskPriorityLiteral | None = Query(default=None, alias="priority"),
     label_id: Annotated[list[UUID] | None, Query()] = None,
+    created_in_instance_id: UUID | None = None,
     db: Session = Depends(get_db),
 ) -> list[TaskResponse]:
     """``unfiled`` selects No-project tasks (``vicoa task ls --project none``);
     it cannot be combined with ``project_id``. ``label_id`` may repeat — a task
-    must carry every one given."""
+    must carry every one given. ``created_in_instance_id`` keeps the tasks
+    created in that session."""
     if unfiled and project_id is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -113,6 +116,7 @@ def list_tasks_endpoint(
         priority=task_priority,
         unfiled=unfiled,
         label_ids=label_id,
+        created_in_instance_id=created_in_instance_id,
     )
     return serialize_tasks(db, tasks)
 
@@ -123,14 +127,17 @@ def list_tasks_endpoint(
     status_code=status.HTTP_201_CREATED,
 )
 def create_task_endpoint(
-    request: CreateTaskRequest,
+    request: CreateAgentTaskRequest,
     user_id: Annotated[str, Depends(get_current_user_id)],
     db: Session = Depends(get_db),
 ) -> TaskResponse:
+    resolved = _user_uuid(user_id)
+    calling = _calling_session(db, resolved, request.agent_instance_id)
+    _attribute_to_session(db, resolved, calling)
     try:
         task = task_queries.create_task(
             db,
-            _user_uuid(user_id),
+            resolved,
             title=request.title,
             description=request.description,
             project_id=request.project_id,
@@ -141,6 +148,8 @@ def create_task_endpoint(
             label_ids=request.label_ids,
             start_date=request.start_date,
             due_date=request.due_date,
+            creator_type=_author(resolved, calling)[0],
+            created_in_instance_id=calling.id if calling is not None else None,
         )
     except (ProjectNotFoundError, LabelNotFoundError, ParentTaskError) as exc:
         _raise_task_ref_errors(exc)
@@ -160,13 +169,16 @@ def get_task_endpoint(
 @task_router.patch("/tasks/{task_id}", response_model=TaskResponse)
 def update_task_endpoint(
     task_id: str,
-    request: UpdateTaskRequest,
+    request: UpdateAgentTaskRequest,
     user_id: Annotated[str, Depends(get_current_user_id)],
     db: Session = Depends(get_db),
 ) -> TaskResponse:
-    fields = request.model_dump(exclude_unset=True)
+    fields = request.model_dump(exclude_unset=True, exclude={"agent_instance_id"})
     resolved = _user_uuid(user_id)
     existing = _require_task(db, resolved, task_id)
+    _attribute_to_session(
+        db, resolved, _calling_session(db, resolved, request.agent_instance_id)
+    )
     try:
         task = task_queries.update_task(db, resolved, existing.id, fields)
     except (ProjectNotFoundError, LabelNotFoundError, ParentTaskError) as exc:
@@ -261,27 +273,65 @@ def _require_task(db: Session, user_id: UUID, task_id: str):
     return task
 
 
-def _comment_author(
-    db: Session, user_id: UUID, agent_instance_id: UUID | None
-) -> tuple[str, UUID]:
-    """Whose name goes on the comment.
+class _CallingSession(NamedTuple):
+    id: UUID
+    agent_profile_id: UUID | None
 
-    The user's, unless the caller named a session of theirs that was started
-    from an agent profile — then the profile's, so the timeline can say "Claude
-    commented" instead of attributing the agent's words to the human. Scoped by
-    `user_id`: naming someone else's session must not borrow their agent's name.
+
+def _calling_session(
+    db: Session, user_id: UUID, agent_instance_id: UUID | None
+) -> _CallingSession | None:
+    """The caller's own session the request names, if any.
+
+    `vicoa task create|update|comment` run inside a Vicoa session names it
+    (from `VICOA_AGENT_INSTANCE_ID`). Scoped by `user_id`: naming someone
+    else's session must not borrow their agent's name or put their session on
+    your task. An unknown or foreign id is ignored rather than refused — a
+    stale environment must not cost the write itself.
     """
     if agent_instance_id is None:
-        return ("user", user_id)
-    profile_id = (
-        db.query(AgentInstance.agent_profile_id)
+        return None
+    row = (
+        db.query(AgentInstance.id, AgentInstance.agent_profile_id)
         .filter(
             AgentInstance.id == agent_instance_id,
             AgentInstance.user_id == user_id,
         )
-        .scalar()
+        .first()
     )
-    return ("agent", profile_id) if profile_id is not None else ("user", user_id)
+    return _CallingSession(row[0], row[1]) if row is not None else None
+
+
+def _author(user_id: UUID, calling: _CallingSession | None) -> tuple[str, UUID]:
+    """Whose name goes on the write.
+
+    The user's, unless the calling session was started from an agent profile —
+    then the profile's, so the timeline can say "Claude commented" instead of
+    attributing the agent's words to the human.
+    """
+    if calling is not None and calling.agent_profile_id is not None:
+        return ("agent", calling.agent_profile_id)
+    return ("user", user_id)
+
+
+def _attribute_to_session(
+    db: Session, user_id: UUID, calling: _CallingSession | None
+) -> None:
+    """Attribute the activity this request generates to the calling session,
+    marked `direct`: the session changed the task itself, as opposed to the
+    task following the session's status (`shared/database/tasks.py`)."""
+    if calling is None:
+        return
+    actor_type, actor_id = _author(user_id, calling)
+    set_session_actor(
+        db,
+        Actor(
+            type=actor_type,
+            id=actor_id,
+            agent_instance_id=calling.id,
+            direct=True,
+        ),
+    )
 
 
 @task_router.get("/tasks/{task_id}/timeline", response_model=TaskTimelineResponse)
@@ -310,6 +360,7 @@ def create_task_comment_endpoint(
 ) -> TaskTimelineResponse:
     resolved = _user_uuid(user_id)
     task = _require_task(db, resolved, task_id)
+    calling = _calling_session(db, resolved, request.agent_instance_id)
     try:
         task_timeline_queries.create_comment(
             db,
@@ -317,7 +368,8 @@ def create_task_comment_endpoint(
             resolved,
             request.body,
             parent_comment_id=request.parent_comment_id,
-            author=_comment_author(db, resolved, request.agent_instance_id),
+            author=_author(resolved, calling),
+            agent_instance_id=calling.id if calling is not None else None,
         )
     except task_timeline_queries.CommentNotFoundError as exc:
         raise HTTPException(

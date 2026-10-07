@@ -293,7 +293,7 @@ vicoa session update <SESSION_ID> --project none
 | `--worktree <branch>` | File the session under the checkout of its repo that has `<branch>` checked out — a linked worktree, or the main checkout's branch to move it back |
 | `--project <project>` | File the session under this project: key (`VIC`), name, or id from `vicoa project ls`; `none` = No project |
 
-Linking drives the task's status from the session's status: a running linked session flips its task to `in_progress`.
+Linking drives the task's status from the session's status: a running linked session moves a `backlog` or `todo` task to `in_progress`, and the session finishing moves an `in_progress` task to `done`. A status someone set (in the app, or with `vicoa task update`, including from inside the session) is left alone, so an agent that marks its task `blocked` and then exits leaves it `blocked`.
 
 `--worktree` is for a session whose agent moved into a worktree on its own (the sidebar keeps it under the folder it was started in): the session's sidebar group and the folder its next resume launches in follow the new checkout, while the running agent is left where it is. A session started in a subfolder of the repo lands in the same subfolder of the target. The worktree is resolved with `git worktree list` on this machine, so run it where the session lives; the name is the checked-out branch (the label the sidebar shows), or the directory name for a detached checkout.
 
@@ -495,6 +495,8 @@ vicoa task delete VIC-42 -y
 **Labels go by name.** `--label`, `--add-label`, and `--remove-label` take label names (`vicoa label ls`); every flag repeats. On `ls`, several `--label`s mean the task must carry *all* of them. On `update`, `--label` replaces the whole set, while `--add-label` / `--remove-label` keep the rest.
 
 `create` defaults to `status=backlog`, `priority=none`, and files under **No project** unless you pass `--project`.
+
+**Run inside a Vicoa session, `create`, `update`, and `comment` record that session.** The task page then shows *Created in &lt;session&gt;* under the title and *via &lt;session&gt;* on the comment or change, and the session's header lists the tasks it created. Nothing to pass: the CLI reads the session from `VICOA_AGENT_INSTANCE_ID`.
 
 | Flag (create / update) | Meaning |
 |---|---|

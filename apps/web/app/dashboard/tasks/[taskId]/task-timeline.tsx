@@ -46,6 +46,7 @@ import {
   TaskActivityResponse,
   TaskCommentResponse,
   TaskReactionSummary,
+  TaskSessionRef,
 } from '@/lib/backend-api';
 import { EmojiPicker } from '@/components/ui/emoji-picker';
 import { CommentComposer } from './comment-composer';
@@ -133,6 +134,55 @@ export function activityText(entry: TaskActivityResponse): string {
   }
 }
 
+/**
+ * A session's name as a "Created in" / "via" line reads it. Not
+ * `getSessionTitle`: a ref carries no transcript, and that helper would call
+ * every unnamed one "New session".
+ */
+export function sessionRefTitle(ref: TaskSessionRef): string {
+  if (ref.name) return ref.name;
+  const agent = ref.agent_type_name;
+  return agent ? `a ${agent.charAt(0).toUpperCase()}${agent.slice(1)} session` : 'a session';
+}
+
+/** id → ref, for the rows that name a session. */
+type SessionRefs = Map<string, TaskSessionRef>;
+
+const NO_SESSION_REFS: TaskSessionRef[] = [];
+
+/** The session a row came from, when the viewer may open it. */
+function rowSessionRef(refs: SessionRefs, instanceId: unknown): TaskSessionRef | undefined {
+  return typeof instanceId === 'string' ? refs.get(instanceId) : undefined;
+}
+
+/** "Created in <session>" under a task's title; nothing when the viewer can't open it. */
+export function CreatedInSession({ sessionRef }: { sessionRef: TaskSessionRef | undefined }) {
+  if (!sessionRef) return null;
+  return (
+    <Link
+      href={`/dashboard/sessions/${sessionRef.id}`}
+      className="group/created inline-flex max-w-full cursor-pointer items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+    >
+      <span className="shrink-0 font-medium">Created in</span>
+      <span className="truncate group-hover/created:text-foreground">
+        {sessionRefTitle(sessionRef)}
+      </span>
+    </Link>
+  );
+}
+
+/** "via <session>" after a comment's or a change's byline. */
+function ViaSession({ sessionRef }: { sessionRef: TaskSessionRef }) {
+  return (
+    <Link
+      href={`/dashboard/sessions/${sessionRef.id}`}
+      className="min-w-0 cursor-pointer truncate text-xs text-muted-foreground transition-colors hover:text-foreground hover:underline"
+    >
+      via {sessionRefTitle(sessionRef)}
+    </Link>
+  );
+}
+
 function timeLabel(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     month: 'short',
@@ -201,12 +251,16 @@ export function buildEntries(
   // deleted) would otherwise be bucketed against a card that never renders and
   // vanish from the timeline — the change really happened, so it stays as a
   // normal line instead.
+  // Only the session's status churn folds, too: a row marked `direct` is a
+  // change the session made itself (`vicoa task update` — "set it blocked"),
+  // and that is the line worth reading, not one to tuck into the card.
   const linked = new Set(sessions.map((session) => session.id));
   const bySession = new Map<string, TaskActivityResponse[]>();
   const loose: TaskActivityResponse[] = [];
   for (const row of activity) {
     const instanceId = row.details?.agent_instance_id;
-    if (typeof instanceId === 'string' && linked.has(instanceId)) {
+    const direct = row.details?.direct === true;
+    if (typeof instanceId === 'string' && linked.has(instanceId) && !direct) {
       const bucket = bySession.get(instanceId);
       if (bucket) bucket.push(row);
       else bySession.set(instanceId, [row]);
@@ -392,13 +446,16 @@ export function ReactionRow({
 function CommentBody({
   comment,
   viewer,
+  sessionRefs,
   onToggleReaction,
 }: {
   comment: TaskCommentResponse;
   viewer: Principal | null;
+  sessionRefs: SessionRefs;
   onToggleReaction?: (commentId: string, emoji: string) => void;
 }) {
   const author = principalFromResponse(comment.author);
+  const via = rowSessionRef(sessionRefs, comment.agent_instance_id);
   return (
     <>
       <div className="flex items-center gap-2">
@@ -414,6 +471,7 @@ function CommentBody({
         <span className="text-xs text-muted-foreground">
           {timeLabel(comment.created_at)}
         </span>
+        {via && <ViaSession sessionRef={via} />}
         {comment.edited_at && (
           <span className="text-xs text-muted-foreground/60">(edited)</span>
         )}
@@ -448,18 +506,25 @@ function CommentBody({
 function ThreadCard({
   thread,
   viewer,
+  sessionRefs,
   onToggleReaction,
   onReply,
 }: {
   thread: Thread;
   viewer: Principal | null;
+  sessionRefs: SessionRefs;
   onToggleReaction?: (commentId: string, emoji: string) => void;
   onReply?: (parentCommentId: string, body: string) => Promise<void>;
 }) {
   return (
     <div className={cn(CARD_ROW, 'px-0')}>
       <div className="px-3 py-2.5">
-        <CommentBody comment={thread.root} viewer={viewer} onToggleReaction={onToggleReaction} />
+        <CommentBody
+          comment={thread.root}
+          viewer={viewer}
+          sessionRefs={sessionRefs}
+          onToggleReaction={onToggleReaction}
+        />
       </div>
       {/* Not indented (rule 4). The card's edge already says these belong
           together, and there is no second level to distinguish them from — a
@@ -467,7 +532,12 @@ function ThreadCard({
           depth that cannot exist. */}
       {thread.replies.map((reply) => (
         <div key={reply.id} className="border-t px-3 py-2.5">
-          <CommentBody comment={reply} viewer={viewer} onToggleReaction={onToggleReaction} />
+          <CommentBody
+            comment={reply}
+            viewer={viewer}
+            sessionRefs={sessionRefs}
+            onToggleReaction={onToggleReaction}
+          />
         </div>
       ))}
       {onReply && (
@@ -492,11 +562,14 @@ function ThreadCard({
 function ActivityLine({
   row,
   viewer,
+  sessionRefs,
 }: {
   row: TaskActivityResponse;
   viewer: Principal | null;
+  sessionRefs: SessionRefs;
 }) {
   const actor = principalFromResponse(row.actor);
+  const via = rowSessionRef(sessionRefs, row.details?.agent_instance_id);
   return (
     <div className={cn(BARE_ROW, 'flex items-center gap-2 py-1 text-xs text-muted-foreground')}>
       <PrincipalAvatar principal={principalForAvatar(actor, viewer)} size="xs" />
@@ -504,6 +577,7 @@ function ActivityLine({
         <span className="text-foreground/70">{principalDisplayName(actor, viewer)}</span>{' '}
         {activityText(row)}
       </span>
+      {via && <ViaSession sessionRef={via} />}
       <span className="shrink-0 opacity-50">{timeLabel(row.created_at)}</span>
     </div>
   );
@@ -512,12 +586,16 @@ function ActivityLine({
 function ActivityRun({
   rows,
   viewer,
+  sessionRefs,
 }: {
   rows: TaskActivityResponse[];
   viewer: Principal | null;
+  sessionRefs: SessionRefs;
 }) {
   const [open, setOpen] = useState(false);
-  if (rows.length === 1) return <ActivityLine row={rows[0]} viewer={viewer} />;
+  if (rows.length === 1) {
+    return <ActivityLine row={rows[0]} viewer={viewer} sessionRefs={sessionRefs} />;
+  }
 
   const actors = Array.from(
     new Set(
@@ -546,7 +624,7 @@ function ActivityRun({
       {open && (
         <div className="ml-5 mt-1 space-y-0.5 border-l">
           {rows.map((row) => (
-            <ActivityLine key={row.id} row={row} viewer={viewer} />
+            <ActivityLine key={row.id} row={row} viewer={viewer} sessionRefs={sessionRefs} />
           ))}
         </div>
       )}
@@ -623,6 +701,7 @@ export function TaskTimeline({
   comments,
   activity,
   sessions,
+  sessionRefs = NO_SESSION_REFS,
   viewer,
   onToggleCommentReaction,
   onReply,
@@ -630,6 +709,8 @@ export function TaskTimeline({
   comments: TaskCommentResponse[];
   activity: TaskActivityResponse[];
   sessions: AgentInstanceResponse[];
+  /** The timeline's `sessions`: what a "via" line may name and link to. */
+  sessionRefs?: TaskSessionRef[];
   /** The signed-in user, so a nameless principal can still read as "You". */
   viewer: Principal | null;
   /** Omitted on a read-only surface (P4's public board): reactions are shown, not toggled. */
@@ -641,6 +722,10 @@ export function TaskTimeline({
     () => buildEntries(comments, activity, sessions),
     [comments, activity, sessions],
   );
+  const refs = useMemo<SessionRefs>(
+    () => new Map(sessionRefs.map((ref) => [ref.id, ref])),
+    [sessionRefs],
+  );
 
   return (
     <div className="space-y-1.5">
@@ -651,13 +736,16 @@ export function TaskTimeline({
               key={entry.id}
               thread={entry.thread}
               viewer={viewer}
+              sessionRefs={refs}
               onToggleReaction={onToggleCommentReaction}
               onReply={onReply}
             />
           );
         }
         if (entry.kind === 'activity') {
-          return <ActivityRun key={entry.id} rows={entry.items} viewer={viewer} />;
+          return (
+            <ActivityRun key={entry.id} rows={entry.items} viewer={viewer} sessionRefs={refs} />
+          );
         }
         return <SessionCard key={entry.id} session={entry.session} absorbed={entry.absorbed} />;
       })}

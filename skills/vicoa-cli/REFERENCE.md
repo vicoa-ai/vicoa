@@ -103,8 +103,9 @@ many messages/payloads were hidden. `--limit` counts **all** senders before
 
 Mirrors the web: rename, (un)link a task, re-file the session under another
 checkout, or under another project. Linking drives the task's status from the
-session's status server-side (a running linked session flips its task to
-`in_progress`).
+session's status server-side (a running linked session moves a `backlog`/`todo`
+task to `in_progress`; finishing moves an `in_progress` one to `done`). A status
+set by hand or with `task update` is never overwritten by the session.
 
 | Flag | Meaning |
 |---|---|

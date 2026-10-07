@@ -804,6 +804,11 @@ export interface TaskResponse {
   labels: TaskLabelResponse[];
   start_date: string | null;
   due_date: string | null;
+  /**
+   * The session the task was created in (`vicoa task create` run inside one).
+   * Only an id: the timeline's `sessions` names it when the viewer may open it.
+   */
+  created_in_instance_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -830,6 +835,8 @@ export interface TaskCommentResponse {
    */
   parent_comment_id: string | null;
   author: PrincipalResponse;
+  /** The session it was posted from, if any — "via <session>". */
+  agent_instance_id: string | null;
   /** null once soft-deleted; render a tombstone, not an empty comment. */
   body: string | null;
   kind: 'comment' | 'system';
@@ -848,11 +855,23 @@ export interface TaskActivityResponse {
   created_at: string;
 }
 
+/** A session the timeline mentions ("Created in", "via"), by name. */
+export interface TaskSessionRef {
+  id: string;
+  name: string | null;
+  agent_type_name: string | null;
+}
+
 export interface TaskTimelineResponse {
   comments: TaskCommentResponse[];
   activity: TaskActivityResponse[];
   /** Reactions on the task itself, not on any comment. */
   reactions: TaskReactionSummary[];
+  /**
+   * The sessions the task or its rows came from that the viewer may open. A
+   * session id with no entry here is one they can't: show no link or title.
+   */
+  sessions: TaskSessionRef[];
 }
 
 export interface CreateProjectRequest {
@@ -2107,10 +2126,13 @@ class BackendAPI {
     await this.requestVoid(`/api/v1/projects/${projectId}`, { method: 'DELETE' });
   }
 
-  async listTasks(options: { projectId?: string; status?: TaskStatus } = {}): Promise<TaskResponse[]> {
+  async listTasks(
+    options: { projectId?: string; status?: TaskStatus; createdInInstanceId?: string } = {},
+  ): Promise<TaskResponse[]> {
     const params = new URLSearchParams();
     if (options.projectId) params.append('project_id', options.projectId);
     if (options.status) params.append('status', options.status);
+    if (options.createdInInstanceId) params.append('created_in_instance_id', options.createdInInstanceId);
     const endpoint = `/api/v1/tasks${params.toString() ? `?${params.toString()}` : ''}`;
     return this.request<TaskResponse[]>(endpoint);
   }

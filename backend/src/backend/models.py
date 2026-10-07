@@ -954,6 +954,10 @@ class TaskResponse(BaseModel):
     labels: list["TaskLabelResponse"] = Field(default_factory=list)
     start_date: datetime | None = None
     due_date: datetime | None = None
+    # The session the task was created in, when `vicoa task create` ran inside
+    # one. Just the id: whether the viewer may see that session's title is the
+    # timeline's call (`TaskTimelineResponse.sessions`), not every list's.
+    created_in_instance_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -1003,6 +1007,26 @@ class UpdateTaskRequest(TaskAssigneeFields):
     label_ids: list[UUID] | None = None
     start_date: datetime | None = None
     due_date: datetime | None = None
+
+
+class CreateAgentTaskRequest(CreateTaskRequest):
+    """The agent-facing create body: the human one plus the calling session.
+
+    `vicoa task create` run inside a Vicoa session passes that session's id (it
+    has it as `VICOA_AGENT_INSTANCE_ID`) and the task records it as
+    `created_in_instance_id`. A session that is not the caller's is ignored
+    rather than refused — a stale environment must not cost the task.
+    """
+
+    agent_instance_id: UUID | None = None
+
+
+class UpdateAgentTaskRequest(UpdateTaskRequest):
+    """The agent-facing PATCH body plus the calling session, which the
+    activity rows the change generates carry (`direct: true`) so the task page
+    can say "via <session>". Not a task field: it is never applied."""
+
+    agent_instance_id: UUID | None = None
 
 
 class TaskLabelResponse(BaseModel):
@@ -1072,6 +1096,9 @@ class TaskCommentResponse(BaseModel):
     # already in thread order — each root followed by its replies.
     parent_comment_id: UUID | None = None
     author: PrincipalResponse
+    # The session it was posted from, if any; its title is in
+    # `TaskTimelineResponse.sessions` when the viewer may see it.
+    agent_instance_id: UUID | None = None
     # None once soft-deleted: the row stays so the thread keeps its shape, but
     # the text does not travel to the client.
     body: str | None = None
@@ -1092,6 +1119,16 @@ class TaskActivityResponse(BaseModel):
     created_at: datetime
 
 
+class TaskSessionRef(BaseModel):
+    """A session the timeline mentions — "Created in", "via" — by name."""
+
+    id: UUID
+    name: str | None = None
+    # What a client titles an unnamed session by ("Claude"), as it does in the
+    # sidebar.
+    agent_type_name: str | None = None
+
+
 class TaskTimelineResponse(BaseModel):
     """Comments and activity in one fetch.
 
@@ -1105,6 +1142,11 @@ class TaskTimelineResponse(BaseModel):
     # Reactions on the task itself, not on any comment — the task body is a
     # reactable target too, the same way a GitHub issue's opening post is.
     reactions: list[TaskReactionSummary] = Field(default_factory=list)
+    # Every session the task or a row names (`created_in_instance_id`, a
+    # comment's `agent_instance_id`, an activity row's) that the viewer may
+    # open. A session missing here is one they can't: render no link, and no
+    # title — naming it would leak what a shared task's viewer can't see.
+    sessions: list[TaskSessionRef] = Field(default_factory=list)
 
 
 class CreateTaskCommentRequest(BaseModel):
@@ -1123,7 +1165,8 @@ class CreateAgentTaskCommentRequest(CreateTaskCommentRequest):
     and the server authors the comment as the session's agent profile — the only
     way a comment ever gets `author_type='agent'`. A session with no profile, or
     one belonging to another user, falls back to the user rather than failing:
-    losing the byline is a better outcome than losing the comment.
+    losing the byline is a better outcome than losing the comment. Either way
+    the caller's own session is stored on the comment, for "via <session>".
     """
 
     agent_instance_id: UUID | None = None

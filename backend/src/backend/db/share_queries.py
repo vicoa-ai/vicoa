@@ -170,9 +170,11 @@ def _public_reactors(
 def public_tasks(
     db: Session, grant: access.ShareGrant, tasks: list[Task]
 ) -> list[TaskResponse]:
-    """`serialize_tasks` with the owner rule applied to each assignee."""
+    """`serialize_tasks` with the owner rule applied to each assignee, and no
+    session provenance: a link shows a board, not the owner's sessions."""
     rows = serialize_tasks(db, tasks)
     for row in rows:
+        row.created_in_instance_id = None
         if row.assignee is None:
             continue
         shown = _public_principal(row.assignee, grant.link)
@@ -186,9 +188,13 @@ def public_tasks(
 def public_timeline(
     timeline: TaskTimelineResponse, grant: access.ShareGrant
 ) -> TaskTimelineResponse:
-    """A built timeline with the owner rule applied to every principal in it."""
+    """A built timeline with the owner rule applied to every principal in it,
+    and without the "Created in"/"via" session refs: a link never opens the
+    dashboard's session pages, so naming them would only leak titles."""
     link = grant.link
+    timeline.sessions = []
     for comment in timeline.comments:
+        comment.agent_instance_id = None
         comment.author = _public_principal(comment.author, link)
         for reaction in comment.reactions:
             reaction.reactors = _public_reactors(reaction.reactors, link)

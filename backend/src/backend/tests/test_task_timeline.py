@@ -268,6 +268,56 @@ class TestThreads:
         )
 
 
+class TestSessionRefs:
+    """Session refs ("Created in", "via"): the timeline names the sessions its
+    rows came from, but only the ones the viewer may open."""
+
+    @pytest.fixture
+    def session(self, test_db, test_user, test_agent_type):
+        from shared.database import AgentInstance
+
+        instance = AgentInstance(
+            user_id=test_user.id, agent_type_id=test_agent_type.id, name="Fix login"
+        )
+        test_db.add(instance)
+        test_db.commit()
+        return instance
+
+    def test_names_the_sessions_the_task_and_its_rows_came_from(
+        self, test_db, test_user, task, session
+    ):
+        task.created_in_instance_id = session.id
+        test_db.commit()
+        task_timeline_queries.create_comment(
+            test_db, task, test_user.id, "on it", agent_instance_id=session.id
+        )
+
+        timeline = task_timeline_queries.build_timeline(test_db, task, test_user.id)
+        assert timeline.comments[0].agent_instance_id == session.id
+        assert [(s.id, s.name) for s in timeline.sessions] == [
+            (session.id, "Fix login")
+        ]
+
+    def test_a_session_the_viewer_cannot_open_is_not_named(
+        self, test_db, test_user, stranger, task, session
+    ):
+        task.created_in_instance_id = session.id
+        test_db.commit()
+
+        timeline = task_timeline_queries.build_timeline(test_db, task, stranger.id)
+        assert timeline.sessions == []
+
+    def test_a_deleted_session_is_not_named(self, test_db, test_user, task, session):
+        from shared.database import AgentStatus
+
+        task.created_in_instance_id = session.id
+        session.status = AgentStatus.DELETED
+        test_db.commit()
+
+        timeline = task_timeline_queries.build_timeline(test_db, task, test_user.id)
+        assert timeline.sessions == []
+
+
 class TestReactions:
     def test_toggle_on_then_off(self, test_db, test_user, task):
         comment = task_timeline_queries.create_comment(

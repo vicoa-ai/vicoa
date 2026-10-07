@@ -401,6 +401,13 @@ class Task(Base):
             unique=True,
             postgresql_where=text("number IS NOT NULL"),
         ),
+        # "Tasks created in this session", and the FK's SET NULL on a session
+        # delete. Partial: most tasks were not created from a session.
+        Index(
+            "ix_tasks_created_in_instance",
+            "created_in_instance_id",
+            postgresql_where=text("created_in_instance_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -440,6 +447,17 @@ class Task(Base):
         PostgresUUID(as_uuid=True), default=None
     )
     creator_type: Mapped[str] = mapped_column(String(10), default="user")
+    # The session this task was created in (`vicoa task create` run inside a
+    # Vicoa session). Provenance only: unlike `agent_instances.task_id` — the
+    # run that works on a task, which drives its status — this never moves the
+    # task, and one session can create many tasks. SET NULL so deleting the
+    # session just drops the "Created in" line.
+    created_in_instance_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_instances.id", ondelete="SET NULL"),
+        type_=PostgresUUID(as_uuid=True),
+        nullable=True,
+        default=None,
+    )
     parent_task_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("tasks.id", ondelete="SET NULL"),
         type_=PostgresUUID(as_uuid=True),
@@ -504,6 +522,12 @@ class TaskComment(Base):
             "parent_comment_id",
             postgresql_where=text("parent_comment_id IS NOT NULL"),
         ),
+        # Backs the FK's SET NULL when a session is deleted.
+        Index(
+            "ix_task_comments_agent_instance",
+            "agent_instance_id",
+            postgresql_where=text("agent_instance_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -536,6 +560,16 @@ class TaskComment(Base):
     # readable ("Deleted agent said …"), which a CASCADE would not.
     author_type: Mapped[str] = mapped_column(String(8), default="user")
     author_id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True))
+    # The session the comment was posted from (`vicoa task comment` inside a
+    # Vicoa session), whoever the author is — a session with no agent profile
+    # still posts as the user, and this is the only trace of where it came
+    # from. Rendered as "via <session>"; SET NULL drops just that.
+    agent_instance_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_instances.id", ondelete="SET NULL"),
+        type_=PostgresUUID(as_uuid=True),
+        nullable=True,
+        default=None,
+    )
     body: Mapped[str] = mapped_column(Text)
     kind: Mapped[str] = mapped_column(String(16), default="comment")
     # Soft delete: removing the row outright would strand replies and reactions

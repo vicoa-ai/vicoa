@@ -954,6 +954,7 @@ def list_tasks(
     sharing: bool = False,
     unfiled: bool = False,
     label_ids: Sequence[UUID] | None = None,
+    created_in_instance_id: UUID | None = None,
 ) -> list[Task]:
     """Visible tasks ordered by position (board/list order), then age.
 
@@ -961,6 +962,8 @@ def list_tasks(
     can select, since NULL is the filter's "any project" too. `label_ids` is a
     conjunction: a task must carry every one of them ("tagged growth AND bug"),
     which is what a selector means; a union is two calls.
+    `created_in_instance_id` keeps the tasks created in that session — still
+    only the visible ones, so it needs no check on the session itself.
     """
     query = (
         db.query(Task)
@@ -977,6 +980,8 @@ def list_tasks(
         query = query.filter(Task.priority == priority)
     for label_id in label_ids or ():
         query = query.filter(Task.labels.any(TaskLabel.id == label_id))
+    if created_in_instance_id is not None:
+        query = query.filter(Task.created_in_instance_id == created_in_instance_id)
     return query.order_by(Task.position.asc(), Task.created_at.asc()).all()
 
 
@@ -997,10 +1002,13 @@ def create_task(
     assignee_id: UUID | None = None,
     *,
     sharing: bool = False,
+    creator_type: str = "user",
+    created_in_instance_id: UUID | None = None,
 ) -> Task:
     """Create a task; without an explicit project it is unfiled (No project,
     owned by the caller, no identifier). Creating on someone else's project
-    needs `editor`."""
+    needs `editor`. `created_in_instance_id` is the session it was created in,
+    already checked to be the caller's."""
     project: Project | None = None
     if project_id is not None:
         project = _get_project(
@@ -1050,6 +1058,8 @@ def create_task(
         due_date=due_date,
         assignee_type=assignee_type,
         assignee_id=assignee_id,
+        creator_type=creator_type,
+        created_in_instance_id=created_in_instance_id,
     )
     if labels:
         task.labels = labels

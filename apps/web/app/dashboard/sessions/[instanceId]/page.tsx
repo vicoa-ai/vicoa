@@ -63,6 +63,7 @@ import { SessionActionsMenu } from '@/components/dashboard/session-actions-menu'
 import { fileableProjects, sessionProjectChoices } from '@/components/dashboard/session-project-choices';
 import { NO_PROJECT_LABEL } from '@/components/dashboard/task-ui';
 import { useProjects } from '@/lib/use-projects';
+import { SessionCreatedTasks } from '@/components/dashboard/session-created-tasks';
 import { FileSearchPalette } from '@/components/dashboard/file-search-palette';
 import { toAbsolutePath } from '@/lib/utils';
 import { RenameSessionDialog, DeleteSessionDialog, CompleteSessionDialog } from '@/components/dashboard/session-dialogs';
@@ -2469,6 +2470,8 @@ function AgentInstanceContent() {
                 </Tooltip>
               </>
             )}
+            {/* Provenance the other way: tasks this session created. */}
+            <SessionCreatedTasks instanceId={instance.id} messageCount={instance.messages.length} />
             {instance.project && (
               <>
                 <span className="text-muted-foreground flex-shrink-0">·</span>

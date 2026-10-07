@@ -27,6 +27,7 @@ import {
   TaskLabelResponse,
   TaskReactionSummary,
   TaskResponse,
+  TaskSessionRef,
   TaskStatus,
   UpdateTaskRequest,
   UserProfile,
@@ -54,7 +55,7 @@ import {
   toDateOnly,
   dateOnlyToLocalDate,
 } from '@/components/dashboard/task-ui';
-import { ReactionRow, TaskTimeline } from './task-timeline';
+import { CreatedInSession, ReactionRow, TaskTimeline } from './task-timeline';
 import { CommentComposer } from './comment-composer';
 import { ParentTaskLink, SubTasksSection, subTaskProgress } from './sub-tasks';
 import { TaskDetailSkeleton } from './task-detail-skeleton';
@@ -100,6 +101,9 @@ export default function TaskDetailPage() {
   const [activity, setActivity] = useState<TaskActivityResponse[]>([]);
   const [taskReactions, setTaskReactions] = useState<TaskReactionSummary[]>([]);
   const [sessions, setSessions] = useState<AgentInstanceResponse[]>([]);
+  // The sessions the task and its rows name ("Created in", "via") that this
+  // viewer may open. Arrives with the timeline.
+  const [sessionRefs, setSessionRefs] = useState<TaskSessionRef[]>([]);
   const [me, setMe] = useState<UserProfile | null>(null);
   // The pickers need the same reference data the board dialog uses.
   const [labels, setLabels] = useState<TaskLabelResponse[]>([]);
@@ -136,6 +140,7 @@ export default function TaskDetailPage() {
       setTask(taskRow);
       setComments(timeline.comments);
       setActivity(timeline.activity);
+      setSessionRefs(timeline.sessions);
       setTaskReactions(timeline.reactions);
       setSessions(taskSessions);
       setProjects(projectRows);
@@ -299,6 +304,7 @@ export default function TaskDetailPage() {
       // to guess where in the thread it goes.
       setComments(timeline.comments);
       setActivity(timeline.activity);
+      setSessionRefs(timeline.sessions);
       setTaskReactions(timeline.reactions);
     },
     [api, task],
@@ -314,6 +320,7 @@ export default function TaskDetailPage() {
       });
       setComments(timeline.comments);
       setActivity(timeline.activity);
+      setSessionRefs(timeline.sessions);
       setTaskReactions(timeline.reactions);
     },
     [api, task],
@@ -408,6 +415,9 @@ export default function TaskDetailPage() {
               readOnly={!canEdit}
             />
             <ParentTaskLink task={task} parent={parentTask} siblings={siblingTasks} />
+            <CreatedInSession
+              sessionRef={sessionRefs.find((ref) => ref.id === task.created_in_instance_id)}
+            />
             <EditableDescription
               value={task.description}
               onSave={(description) => void patchTask({ description })}
@@ -439,6 +449,7 @@ export default function TaskDetailPage() {
               comments={comments}
               activity={activity}
               sessions={sessions}
+              sessionRefs={sessionRefs}
               viewer={viewer}
               onToggleCommentReaction={
                 canComment

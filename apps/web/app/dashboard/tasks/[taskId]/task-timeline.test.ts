@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildEntries, buildThreads, describeReactors } from './task-timeline';
+import { buildEntries, buildThreads, describeReactors, sessionRefTitle } from './task-timeline';
 import type {
   PrincipalResponse,
   TaskCommentResponse,
@@ -88,6 +88,7 @@ const comment = (
   task_id: 't1',
   parent_comment_id: parent,
   author: person('u1', 'Nick'),
+  agent_instance_id: null,
   body: id,
   kind: 'comment',
   reactions: [],
@@ -193,5 +194,40 @@ describe('buildEntries', () => {
     expect(entries).toHaveLength(1);
     if (entries[0].kind !== 'session') throw new Error('expected a session entry');
     expect(entries[0].absorbed.map((r) => r.id)).toEqual(['a1']);
+  });
+
+  it('keeps a change the session made directly out of its card', () => {
+    // `vicoa task update --status blocked` from inside the linked session: the
+    // agent's own call, not status churn, so it stays a line of its own.
+    const session = {
+      id: 's1',
+      started_at: '2026-09-01T09:00:00Z',
+      status: 'ACTIVE',
+    } as never;
+    const entries = buildEntries(
+      [],
+      [
+        activityRow('a1', '2026-09-01T10:00:00Z', { agent_instance_id: 's1' }),
+        activityRow('a2', '2026-09-01T11:00:00Z', { agent_instance_id: 's1', direct: true }),
+      ],
+      [session],
+    );
+    expect(entries.map((e) => e.kind)).toEqual(['session', 'activity']);
+    if (entries[0].kind !== 'session') throw new Error('expected a session entry');
+    expect(entries[0].absorbed.map((r) => r.id)).toEqual(['a1']);
+    if (entries[1].kind !== 'activity') throw new Error('expected an activity entry');
+    expect(entries[1].items.map((r) => r.id)).toEqual(['a2']);
+  });
+});
+
+describe('sessionRefTitle', () => {
+  it('names a session by its name, else by its agent', () => {
+    expect(sessionRefTitle({ id: 's1', name: 'Fix login', agent_type_name: 'claude' })).toBe(
+      'Fix login',
+    );
+    expect(sessionRefTitle({ id: 's1', name: null, agent_type_name: 'claude' })).toBe(
+      'a Claude session',
+    );
+    expect(sessionRefTitle({ id: 's1', name: null, agent_type_name: null })).toBe('a session');
   });
 });

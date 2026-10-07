@@ -39,6 +39,12 @@ class Actor:
     # `task_activity.details` so the task timeline can fold a session's status
     # churn into that session's card instead of listing every hop separately.
     agent_instance_id: UUID | None = None
+    # The session changed the task itself (`vicoa task update` run inside it),
+    # rather than the task following the session's status. Carried into
+    # `details` as `direct: true`: the timeline keeps such a row out of the
+    # session card's folded status churn, and the status sync treats it as a
+    # status someone chose (`tasks.py`), not one the sync may overwrite.
+    direct: bool = False
 
 
 def set_session_actor(db: Session, actor: Actor | None) -> None:

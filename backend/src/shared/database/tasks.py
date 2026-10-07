@@ -5,6 +5,7 @@ Holds the instance-status → task-status linkage (tasks-and-projects plan §4).
 """
 
 import logging
+from uuid import UUID
 
 from sqlalchemy import event
 from sqlalchemy.orm import Session, attributes
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session, attributes
 from .actor import Actor, register_activity_override
 from .enums import AgentStatus
 from .models import AgentInstance
-from .task_models import Task
+from .task_models import Task, TaskActivity
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,45 @@ AGENT_TO_TASK_STATUS: dict[AgentStatus, str] = {
     AgentStatus.REVIEWED: "in_review",
 }
 
+# The status a task must be in for the sync to move it on its own say-so.
+# Anything else was chosen — in the UI, or by an agent with `vicoa task update`
+# — and a session starting, finishing or being reviewed must not overwrite it:
+# an agent that marks its task blocked and then exits leaves it blocked. The
+# one way past this is a status the sync wrote itself (`_status_set_by_sync`),
+# which is what lets a session's own in_progress → done → in_review chain run,
+# and a resumed session reopen the `done` it set.
+SYNC_MAY_MOVE_FROM: dict[AgentStatus, frozenset[str]] = {
+    # Starting work picks up a task nobody has started.
+    AgentStatus.ACTIVE: frozenset({"backlog", "todo"}),
+    # Finishing closes a task that is in progress, whoever put it there.
+    AgentStatus.COMPLETED: frozenset({"in_progress"}),
+    # REVIEWED fires when the user merely switches away from a finished session,
+    # so it only ever follows the sync's own `done`, never one a person chose.
+    AgentStatus.REVIEWED: frozenset(),
+}
+
+
+def _status_set_by_sync(session: Session, task_id: UUID) -> bool:
+    """Whether the task's current status was written by this sync.
+
+    Read off the latest `status_changed` row: the sync's carry the session's
+    `agent_instance_id` and no `direct` flag. A change made in the UI carries
+    no session, and one an agent made with `vicoa task update` is `direct`.
+    A task whose status never changed (still the one it was created with)
+    has no row, which counts as chosen.
+    """
+    row = (
+        session.query(TaskActivity.details)
+        .filter(
+            TaskActivity.task_id == task_id,
+            TaskActivity.action == "status_changed",
+        )
+        .order_by(TaskActivity.created_at.desc())
+        .first()
+    )
+    details = (row[0] if row is not None else None) or {}
+    return "agent_instance_id" in details and not details.get("direct")
+
 
 def _sync_task_status_before_flush(session: Session, flush_context, instances) -> None:
     """Drive a linked task's status from its run's status (plan §4).
@@ -34,7 +74,8 @@ def _sync_task_status_before_flush(session: Session, flush_context, instances) -
     point they all pass through, so the linkage lives here rather than in
     each caller. Fires when a linked instance's status changes into a mapped
     state, and when task_id is stamped late (§8b: the web PATCH that links a
-    spawned instance can land after the instance already went ACTIVE).
+    spawned instance can land after the instance already went ACTIVE). A status
+    someone chose wins over the mapping; see `SYNC_MAY_MOVE_FROM`.
     """
     for obj in list(session.new) + list(session.dirty):
         if not isinstance(obj, AgentInstance) or obj.task_id is None:
@@ -49,8 +90,20 @@ def _sync_task_status_before_flush(session: Session, flush_context, instances) -
             continue
         with session.no_autoflush:
             task = session.get(Task, obj.task_id)
-        if task is None or task.user_id != obj.user_id or task.status == mapped:
-            continue
+            if task is None or task.user_id != obj.user_id or task.status == mapped:
+                continue
+            if task.status not in SYNC_MAY_MOVE_FROM[
+                obj.status
+            ] and not _status_set_by_sync(session, task.id):
+                logger.info(
+                    "task status sync: instance %s went %s, task %s keeps its "
+                    "chosen status %s",
+                    obj.id,
+                    obj.status.value,
+                    task.id,
+                    task.status,
+                )
+                continue
         logger.info(
             "task status sync: instance %s went %s -> task %s becomes %s",
             obj.id,

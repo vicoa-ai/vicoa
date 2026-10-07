@@ -81,6 +81,8 @@ def _activity(
     payload = dict(details)
     if actor is not None and actor.agent_instance_id is not None:
         payload["agent_instance_id"] = str(actor.agent_instance_id)
+        if actor.direct:
+            payload["direct"] = True
     return TaskActivity(
         task_id=task.id,
         project_id=task.project_id,

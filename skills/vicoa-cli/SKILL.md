@@ -46,7 +46,9 @@ confirm intent before running them:
   visible to the user immediately in the web/mobile task detail. `task update`
   takes several task refs and applies the same change to each, so a wrong filter
   edits a lot at once. `session update --task` **flips the linked task's status**
-  to follow the session (a running session ⇒ `in_progress`).
+  to follow the session (a running session ⇒ `in_progress`, a finished one ⇒
+  `done`), but never over a status someone set: mark your task `blocked` with
+  `task update` and it stays `blocked` after the session ends.
 - `session share` — mints a **link that serves the session's transcript to
   anyone who has the URL**. Publishing a transcript is not reversible in the
   "nobody saw it" sense; confirm first, and pass `--audience authenticated` when

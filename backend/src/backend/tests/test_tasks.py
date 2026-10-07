@@ -21,6 +21,7 @@ from shared.database import (
     TeamMember,
     User,
 )
+from shared.database.actor import Actor, set_session_actor
 from shared.database.enums import AgentStatus
 
 
@@ -1064,6 +1065,102 @@ class TestStatusLinkage:
         )
         test_db.refresh(linked_task)
         assert linked_task.status == "done"
+
+    @pytest.mark.parametrize("chosen", ["blocked", "in_review", "todo", "cancelled"])
+    def test_session_end_keeps_a_chosen_status(
+        self, test_db, test_agent_instance, linked_task, chosen
+    ):
+        """The bug this rule exists for: an agent marks its task blocked and
+        exits, and the task must not flip to done behind its back."""
+        assert linked_task.status == "in_progress"
+        linked_task.status = chosen
+        test_db.commit()
+
+        test_agent_instance.status = AgentStatus.COMPLETED
+        test_db.commit()
+        test_db.refresh(linked_task)
+        assert linked_task.status == chosen
+
+    def test_session_end_closes_in_progress_whoever_set_it(
+        self, test_db, test_agent_instance, linked_task
+    ):
+        linked_task.status = "todo"
+        test_db.commit()
+        linked_task.status = "in_progress"
+        test_db.commit()
+
+        test_agent_instance.status = AgentStatus.COMPLETED
+        test_db.commit()
+        test_db.refresh(linked_task)
+        assert linked_task.status == "done"
+
+    def test_review_does_not_reopen_a_chosen_done(
+        self, test_db, test_agent_instance, linked_task
+    ):
+        """REVIEWED fires when the user merely switches away from a finished
+        session; it follows the sync's own `done`, never one a person set."""
+        linked_task.status = "done"
+        test_db.commit()
+
+        test_agent_instance.status = AgentStatus.COMPLETED
+        test_db.commit()
+        test_agent_instance.status = AgentStatus.REVIEWED
+        test_db.commit()
+        test_db.refresh(linked_task)
+        assert linked_task.status == "done"
+
+    def test_resumed_session_reopens_the_done_it_set(
+        self, test_db, test_agent_instance, linked_task
+    ):
+        test_agent_instance.status = AgentStatus.COMPLETED
+        test_db.commit()
+        test_db.refresh(linked_task)
+        assert linked_task.status == "done"
+
+        test_agent_instance.status = AgentStatus.ACTIVE
+        test_db.commit()
+        test_db.refresh(linked_task)
+        assert linked_task.status == "in_progress"
+
+    def test_session_restart_does_not_reopen_a_chosen_blocked(
+        self, test_db, test_agent_instance, linked_task
+    ):
+        """The agent asked for help and set blocked; the user's reply wakes the
+        session (ACTIVE again) but only the agent or the user unblocks it."""
+        linked_task.status = "blocked"
+        test_db.commit()
+        test_agent_instance.status = AgentStatus.AWAITING_INPUT
+        test_db.commit()
+
+        test_agent_instance.status = AgentStatus.ACTIVE
+        test_db.commit()
+        test_db.refresh(linked_task)
+        assert linked_task.status == "blocked"
+
+    def test_a_status_the_session_set_directly_counts_as_chosen(
+        self, test_db, test_agent_instance, linked_task
+    ):
+        """`vicoa task update` from inside the linked session carries the same
+        session id as the sync's own rows; `direct` is what tells them apart."""
+        set_session_actor(
+            test_db,
+            Actor(
+                type="user",
+                id=linked_task.user_id,
+                agent_instance_id=test_agent_instance.id,
+                direct=True,
+            ),
+        )
+        try:
+            linked_task.status = "blocked"
+            test_db.commit()
+        finally:
+            set_session_actor(test_db, None)
+
+        test_agent_instance.status = AgentStatus.COMPLETED
+        test_db.commit()
+        test_db.refresh(linked_task)
+        assert linked_task.status == "blocked"
 
 
 class TestProjectAutoMatch:

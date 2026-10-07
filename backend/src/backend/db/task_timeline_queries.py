@@ -18,7 +18,11 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session
 
+from shared import access
 from shared.database import (
+    AgentInstance,
+    AgentStatus,
+    AgentType,
     Task,
     TaskActivity,
     TaskComment,
@@ -35,6 +39,7 @@ from ..models import (
     TaskActivityResponse,
     TaskCommentResponse,
     TaskReactionSummary,
+    TaskSessionRef,
     TaskTimelineResponse,
 )
 
@@ -251,13 +256,15 @@ def create_comment(
     *,
     parent_comment_id: UUID | None = None,
     author: PrincipalRef | None = None,
+    agent_instance_id: UUID | None = None,
 ) -> TaskComment:
     """Post a comment as `user_id`, or as `author` when an agent wrote it.
 
     `author` is how an agent-authored comment gets its own name in the timeline:
     the agent-facing API resolves the calling session's agent profile and passes
     ('agent', profile_id). `user_id` still governs *scope* — the comment lands on
-    a task that user owns either way.
+    a task that user owns either way. `agent_instance_id` is the session it was
+    posted from, already checked to be the caller's.
     """
     author_type, author_id = author or ("user", user_id)
     root_id = (
@@ -271,6 +278,7 @@ def create_comment(
         parent_comment_id=root_id,
         author_type=author_type,
         author_id=author_id,
+        agent_instance_id=agent_instance_id,
         body=body,
     )
     db.add(comment)
@@ -343,6 +351,37 @@ def thread_order(comments: list[TaskComment]) -> list[TaskComment]:
     return ordered
 
 
+def _session_refs(db: Session, viewer_id: UUID, ids: set[UUID]) -> list[TaskSessionRef]:
+    """The sessions in `ids` that `viewer_id` may open — their own, or one
+    shared to them by any path — by name. The rest are left out on purpose: a
+    teammate reading a shared task must not learn what the owner's private
+    sessions are called."""
+    if not ids:
+        return []
+    rows = (
+        db.query(AgentInstance.id, AgentInstance.name, AgentType.name)
+        .join(AgentType, AgentType.id == AgentInstance.agent_type_id)
+        .filter(
+            AgentInstance.id.in_(ids),
+            AgentInstance.status != AgentStatus.DELETED,
+            (AgentInstance.user_id == viewer_id)
+            | AgentInstance.id.in_(access.shared_instance_select(viewer_id)),
+        )
+        .all()
+    )
+    return [
+        TaskSessionRef(id=row[0], name=row[1], agent_type_name=row[2]) for row in rows
+    ]
+
+
+def _instance_id_of(details: dict | None) -> UUID | None:
+    raw = (details or {}).get("agent_instance_id")
+    try:
+        return UUID(str(raw)) if raw else None
+    except ValueError:
+        return None
+
+
 def build_timeline(db: Session, task: Task, user_id: UUID) -> TaskTimelineResponse:
     """Everything the task-detail timeline renders, in one round trip."""
     comments = thread_order(
@@ -368,15 +407,25 @@ def build_timeline(db: Session, task: Task, user_id: UUID) -> TaskTimelineRespon
     reactions = _reaction_summaries(
         db, user_id, [("comment", c.id) for c in comments] + [("task", task.id)]
     )
+    session_ids = {c.agent_instance_id for c in comments if c.agent_instance_id}
+    session_ids |= {
+        instance_id
+        for a in activity
+        if (instance_id := _instance_id_of(a.details)) is not None
+    }
+    if task.created_in_instance_id is not None:
+        session_ids.add(task.created_in_instance_id)
 
     return TaskTimelineResponse(
         reactions=reactions.get(("task", task.id), []),
+        sessions=_session_refs(db, user_id, session_ids),
         comments=[
             TaskCommentResponse(
                 id=c.id,
                 task_id=c.task_id,
                 parent_comment_id=c.parent_comment_id,
                 author=principals[(c.author_type, c.author_id)],
+                agent_instance_id=c.agent_instance_id,
                 body=None if c.deleted_at else c.body,
                 kind="system" if c.kind == "system" else "comment",
                 reactions=reactions.get(("comment", c.id), []),

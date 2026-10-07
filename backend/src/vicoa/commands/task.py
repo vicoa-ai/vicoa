@@ -287,6 +287,17 @@ def _description_arg(value: Optional[str]) -> Optional[str]:
     return value
 
 
+def _calling_session() -> Optional[str]:
+    """The Vicoa session this command runs inside, if any.
+
+    Sent with every write so the server can record where it came from — the
+    task's "Created in", a change's or a comment's "via" — and author it as the
+    session's agent profile when it has one rather than as the human whose API
+    key it is.
+    """
+    return os.environ.get("VICOA_AGENT_INSTANCE_ID") or None
+
+
 def _cmd_create(args, api_key: str) -> int:
     body: dict[str, Any] = {"title": args.title}
     description = _description_arg(getattr(args, "description", None))
@@ -310,6 +321,9 @@ def _cmd_create(args, api_key: str) -> int:
         body["start_date"] = args.start
     if getattr(args, "due", None):
         body["due_date"] = args.due
+    self_id = _calling_session()
+    if self_id:
+        body["agent_instance_id"] = self_id
     task = _request(args, api_key, "POST", "/api/v1/tasks", json=body)
     if getattr(args, "json", False):
         print(_json.dumps(task, indent=2))
@@ -375,6 +389,11 @@ def _cmd_update(args, api_key: str) -> int:
             file=sys.stderr,
         )
         return 2
+
+    # Not a field: the server records it on the change, never applies it.
+    self_id = _calling_session()
+    if self_id:
+        body["agent_instance_id"] = self_id
 
     refs: list[str] = list(getattr(args, "task_ids", None) or [])
     # A move renames the task and +/- labels need the current set, so those
@@ -456,10 +475,7 @@ def _cmd_comment(args, api_key: str) -> int:
     payload: dict[str, Any] = {"body": body}
     if getattr(args, "reply_to", None):
         payload["parent_comment_id"] = args.reply_to
-    # When this runs inside a Vicoa session, tell the server which one: if that
-    # session was started from an agent profile the comment is authored by the
-    # agent ("Claude commented"), not by the human whose API key it is.
-    self_id = os.environ.get("VICOA_AGENT_INSTANCE_ID")
+    self_id = _calling_session()
     if self_id:
         payload["agent_instance_id"] = self_id
 

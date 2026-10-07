@@ -718,11 +718,14 @@ def list_tasks_endpoint(
     task_status: TaskStatusLiteral | None = Query(default=None, alias="status"),
     task_priority: TaskPriorityLiteral | None = Query(default=None, alias="priority"),
     label_id: Annotated[list[UUID] | None, Query()] = None,
+    created_in_instance_id: UUID | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[TaskResponse]:
     """Same filters as the agent-facing twin: ``unfiled`` selects No-project
-    tasks (exclusive with ``project_id``), ``label_id`` may repeat (AND)."""
+    tasks (exclusive with ``project_id``), ``label_id`` may repeat (AND), and
+    ``created_in_instance_id`` keeps the tasks created in that session (the
+    session page's list)."""
     if unfiled and project_id is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -737,6 +740,7 @@ def list_tasks_endpoint(
         sharing=True,
         unfiled=unfiled,
         label_ids=label_id,
+        created_in_instance_id=created_in_instance_id,
     )
     return serialize_tasks(db, tasks)
 

@@ -5,7 +5,7 @@ suite proves the same CRUD works under the agent RS256-JWT auth used by the
 CLI, including user scoping and the No-project default.
 """
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -414,3 +414,133 @@ class TestLabels:
         client.post("/api/v1/task-labels", json={"name": "mine", "color": "#000000"})
         stranger = _make_client(test_db, uuid4())
         assert stranger.get("/api/v1/task-labels").json() == []
+
+
+class TestSessionProvenance:
+    """Writes made from inside a Vicoa session remember it: the task's
+    "Created in", a comment's and a change's "via"."""
+
+    @pytest.fixture
+    def instance(self, test_db, test_user):
+        from shared.database.models import AgentInstance, AgentType
+
+        instance = AgentInstance(
+            user_id=test_user.id,
+            agent_type_id=test_db.query(AgentType).first().id,
+            name="Triage run",
+        )
+        test_db.add(instance)
+        test_db.commit()
+        return instance
+
+    @pytest.fixture
+    def profiled_instance(self, test_db, test_user):
+        from shared.database.agent_profile_models import AgentProfile
+        from shared.database.models import AgentInstance, AgentType
+
+        profile = AgentProfile(
+            user_id=test_user.id, name="Reviewer", agent="claude", emoji="🤖"
+        )
+        test_db.add(profile)
+        test_db.flush()
+        instance = AgentInstance(
+            user_id=test_user.id,
+            agent_type_id=test_db.query(AgentType).first().id,
+            agent_profile_id=profile.id,
+        )
+        test_db.add(instance)
+        test_db.commit()
+        return instance
+
+    def test_create_records_the_calling_session(self, test_db, client, instance):
+        from shared.database.task_models import Task
+
+        resp = client.post(
+            "/api/v1/tasks",
+            json={"title": "Found while fixing", "agent_instance_id": str(instance.id)},
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["created_in_instance_id"] == str(instance.id)
+        task = test_db.get(Task, resp.json()["id"])
+        assert task.creator_type == "user"  # no profile: the user's own session
+
+        listed = client.get(
+            "/api/v1/tasks", params={"created_in_instance_id": str(instance.id)}
+        ).json()
+        assert [t["id"] for t in listed] == [resp.json()["id"]]
+
+    def test_create_from_a_profiled_session_is_agent_created(
+        self, test_db, client, profiled_instance
+    ):
+        from shared.database.task_models import Task
+
+        resp = client.post(
+            "/api/v1/tasks",
+            json={"title": "t", "agent_instance_id": str(profiled_instance.id)},
+        )
+        assert test_db.get(Task, resp.json()["id"]).creator_type == "agent"
+
+    def test_a_foreign_session_is_ignored_not_refused(self, client):
+        resp = client.post(
+            "/api/v1/tasks", json={"title": "t", "agent_instance_id": str(uuid4())}
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["created_in_instance_id"] is None
+
+    def test_update_marks_its_changes_direct(self, client, instance):
+        task = client.post("/api/v1/tasks", json={"title": "t"}).json()
+        resp = client.patch(
+            f"/api/v1/tasks/{task['id']}",
+            json={"status": "blocked", "agent_instance_id": str(instance.id)},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "blocked"
+
+        timeline = client.get(f"/api/v1/tasks/{task['id']}/timeline").json()
+        row = next(r for r in timeline["activity"] if r["action"] == "status_changed")
+        assert row["details"] == {
+            "from": "backlog",
+            "to": "blocked",
+            "agent_instance_id": str(instance.id),
+            "direct": True,
+        }
+        assert [s["id"] for s in timeline["sessions"]] == [str(instance.id)]
+
+    def test_session_end_keeps_the_status_its_agent_chose(
+        self, test_db, client, instance
+    ):
+        """End to end: the agent marks its own linked task blocked and exits."""
+        from shared.database.enums import AgentStatus
+
+        task = client.post("/api/v1/tasks", json={"title": "t"}).json()
+        instance.task_id = UUID(task["id"])
+        test_db.commit()
+        assert client.get(f"/api/v1/tasks/{task['id']}").json()["status"] == (
+            "in_progress"
+        )
+
+        client.patch(
+            f"/api/v1/tasks/{task['id']}",
+            json={"status": "blocked", "agent_instance_id": str(instance.id)},
+        )
+        instance.status = AgentStatus.COMPLETED
+        test_db.commit()
+        assert client.get(f"/api/v1/tasks/{task['id']}").json()["status"] == "blocked"
+
+    def test_comment_records_the_session_without_a_profile(self, client, instance):
+        task = client.post("/api/v1/tasks", json={"title": "t"}).json()
+        resp = client.post(
+            f"/api/v1/tasks/{task['id']}/comments",
+            json={"body": "noted", "agent_instance_id": str(instance.id)},
+        )
+        assert resp.status_code == 201, resp.text
+        comment = resp.json()["comments"][0]
+        assert comment["author"]["type"] == "user"
+        assert comment["agent_instance_id"] == str(instance.id)
+        assert resp.json()["sessions"] == [
+            {
+                "id": str(instance.id),
+                "name": "Triage run",
+                "agent_type_name": "Claude Code",
+            }
+        ]

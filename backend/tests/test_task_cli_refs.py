@@ -129,6 +129,9 @@ def server(monkeypatch):
     monkeypatch.setattr(T, "_request", srv)
     monkeypatch.setattr(P, "request", srv)
     monkeypatch.setattr(L, "request", srv)
+    # Running these from inside a Vicoa session would otherwise add the
+    # session's id to every write body (see TestCallingSession).
+    monkeypatch.delenv("VICOA_AGENT_INSTANCE_ID", raising=False)
     return srv
 
 
@@ -349,6 +352,44 @@ class TestTaskUpdate:
         assert isinstance(json.loads(capsys.readouterr().out), dict)
         T._cmd_update(_update_args("VIC-20", "VIC-21", status="done", json=True), "k")
         assert len(json.loads(capsys.readouterr().out)) == 2
+
+
+class TestCallingSession:
+    """Inside a Vicoa session every write names it, so the server can record
+    the task's "Created in" and a change's "via"."""
+
+    SESSION = "99999999-9999-9999-9999-999999999999"
+
+    def test_create_sends_the_session(self, server, monkeypatch):
+        monkeypatch.setenv("VICOA_AGENT_INSTANCE_ID", self.SESSION)
+        T._cmd_create(
+            _args(
+                title="Found while fixing",
+                description=None,
+                project=None,
+                status=None,
+                priority=None,
+                parent=None,
+                label=None,
+                start=None,
+                due=None,
+            ),
+            "k",
+        )
+        assert server.sent[-1][3]["agent_instance_id"] == self.SESSION
+
+    def test_update_sends_the_session_with_each_patch(self, server, monkeypatch):
+        monkeypatch.setenv("VICOA_AGENT_INSTANCE_ID", self.SESSION)
+        assert (
+            T._cmd_update(_update_args("VIC-20", "VIC-21", status="blocked"), "k") == 0
+        )
+        patches = [s[3] for s in server.sent if s[0] == "PATCH"]
+        assert patches == [{"status": "blocked", "agent_instance_id": self.SESSION}] * 2
+
+    def test_the_session_alone_is_not_an_update(self, server, monkeypatch, capsys):
+        monkeypatch.setenv("VICOA_AGENT_INSTANCE_ID", self.SESSION)
+        assert T._cmd_update(_update_args("VIC-20"), "k") == 2
+        assert not [s for s in server.sent if s[0] == "PATCH"]
 
 
 class TestProjectCommands:

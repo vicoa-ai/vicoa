@@ -39,6 +39,7 @@ from shared.database import (
     SenderType,
     ShareLink,
     Task,
+    TaskComment,
     TaskLabel,
     TaskReaction,
     User,
@@ -1250,6 +1251,21 @@ class TestPublicBoard:
         assert task["assignee"]["name"] == "Owner"
         assert task["assignee"]["id"] == str(world.owner.id)
         assert timeline["comments"][0]["author"]["name"] == "Owner"
+
+    def test_session_provenance_stays_off_the_link(self, client, world):
+        """Session provenance ("Created in", "via") names the owner's sessions;
+        a link never opens those, so neither the ids nor the titles travel."""
+        self._owner_footprint(client, world)
+        world.task.created_in_instance_id = world.instance.id
+        comment = world.db.query(TaskComment).filter_by(task_id=world.task.id).one()
+        comment.agent_instance_id = world.instance.id
+        world.db.commit()
+
+        token = self._link(client, world, show_owner=True)["token"]
+        task, timeline = self._public_task_and_timeline(client, world, token)
+        assert task["created_in_instance_id"] is None
+        assert timeline["sessions"] == []
+        assert timeline["comments"][0]["agent_instance_id"] is None
 
     def test_visitor_comments_keep_their_name_when_owner_is_hidden(self, client, world):
         self._owner_footprint(client, world)
