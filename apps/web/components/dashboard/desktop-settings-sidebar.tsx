@@ -19,8 +19,9 @@ import { cn } from '@/lib/utils';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { DesktopTitlebarLead } from '@/components/desktop/window-chrome';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
-import { PROJECTS_CHANGED_EVENT, projectSettingsHref } from '@/lib/project-settings-route';
-import { getBackendAPI, type ProjectResponse } from '@/lib/backend-api';
+import { projectSettingsHref } from '@/lib/project-settings-route';
+import { useProjects } from '@/lib/use-projects';
+import type { ProjectResponse } from '@/lib/backend-api';
 
 /**
  * Left panel while the desktop app is on /dashboard/settings: replaces the
@@ -84,28 +85,12 @@ function DesktopSettingsSidebarInner() {
   // The DB projects, in the backend's order (the user's synced drag order,
   // then recency) — the same rows, names and icons as the app sidebar's
   // project groups, plus the archived ones so Unarchive / Delete stay
-  // reachable. Refetched when navigating between panes, on window focus, and
-  // whenever the middle pane reports a mutation (rename, icon, archive, …).
-  const [projects, setProjects] = useState<ProjectResponse[]>([]);
+  // reachable. The shared list: drawn from cache on the first frame (no icon
+  // flash when Settings opens), revalidated on window focus and after any
+  // mutation in the middle pane (rename, icon, archive, …).
+  const { projects: loaded } = useProjects();
+  const projects = useMemo(() => loaded ?? [], [loaded]);
   const [showArchived, setShowArchived] = useState(false);
-  const searchKey = searchParams.toString();
-  useEffect(() => {
-    const load = () => {
-      getBackendAPI(true)
-        .listProjects(true)
-        .then(setProjects)
-        .catch(() => {
-          /* best-effort: the list keeps its last value until the next load */
-        });
-    };
-    load();
-    window.addEventListener('focus', load);
-    window.addEventListener(PROJECTS_CHANGED_EVENT, load);
-    return () => {
-      window.removeEventListener('focus', load);
-      window.removeEventListener(PROJECTS_CHANGED_EVENT, load);
-    };
-  }, [searchKey]);
 
   const { active, archived } = useMemo(
     () => ({

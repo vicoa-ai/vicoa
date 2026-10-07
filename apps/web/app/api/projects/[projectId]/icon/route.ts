@@ -9,9 +9,12 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * the backend bearer token — mirrors /api/attachments/[attachmentId]. The
  * backend URL (projects.icon_image_uri) is stable across replacements, so
  * callers cache-bust with the project's updated_at (see lib/project-icons.ts).
+ * A versioned URL (`?v=`) never changes content, so the browser keeps it for
+ * good: a remount, a reload or the next app launch draws the image from cache
+ * instead of an empty box while it refetches. An unversioned one stays short.
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   try {
@@ -41,7 +44,9 @@ export async function GET(
       status: 200,
       headers: {
         'Content-Type': response.headers.get('content-type') ?? 'application/octet-stream',
-        'Cache-Control': 'private, max-age=300',
+        'Cache-Control': request.nextUrl.searchParams.has('v')
+          ? 'private, max-age=31536000, immutable'
+          : 'private, max-age=300',
         'X-Content-Type-Options': 'nosniff',
       },
     });

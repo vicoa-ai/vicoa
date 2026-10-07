@@ -53,10 +53,8 @@ import { NewSessionButton } from '@/components/dashboard/new-session-button';
 import { WorktreeSubGroupHeader } from '@/components/dashboard/worktree-sub-group-header';
 import type { AgentInstanceResponse, ProjectResponse } from '@/lib/backend-api';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
-import {
-  PROJECTS_CHANGED_EVENT,
-  projectSettingsHref as settingsHrefForProject,
-} from '@/lib/project-settings-route';
+import { projectSettingsHref as settingsHrefForProject } from '@/lib/project-settings-route';
+import { useProjects } from '@/lib/use-projects';
 import {
   formatSidebarTime,
   getSessionTitle,
@@ -70,6 +68,7 @@ import {
   filterWantsActiveOnly,
   groupSessions,
   mergeRenderedOrder,
+  rankProjects,
   normalizeWorktreePath,
   splitProjectByWorktree,
   worktreeSessionPaths,
@@ -472,12 +471,17 @@ export function SidebarSessions({
   const agentNames = useMemo(() => distinctAgentNames(recentInstances), [recentInstances]);
 
   // The DB projects, by id — the source of truth for a group's name, icon, and
-  // archived state (identity-unification §5a/§5b). Refetched when the set of
-  // linked project ids changes so an auto-created project's name/icon appears
-  // and a just-archived one drops out. Empty until it loads → grouping falls
-  // back to the path basename (unchanged legacy behavior).
-  const [projectsById, setProjectsById] = useState<Map<string, ProjectResponse>>(
-    () => new Map(),
+  // archived state (identity-unification §5a/§5b). The shared list
+  // (`useProjects`), so a remount — desktop Settings swaps the sidebar out —
+  // draws the cached rows on its first frame instead of a default icon per
+  // group. Refetched when the set of linked project ids changes so an
+  // auto-created project's name/icon appears and a just-archived one drops
+  // out. Empty until the first load → grouping falls back to the path
+  // basename (unchanged legacy behavior).
+  const { projects: loadedProjects, mutate: mutateProjects } = useProjects();
+  const projectsById = useMemo(
+    () => new Map((loadedProjects ?? []).map((p) => [p.id, p])),
+    [loadedProjects],
   );
   // Where a session's "Project ▸" menu can file it. Empty on the logged-out
   // desktop (no projects API), which hides the item.
@@ -535,41 +539,25 @@ export function SidebarSessions({
     cacheProjectOrder(serverOrder);
   }, [applyProjectOrder, persistProjectOrder]);
 
+  // Every list that arrives carries the server's order, the cached one a
+  // remount starts from included (a drop reorders the cache too, below).
+  useEffect(() => {
+    if (loadedProjects && syncProjectOrder) applyServerProjectOrder(loadedProjects);
+  }, [loadedProjects, syncProjectOrder, applyServerProjectOrder]);
+
+  // Window focus (an edit in another tab or window) revalidates through SWR,
+  // and Settings writes its mutations into the shared list.
   const refreshProjects = useCallback(() => {
-    if (!api) return;
-    // include_archived so the map carries the archived flag (grouping needs it
-    // to drop archived groups); an unknown/loading id defaults to visible.
-    api
-      .listProjects(true)
-      .then((list) => {
-        setProjectsById(new Map(list.map((p) => [p.id, p])));
-        if (syncProjectOrder) applyServerProjectOrder(list);
-      })
-      .catch(() => {
-        /* best-effort: grouping falls back to basenames until it loads */
-      });
-  }, [api, syncProjectOrder, applyServerProjectOrder]);
+    void mutateProjects();
+  }, [mutateProjects]);
   useEffect(() => {
     refreshProjects();
     // Re-run when a session's project link appears/changes (linkedProjectIds)
-    // and when navigating back to a dashboard route (pathname) — so an icon/name
-    // edited in /dashboard/settings shows up without a hard refresh. The image
-    // <img src> is cache-busted by the project's updated_at, so a refetched row
-    // reloads the picture.
+    // and on navigation (pathname), which picks up what nothing writes into the
+    // shared list: a background git-avatar seed, an edit on another device.
+    // The image <img src> is cache-busted by the project's updated_at, so a
+    // refetched row reloads the picture.
   }, [refreshProjects, linkedProjectIds, pathname]);
-
-  // Also refresh when the window/tab regains focus (edited in another tab/window),
-  // and when Settings changes a project in place (a move into a team swaps its
-  // owner badge without any route change).
-  useEffect(() => {
-    const onFocus = () => refreshProjects();
-    window.addEventListener('focus', onFocus);
-    window.addEventListener(PROJECTS_CHANGED_EVENT, onFocus);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      window.removeEventListener(PROJECTS_CHANGED_EVENT, onFocus);
-    };
-  }, [refreshProjects]);
 
   // Other people's sessions this user can see. One fetch feeds both
   // "Shared with me" and the Team rows of the projects listed as their own;
@@ -600,12 +588,10 @@ export function SidebarSessions({
   const handleSetFollowed = useCallback(
     async (project: ProjectResponse, followed: boolean) => {
       if (!api) return;
-      setProjectsById((prev) => {
-        const next = new Map(prev);
-        const current = next.get(project.id);
-        if (current) next.set(project.id, { ...current, followed });
-        return next;
-      });
+      void mutateProjects(
+        (list) => list?.map((p) => (p.id === project.id ? { ...p, followed } : p)),
+        { revalidate: false },
+      );
       try {
         await api.setProjectFollowed(project.id, followed);
       } catch (err) {
@@ -614,7 +600,7 @@ export function SidebarSessions({
         refreshProjects();
       }
     },
-    [api, refreshProjects],
+    [api, mutateProjects, refreshProjects],
   );
   const [leavingProject, setLeavingProject] = useState<ProjectResponse | null>(null);
 
@@ -623,12 +609,10 @@ export function SidebarSessions({
   const handleArchiveProject = useCallback(
     async (projectId: string) => {
       if (!api) return;
-      setProjectsById((prev) => {
-        const next = new Map(prev);
-        const project = next.get(projectId);
-        if (project) next.set(projectId, { ...project, is_archived: true });
-        return next;
-      });
+      void mutateProjects(
+        (list) => list?.map((p) => (p.id === projectId ? { ...p, is_archived: true } : p)),
+        { revalidate: false },
+      );
       try {
         await api.updateProject(projectId, { is_archived: true });
       } catch (err) {
@@ -637,7 +621,7 @@ export function SidebarSessions({
         refreshProjects();
       }
     },
-    [api, refreshProjects],
+    [api, mutateProjects, refreshProjects],
   );
 
   // Worktree display is applied in a second pass (renderLayout) with live git
@@ -902,9 +886,13 @@ export function SidebarSessions({
     const order = projectOrderRef.current;
     cacheProjectOrder(order);
     if (syncProjectOrder) {
-      persistProjectOrder(order.filter((key) => projectsById.has(key)));
+      const ranked = order.filter((key) => projectsById.has(key));
+      persistProjectOrder(ranked);
+      // The shared list too, or a remount would apply the pre-drop order from
+      // the cache until the next refetch.
+      void mutateProjects((list) => list && rankProjects(list, ranked), { revalidate: false });
     }
-  }, [syncProjectOrder, persistProjectOrder, projectsById]);
+  }, [syncProjectOrder, persistProjectOrder, projectsById, mutateProjects]);
 
   // Collapsible groups: clicking a group label hides/shows its sessions.
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -1609,9 +1597,9 @@ export function SidebarSessions({
                       aria-expanded={!isGroupCollapsed}
                       className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                     >
-                      {/* Project groups show the DB project's icon/image/emoji
-                          (or a generated square from the name); time/status
-                          groups have no project identity, so no icon (§5a). */}
+                      {/* Project groups show the DB project's image/emoji
+                          (or the folder glyph); time/status groups have no
+                          project identity, so no icon (§5a). */}
                       {groupBy === 'project' &&
                         (dbProject?.owner ? (
                           <ProjectIconWithOwner project={dbProject} owner={dbProject.owner} />

@@ -23,7 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
-import type { AgentProfile, MachineSummary, ProjectResponse, ReferenceCandidate, TaskResponse, TeamSummary } from '@/lib/backend-api';
+import type { AgentProfile, MachineSummary, ReferenceCandidate, TaskResponse, TeamSummary } from '@/lib/backend-api';
 import {
   activeReferences,
   addReference,
@@ -34,6 +34,7 @@ import {
   type ComposerReference,
 } from '@/lib/composer-references';
 import { TEAMS_KEY } from '@/lib/use-team-invitations';
+import { useProjects } from '@/lib/use-projects';
 import { TaskPickerPopover } from '@/components/dashboard/task-picker-popover';
 import { MentionTextarea } from '@/components/mention-textarea';
 import { AgentTypeIcon, getAgentLogoSrc } from '@/components/dashboard/agent-type-icon';
@@ -446,7 +447,12 @@ function NewSessionContent() {
   // The user's projects (all machines): the picker lists the ones linked to a
   // folder on the selected machine, the folder chip names the one `directory`
   // falls under, and a selected task resolves to its linked folder below.
-  const [projects, setProjects] = useState<ProjectResponse[]>([]);
+  // Archived ones are left out.
+  const { projects: allProjects } = useProjects();
+  const projects = useMemo(
+    () => (allProjects ?? []).filter((p) => !p.is_archived),
+    [allProjects],
+  );
   // The selected folder's repo as the daemon sees it: its main checkout and
   // linked worktrees. Drives the worktree-path normalisation (a typed or
   // linked worktree path becomes root + "existing" selection), the restore
@@ -1109,16 +1115,6 @@ function NewSessionContent() {
       cancelled = true;
     };
   }, [api, selectedTask, taskIdParam, selectedSubtaskIds]);
-
-  useEffect(() => {
-    if (!api) return;
-    let cancelled = false;
-    api
-      .listProjects()
-      .then((list) => { if (!cancelled) setProjects(list); })
-      .catch(() => { /* no project links → machine defaults stand */ });
-    return () => { cancelled = true; };
-  }, [api]);
 
   // A project can be linked to a folder per machine (Tasks → ⚙ → Projects).
   // When a task is selected — from `?taskId=` or the chip picker — point this

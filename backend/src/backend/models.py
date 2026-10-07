@@ -1369,8 +1369,8 @@ ReferenceKindLiteral = Literal["session", "task", "automation"]
 
 class ReferenceProject(BaseModel):
     """Just enough of a project to draw its icon and name on a picker row —
-    the same fields `ProjectIcon` reads on the web (generated initial-square,
-    emoji, or the uploaded image behind `/api/projects/{id}/icon`)."""
+    the same fields `ProjectIcon` reads on the web (the uploaded image behind
+    `/api/projects/{id}/icon`, the emoji, or else a folder glyph)."""
 
     id: str
     name: str

@@ -17,6 +17,7 @@ import { createClient } from '@/lib/auth/supabase-client';
 import { isBuiltinAuth } from '@/lib/auth/auth-provider';
 import { signOutBrowser } from '@/lib/auth/sign-out';
 import { getBackendAPI, type ProjectResponse } from '@/lib/backend-api';
+import { useProjects } from '@/lib/use-projects';
 import {
   Dialog,
   DialogContent,
@@ -40,7 +41,6 @@ import {
   useHiddenSidebarNavItems,
 } from '@/lib/sidebar-nav-pref';
 import {
-  PROJECTS_CHANGED_EVENT,
   projectSettingsHref,
   projectSettingsSection,
 } from '@/lib/project-settings-route';
@@ -90,20 +90,10 @@ function SettingsContent() {
   // The Projects nav lists real DB projects (identity source of truth), not
   // session-derived groups — so it works on web even without a live session.
   // Archived ones ride along under a collapsed group so Unarchive / Delete
-  // stay reachable. Refetched whenever the pane reports a mutation.
-  const [dbProjects, setDbProjects] = useState<ProjectResponse[]>([]);
+  // stay reachable. The shared list, so a pane mutation shows here at once.
+  const { projects } = useProjects();
+  const dbProjects = useMemo(() => projects ?? [], [projects]);
   const [showArchived, setShowArchived] = useState(false);
-  useEffect(() => {
-    const load = () => {
-      getBackendAPI(true)
-        .listProjects(true)
-        .then(setDbProjects)
-        .catch(() => setDbProjects([]));
-    };
-    load();
-    window.addEventListener(PROJECTS_CHANGED_EVENT, load);
-    return () => window.removeEventListener(PROJECTS_CHANGED_EVENT, load);
-  }, []);
   const activeProjects = useMemo(() => dbProjects.filter((p) => !p.is_archived), [dbProjects]);
   const archivedProjects = useMemo(() => dbProjects.filter((p) => p.is_archived), [dbProjects]);
 

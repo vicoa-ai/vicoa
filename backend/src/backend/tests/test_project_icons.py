@@ -245,6 +245,23 @@ class TestIconEndpoints:
         assert row["icon_image_uri"] is None
         assert row["icon_source"] == "user"
 
+    def test_replacing_an_upload_moves_updated_at(
+        self, authenticated_client, fake_icon_storage
+    ):
+        # The web caches each `?v=<updated_at>` icon URL for good, so a second
+        # upload must change the version even though the served URL is stable.
+        pid = self._project(authenticated_client)["id"]
+        first = authenticated_client.put(
+            f"/api/v1/projects/{pid}/icon",
+            files={"file": ("a.png", _png_bytes(color=(200, 20, 20)), "image/png")},
+        ).json()
+        second = authenticated_client.put(
+            f"/api/v1/projects/{pid}/icon",
+            files={"file": ("b.png", _png_bytes(color=(20, 200, 20)), "image/png")},
+        ).json()
+        assert second["icon_image_uri"] == first["icon_image_uri"]
+        assert second["updated_at"] != first["updated_at"]
+
     def test_upload_rejects_non_image(self, authenticated_client, fake_icon_storage):
         project = self._project(authenticated_client)
         resp = authenticated_client.put(

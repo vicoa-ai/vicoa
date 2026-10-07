@@ -77,9 +77,9 @@ import { machineDisplayName } from '@/lib/machine-display';
 import { getDesktopConfig } from '@/lib/runtime-config';
 import {
   PROJECT_SETTINGS_SECTIONS,
-  notifyProjectsChanged,
   type ProjectSettingsSection,
 } from '@/lib/project-settings-route';
+import { refreshProjects, replaceCachedProject, useProjects } from '@/lib/use-projects';
 import { isMachineOnline } from '@/lib/session-liveness';
 import { cn } from '@/lib/utils';
 
@@ -112,25 +112,34 @@ export function ProjectSettingsPane({
   /** The project is gone — the caller navigates away. */
   onProjectDeleted: () => void;
 }) {
+  // The row comes from the shared project list, so switching projects in the
+  // nav draws the pane at once. A project the cached list lacks (created a
+  // moment ago elsewhere) gets one refetch before it counts as gone.
+  const {
+    projects,
+    error: projectsError,
+    isValidating: projectsValidating,
+    mutate: mutateProjects,
+  } = useProjects();
+  const found = projects?.find((p) => p.id === projectId);
+  const missing = projects !== undefined && found === undefined;
+  useEffect(() => {
+    if (missing) void mutateProjects();
+  }, [missing, projectId, mutateProjects]);
   // undefined = loading, null = not found (deleted, or not visible to us).
-  const [project, setProject] = useState<ProjectResponse | null | undefined>(undefined);
+  let project: ProjectResponse | null | undefined = found;
+  if (!found) {
+    if (projects === undefined) project = projectsError || isDesktopLocal() ? null : undefined;
+    else project = projectsValidating ? undefined : null;
+  }
   const [machines, setMachines] = useState<MachineSummary[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    setProject(undefined);
-    const api = getBackendAPI(true);
-    // Two independent loads: a machine-list failure (offline daemon, cloud
-    // hiccup) must not blank the whole pane — only the folder pickers need it.
-    api
-      .listProjects(true)
-      .then((list) => {
-        if (!cancelled) setProject(list.find((p) => p.id === projectId) ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) setProject(null);
-      });
-    api
+    // Independent of the project row: a machine-list failure (offline daemon,
+    // cloud hiccup) must not blank the whole pane — only the folder pickers
+    // need it.
+    getBackendAPI(true)
       .listMachines()
       .then((list) => {
         if (!cancelled) setMachines(list);
@@ -141,11 +150,10 @@ export function ProjectSettingsPane({
     };
   }, [projectId]);
 
-  // Every mutation lands here: the pane re-renders from the server's row and
-  // the settings nav (which keeps its own list) is told to refetch.
+  // Every mutation lands here: the server's row goes into the shared list, so
+  // the pane, the settings nav and the app sidebar all redraw from it.
   const onUpdated = useCallback((next: ProjectResponse) => {
-    setProject(next);
-    notifyProjectsChanged();
+    replaceCachedProject(next);
   }, []);
 
   if (project === undefined) {
@@ -220,7 +228,7 @@ export function ProjectSettingsPane({
           machines={machines}
           onUpdated={onUpdated}
           onDeleted={() => {
-            notifyProjectsChanged();
+            refreshProjects();
             onProjectDeleted();
           }}
         />

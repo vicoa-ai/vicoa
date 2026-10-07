@@ -89,6 +89,19 @@ export function mergeRenderedOrder(full: string[], rendered: string[]): string[]
   return base.map((key) => (onScreen.has(key) ? queue.shift()! : key));
 }
 
+/**
+ * A project list in the order the server answers with after
+ * `PUT /projects/order`: the ranked ids first, then everything else in its
+ * current order. Lets a drop reorder the cached list without a refetch.
+ */
+export function rankProjects<T extends { id: string }>(list: T[], ranked: string[]): T[] {
+  const rank = new Map(ranked.map((id, i) => [id, i]));
+  const head = list
+    .filter((p) => rank.has(p.id))
+    .sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+  return [...head, ...list.filter((p) => !rank.has(p.id))];
+}
+
 /** Distinct project groups present in the list, as `{ key, label }` pairs. */
 export function distinctProjects(
   instances: AgentInstanceResponse[],

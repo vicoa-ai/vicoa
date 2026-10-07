@@ -31,14 +31,3 @@ export function projectSettingsHref(projectId: string, section?: ProjectSettings
   if (section && section !== 'general') params.set('section', section);
   return `/dashboard/settings?${params.toString()}`;
 }
-
-/**
- * Window event the pane fires after any project mutation (rename, icon,
- * folders, archive, delete) so the settings navs — which keep their own copy
- * of the project list — refetch without a route change or window blur.
- */
-export const PROJECTS_CHANGED_EVENT = 'vicoa:projects-changed';
-
-export function notifyProjectsChanged(): void {
-  if (typeof window !== 'undefined') window.dispatchEvent(new Event(PROJECTS_CHANGED_EVENT));
-}

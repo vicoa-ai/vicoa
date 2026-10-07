@@ -8,6 +8,7 @@ import {
   groupSessions,
   mergeRenderedOrder,
   projectGroupKey,
+  rankProjects,
   splitProjectByWorktree,
   worktreeSessionPaths,
   type LiveWorktree,
@@ -146,6 +147,19 @@ describe('groupSessions project order', () => {
 
     const groups = groupSessions([a, b, c, none], 'all', 'project', 'all', ['gamma', 'alpha']);
     expect(groups.map((g) => g.label)).toEqual(['gamma', 'alpha', 'beta', null]);
+  });
+});
+
+describe('rankProjects', () => {
+  const list = ['A', 'B', 'C', 'D'].map((id) => ({ id }));
+  const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
+
+  it('puts the ranked ids first, in rank order, and keeps the rest as they were', () => {
+    expect(ids(rankProjects(list, ['C', 'A']))).toEqual(['C', 'A', 'B', 'D']);
+  });
+
+  it('ignores ranked ids the list does not have', () => {
+    expect(ids(rankProjects(list, ['Z', 'D']))).toEqual(['D', 'A', 'B', 'C']);
   });
 });
 

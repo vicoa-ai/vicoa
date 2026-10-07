@@ -35,7 +35,8 @@ import {
   type TeamSummary,
 } from '@/lib/backend-api';
 import { SEATS_PAGE_HREF, seatSummary } from '@/lib/billing';
-import { notifyProjectsChanged, projectSettingsHref } from '@/lib/project-settings-route';
+import { projectSettingsHref } from '@/lib/project-settings-route';
+import { refreshProjects, useProjects } from '@/lib/use-projects';
 import { moveDestinations } from '@/lib/project-transfer';
 import { isDesktopLocal } from '@/lib/runtime-config';
 import { canManageTeam, nextTeamAgentName } from '@/lib/team-settings';
@@ -43,7 +44,6 @@ import { agentPrincipal } from '@/lib/use-agent-profiles';
 import { TEAMS_KEY } from '@/lib/use-team-invitations';
 import { cn } from '@/lib/utils';
 
-const PROJECTS_KEY = 'team-settings:projects';
 const AGENTS_KEY = 'agent-profiles';
 
 function SectionCard({ children }: { children: ReactNode }) {
@@ -74,12 +74,7 @@ const ROW =
 
 export function TeamProjectsSection({ team }: { team: TeamDetail }) {
   const local = isDesktopLocal();
-  const { mutate } = useSWRConfig();
-  const { data: projects } = useSWR<ProjectResponse[]>(
-    local ? null : PROJECTS_KEY,
-    () => getBackendAPI(true).listProjects(true),
-    { shouldRetryOnError: false },
-  );
+  const { projects } = useProjects();
   const { data: teams } = useSWR<TeamSummary[]>(
     local ? null : TEAMS_KEY,
     () => getBackendAPI(true).listTeams(),
@@ -168,8 +163,7 @@ export function TeamProjectsSection({ team }: { team: TeamDetail }) {
           initialTeamId={team.id}
           onMoved={() => {
             setMoving(null);
-            void mutate(PROJECTS_KEY);
-            notifyProjectsChanged();
+            refreshProjects();
           }}
         />
       )}

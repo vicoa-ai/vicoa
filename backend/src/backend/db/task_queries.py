@@ -463,6 +463,11 @@ def set_project_icon(
         return None
     project.icon_image_uri = icon_image_uri
     project.icon_source = icon_source
+    # Replacing one upload with another leaves both columns as they were, so
+    # the ORM would skip the UPDATE and `onupdate` with it. Clients cache-bust
+    # the icon URL with `updated_at` and cache each version for good, so it
+    # has to move on every upload.
+    project.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(project)
     return project
@@ -473,7 +478,7 @@ def reset_project_icon(
 ) -> Project | None:
     """Reset to the generated default: drop the image AND emoji, and pin
     ``icon_source='user'`` so the git-avatar seed does NOT re-add an image on the
-    next fetch. Renders as the generated initial-square. Admin+."""
+    next fetch. Renders as the default folder glyph. Admin+."""
     project = _get_project(db, user_id, project_id, sharing=sharing, minimum="admin")
     if project is None:
         return None

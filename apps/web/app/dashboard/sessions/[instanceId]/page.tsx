@@ -22,7 +22,7 @@ import { trackFirstMessageSent } from '@/lib/desktop-telemetry';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { useDashboardNavigation } from '@/lib/contexts/dashboard-navigation-context';
-import { AgentInstanceDetail, MessageResponse, SessionInstanceMetadata, type ProjectResponse } from '@/lib/backend-api';
+import { AgentInstanceDetail, MessageResponse, SessionInstanceMetadata } from '@/lib/backend-api';
 import { getInstanceDetail, postInstanceMessage } from '@/lib/agent-instance-api';
 import { getMessageStore } from '@/lib/message-store';
 import { useMessageStream } from '@/lib/hooks/use-ws-stream';
@@ -62,7 +62,7 @@ import { SessionEmptyState } from '@/components/dashboard/session-empty-state';
 import { SessionActionsMenu } from '@/components/dashboard/session-actions-menu';
 import { fileableProjects, sessionProjectChoices } from '@/components/dashboard/session-project-choices';
 import { NO_PROJECT_LABEL } from '@/components/dashboard/task-ui';
-import { PROJECTS_CHANGED_EVENT } from '@/lib/project-settings-route';
+import { useProjects } from '@/lib/use-projects';
 import { FileSearchPalette } from '@/components/dashboard/file-search-palette';
 import { toAbsolutePath } from '@/lib/utils';
 import { RenameSessionDialog, DeleteSessionDialog, CompleteSessionDialog } from '@/components/dashboard/session-dialogs';
@@ -653,32 +653,18 @@ function AgentInstanceContent() {
 
   // The caller's projects: the header names the one this session is filed
   // under, and the ⋯ menu's "Project ▸" offers the same choices as the sidebar
-  // row's menu. Refetched when the session moves (it may land in a project
-  // created after this page loaded) and when a project is edited elsewhere.
-  // Nothing on the logged-out desktop, whose local daemon has no projects.
-  const [projects, setProjects] = useState<ProjectResponse[]>([]);
+  // row's menu. The shared list; refetched when the session lands in a
+  // project it doesn't have yet (one created after it loaded). Empty on the
+  // logged-out desktop, whose local daemon has no projects; on a failed load
+  // the header falls back to the folder and the menu drops Project.
+  const { projects: loadedProjects, mutate: mutateProjects } = useProjects();
+  const projects = useMemo(() => loadedProjects ?? [], [loadedProjects]);
   const instanceProjectId = instance?.project_id ?? null;
+  const knowsInstanceProject =
+    !instanceProjectId || !loadedProjects || loadedProjects.some((p) => p.id === instanceProjectId);
   useEffect(() => {
-    const api = dashboardContext.api;
-    if (!api || isDesktopLocal()) return;
-    let cancelled = false;
-    const load = () => {
-      api
-        .listProjects(true)
-        .then((list) => {
-          if (!cancelled) setProjects(list);
-        })
-        .catch(() => {
-          /* best-effort: the header falls back to the folder, the menu drops Project */
-        });
-    };
-    load();
-    window.addEventListener(PROJECTS_CHANGED_EVENT, load);
-    return () => {
-      cancelled = true;
-      window.removeEventListener(PROJECTS_CHANGED_EVENT, load);
-    };
-  }, [dashboardContext.api, instanceId, instanceProjectId]);
+    if (!knowsInstanceProject) void mutateProjects();
+  }, [knowsInstanceProject, mutateProjects]);
   // Moving needs manage rights on the session, so only the owner gets choices.
   const fileable = useMemo(() => (isOwner ? fileableProjects(projects) : []), [isOwner, projects]);
   const headerProject = instanceProjectId

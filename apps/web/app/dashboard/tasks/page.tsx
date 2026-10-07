@@ -36,6 +36,7 @@ import {
 } from '@/lib/backend-api';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { notifyOnboardingProgress } from '@/lib/onboarding-progress';
+import { refreshProjects } from '@/lib/use-projects';
 import {
   NO_PROJECT_LABEL,
   ProjectIcon,
@@ -369,6 +370,7 @@ function TasksPageInner() {
       try {
         const project = await api.createProject(values);
         setProjects((prev) => [...prev, project]);
+        refreshProjects();
         updateActiveView({ projectFilter: project.id });
       } catch (err) {
         console.error('Failed to create project:', err);

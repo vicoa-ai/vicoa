@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { CalendarClock, Check, ListFilter, Plus, Repeat } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -30,6 +30,7 @@ import {
   type SessionConfig,
 } from '@/lib/agent-catalog';
 import { useAgentProfiles } from '@/lib/use-agent-profiles';
+import { useProjects } from '@/lib/use-projects';
 import { resolveWorktreeSpawn } from '@/lib/worktree-selection';
 import type {
   AutomationResponse,
@@ -109,7 +110,12 @@ function AutomationPageInner() {
   // collaborators' (read-only) in projects shared with you. The project
   // picker narrows it: null = "All automations", grouped by project; a
   // project id = that project's alone; NO_PROJECT = yours filed nowhere.
-  const [projects, setProjects] = useState<ProjectResponse[]>([]);
+  // Archived projects are left out.
+  const { projects: allProjects } = useProjects();
+  const projects = useMemo(
+    () => (allProjects ?? []).filter((p) => !p.is_archived),
+    [allProjects],
+  );
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<AgentCatalog>(
     () => getAutomationCache()?.catalog ?? AGENT_CATALOG_FALLBACK,
@@ -146,18 +152,6 @@ function AutomationPageInner() {
     setAutomations(automationList);
     setMachines(sortMachinesOnlineFirst(machineList));
     return automationList;
-  }, [api]);
-
-  useEffect(() => {
-    if (!api) return;
-    let cancelled = false;
-    api
-      .listProjects()
-      .then((list) => !cancelled && setProjects(list))
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
   }, [api]);
 
   // Keep only the machine list warm so the "Runs on" online dot stays accurate
