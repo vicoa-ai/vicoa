@@ -929,6 +929,34 @@ def _resolve_owned_task_id(db: Session, raw_task_id: str, user_id: str) -> UUID:
     return task_uuid
 
 
+def _resolve_owned_project_id(db: Session, raw_project_id: str, user_id: str) -> UUID:
+    """Parse and ownership-check a project_id for filing a session, or raise.
+
+    The owner-only twin of the dashboard's ``move_instance_to_project``: this
+    server never widens to shared or team projects (AGENTS.md), so the target
+    must be one of the caller's personal projects — 400 for a malformed id,
+    404 for anything else. Same self-heal as there: filing a session is live
+    work, so an archived target comes back.
+    """
+    from backend.db.task_queries import get_accessible_project
+
+    try:
+        project_uuid = UUID(raw_project_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid project_id"
+        ) from exc
+    project = get_accessible_project(db, UUID(user_id), project_uuid)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+    if project.is_archived:
+        project.is_archived = False
+        project.archived_at = None
+    return project_uuid
+
+
 # Statuses a same-owner re-register must not silently adopt (see the
 # idempotent branch in `register_agent_instance_endpoint`).
 _REGISTER_TERMINAL_STATUSES = frozenset(
@@ -1385,8 +1413,9 @@ def update_agent_instance_endpoint(
     db: Session = Depends(get_db),
 ) -> RegisterAgentInstanceResponse:
     """Update agent instance metadata: name, session_config / instance_metadata
-    merges, task link, or the folder the session is filed under (project +
-    worktree_name + repo_root, from `vicoa session update --worktree`)."""
+    merges, task link, the folder the session is filed under (project +
+    worktree_name + repo_root, from `vicoa session update --worktree`), or the
+    project it is filed under (project_id, from `--project`)."""
 
     try:
         user_uuid = UUID(user_id)
@@ -1517,6 +1546,16 @@ def update_agent_instance_endpoint(
             instance.task_id = (
                 _resolve_owned_task_id(db, update_data.task_id, user_id)
                 if update_data.task_id is not None
+                else None
+            )
+        if "project_id" in fields:
+            # Same field-present semantics: a UUID files the session under
+            # that project, an explicit null under No project. Registration
+            # never re-resolves an existing row (a resume skips it), so the
+            # choice sticks.
+            instance.project_id = (
+                _resolve_owned_project_id(db, update_data.project_id, user_id)
+                if update_data.project_id is not None
                 else None
             )
         db.flush()

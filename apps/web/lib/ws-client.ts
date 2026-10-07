@@ -53,6 +53,8 @@ export type InstanceBody = {
   status: string;
   name: string | null;
   project: string | null;
+  /** The project it is filed under. Absent from an older server. */
+  project_id?: string | null;
   home_dir: string | null;
   started_at: string | null;
   ended_at: string | null;

@@ -652,8 +652,8 @@ def _resolve_worktree_move(
 
 
 def _cmd_update(args, api_key: str) -> int:
-    """Rename a session, (un)link its task, or move it to a worktree via the
-    instance PATCH.
+    """Rename a session, (un)link its task, move it to a worktree, or file it
+    under another project via the instance PATCH.
 
     Mirrors the web: ``--title`` renames (``name``) and ``--task`` /
     ``--unlink-task`` stamp or clear ``task_id`` — which drives the linked
@@ -662,6 +662,8 @@ def _cmd_update(args, api_key: str) -> int:
     re-files the session under the checkout with that branch (resolved with
     local git — see ``_resolve_worktree_move``); the agent itself keeps
     running where it is, only the folder the session is filed under changes.
+    ``--project`` sets ``project_id`` (the app's "Project" menu on a session):
+    only the grouping changes, not the folder.
     """
     if getattr(args, "task", None) and getattr(args, "unlink_task", False):
         print("Pass either --task or --unlink-task, not both.", file=sys.stderr)
@@ -675,15 +677,28 @@ def _cmd_update(args, api_key: str) -> int:
     elif getattr(args, "unlink_task", False):
         body["task_id"] = None
     worktree = getattr(args, "worktree", None)
+    project_ref = getattr(args, "project", None)
 
-    if not body and not worktree:
+    if not body and not worktree and not project_ref:
         print(
-            "Nothing to update — pass --title, --task, --unlink-task, or --worktree.",
+            "Nothing to update — pass --title, --task, --unlink-task, "
+            "--worktree, or --project.",
             file=sys.stderr,
         )
         return 2
 
     instance_id = _require_session_id(args.session_id)
+    project_label: str | None = None
+    if project_ref:
+        # Deferred like the other cross-command imports here.
+        from vicoa.commands.project import NO_PROJECT, find_project
+
+        if project_ref.strip().lower() == NO_PROJECT:
+            body["project_id"] = None
+        else:
+            project = find_project(args, api_key, project_ref)
+            body["project_id"] = str(project["id"])
+            project_label = str(project.get("name") or project["id"])
     if worktree:
         try:
             body.update(_resolve_worktree_move(args, api_key, instance_id, worktree))
@@ -709,6 +724,17 @@ def _cmd_update(args, api_key: str) -> int:
             file=sys.stderr,
         )
         return 1
+    if "project_id" in body and (
+        not isinstance(updated, dict) or updated.get("project_id") != body["project_id"]
+    ):
+        # Same tell as above: an older server drops `project_id` and echoes
+        # the row it already had.
+        print(
+            "The server did not file the session under the project — it "
+            "predates `--project`.",
+            file=sys.stderr,
+        )
+        return 1
     if getattr(args, "json", False):
         print(_json.dumps(updated, indent=2))
         return 0
@@ -725,6 +751,12 @@ def _cmd_update(args, api_key: str) -> int:
             f"moved to worktree {body['worktree_name']} ({body['project']})"
             if body.get("worktree_name")
             else f"moved to the main checkout ({body['project']})"
+        )
+    if "project_id" in body:
+        changes.append(
+            f"filed under project {project_label}"
+            if body["project_id"]
+            else "filed under No project"
         )
     print(f"Updated session {instance_id} — {', '.join(changes)}.")
     return 0

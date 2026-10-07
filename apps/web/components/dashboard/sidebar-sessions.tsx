@@ -44,10 +44,11 @@ import { agentPrincipal, useAgentProfiles } from '@/lib/use-agent-profiles';
 import { SnakeLoader } from '@/components/dashboard/snake-loader';
 import {
   SessionActionsMenu,
-  SessionActionItemContent,
+  SessionActionContextMenuItems,
   buildSessionActions,
   type SessionActionsConfig,
 } from '@/components/dashboard/session-actions-menu';
+import { fileableProjects, sessionProjectChoices } from '@/components/dashboard/session-project-choices';
 import { NewSessionButton } from '@/components/dashboard/new-session-button';
 import { WorktreeSubGroupHeader } from '@/components/dashboard/worktree-sub-group-header';
 import type { AgentInstanceResponse, ProjectResponse } from '@/lib/backend-api';
@@ -393,6 +394,19 @@ export function SidebarSessions({
     }
   }, [api, updateInstanceStatus, refreshData]);
 
+  // File a session under another project, or under No project (null). Only
+  // the grouping changes: the session keeps its folder, and a resume
+  // relaunches there.
+  const handleMoveToProject = useCallback(async (instance: AgentInstanceResponse, projectId: string | null) => {
+    if (!api || (instance.project_id ?? null) === projectId) return;
+    try {
+      await api.updateAgentInstance(instance.id, { project_id: projectId });
+      await refreshData();
+    } catch (error) {
+      console.error(`Failed to move ${instance.id} to another project:`, error);
+    }
+  }, [api, refreshData]);
+
   // Filters + group-by, persisted to the same localStorage keys as before so
   // the two sidebars stay in sync. Read post-mount to keep SSR stable.
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(DEFAULT_STATUS_FILTER);
@@ -465,6 +479,9 @@ export function SidebarSessions({
   const [projectsById, setProjectsById] = useState<Map<string, ProjectResponse>>(
     () => new Map(),
   );
+  // Where a session's "Project ▸" menu can file it. Empty on the logged-out
+  // desktop (no projects API), which hides the item.
+  const fileable = useMemo(() => fileableProjects(projectsById.values()), [projectsById]);
   const linkedProjectIds = useMemo(() => {
     const ids = new Set<string>();
     for (const instance of recentInstances) {
@@ -1195,6 +1212,12 @@ export function SidebarSessions({
     const people = sessionRowPeople(instance);
     const ownerName = foreign ? instance.owner?.name?.trim() || null : null;
 
+    const projectChoices = sessionProjectChoices(
+      fileable,
+      instance.project_id ?? null,
+      (projectId) => void handleMoveToProject(instance, projectId),
+    );
+
     // One config drives both the hover three-dot (SessionActionsMenu) and the
     // right-click context menu below, so the two menus can never list different
     // actions.
@@ -1234,6 +1257,7 @@ export function SidebarSessions({
             : undefined,
           onRename: () =>
             setRenameDialog({ open: true, sessionId: instance.id, currentName: instance.name ?? title }),
+          projectChoices,
           onCopyId: () => void copySessionId(instance.id, instance.id),
           copied: copiedSessionId === instance.id,
           onMarkDone: instance.status !== 'COMPLETED' ? () => void handleArchive(instance) : undefined,
@@ -1366,17 +1390,7 @@ export function SidebarSessions({
       </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="font-mono">
-          {contextMenuActions.map((action) => (
-            <ContextMenuItem
-              key={action.key}
-              className="text-xs"
-              disabled={action.disabled}
-              title={action.title}
-              onSelect={action.onSelect}
-            >
-              <SessionActionItemContent action={action} />
-            </ContextMenuItem>
-          ))}
+          <SessionActionContextMenuItems actions={contextMenuActions} />
         </ContextMenuContent>
       </ContextMenu>
     );
@@ -1388,6 +1402,8 @@ export function SidebarSessions({
     handleArchive,
     handleUnread,
     handleResumeInstance,
+    handleMoveToProject,
+    fileable,
     copySessionId,
     copiedSessionId,
     resumingId,

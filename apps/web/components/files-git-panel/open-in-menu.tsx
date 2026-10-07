@@ -178,23 +178,33 @@ export function OpenInMenu({
  * of the session's actions rather than in a second menu next door.
  *
  * Must be rendered inside a `DropdownMenuContent`; closing is left to the
- * parent menu, which Radix handles on a successful select.
+ * parent menu, which Radix handles on a successful select. `separatorBefore`
+ * draws the line above it here rather than in the parent, so when there is
+ * nothing to open the path with, no stray separator is left behind.
  */
-export function OpenInSubMenu({ machineId, cwd, path = '' }: OpenInTarget) {
+export function OpenInSubMenu({
+  machineId,
+  cwd,
+  path = '',
+  separatorBefore = false,
+}: OpenInTarget & { separatorBefore?: boolean }) {
   const noop = useCallback(() => {}, []);
   const { groups, ready, error, openWith } = useOpenIn({ machineId, cwd, path }, noop);
 
   if (!ready) return null;
 
   return (
-    <DropdownMenuSub>
-      <DropdownMenuSubTrigger className="cursor-pointer gap-2 px-2 py-1 text-xs">
-        <ExternalLink className="h-3 w-3" />
-        Open in
-      </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent className="min-w-[8.5rem] font-mono">
-        <OpenInRows groups={groups} error={error} openWith={openWith} />
-      </DropdownMenuSubContent>
-    </DropdownMenuSub>
+    <>
+      {separatorBefore && <DropdownMenuSeparator />}
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger className="cursor-pointer gap-2 px-2 py-1 text-xs">
+          <ExternalLink className="h-3 w-3" />
+          Open in
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent className="min-w-[8.5rem] font-mono">
+          <OpenInRows groups={groups} error={error} openWith={openWith} />
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+    </>
   );
 }

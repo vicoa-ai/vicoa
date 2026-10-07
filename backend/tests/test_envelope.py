@@ -148,6 +148,20 @@ def test_instance_body_keeps_the_legacy_user_agent_id_wire_key() -> None:
     assert body["user_agent_id"] == str(inst.agent_type_id)
 
 
+def test_instance_body_carries_the_project_it_is_filed_under() -> None:
+    """The sidebar groups on `project_id`, so a session moved to another
+    project (app menu or `vicoa session update --project`) must say so on the
+    live frame, not only on the next list load."""
+    inst = _instance()
+    assert build_instance_update(inst)["body"]["project_id"] is None
+
+    inst.project_id = uuid4()
+    body = build_instance_update(inst)["body"]
+
+    assert body["project_id"] == str(inst.project_id)
+    json.dumps(body)
+
+
 def test_build_instance_created_update_uses_the_created_discriminator() -> None:
     inst = _instance()
 

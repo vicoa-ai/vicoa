@@ -22,7 +22,7 @@ import { trackFirstMessageSent } from '@/lib/desktop-telemetry';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { useDashboardNavigation } from '@/lib/contexts/dashboard-navigation-context';
-import { AgentInstanceDetail, MessageResponse, SessionInstanceMetadata } from '@/lib/backend-api';
+import { AgentInstanceDetail, MessageResponse, SessionInstanceMetadata, type ProjectResponse } from '@/lib/backend-api';
 import { getInstanceDetail, postInstanceMessage } from '@/lib/agent-instance-api';
 import { getMessageStore } from '@/lib/message-store';
 import { useMessageStream } from '@/lib/hooks/use-ws-stream';
@@ -60,6 +60,9 @@ import {
 import { extractChatAttachments } from '@/components/chat-attachments';
 import { SessionEmptyState } from '@/components/dashboard/session-empty-state';
 import { SessionActionsMenu } from '@/components/dashboard/session-actions-menu';
+import { fileableProjects, sessionProjectChoices } from '@/components/dashboard/session-project-choices';
+import { NO_PROJECT_LABEL } from '@/components/dashboard/task-ui';
+import { PROJECTS_CHANGED_EVENT } from '@/lib/project-settings-route';
 import { FileSearchPalette } from '@/components/dashboard/file-search-palette';
 import { toAbsolutePath } from '@/lib/utils';
 import { RenameSessionDialog, DeleteSessionDialog, CompleteSessionDialog } from '@/components/dashboard/session-dialogs';
@@ -612,6 +615,9 @@ function AgentInstanceContent() {
     const patch: Partial<AgentInstanceDetail> = {};
     if (body.last_heartbeat_at) patch.last_heartbeat_at = body.last_heartbeat_at;
     if (body.live_state) patch.live_state = body.live_state as AgentInstanceDetail['live_state'];
+    // Filed under another project elsewhere (the sidebar, another device, the
+    // CLI): keep the ⋯ menu's checked project current. Absent = older server.
+    if (body.project_id !== undefined) patch.project_id = body.project_id;
     if (Object.keys(patch).length > 0) getMessageStore().patchInstance(instanceId, patch);
   }, [instanceId]);
 
@@ -644,6 +650,56 @@ function AgentInstanceContent() {
       alert(wasPinned ? "Couldn't unpin session" : "Couldn't pin session");
     }
   }, [instance?.pinned_at, instanceId, togglePin, dashboardContext]);
+
+  // The caller's projects: the header names the one this session is filed
+  // under, and the ⋯ menu's "Project ▸" offers the same choices as the sidebar
+  // row's menu. Refetched when the session moves (it may land in a project
+  // created after this page loaded) and when a project is edited elsewhere.
+  // Nothing on the logged-out desktop, whose local daemon has no projects.
+  const [projects, setProjects] = useState<ProjectResponse[]>([]);
+  const instanceProjectId = instance?.project_id ?? null;
+  useEffect(() => {
+    const api = dashboardContext.api;
+    if (!api || isDesktopLocal()) return;
+    let cancelled = false;
+    const load = () => {
+      api
+        .listProjects(true)
+        .then((list) => {
+          if (!cancelled) setProjects(list);
+        })
+        .catch(() => {
+          /* best-effort: the header falls back to the folder, the menu drops Project */
+        });
+    };
+    load();
+    window.addEventListener(PROJECTS_CHANGED_EVENT, load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(PROJECTS_CHANGED_EVENT, load);
+    };
+  }, [dashboardContext.api, instanceId, instanceProjectId]);
+  // Moving needs manage rights on the session, so only the owner gets choices.
+  const fileable = useMemo(() => (isOwner ? fileableProjects(projects) : []), [isOwner, projects]);
+  const headerProject = instanceProjectId
+    ? (projects.find((p) => p.id === instanceProjectId) ?? null)
+    : null;
+
+  // Optimistic like Pin: the sidebar regroups at once, rolled back on failure.
+  const handleMoveToProject = useCallback(async (projectId: string | null) => {
+    const previous = instance?.project_id ?? null;
+    if (previous === projectId || !dashboardContext.api) return;
+    getMessageStore().patchInstance(instanceId, { project_id: projectId });
+    dashboardContext.updateInstance(instanceId, { project_id: projectId });
+    try {
+      await dashboardContext.api.updateAgentInstance(instanceId, { project_id: projectId });
+    } catch (err) {
+      console.error('Failed to move session to another project:', err);
+      getMessageStore().patchInstance(instanceId, { project_id: previous });
+      dashboardContext.updateInstance(instanceId, { project_id: previous });
+      alert("Couldn't move the session to that project");
+    }
+  }, [instance?.project_id, instanceId, dashboardContext]);
   
   // Handle streaming connection
   const {
@@ -2345,7 +2401,11 @@ function AgentInstanceContent() {
                 authority on what it's actually running, and the two legitimately
                 diverge as soon as the user switches model mid-session. */}
             {sessionAgentProfile ? (
-              <span title={sessionAgentProfile.system_prompt || undefined} className="flex items-center gap-1.5 min-w-0">
+              <span
+                title={sessionAgentProfile.system_prompt || undefined}
+                style={NO_DRAG}
+                className="flex items-center gap-1.5 min-w-0"
+              >
                 <PrincipalAvatar principal={agentPrincipal(sessionAgentProfile)} size="xs" />
                 <span className="truncate text-xs text-muted-foreground">
                   {sessionAgentProfile.name}
@@ -2380,10 +2440,12 @@ function AgentInstanceContent() {
                   displayName = agentTypeName;
                 }
 
+                // NO_DRAG: the full title shows on hover, which the desktop
+                // title bar would otherwise swallow.
                 return (
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span className="truncate cursor-default">{displayName}</span>
+                      <span style={NO_DRAG} className="truncate cursor-default">{displayName}</span>
                     </TooltipTrigger>
                     <TooltipContent align="start">
                       <p>{displayName}</p>
@@ -2424,10 +2486,16 @@ function AgentInstanceContent() {
             {instance.project && (
               <>
                 <span className="text-muted-foreground flex-shrink-0">·</span>
-                {/* Folder chip: basename only, full path in the tooltip. */}
+                {/* Folder chip: basename only. The tooltip adds the full path
+                    and the project the session is filed under, which can
+                    differ from the folder once it has been moved. NO_DRAG so
+                    the desktop title bar doesn't swallow the hover. */}
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <span className="flex min-w-0 max-w-[16vw] cursor-default items-center gap-1 font-mono text-sm text-muted-foreground">
+                    <span
+                      style={NO_DRAG}
+                      className="flex min-w-0 max-w-[16vw] cursor-default items-center gap-1 font-mono text-sm text-muted-foreground"
+                    >
                       <Folder className="h-3.5 w-3.5 flex-shrink-0" />
                       <span className="truncate">
                         {instance.project.replace(/\/+$/, '').split('/').pop() || instance.project}
@@ -2435,7 +2503,12 @@ function AgentInstanceContent() {
                     </span>
                   </TooltipTrigger>
                   <TooltipContent align="start">
-                    <p>{instance.project}</p>
+                    {headerProject ? (
+                      <p>Project: {headerProject.name}</p>
+                    ) : instanceProjectId === null ? (
+                      <p>Project: {NO_PROJECT_LABEL}</p>
+                    ) : null}
+                    <p>Folder: {instance.project}</p>
                   </TooltipContent>
                 </Tooltip>
                 {isOwner && (
@@ -2492,8 +2565,14 @@ function AgentInstanceContent() {
                     <OpenInSubMenu
                       machineId={instance.machine_id ?? null}
                       cwd={instance.project ?? null}
+                      separatorBefore
                     />
                   }
+                  projectChoices={sessionProjectChoices(
+                    fileable,
+                    instance.project_id ?? null,
+                    (projectId) => void handleMoveToProject(projectId),
+                  )}
                   onResume={() => void handleResumeSession()}
                   showResume={canResume}
                   resumeDisabledReason={

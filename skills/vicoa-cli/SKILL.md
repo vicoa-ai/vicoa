@@ -112,6 +112,7 @@ vicoa session get <SESSION_ID> --json # {"instance": {...}, "messages": [...]}
 vicoa session update <SESSION_ID> --title "Refactor auth"
 vicoa session update <SESSION_ID> --task <TASK_UUID>
 vicoa session update <SESSION_ID> --unlink-task
+vicoa session update <SESSION_ID> --project VIC  # file under a project (`none` = No project)
 
 # Send input into a running session (delivered to the agent; flips it ACTIVE)
 vicoa session message <SESSION_ID> "run the tests and fix failures"

@@ -2303,7 +2303,10 @@ Examples:
     session_update = session_sub.add_parser(
         "update",
         parents=[session_common],
-        help="Set a session's title, link it to a task, or move it to a worktree",
+        help=(
+            "Set a session's title, link it to a task, move it to a worktree, "
+            "or file it under another project"
+        ),
     )
     session_update.add_argument(
         "session_id",
@@ -2331,6 +2334,15 @@ Examples:
             "move it back. Resolved with git on this machine, so run it where "
             "the session lives. The agent keeps running where it is; the "
             "sidebar group and the next resume follow the new folder."
+        ),
+    )
+    session_update.add_argument(
+        "--project",
+        metavar="PROJECT",
+        help=(
+            f"File the session under this project — {_PROJECT_HELP}. Only the "
+            "grouping changes: the folder, the running agent and the next "
+            "resume stay where they are"
         ),
     )
 

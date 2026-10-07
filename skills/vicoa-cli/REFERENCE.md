@@ -101,9 +101,10 @@ many messages/payloads were hidden. `--limit` counts **all** senders before
 
 ### `vicoa session update <session_id>`
 
-Mirrors the web: rename, (un)link a task, or re-file the session under another
-checkout. Linking drives the task's status from the session's status
-server-side (a running linked session flips its task to `in_progress`).
+Mirrors the web: rename, (un)link a task, re-file the session under another
+checkout, or under another project. Linking drives the task's status from the
+session's status server-side (a running linked session flips its task to
+`in_progress`).
 
 | Flag | Meaning |
 |---|---|
@@ -111,6 +112,12 @@ server-side (a running linked session flips its task to `in_progress`).
 | `--task <TASK_UUID>` | Link to this task |
 | `--unlink-task` | Clear the task link (mutually exclusive with `--task`) |
 | `--worktree <BRANCH>` | File the session under the checkout of its repo with BRANCH checked out |
+| `--project <PROJECT>` | File the session under this project: key (`VIC`), name, or id; `none` = No project |
+
+`--project` only changes the project the session is listed under; the folder,
+the running agent and the next resume stay put. It takes the caller's own
+projects (same lookup as `task --project`); team and shared projects are
+app-only.
 
 `--worktree` resolves the branch with **local git**, so run it on the machine
 the session lives on. Pass the main checkout's branch to move it back. The agent

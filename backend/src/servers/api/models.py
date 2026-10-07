@@ -431,6 +431,16 @@ class UpdateAgentInstanceRequest(BaseModel):
             "registered at launch. Absent = leave the stored root alone."
         ),
     )
+    project_id: str | None = Field(
+        default=None,
+        description=(
+            "File the session under another project (`vicoa session update "
+            "--project`). Field-present semantics, like `task_id`: absent = "
+            "leave it, null = No project, a UUID = that project. Must be one "
+            "of the caller's own personal projects. Only the filing changes; "
+            "the folder and the running agent stay where they are."
+        ),
+    )
 
 
 class EndSessionRequest(BaseEndSessionRequest):

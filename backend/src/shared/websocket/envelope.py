@@ -106,6 +106,10 @@ def _instance_row(
         "status": inst.status.value,
         "name": inst.name,
         "project": inst.project,
+        # The project the session is filed under; the sidebar groups on it,
+        # so a move (app or `vicoa session update --project`) regroups the
+        # row live instead of on the next list load.
+        "project_id": str(inst.project_id) if inst.project_id else None,
         "home_dir": inst.home_dir,
         "started_at": _iso(inst.started_at),
         "ended_at": _iso(inst.ended_at),

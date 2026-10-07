@@ -58,6 +58,10 @@ export function bodyToInstancePatch(
     status: body.status as keyof AgentStatus,
     name: body.name,
     project: body.project,
+    // The sidebar's top-level group: a session filed under another project
+    // (the row's Project menu, `vicoa session update --project`) moves live.
+    // Only when sent — an older server's frame must not unfile the row.
+    ...(body.project_id !== undefined ? { project_id: body.project_id } : {}),
     home_dir: body.home_dir,
     ...(body.started_at ? { started_at: body.started_at } : {}),
     ended_at: body.ended_at,

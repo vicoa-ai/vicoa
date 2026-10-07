@@ -1,16 +1,54 @@
 'use client';
 
 import type React from 'react';
-import { Archive, Check, CirclePlay, Copy, Mail, MoreHorizontal, Pencil, Pin, PinOff, Share, Trash2, type LucideIcon } from 'lucide-react';
+import {
+  Archive,
+  Check,
+  ChevronRight,
+  CirclePlay,
+  Copy,
+  Folder,
+  Mail,
+  MoreHorizontal,
+  Pencil,
+  Pin,
+  PinOff,
+  Share,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+} from '@/components/ui/context-menu';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+
+/** One entry of an action's submenu (e.g. a project under "Project ▸"). */
+export interface SessionActionChoice {
+  key: string;
+  label: string;
+  /** Leading icon, already rendered (a project's own icon, say). */
+  leading?: React.ReactNode;
+  /** The current value: drawn with a check. */
+  checked?: boolean;
+  /** Draw a separator above this entry. */
+  separatorBefore?: boolean;
+  onSelect: () => void;
+}
 
 /** The set of session actions, independent of how they're rendered. Both the
     three-dot dropdown (below) and the sidebar's right-click context menu build
@@ -37,11 +75,16 @@ export interface SessionActionsConfig {
   /** Open the share dialog (a read-only link; collaboration P4). Omitted where
    *  the caller cannot mint one — e.g. logged-out desktop, non-owners. */
   onShare?: () => void;
+  /** Where the session can be filed, for the "Project ▸" submenu: the
+   *  projects plus No project, the current one checked. Omitted where the
+   *  caller cannot move it (someone else's session, no projects API). */
+  projectChoices?: SessionActionChoice[];
   extraActions?: Array<{ label: string; onClick: () => void }>;
 }
 
 /** One rendered action: an icon, a label (optionally with a small sublabel),
-    a select handler, and an optional disabled state + tooltip. */
+    a select handler, and an optional disabled state + tooltip. With
+    `submenu`, the action opens those choices instead of firing `onSelect`. */
 export interface SessionActionDescriptor {
   key: string;
   icon?: LucideIcon;
@@ -51,11 +94,12 @@ export interface SessionActionDescriptor {
   onSelect: () => void;
   disabled?: boolean;
   title?: string;
+  submenu?: SessionActionChoice[];
 }
 
 /** Resolve the config into an ordered action list. Order is the canonical one
-    shared by every menu: extras, Resume, Pin, Share, Rename, Copy ID, Unread,
-    Archive, Delete. Items whose handler/flag is absent are omitted. */
+    shared by every menu: extras, Resume, Pin, Share, Rename, Project, Copy ID,
+    Unread, Archive, Delete. Items whose handler/flag is absent are omitted. */
 export function buildSessionActions({
   onRename,
   onCopyId,
@@ -72,6 +116,7 @@ export function buildSessionActions({
   onPin,
   isPinned = false,
   onShare,
+  projectChoices,
   extraActions = [],
 }: SessionActionsConfig): SessionActionDescriptor[] {
   const actions: SessionActionDescriptor[] = [];
@@ -103,6 +148,15 @@ export function buildSessionActions({
   }
   if (onRename) {
     actions.push({ key: 'rename', icon: Pencil, label: 'Rename', onSelect: onRename });
+  }
+  if (projectChoices && projectChoices.length > 0) {
+    actions.push({
+      key: 'project',
+      icon: Folder,
+      label: 'Project',
+      onSelect: () => {},
+      submenu: projectChoices,
+    });
   }
   if (onCopyId) {
     actions.push({
@@ -147,11 +201,68 @@ export function SessionActionItemContent({ action }: { action: SessionActionDesc
   );
 }
 
+// A project list can be long; the submenu scrolls rather than run off screen.
+const SUBMENU_CONTENT_CLASS = 'font-mono max-w-64 max-h-72 overflow-y-auto custom-scrollbar';
+
+// The dropdown's sub-trigger primitive is styled apart from its items (no icon
+// gap, accent highlight, arrow cursor); match the items so it reads as one.
+const DROPDOWN_SUB_TRIGGER_CLASS =
+  "gap-2 text-xs cursor-pointer focus:bg-foreground/[0.06] dark:focus:bg-foreground/10 data-[state=open]:bg-foreground/[0.06] dark:data-[state=open]:bg-foreground/10 focus:text-foreground data-[state=open]:text-foreground [&_svg:not([class*='text-'])]:text-muted-foreground [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
+
+function SessionActionChoiceContent({ choice }: { choice: SessionActionChoice }) {
+  return (
+    <>
+      {choice.leading}
+      <span className="truncate">{choice.label}</span>
+      {choice.checked ? <Check className="ml-auto h-3 w-3" /> : null}
+    </>
+  );
+}
+
+/** The actions as right-click menu items — the context-menu twin of the
+    dropdown below, submenus included. */
+export function SessionActionContextMenuItems({ actions }: { actions: SessionActionDescriptor[] }) {
+  return (
+    <>
+      {actions.map((action) =>
+        action.submenu ? (
+          <ContextMenuSub key={action.key}>
+            <ContextMenuSubTrigger className="text-xs">
+              <SessionActionItemContent action={action} />
+              {/* Unlike the dropdown's, this trigger draws no chevron itself. */}
+              <ChevronRight className="ml-auto h-3 w-3" />
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent className={SUBMENU_CONTENT_CLASS}>
+              {action.submenu.map((choice) => [
+                choice.separatorBefore ? <ContextMenuSeparator key={`${choice.key}:sep`} /> : null,
+                <ContextMenuItem key={choice.key} className="text-xs" onSelect={choice.onSelect}>
+                  <SessionActionChoiceContent choice={choice} />
+                </ContextMenuItem>,
+              ])}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        ) : (
+          <ContextMenuItem
+            key={action.key}
+            className="text-xs"
+            disabled={action.disabled}
+            title={action.title}
+            onSelect={action.onSelect}
+          >
+            <SessionActionItemContent action={action} />
+          </ContextMenuItem>
+        ),
+      )}
+    </>
+  );
+}
+
 type SessionActionsMenuProps = SessionActionsConfig & {
   className?: string;
   iconClassName?: string;
   contentClassName?: string;
-  /** Extra items rendered below the standard actions, separated from them.
+  /** Extra items rendered below the standard actions. They draw their own
+      separator (one that may render nothing must not leave a stray line).
       Dropdown-only: the sidebar's context-menu variant builds from
       `buildSessionActions` and can't host DropdownMenu children. Used by the
       session header for the "Open in ▸" submenu. */
@@ -182,18 +293,33 @@ export function SessionActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className={contentClassName ?? 'font-mono'}>
-        {actions.map((action) => (
-          <DropdownMenuItem
-            key={action.key}
-            onClick={action.onSelect}
-            disabled={action.disabled}
-            title={action.title}
-            className="text-xs"
-          >
-            <SessionActionItemContent action={action} />
-          </DropdownMenuItem>
-        ))}
-        {trailingItems && actions.length > 0 && <DropdownMenuSeparator />}
+        {actions.map((action) =>
+          action.submenu ? (
+            <DropdownMenuSub key={action.key}>
+              <DropdownMenuSubTrigger className={DROPDOWN_SUB_TRIGGER_CLASS}>
+                <SessionActionItemContent action={action} />
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className={SUBMENU_CONTENT_CLASS}>
+                {action.submenu.map((choice) => [
+                  choice.separatorBefore ? <DropdownMenuSeparator key={`${choice.key}:sep`} /> : null,
+                  <DropdownMenuItem key={choice.key} className="text-xs" onClick={choice.onSelect}>
+                    <SessionActionChoiceContent choice={choice} />
+                  </DropdownMenuItem>,
+                ])}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          ) : (
+            <DropdownMenuItem
+              key={action.key}
+              onClick={action.onSelect}
+              disabled={action.disabled}
+              title={action.title}
+              className="text-xs"
+            >
+              <SessionActionItemContent action={action} />
+            </DropdownMenuItem>
+          ),
+        )}
         {trailingItems}
       </DropdownMenuContent>
     </DropdownMenu>

@@ -9,6 +9,7 @@
 
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { NO_DRAG } from '@/lib/app-region';
 import type { PrincipalResponse, ProjectRole } from '@/lib/backend-api';
 import { principalDisplayName, principalFromResponse } from '@/lib/principals';
 import { roleLabel } from '@/lib/share-people';
@@ -37,10 +38,12 @@ export function SessionParticipants({
   const names = people.map((p) => principalDisplayName(principalFromResponse(p))).join(', ');
   const ownerName = owner ? principalDisplayName(principalFromResponse(owner)) : null;
 
+  // Lives in the session header, which is the desktop title bar's drag region:
+  // NO_DRAG or the window drag swallows the hover and the tooltip never shows.
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span className="flex flex-shrink-0 cursor-default items-center gap-1.5">
+        <span style={NO_DRAG} className="flex flex-shrink-0 cursor-default items-center gap-1.5">
           {shown.length > 0 && (
             <span className="flex items-center -space-x-1">
               {shown.map((person, index) => (
