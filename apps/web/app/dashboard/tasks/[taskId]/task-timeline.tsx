@@ -427,8 +427,10 @@ function CommentBody({
       ) : (
         <>
           {/* Body starts at the avatar's left edge, not indented under the
-              name — the indent buys nothing and costs the column. */}
-          <div className="mt-1.5 text-sm leading-relaxed">
+              name — the indent buys nothing and costs the column. Agents
+              write long unbroken runs (`A/B/C/…`, paths, ids); `anywhere`
+              breaks them inside the card instead of past its edge. */}
+          <div className="mt-1.5 text-sm leading-relaxed [overflow-wrap:anywhere]">
             <MessageMarkdown>{comment.body}</MessageMarkdown>
           </div>
           <ReactionRow
