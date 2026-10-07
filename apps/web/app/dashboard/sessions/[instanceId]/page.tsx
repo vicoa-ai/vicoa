@@ -2526,92 +2526,6 @@ function AgentInstanceContent() {
                 )}
               </>
             )}
-            {/* Session actions belong with the session's identity, not with the
-                view controls on the right edge. NO_DRAG because the left half of
-                this header is the desktop title bar's drag region. */}
-            <div style={NO_DRAG} className="flex-shrink-0">
-              {/* The three-dot menu also hosts "Open in ▸": the project
-                  directory is a session-level target, so it belongs with the
-                  session's other actions rather than in its own control. The
-                  files panel keeps a top-level "Open in" because there the
-                  target is the file on screen. */}
-              {!isOwner ? (
-                <SessionActionsMenu
-                  onCopyId={() => {
-                    void handleCopySessionId();
-                  }}
-                  copied={copiedSessionId === (instance?.id || instanceId)}
-                  className="h-8 w-8 p-0 hover:bg-muted"
-                  iconClassName="h-4 w-4"
-                  contentClassName="font-mono"
-                />
-              ) : (
-                <SessionActionsMenu
-                  trailingItems={
-                    <OpenInSubMenu
-                      machineId={instance.machine_id ?? null}
-                      cwd={instance.project ?? null}
-                      separatorBefore
-                    />
-                  }
-                  projectChoices={sessionProjectChoices(
-                    fileable,
-                    instance.project_id ?? null,
-                    (projectId) => void handleMoveToProject(projectId),
-                  )}
-                  onResume={() => void handleResumeSession()}
-                  showResume={canResume}
-                  resumeDisabledReason={
-                    isResuming
-                      ? 'Resuming…'
-                      : resumeBlocked
-                        ? resumeBlockedMessage(resumeBlocked)
-                        : null
-                  }
-                  resumeBlockedLabel={
-                    isResuming
-                      ? 'Resuming…'
-                      : resumeBlocked
-                        ? resumeBlockedShortLabel(resumeBlocked)
-                        : null
-                  }
-                  onPin={handleTogglePin}
-                  isPinned={!!instance.pinned_at}
-                  onShare={
-                    !isDesktopLocal() && instance.is_owner !== false ? () => setShareOpen(true) : undefined
-                  }
-                  onRename={handleOpenRenameDialog}
-                  onCopyId={() => {
-                    void handleCopySessionId();
-                  }}
-                  copied={copiedSessionId === (instance?.id || instanceId)}
-                  onMarkDone={
-                    instance.status !== 'COMPLETED'
-                      ? () => {
-                          const sessionName = instance.name || '';
-                          handleMarkSessionComplete(instanceId, sessionName);
-                        }
-                      : undefined
-                  }
-                  showMarkDone={instance.status !== 'COMPLETED'}
-                  onUnread={
-                    instance.status === 'REVIEWED'
-                      ? () => {
-                          void handleMarkSessionUnread(instanceId);
-                        }
-                      : undefined
-                  }
-                  showUnread={instance.status === 'REVIEWED'}
-                  onDelete={() => {
-                    const sessionName = instance.name || '';
-                    handleDeleteSession(instanceId, sessionName);
-                  }}
-                  className="h-8 w-8 p-0 hover:bg-muted"
-                  iconClassName="h-4 w-4"
-                  contentClassName="font-mono"
-                />
-              )}
-            </div>
           </div>
         </TooltipProvider>
         <div style={NO_DRAG} className="flex items-center gap-0.5">
@@ -2622,6 +2536,88 @@ function AgentInstanceContent() {
               NO_DRAG for its click). */}
           {isOwner && (
             <WorktreeSetupBadge machineId={instance.machine_id ?? null} cwd={instance.project ?? null} />
+          )}
+          {/* The ⋯ menu sits with the other action buttons, left of Share.
+              It also hosts "Open in ▸": the project directory is a
+              session-level target, so it belongs with the session's other
+              actions rather than in its own control. The files panel keeps a
+              top-level "Open in" because there the target is the file on
+              screen. */}
+          {!isOwner ? (
+            <SessionActionsMenu
+              onCopyId={() => {
+                void handleCopySessionId();
+              }}
+              copied={copiedSessionId === (instance?.id || instanceId)}
+              className="h-8 w-8 p-0 hover:bg-muted"
+              iconClassName="h-4 w-4"
+              contentClassName="font-mono"
+            />
+          ) : (
+            <SessionActionsMenu
+              trailingItems={
+                <OpenInSubMenu
+                  machineId={instance.machine_id ?? null}
+                  cwd={instance.project ?? null}
+                  separatorBefore
+                />
+              }
+              projectChoices={sessionProjectChoices(
+                fileable,
+                instance.project_id ?? null,
+                (projectId) => void handleMoveToProject(projectId),
+              )}
+              onResume={() => void handleResumeSession()}
+              showResume={canResume}
+              resumeDisabledReason={
+                isResuming
+                  ? 'Resuming…'
+                  : resumeBlocked
+                    ? resumeBlockedMessage(resumeBlocked)
+                    : null
+              }
+              resumeBlockedLabel={
+                isResuming
+                  ? 'Resuming…'
+                  : resumeBlocked
+                    ? resumeBlockedShortLabel(resumeBlocked)
+                    : null
+              }
+              onPin={handleTogglePin}
+              isPinned={!!instance.pinned_at}
+              onShare={
+                !isDesktopLocal() && instance.is_owner !== false ? () => setShareOpen(true) : undefined
+              }
+              onRename={handleOpenRenameDialog}
+              onCopyId={() => {
+                void handleCopySessionId();
+              }}
+              copied={copiedSessionId === (instance?.id || instanceId)}
+              onMarkDone={
+                instance.status !== 'COMPLETED'
+                  ? () => {
+                      const sessionName = instance.name || '';
+                      handleMarkSessionComplete(instanceId, sessionName);
+                    }
+                  : undefined
+              }
+              showMarkDone={instance.status !== 'COMPLETED'}
+              onUnread={
+                instance.status === 'REVIEWED'
+                  ? () => {
+                      void handleMarkSessionUnread(instanceId);
+                    }
+                  : undefined
+              }
+              showUnread={instance.status === 'REVIEWED'}
+              onDelete={() => {
+                const sessionName = instance.name || '';
+                handleDeleteSession(instanceId, sessionName);
+              }}
+              className="h-8 w-8 p-0 hover:bg-muted"
+              iconClassName="h-4 w-4"
+              contentClassName="font-mono"
+            />
           )}
           {/* Share sits next to the panel toggle (same visual weight); the
               ⋯ menu keeps its entry too. Same gate as the menu entry. */}
