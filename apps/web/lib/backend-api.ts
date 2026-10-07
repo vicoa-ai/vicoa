@@ -547,7 +547,7 @@ export interface ProjectResponse {
    * Served URL for an uploaded/seeded image icon, or null. Rendered via the
    * same-origin proxy (see lib/project-icons.ts `projectIconSrc`) since an
    * <img> can't carry the backend bearer. Fallback chain when null: emoji
-   * `icon` → generated initial-square.
+   * `icon` → Folder glyph.
    */
   icon_image_uri: string | null;
   /** Who set the image: 'user' (upload, wins) | 'git' (seeded) | null. */

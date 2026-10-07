@@ -2,11 +2,9 @@ import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '/backend/supabase/supabase.dart';
 import '/custom_code/actions/vicoa_api_config.dart';
-import '/custom_code/utils/project_icons.dart' as picons;
 import '/custom_code/utils/task_utils.dart' as tutils;
 import '/flutter_flow/flutter_flow_theme.dart';
 
@@ -217,9 +215,9 @@ class _PriorityPainter extends CustomPainter {
 
 /// A project's icon, in the web `ProjectIcon`'s fallback order: the uploaded /
 /// git-seeded image (`icon_image_uri`, fetched with the bearer like an
-/// attachment) → the emoji `icon` → a generated initial-square in the paseo
-/// palette (same hash as the web, so a project keeps its color across devices)
-/// → a muted folder glyph when there is no project at all.
+/// attachment) → the emoji `icon` → a muted folder glyph → a dashed square
+/// when there is no project at all ("No project"; not a dashed circle, which
+/// is the Backlog status).
 class TaskProjectIcon extends StatelessWidget {
   const TaskProjectIcon({super.key, required this.project, this.size = 14.0});
 
@@ -243,8 +241,8 @@ class TaskProjectIcon extends StatelessWidget {
         width: size,
         height: size,
         fit: BoxFit.cover,
-        // The generated square stands in while the bytes load — and stays if
-        // they never arrive — since a spinner this small would only flicker.
+        // The folder stands in while the bytes load — and stays if they never
+        // arrive — since a spinner this small would only flicker.
         placeholder: (context, _) => fallback,
         errorWidget: (context, _, __) => fallback,
       ),
@@ -277,29 +275,50 @@ class TaskProjectIcon extends StatelessWidget {
         ),
       );
     }
-    final name = tutils.projectName(project);
-    if (name.isNotEmpty) {
-      final id = tutils.projectId(project);
-      return Container(
-        width: size,
-        height: size,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: Color(picons.projectAvatarColor(id.isNotEmpty ? id : name)),
-          borderRadius: BorderRadius.circular(_radius),
-        ),
-        child: Text(
-          picons.projectInitial(name),
-          style: GoogleFonts.sourceSans3(
-            color: Colors.white,
-            // The web's 10px letter in a 14px box.
-            fontSize: size * 10 / 14,
-            fontWeight: FontWeight.w600,
-            height: 1.0,
-          ),
-        ),
-      );
+    if (project != null) {
+      return Icon(Icons.folder_outlined, size: size, color: theme.secondaryText);
     }
-    return Icon(Icons.folder_outlined, size: size, color: theme.secondaryText);
+    return CustomPaint(
+      size: Size.square(size),
+      painter: _DashedSquarePainter(color: theme.secondaryText),
+    );
   }
+}
+
+/// lucide's `square-dashed` (the web's "No project" glyph) in its 24×24 space:
+/// four rounded corners plus two dashes per side, stroke 2, round caps.
+class _DashedSquarePainter extends CustomPainter {
+  _DashedSquarePainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.width / 24;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2 * s
+      ..strokeCap = StrokeCap.round;
+    Offset p(double x, double y) => Offset(x * s, y * s);
+    // Corners: quarter arcs of radius 2 around (5,5), (19,5), (19,19), (5,19).
+    for (final (cx, cy, start) in [
+      (5.0, 5.0, math.pi),
+      (19.0, 5.0, -math.pi / 2),
+      (19.0, 19.0, 0.0),
+      (5.0, 19.0, math.pi / 2),
+    ]) {
+      canvas.drawArc(Rect.fromCircle(center: p(cx, cy), radius: 2 * s), start,
+          math.pi / 2, false, paint);
+    }
+    for (final at in [9.0, 14.0]) {
+      canvas.drawLine(p(at, 3), p(at + 1, 3), paint);
+      canvas.drawLine(p(at, 21), p(at + 1, 21), paint);
+      canvas.drawLine(p(3, at), p(3, at + 1), paint);
+      canvas.drawLine(p(21, at), p(21, at + 1), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DashedSquarePainter old) => old.color != color;
 }

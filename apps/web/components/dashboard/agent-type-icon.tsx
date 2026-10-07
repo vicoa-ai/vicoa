@@ -135,8 +135,8 @@ export function AgentTypeIcon({
   // ~/.vicoa/config.json, or a catalog entry whose logo we don't ship. Adding
   // an agent must never need a client release, so this has to degrade rather
   // than fail — returning null rendered nothing, which read as a broken row.
-  // Fall back to a deterministic initial-square, the same treatment generated
-  // project icons get, so a custom agent is visually stable and distinguishable.
+  // Fall back to a deterministic initial-square (the palette people avatars
+  // use too), so a custom agent is visually stable and distinguishable.
   if (!logo) {
     if (!agentTypeName) return null;
     return (

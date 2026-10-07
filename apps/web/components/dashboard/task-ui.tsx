@@ -19,6 +19,7 @@ import {
   Pencil,
   Play,
   Repeat,
+  SquareDashed,
   Tag,
   Trash2,
   UserRound,
@@ -58,7 +59,7 @@ import {
   TaskStatus,
   UpdateTaskRequest,
 } from '@/lib/backend-api';
-import { projectAvatarColor, projectIconSrc, projectInitial } from '@/lib/project-icons';
+import { projectIconSrc } from '@/lib/project-icons';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import {
   principalDisplayName,
@@ -383,21 +384,18 @@ export function PriorityIcon({
 }
 
 // ---------------------------------------------------------------------------
-// ProjectIcon — the project's emoji, else a line icon (multica project-icon)
+// ProjectIcon — the project's image or emoji, else a line icon
 // ---------------------------------------------------------------------------
 
 /**
- * A project with no emoji falls back to a stroked lucide glyph rather than a
- * default emoji: 📁/📥 read as a *chosen* icon and sat oddly next to the line
- * icons on the neighbouring pills (status, priority, dates).
- */
-/**
  * A project's icon, rendering the full fallback chain (identity-unification
- * §5d): uploaded/seeded image → emoji `icon` → a generated initial-square
- * (paseo-style hashed color + first letter) → Folder glyph when there's no
- * name to seed one (the unfiled "No project" slot). `className` sizes the box
- * (default `size-3.5`); the image and square fill it, so a larger box just
- * needs a bigger `size-*`.
+ * §5d): uploaded/seeded image → emoji `icon` → a muted Folder glyph → a dashed
+ * square when there's no project at all (the unfiled "No project" slot). The
+ * defaults are line icons, like the status/priority/date glyphs on the
+ * neighbouring pills, so only a chosen image or emoji reads as an identity.
+ * "No project" isn't a dashed circle because that's the Backlog status.
+ * `className` sizes the box (default `size-3.5`); the image fills it, so a
+ * larger box just needs a bigger `size-*`.
  */
 export function ProjectIcon({
   project,
@@ -444,27 +442,11 @@ export function ProjectIcon({
     );
   }
 
-  // A project with a name and no icon gets a generated square: a muted
-  // paseo-palette fill with a white initial (the palette is tuned for a white
-  // letter on top). Small default radius, matching the image variant; the
-  // Display pane overrides it to a larger shared radius on its big icon.
-  if (project?.name) {
-    const color = projectAvatarColor(project.id ?? project.name);
-    return (
-      <span
-        aria-hidden="true"
-        style={{ backgroundColor: color }}
-        className={cn(
-          'inline-flex items-center justify-center rounded-[3px] text-[10px] font-semibold leading-none text-white',
-          box,
-        )}
-      >
-        {projectInitial(project.name)}
-      </span>
-    );
+  if (project) {
+    return <Folder aria-hidden="true" className={cn('text-muted-foreground', box)} />;
   }
 
-  return <Folder aria-hidden="true" className={cn('text-muted-foreground', box)} />;
+  return <SquareDashed aria-hidden="true" className={cn('text-muted-foreground', box)} />;
 }
 
 /**

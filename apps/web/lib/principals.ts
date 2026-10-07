@@ -153,9 +153,9 @@ export function principalColor(principal: Principal): string {
  *
  * One letter, not two: a monogram reads as a mark at any size, while "AL" in a
  * 24px circle is two shapes fighting for the same space and starts to look like
- * a label. Same rule the project icons already follow (`projectInitial`); the
- * wrapper exists because they render `·` for an empty name and this has to
- * return null so the caller can fall through to the glyph.
+ * a label. Built on `projectInitial`; the wrapper exists because that renders
+ * `·` for an empty name and this has to return null so the caller can fall
+ * through to the glyph.
  */
 export function principalInitial(name: string | null | undefined): string | null {
   const trimmed = (name ?? '').trim();

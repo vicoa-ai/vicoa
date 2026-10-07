@@ -106,7 +106,7 @@ String? projectColorHex(dynamic p) =>
 const String kNoProjectFilter = 'none';
 
 /// The project's emoji glyph (`icon` field), or null → the caller falls back
-/// to a generated initial-square (see `TaskProjectIcon`).
+/// to a folder glyph (see `TaskProjectIcon`).
 String? projectIcon(dynamic p) {
   final s = (p is Map ? p['icon'] : null)?.toString();
   return (s == null || s.isEmpty) ? null : s;

@@ -164,7 +164,13 @@ export function AutomationList({
               {groups.map((group) => (
                 <li key={group.key}>
                   <div className="flex items-center gap-1.5 px-3 pb-1 pt-3 text-[0.8rem] font-normal text-muted-foreground">
-                    <ProjectIcon project={group.project} />
+                    {/* A project the viewer can't see is still a project. */}
+                    <ProjectIcon
+                      project={
+                        group.project ??
+                        (group.key === NO_PROJECT ? null : { name: 'Other project' })
+                      }
+                    />
                     <span className="truncate">
                       {group.project?.name ??
                         (group.key === NO_PROJECT ? 'No project' : 'Other project')}

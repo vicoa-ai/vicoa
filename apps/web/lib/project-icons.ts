@@ -21,12 +21,13 @@ export function projectIconSrc(project: IconProject | null | undefined): string 
   return `/api/projects/${project.id}/icon${version}`;
 }
 
-// Generated fallback — an initial-square filled with one of a fixed palette,
-// picked by a stable hash of the project's identity. The palette is paseo's
+// Generated initial-square — one of a fixed palette, picked by a stable hash of
+// an identity. Projects no longer use it (their default is a Folder glyph);
+// custom agents and people avatars do. The palette is paseo's
 // `IDENTITY_COLORS` (packages/app/src/styles/identity-colors.ts): muted,
 // low-chroma tones tuned to one 4.2–4.8:1 contrast band against a white letter,
-// so the color *identifies* a project without shouting. Deterministic → a
-// project keeps its color across sessions and devices.
+// so the color *identifies* its owner without shouting. Deterministic → the
+// same color across sessions and devices.
 export const PROJECT_AVATAR_PALETTE = [
   '#7a6aa8', // violet
   '#3d7ea6', // sky
