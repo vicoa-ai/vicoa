@@ -3,9 +3,10 @@
 `@` browses the filesystem; `#` browses the workspace: the user's live
 sessions, their tasks and their automations. Two calls back it.
 
-* :func:`list_reference_candidates` fills the panel. Title-only matching, one
-  query per kind, and an *empty* query is answered with "what is live and
-  recent" rather than a blank panel — `#` on its own has to be useful.
+* :func:`list_reference_candidates` fills the panel. Title matching (plus a
+  task's `VIC-42` identifier), one query per kind, and an *empty* query is
+  answered with "what is live and recent" rather than a blank panel — `#` on
+  its own has to be useful.
 * :func:`get_reference` expands one pick into the block of text that actually
   reaches the agent. The client fetches it at **pick** time, not at send time,
   so sending never waits on the network and a dead reference degrades to its
@@ -21,7 +22,17 @@ added (see `link_instance_to_task`).
 import re
 from uuid import UUID
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import (
+    ColumnElement,
+    String,
+    and_,
+    case,
+    cast,
+    false,
+    func,
+    or_,
+    select,
+)
 from sqlalchemy.orm import Session, joinedload
 
 from shared.database import AgentInstance, Automation, Project, Task
@@ -53,6 +64,11 @@ MAX_PROMPT_CHARS = 2000
 MAX_TOKEN_CHARS = 32
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
+
+# A (lowercased) query shaped like a task identifier, or a prefix of one:
+# "vic", "vic-", "vic-3", "vic-38". The key half is bounded like
+# `task_identity._IDENTIFIER`; the 1-char floor lets "#v" start narrowing.
+_IDENTIFIER_QUERY = re.compile(r"^([a-z][a-z0-9]{0,7})(?:(-)([0-9]{0,9}))?$")
 
 
 def slugify_token(label: str, fallback: str) -> str:
@@ -150,10 +166,40 @@ def _session_candidates(
     ]
 
 
+def _identifier_conditions(
+    user_id: UUID, lowered: str
+) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
+    """``(exact, partial)`` task filters for a query shaped like "vic-38".
+
+    The identifier is what a task is called everywhere else (the board, the
+    detail header, `vicoa task ls`), yet it is nowhere in the title, so title
+    matching alone can never find `#VIC-38`. ``partial`` also covers the
+    keystrokes on the way there ("vic", "vic-", "vic-3"), so the panel narrows
+    to that project's tasks instead of going blank until the number is
+    complete. Both are ``false()`` for any other query.
+    """
+    match = _IDENTIFIER_QUERY.match(lowered)
+    if match is None:
+        return false(), false()
+    key, dash, digits = match.group(1).upper(), match.group(2), match.group(3)
+    # Keys and digits are alphanumeric, so neither LIKE needs escaping.
+    project_key = func.upper(Project.key)
+    key_match = project_key == key if dash else project_key.like(f"{key}%")
+    in_project = Task.project_id.in_(
+        select(Project.id).where(Project.user_id == user_id, key_match)
+    )
+    if not digits:
+        return false(), in_project
+    return (
+        and_(in_project, Task.number == int(digits)),
+        and_(in_project, cast(Task.number, String).like(f"{digits}%")),
+    )
+
+
 def _task_candidates(
     db: Session, user_id: UUID, lowered: str, limit: int
 ) -> list[dict]:
-    """Tasks matched by title.
+    """Tasks matched by title or by identifier.
 
     An empty query lists only *open* tasks — `#` with nothing typed should read
     as "what am I working on". A typed query widens to the whole backlog with
@@ -166,13 +212,18 @@ def _task_candidates(
         contains = f"%{_escape_like(lowered)}%"
         prefix = f"{_escape_like(lowered)}%"
         title_match = func.lower(Task.title).like(contains, escape="\\")
+        exact_id, partial_id = _identifier_conditions(user_id, lowered)
         rank = case(
             (func.lower(Task.title) == lowered, 0),
-            (func.lower(Task.title).like(prefix, escape="\\"), 1),
+            (or_(func.lower(Task.title).like(prefix, escape="\\"), partial_id), 1),
             else_=2,
         )
-        query = query.filter(title_match).order_by(
-            closed_rank, rank, Task.updated_at.desc()
+        query = query.filter(or_(title_match, partial_id)).order_by(
+            # A full "VIC-38" names one task outright: it leads, done or not.
+            case((exact_id, 0), else_=1),
+            closed_rank,
+            rank,
+            Task.updated_at.desc(),
         )
     else:
         query = query.filter(Task.status.notin_(CLOSED_TASK_STATUSES)).order_by(

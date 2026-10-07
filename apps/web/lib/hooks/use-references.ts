@@ -27,7 +27,7 @@ interface UseReferenceCandidatesResult {
  * Unlike `@`, this can't read a cached local index: sessions, tasks and
  * automations live only on the server and change while you type. So every
  * keystroke is a (debounced, abortable) request — cheap, because the endpoint
- * matches titles only and caps each kind at a handful of rows.
+ * matches titles (and task keys) only and caps each kind at a handful of rows.
  *
  * `items` is left alone while a new query is in flight, so the panel shows the
  * previous matches instead of blanking between keystrokes.

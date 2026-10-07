@@ -178,6 +178,77 @@ class TestReferenceCandidates:
         assert task["token"] == created["identifier"]
         assert task["label"] == "Fix the diff editor"
 
+    def test_finds_a_task_by_its_identifier(self, authenticated_client):
+        """`#GAR-2` is how the task is named everywhere else, and it is
+        nowhere in the title — so title matching alone came back empty."""
+        project = authenticated_client.post(
+            "/api/v1/projects", json={"name": "Garden Planner"}
+        ).json()
+        for title in ("Seed calendar", "Compost tracker"):
+            authenticated_client.post(
+                "/api/v1/tasks", json={"title": title, "project_id": project["id"]}
+            )
+
+        for q in ("GAR-2", "gar-2"):
+            tasks = _kinds(
+                authenticated_client.get("/api/v1/references", params={"q": q}).json(),
+                "task",
+            )
+            assert [t["identifier"] for t in tasks] == ["GAR-2"]
+            assert tasks[0]["label"] == "Compost tracker"
+
+    def test_a_partial_identifier_narrows_to_the_project(self, authenticated_client):
+        """The keystrokes on the way to `#GAR-2` keep the panel populated."""
+        garden = authenticated_client.post(
+            "/api/v1/projects", json={"name": "Garden Planner"}
+        ).json()
+        other = authenticated_client.post(
+            "/api/v1/projects", json={"name": "Vicoa"}
+        ).json()
+        for title in ("Seed calendar", "Compost tracker"):
+            authenticated_client.post(
+                "/api/v1/tasks", json={"title": title, "project_id": garden["id"]}
+            )
+        authenticated_client.post(
+            "/api/v1/tasks", json={"title": "Fix the drift", "project_id": other["id"]}
+        )
+
+        for q in ("gar", "GAR-"):
+            tasks = _kinds(
+                authenticated_client.get("/api/v1/references", params={"q": q}).json(),
+                "task",
+            )
+            assert sorted(t["identifier"] for t in tasks) == ["GAR-1", "GAR-2"]
+
+    def test_an_exact_identifier_leads_even_when_done(
+        self, authenticated_client, test_db
+    ):
+        project = authenticated_client.post(
+            "/api/v1/projects", json={"name": "Garden Planner"}
+        ).json()
+        first = authenticated_client.post(
+            "/api/v1/tasks",
+            json={"title": "Seed calendar", "project_id": project["id"]},
+        ).json()
+        second = authenticated_client.post(
+            "/api/v1/tasks",
+            json={"title": "Compost tracker", "project_id": project["id"]},
+        ).json()
+        authenticated_client.patch(
+            f"/api/v1/tasks/{first['id']}", json={"status": "done"}
+        )
+        # GAR-10 also starts with "GAR-1", and it's open.
+        test_db.get(Task, UUID(second["id"])).number = 10
+        test_db.commit()
+
+        tasks = _kinds(
+            authenticated_client.get(
+                "/api/v1/references", params={"q": "GAR-1"}
+            ).json(),
+            "task",
+        )
+        assert [t["identifier"] for t in tasks] == ["GAR-1", "GAR-10"]
+
     def test_row_meta_is_the_folder_for_sessions_and_automations(
         self, authenticated_client, test_db, test_user, test_agent_type
     ):
