@@ -12,7 +12,7 @@
  * on a value older than `MENU_MAX_AGE_MS`.
  */
 
-import useSWR, { mutate } from 'swr';
+import useSWR, { mutate, type SWRResponse } from 'swr';
 import { getBackendAPI, type BillingInterval, type BillingSubscription } from '@/lib/backend-api';
 import { getDesktopAuthBridge } from '@/lib/desktop-auth';
 import { startDesktopCheckout, webOrigin } from '@/lib/desktop-paywall';
@@ -33,14 +33,10 @@ export async function fetchBillingSubscription(): Promise<BillingSubscription> {
   return subscription;
 }
 
-/**
- * The cached subscription, fetched on first use only. `undefined` while that
- * first read is in flight or after it failed: callers show nothing rather
- * than guess, since offering Upgrade to a paying customer is worse than
- * showing no plan.
- */
-export function useBillingSubscription(enabled = true): BillingSubscription | undefined {
-  const { data } = useSWR<BillingSubscription>(
+/** The cached subscription read, fetched on first use only; `error` is set
+ *  when that read failed. */
+export function useBillingSubscriptionRead(enabled = true): SWRResponse<BillingSubscription> {
+  return useSWR<BillingSubscription>(
     enabled ? BILLING_SUBSCRIPTION_KEY : null,
     fetchBillingSubscription,
     {
@@ -50,7 +46,15 @@ export function useBillingSubscription(enabled = true): BillingSubscription | un
       shouldRetryOnError: false,
     },
   );
-  return data;
+}
+
+/**
+ * The cached subscription. `undefined` while the first read is in flight or
+ * after it failed: callers show nothing rather than guess, since offering
+ * Upgrade to a paying customer is worse than showing no plan.
+ */
+export function useBillingSubscription(enabled = true): BillingSubscription | undefined {
+  return useBillingSubscriptionRead(enabled).data;
 }
 
 export function refreshBillingSubscription(): Promise<BillingSubscription | undefined> {

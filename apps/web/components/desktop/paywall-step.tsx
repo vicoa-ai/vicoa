@@ -8,9 +8,11 @@ import {
   PRO_ANNUAL_MONTHLY_EQUIVALENT,
   PRO_ANNUAL_PRICE,
   PRO_MONTHLY_PRICE,
+  PLAN_READ_WAIT_MS,
   annualSavingPercent,
   checkoutErrorMessage,
   isPro,
+  readPlanWithin,
   startDesktopCheckout,
 } from '@/lib/desktop-paywall';
 import {
@@ -175,15 +177,10 @@ export function PaywallStep({ onDone }: { onDone: (skipped: boolean) => void }) 
   const declineLater = useCallback(async () => {
     if (declining) return;
     setDeclining(true);
-    let plan: BillingSubscription | null = null;
-    try {
-      plan = await getBackendAPI(true).getBillingSubscription();
-    } catch {
-      // Couldn't read entitlement — fall through to the reassurance view rather
-      // than trapping the user on the paywall.
-    } finally {
-      setDeclining(false);
-    }
+    // Bounded: a read that fails or hangs falls through to the reassurance
+    // view rather than trapping the user on the paywall.
+    const plan = await readPlanWithin(PLAN_READ_WAIT_MS);
+    setDeclining(false);
     if (isPro(plan)) {
       finish(false);
       return;

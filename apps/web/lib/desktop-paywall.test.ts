@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   annualSavingPercent,
   checkoutErrorMessage,
   isPro,
+  settleWithin,
   shouldShowPaywall,
   webOrigin,
 } from './desktop-paywall';
@@ -65,5 +66,27 @@ describe('webOrigin', () => {
     const origin = webOrigin();
     expect(origin).toMatch(/^https:\/\//);
     expect(origin).not.toMatch(/localhost/);
+  });
+});
+
+describe('settleWithin', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('passes a prompt value through', async () => {
+    await expect(settleWithin(Promise.resolve('pro'), 1000)).resolves.toBe('pro');
+  });
+
+  it('gives up with null when the read is slower than the wait', async () => {
+    vi.useFakeTimers();
+    const slow = new Promise<string>(() => {});
+    const result = settleWithin(slow, 2000);
+    await vi.advanceTimersByTimeAsync(2000);
+    await expect(result).resolves.toBeNull();
+  });
+
+  it('turns a failed read into null rather than an error', async () => {
+    await expect(settleWithin(Promise.reject(new Error('down')), 1000)).resolves.toBeNull();
   });
 });
