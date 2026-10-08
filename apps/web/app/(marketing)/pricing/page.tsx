@@ -53,7 +53,7 @@ const pricingFaqs: FAQItem[] = [
   {
     question: 'Do you offer refunds?',
     answer:
-      "Annual Pro includes a free trial. If you're not satisfied, you can cancel anytime during the trial period at no charge. Seats bought for a team have no trial. For subscriptions via mobile apps, refunds are handled by App Store and Google Play Store."
+      'Web purchases go through Stripe, and we review refund requests ourselves: email hi@vicoa.ai about a charge from the last 14 days. For subscriptions via mobile apps, refunds are handled by App Store and Google Play Store.'
   },
   {
     question: 'Can I buy Pro for my team?',

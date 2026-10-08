@@ -21,12 +21,6 @@ export const PRO_MONTHLY_PRICE = 12;
 export const PRO_ANNUAL_PRICE = 108;
 /** What the annual plan works out to per month. */
 export const PRO_ANNUAL_MONTHLY_EQUIVALENT = 9;
-/**
- * Free-trial length on the annual plan, in days. Mirrors the `trialDays`
- * default in app/(marketing)/pricing/pricing-cards.tsx — the annual Stripe
- * price is the one that carries a trial, so this copy only shows for annual.
- */
-export const PRO_TRIAL_DAYS = 7;
 
 export function annualSavingPercent(): number {
   return Math.round((1 - PRO_ANNUAL_PRICE / (PRO_MONTHLY_PRICE * 12)) * 100);

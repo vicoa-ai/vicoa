@@ -8,7 +8,6 @@ import {
   PRO_ANNUAL_MONTHLY_EQUIVALENT,
   PRO_ANNUAL_PRICE,
   PRO_MONTHLY_PRICE,
-  PRO_TRIAL_DAYS,
   annualSavingPercent,
   checkoutErrorMessage,
   isPro,
@@ -66,7 +65,7 @@ function PlanCard({
   // Both tiles headline a per-month price so $9 vs $12 compares at a glance;
   // the annual tile carries the yearly total in the fine print beneath it.
   const perMonth = isAnnual ? PRO_ANNUAL_MONTHLY_EQUIVALENT : PRO_MONTHLY_PRICE;
-  const subtext = isAnnual ? `Try ${PRO_TRIAL_DAYS} days for free` : 'Billed monthly';
+  const subtext = isAnnual ? `$${PRO_ANNUAL_PRICE} billed yearly` : 'Billed monthly';
   return (
     <button
       type="button"
@@ -214,11 +213,11 @@ export function PaywallStep({ onDone }: { onDone: (skipped: boolean) => void }) 
   }
 
   const isAnnual = interval === 'annual';
-  const ctaLabel = checkingOut ? 'Opening checkout…' : isAnnual ? 'Start free trial' : 'Continue';
-  // Only the annual price carries a trial (mirrors the marketing pricing page),
-  // so the reassuring fine print changes with the selected interval.
+  const ctaLabel = checkingOut ? 'Opening checkout…' : 'Continue';
+  // No trial on either interval: checkout charges right away, so the fine
+  // print states what is due for the selected interval.
   const finePrint = isAnnual
-    ? `${PRO_TRIAL_DAYS}-day free trial, then $${PRO_ANNUAL_PRICE}/yr. Cancel anytime.`
+    ? `$${PRO_ANNUAL_PRICE}/yr, billed yearly. Cancel anytime.`
     : `$${PRO_MONTHLY_PRICE}/mo, billed monthly. Cancel anytime.`;
 
   return (
