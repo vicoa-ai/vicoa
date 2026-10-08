@@ -13,9 +13,9 @@
  */
 
 import useSWR, { mutate } from 'swr';
-import { getBackendAPI, type BillingSubscription } from '@/lib/backend-api';
+import { getBackendAPI, type BillingInterval, type BillingSubscription } from '@/lib/backend-api';
 import { getDesktopAuthBridge } from '@/lib/desktop-auth';
-import { webOrigin } from '@/lib/desktop-paywall';
+import { startDesktopCheckout, webOrigin } from '@/lib/desktop-paywall';
 
 export const BILLING_SUBSCRIPTION_KEY = 'billing-subscription';
 
@@ -85,4 +85,25 @@ export function openBillingSettings(navigate: (href: string) => void): void {
     return;
   }
   navigate(BILLING_SETTINGS_HREF);
+}
+
+/**
+ * Start Pro checkout from inside the app. The desktop can't navigate its
+ * window to Stripe, so it opens Checkout in the system browser and resolves
+ * `'browser'`: the caller re-reads the plan when the window regains focus.
+ * The web navigates to Stripe, which comes back to Settings → Billing.
+ */
+export async function startProCheckout(interval: BillingInterval): Promise<'browser' | 'redirect'> {
+  if (getDesktopAuthBridge()) {
+    await startDesktopCheckout(interval);
+    return 'browser';
+  }
+  const session = await getBackendAPI(true).createBillingCheckoutSession({
+    plan_type: 'pro',
+    billing_interval: interval,
+    success_url: `${window.location.origin}${BILLING_SETTINGS_HREF}&checkout=success`,
+    cancel_url: window.location.href,
+  });
+  window.location.assign(session.checkout_url);
+  return 'redirect';
 }

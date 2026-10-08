@@ -2,6 +2,8 @@
 
 /**
  * The in-app plan picker, as a large dialog over whatever the user was doing.
+ * It shows the pricing page's own cards (`<PricingCards inApp />`), so plans,
+ * prices and features read the same on the website and in the app.
  *
  * It replaces navigating to `/dashboard/upgrade` from inside the app: that
  * page renders outside the dashboard shell, so opening it unmounted the
@@ -18,33 +20,15 @@
  * comes back to Settings → Billing.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import posthog from 'posthog-js';
-import { Check, Loader2, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { X } from 'lucide-react';
+import { PricingCards } from '@/components/billing/pricing-cards';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import { PlanCard } from '@/components/desktop/paywall-step';
-import { getBackendAPI, type BillingInterval } from '@/lib/backend-api';
-import { PRO_PLAN_FEATURES, SEATS_PAGE_HREF } from '@/lib/billing';
-import {
-  BILLING_SETTINGS_HREF,
-  refreshBillingSubscription,
-} from '@/lib/billing-subscription';
-import { getDesktopAuthBridge } from '@/lib/desktop-auth';
-import {
-  PRO_ANNUAL_PRICE,
-  PRO_MONTHLY_PRICE,
-  checkoutErrorMessage,
-  isPro,
-  startDesktopCheckout,
-  webOrigin,
-} from '@/lib/desktop-paywall';
-import {
-  trackCheckoutFailed,
-  trackCheckoutStarted,
-  trackPricingCtaClicked,
-} from '@/lib/desktop-telemetry';
+import { SEATS_PAGE_HREF } from '@/lib/billing';
+import { refreshBillingSubscription } from '@/lib/billing-subscription';
+import { isPro } from '@/lib/desktop-paywall';
 
 const OPEN_EVENT = 'vicoa:open-upgrade-dialog';
 
@@ -54,19 +38,13 @@ export function openUpgradeDialog(): void {
 
 export function UpgradeDialog() {
   const [open, setOpen] = useState(false);
-  // Opens on annual, the cheaper per-month price.
-  const [interval, setInterval] = useState<BillingInterval>('annual');
-  const [checkingOut, setCheckingOut] = useState(false);
   // Desktop only: checkout is open in the browser, so the plan may change
   // when the window comes back into focus.
   const [awaitingBrowser, setAwaitingBrowser] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const onOpen = () => {
-      setError(null);
       setAwaitingBrowser(false);
-      setCheckingOut(false);
       setOpen(true);
       posthog.capture('upgrade_page_viewed', { presentation: 'dialog' });
     };
@@ -84,45 +62,9 @@ export function UpgradeDialog() {
     return () => window.removeEventListener('focus', onFocus);
   }, [open, awaitingBrowser]);
 
-  const checkout = useCallback(async () => {
-    if (checkingOut) return;
-    setCheckingOut(true);
-    setError(null);
-    trackPricingCtaClicked(interval);
-    try {
-      if (getDesktopAuthBridge()) {
-        await startDesktopCheckout(interval);
-        trackCheckoutStarted(interval);
-        setAwaitingBrowser(true);
-        // Checkout continues in the browser; re-enable so a user who closed
-        // the tab can start it again.
-        setCheckingOut(false);
-        return;
-      }
-      const session = await getBackendAPI(true).createBillingCheckoutSession({
-        plan_type: 'pro',
-        billing_interval: interval,
-        success_url: `${window.location.origin}${BILLING_SETTINGS_HREF}&checkout=success`,
-        cancel_url: window.location.href,
-      });
-      trackCheckoutStarted(interval);
-      // Stays busy: the page is navigating to Stripe.
-      window.location.assign(session.checkout_url);
-    } catch (err) {
-      trackCheckoutFailed(interval, (err as { status?: number } | null)?.status ?? null);
-      setError(checkoutErrorMessage(err));
-      setCheckingOut(false);
-    }
-  }, [checkingOut, interval]);
-
-  const finePrint =
-    interval === 'annual'
-      ? `$${PRO_ANNUAL_PRICE}/yr, billed yearly. Cancel anytime.`
-      : `$${PRO_MONTHLY_PRICE}/mo, billed monthly. Cancel anytime.`;
-
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-h-[90vh] max-w-[860px] gap-0 overflow-y-auto p-0 custom-scrollbar sm:rounded-2xl md:grid-cols-2">
+      <DialogContent className="max-h-[calc(100vh-3rem)] max-w-[1180px] gap-0 overflow-y-auto p-6 custom-scrollbar sm:p-8 sm:rounded-2xl">
         <button
           type="button"
           aria-label="Close"
@@ -132,84 +74,31 @@ export function UpgradeDialog() {
           <X className="h-4 w-4" />
         </button>
 
-        {/* Left: what Pro adds. */}
-        <div className="relative flex flex-col justify-center overflow-hidden bg-foreground/[0.02] p-8 md:p-10">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -left-20 -top-20 h-52 w-52 rounded-full bg-foreground/[0.05] blur-3xl"
-          />
-          <div className="relative space-y-2">
-            <DialogTitle className="text-[26px] font-semibold leading-tight tracking-tight text-foreground">
-              Upgrade to Pro
-            </DialogTitle>
-            <p className="text-sm leading-relaxed text-muted-foreground">For power users and teams.</p>
-          </div>
-          <p className="relative mt-8 text-sm font-medium text-foreground">Everything in Free, plus:</p>
-          <ul className="relative mt-4 space-y-3">
-            {PRO_PLAN_FEATURES.map((feature) => (
-              <li key={feature} className="flex items-center gap-3 text-[13px] text-foreground/90">
-                <Check className="h-4 w-4 shrink-0 text-emerald-500" strokeWidth={2.75} />
-                {feature}
-              </li>
-            ))}
-          </ul>
+        <div className="mb-5 text-center">
+          <DialogTitle className="text-2xl font-semibold tracking-tight text-foreground">
+            Upgrade your plan
+          </DialogTitle>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Choose the plan that fits you. Manage your subscription from settings after checkout.
+          </p>
         </div>
 
-        {/* Right: the plan chooser and call to action. */}
-        <div className="flex flex-col gap-4 p-8 md:p-10">
-          <span className="text-center text-sm font-medium text-foreground">Choose your plan</span>
+        <PricingCards inApp onCheckoutInBrowser={() => setAwaitingBrowser(true)} />
 
-          <div className="grid grid-cols-2 gap-3 py-3" role="radiogroup" aria-label="Billing interval">
-            <PlanCard
-              interval="annual"
-              selected={interval === 'annual'}
-              onSelect={() => setInterval('annual')}
-            />
-            <PlanCard
-              interval="monthly"
-              selected={interval === 'monthly'}
-              onSelect={() => setInterval('monthly')}
-            />
-          </div>
+        {awaitingBrowser && (
+          <p className="mt-6 text-center text-xs leading-relaxed text-muted-foreground">
+            Checkout is open in your browser. Your plan updates here when you come back.
+          </p>
+        )}
 
-          <p className="text-center text-xs leading-relaxed text-muted-foreground">{finePrint}</p>
-
-          {error && <p className="text-center text-sm text-destructive">{error}</p>}
-          {awaitingBrowser && !error && (
-            <p className="text-center text-xs leading-relaxed text-muted-foreground">
-              Checkout is open in your browser. Your plan updates here when you come back.
-            </p>
-          )}
-
-          <div className="mt-auto space-y-4 pt-2">
-            <Button
-              onClick={() => void checkout()}
-              disabled={checkingOut}
-              className="h-11 w-full cursor-pointer gap-2 rounded-full"
-            >
-              {checkingOut && <Loader2 className="h-4 w-4 animate-spin" />}
-              {checkingOut ? 'Opening checkout…' : 'Continue'}
-            </Button>
-            <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-              <Link
-                href={SEATS_PAGE_HREF}
-                onClick={() => setOpen(false)}
-                className="cursor-pointer underline-offset-4 transition-colors hover:text-foreground hover:underline"
-              >
-                Buying for a team? Choose seats
-              </Link>
-              {/* The contact page, not a mailto: the desktop shell only opens
-                  http(s) links. */}
-              <a
-                href={getDesktopAuthBridge() ? `${webOrigin()}/contact` : '/contact'}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="cursor-pointer underline-offset-4 transition-colors hover:text-foreground hover:underline"
-              >
-                Enterprise? Contact us
-              </a>
-            </div>
-          </div>
+        <div className="mt-5 text-center text-xs text-muted-foreground">
+          <Link
+            href={SEATS_PAGE_HREF}
+            onClick={() => setOpen(false)}
+            className="cursor-pointer underline-offset-4 transition-colors hover:text-foreground hover:underline"
+          >
+            Buying for a team? Choose seats
+          </Link>
         </div>
       </DialogContent>
     </Dialog>

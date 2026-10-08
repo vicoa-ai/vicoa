@@ -4,15 +4,6 @@ import type { BillingSeats, BillingSubscription, BillingTier, SeatPrice } from '
  *  Every seat entry point links here, whatever plan the payer is on. */
 export const SEATS_PAGE_HREF = '/dashboard/seats';
 
-/** What Pro adds over Free, as the pricing page and the upgrade dialog list it. */
-export const PRO_PLAN_FEATURES: readonly string[] = [
-  'Unlimited machines',
-  'Unlimited automations',
-  'Teams & shared projects',
-  'Priority support',
-  'Early feature access',
-];
-
 export const BILLING_PLAN_LABELS: Record<string, string> = {
   free: 'Free',
   pro: 'Pro',
