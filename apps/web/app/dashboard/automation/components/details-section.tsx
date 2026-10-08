@@ -2,7 +2,16 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
-import { Check, ChevronDown, Circle, GitBranch, Folder } from 'lucide-react';
+import Link from 'next/link';
+import {
+  Check,
+  ChevronDown,
+  Circle,
+  ExternalLink,
+  GitBranch,
+  Folder,
+  MessageCircle,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
@@ -33,6 +42,7 @@ import {
 } from '@/lib/project-paths';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
 import { FieldGroup, FieldRow } from './field-row';
+import { SessionTargetPicker, type SessionTarget } from './session-target-picker';
 
 export interface WorktreeDraft {
   mode: WorktreeMode;
@@ -56,6 +66,9 @@ function worktreeLabel(w: WorktreeDraft): string {
 }
 
 export function DetailsSection({
+  api,
+  targetSession,
+  onTargetSessionChange,
   machines,
   projects,
   machineId,
@@ -71,6 +84,12 @@ export function DetailsSection({
   onAgentProfileChange,
   catalog,
 }: {
+  api: ReturnType<typeof getBackendAPI>;
+  /** The session every run continues, or null for a new session each run.
+   *  A session brings its own machine, folder and agent, so none of those
+   *  rows show while one is picked. */
+  targetSession: { id: string; title: string } | null;
+  onTargetSessionChange: (target: SessionTarget | null) => void;
   machines: MachineSummary[];
   /** Every project the user can see; the picker lists the ones linked to a
    *  folder on the selected machine, like the new-session picker. */
@@ -144,128 +163,166 @@ export function DetailsSection({
 
   return (
     <FieldGroup title="Details">
-      {/* Runs on — machine dropdown opens below, flipping up only when cramped. */}
-      <FieldRow label="Runs on">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild disabled={machines.length === 0}>
-            <button type="button" className={VALUE_TRIGGER} title="Machine">
-              {selected ? (
-                <>
-                  <span className="truncate">{machineLabel(selected)}</span>
-                  <Circle
-                    className={cn(
-                      'h-1.5 w-1.5 flex-shrink-0',
-                      online
-                        ? 'fill-green-500 text-green-500'
-                        : 'fill-muted-foreground/30 text-muted-foreground/30',
-                    )}
-                    strokeWidth={0}
-                  />
-                </>
-              ) : (
-                <span className="text-muted-foreground">No machines</span>
-              )}
-              <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-64 rounded-xl font-mono">
-            {machines.map((m) => {
-              const isOnline = isMachineOnline(m);
-              return (
-                <DropdownMenuItem
-                  key={m.machine_id}
-                  onClick={() => onMachineChange(m.machine_id)}
-                  className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs"
-                >
-                  <span
-                    className={cn(
-                      'inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full',
-                      isOnline ? 'bg-green-500' : 'bg-muted-foreground/30',
-                    )}
-                  />
-                  <span className={cn('flex-1 truncate', !isOnline && 'text-muted-foreground')}>
-                    {machineLabel(m)}
-                  </span>
-                  {m.machine_id === machineId && (
-                    <Check className="ml-auto h-3.5 w-3.5 flex-shrink-0" />
-                  )}
-                </DropdownMenuItem>
-              );
-            })}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </FieldRow>
-
-      {/* Project — working folder + optional worktree. */}
-      <FieldRow label="Project">
-        {/* Not gated on the machine being online (the new-session picker is):
-            the machine an automation targets is often asleep while it's set up. */}
-        <DirectoryPickerPopover
-          value={directory}
-          onChange={onDirectoryChange}
-          projects={pickerProjects}
-          selectedProjectId={directoryProject?.project.id ?? null}
-          disabled={!selected}
+      <FieldRow label="Runs in">
+        <SessionTargetPicker
+          api={api}
+          selectedId={targetSession?.id ?? null}
+          onChange={onTargetSessionChange}
         >
           <button
             type="button"
-            title={directory.trim() || 'Project folder'}
-            disabled={!selected}
             className={VALUE_TRIGGER}
+            title={targetSession ? targetSession.title : 'A new session for every run'}
           >
-            {directoryProject ? (
-              <ProjectIcon project={directoryProject.project} className="size-3.5" />
-            ) : (
-              <Folder className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+            {targetSession && (
+              <MessageCircle className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
             )}
-            <span className={cn('truncate', !directory.trim() && 'text-muted-foreground/60')}>
-              {directoryLabel || 'Choose folder'}
+            <span className="truncate">
+              {targetSession ? targetSession.title : 'New session each run'}
             </span>
             <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
           </button>
-        </DirectoryPickerPopover>
-
-        {worktreeSupported && isGitRepo !== false && (
-          <WorktreePickerPopover
-            machineId={machineId}
-            cwd={directory}
-            mode={worktree.mode}
-            selectedPath={worktree.path}
-            onSelect={(mode, path, branch) => onWorktreeChange({ mode, path, branch })}
-            disabled={!online || !directory.trim()}
+        </SessionTargetPicker>
+        {targetSession && (
+          <Link
+            href={`/dashboard/sessions/${targetSession.id}`}
+            title="Open session"
+            aria-label="Open session"
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground dark:hover:bg-foreground/10"
           >
-            <button
-              type="button"
-              title="Worktree"
-              disabled={!online || !directory.trim()}
-              className={VALUE_TRIGGER}
-            >
-              <GitBranch className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-              <span className="truncate">{worktreeLabel(worktree)}</span>
-              <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
-            </button>
-          </WorktreePickerPopover>
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Link>
         )}
       </FieldRow>
 
-      {/* Agent — the new-session chips, saved agents included. Picking a saved
-          agent hides the other chips: an automation resolves its agent at
-          dispatch, so the run uses the agent's config as it is then and there is
-          nothing here to set. Picking a plain agent again brings them back. */}
-      <FieldRow label="Agent" align="start">
-        <SessionConfigEditor
-          value={sessionConfig}
-          onChange={onSessionConfigChange}
-          catalog={catalog}
-          savedAgents={{
-            profiles: agentProfiles,
-            teams,
-            selectedId: agentProfileId,
-            machine: selected,
-            onSelect: onAgentProfileChange,
-          }}
-        />
-      </FieldRow>
+      {/* A new session's machine, folder and agent. A picked session brings
+          its own, so these rows go away while one is the target. */}
+      {!targetSession && (
+        <>
+          {/* Runs on — machine dropdown opens below, flipping up only when cramped. */}
+          <FieldRow label="Runs on">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild disabled={machines.length === 0}>
+                <button type="button" className={VALUE_TRIGGER} title="Machine">
+                  {selected ? (
+                    <>
+                      <span className="truncate">{machineLabel(selected)}</span>
+                      <Circle
+                        className={cn(
+                          'h-1.5 w-1.5 flex-shrink-0',
+                          online
+                            ? 'fill-green-500 text-green-500'
+                            : 'fill-muted-foreground/30 text-muted-foreground/30',
+                        )}
+                        strokeWidth={0}
+                      />
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">No machines</span>
+                  )}
+                  <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64 rounded-xl font-mono">
+                {machines.map((m) => {
+                  const isOnline = isMachineOnline(m);
+                  return (
+                    <DropdownMenuItem
+                      key={m.machine_id}
+                      onClick={() => onMachineChange(m.machine_id)}
+                      className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs"
+                    >
+                      <span
+                        className={cn(
+                          'inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full',
+                          isOnline ? 'bg-green-500' : 'bg-muted-foreground/30',
+                        )}
+                      />
+                      <span className={cn('flex-1 truncate', !isOnline && 'text-muted-foreground')}>
+                        {machineLabel(m)}
+                      </span>
+                      {m.machine_id === machineId && (
+                        <Check className="ml-auto h-3.5 w-3.5 flex-shrink-0" />
+                      )}
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </FieldRow>
+
+          {/* Project — working folder + optional worktree. */}
+          <FieldRow label="Project">
+            {/* Not gated on the machine being online (the new-session picker is):
+                the machine an automation targets is often asleep while it's set up. */}
+            <DirectoryPickerPopover
+              value={directory}
+              onChange={onDirectoryChange}
+              projects={pickerProjects}
+              selectedProjectId={directoryProject?.project.id ?? null}
+              disabled={!selected}
+            >
+              <button
+                type="button"
+                title={directory.trim() || 'Project folder'}
+                disabled={!selected}
+                className={VALUE_TRIGGER}
+              >
+                {directoryProject ? (
+                  <ProjectIcon project={directoryProject.project} className="size-3.5" />
+                ) : (
+                  <Folder className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+                )}
+                <span className={cn('truncate', !directory.trim() && 'text-muted-foreground/60')}>
+                  {directoryLabel || 'Choose folder'}
+                </span>
+                <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
+              </button>
+            </DirectoryPickerPopover>
+
+            {worktreeSupported && isGitRepo !== false && (
+              <WorktreePickerPopover
+                machineId={machineId}
+                cwd={directory}
+                mode={worktree.mode}
+                selectedPath={worktree.path}
+                onSelect={(mode, path, branch) => onWorktreeChange({ mode, path, branch })}
+                disabled={!online || !directory.trim()}
+              >
+                <button
+                  type="button"
+                  title="Worktree"
+                  disabled={!online || !directory.trim()}
+                  className={VALUE_TRIGGER}
+                >
+                  <GitBranch className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+                  <span className="truncate">{worktreeLabel(worktree)}</span>
+                  <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
+                </button>
+              </WorktreePickerPopover>
+            )}
+          </FieldRow>
+
+          {/* Agent — the new-session chips, saved agents included. Picking a saved
+              agent hides the other chips: an automation resolves its agent at
+              dispatch, so the run uses the agent's config as it is then and there is
+              nothing here to set. Picking a plain agent again brings them back. */}
+          <FieldRow label="Agent" align="start">
+            <SessionConfigEditor
+              value={sessionConfig}
+              onChange={onSessionConfigChange}
+              catalog={catalog}
+              savedAgents={{
+                profiles: agentProfiles,
+                teams,
+                selectedId: agentProfileId,
+                machine: selected,
+                onSelect: onAgentProfileChange,
+              }}
+            />
+          </FieldRow>
+        </>
+      )}
     </FieldGroup>
   );
 }
