@@ -15,6 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { getBackendAPI, type BillingInterval } from '@/lib/backend-api';
 import { IncludedGlyph } from '@/components/billing/plan-glyphs';
+import { PRO_PLAN_FEATURES } from '@/lib/billing';
 import { cn } from '@/lib/utils';
 
 const fetcher = (url: string) => fetch(url).then((res) => {
@@ -42,7 +43,7 @@ function CheckoutAbandonedTracker() {
  * below the cards carries the detail. `leadIn` names the tier this one builds
  * on ("Everything in Free, plus:") so the bullets only list what is new.
  */
-function FeatureList({ leadIn, features }: { leadIn?: string; features: string[] }) {
+function FeatureList({ leadIn, features }: { leadIn?: string; features: readonly string[] }) {
   return (
     <div className="space-y-3">
       {leadIn && <p className="text-sm font-medium text-foreground">{leadIn}</p>}
@@ -82,14 +83,6 @@ export function PricingCards() {
     '1 remote machine',
     '10 automations',
     'Community support',
-  ];
-
-  const proFeatures = [
-    'Unlimited machines',
-    'Unlimited automations',
-    'Teams & shared projects',
-    'Priority support',
-    'Early feature access',
   ];
 
   const enterpriseFeatures = [
@@ -268,7 +261,7 @@ export function PricingCards() {
               )}
             </div>
 
-            <FeatureList leadIn="Everything in Free, plus:" features={proFeatures} />
+            <FeatureList leadIn="Everything in Free, plus:" features={PRO_PLAN_FEATURES} />
           </CardContent>
 
           <CardFooter className="pt-2">

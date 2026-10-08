@@ -1,15 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import useSWR from 'swr';
 import { Check, ExternalLink, Loader2, Users } from 'lucide-react';
 import { SeatsCard } from '@/components/billing/seats-card';
+import { openUpgradeDialog } from '@/components/billing/upgrade-dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { getBackendAPI, type BillingSubscription } from '@/lib/backend-api';
 import posthog from 'posthog-js';
 import { getBillingPlanLabel } from '@/lib/billing';
+import { BILLING_SUBSCRIPTION_KEY, fetchBillingSubscription } from '@/lib/billing-subscription';
 
 const freePlanFeatures = [
   'Web & mobile access',
@@ -28,9 +29,7 @@ export function BillingSettingsSection({
     error: billingSubscriptionError,
     isLoading: isBillingSubscriptionLoading,
     mutate: mutateBillingSubscription,
-  } = useSWR<BillingSubscription>('billing-subscription', async () =>
-    getBackendAPI(true).getBillingSubscription()
-  );
+  } = useSWR<BillingSubscription>(BILLING_SUBSCRIPTION_KEY, fetchBillingSubscription);
   const [billingAction, setBillingAction] = useState<'portal' | null>(null);
   const [billingError, setBillingError] = useState<string | null>(null);
   const [billingNotice, setBillingNotice] = useState<string | null>(null);
@@ -126,8 +125,8 @@ export function BillingSettingsSection({
                   Try Vicoa
                 </p>
               </div>
-              <Button asChild className="sm:min-w-[120px]">
-                <Link href="/dashboard/upgrade">Upgrade</Link>
+              <Button className="cursor-pointer sm:min-w-[120px]" onClick={openUpgradeDialog}>
+                Upgrade
               </Button>
             </div>
 

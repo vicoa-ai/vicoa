@@ -50,9 +50,9 @@ const PRO_FEATURES = [
 /**
  * A selectable plan tile. Selection is shown purely by the tile's background
  * and ring — deliberately no radio dot or check mark, so the whole card reads
- * as the control.
+ * as the control. Also the upgrade dialog's plan chooser.
  */
-function PlanCard({
+export function PlanCard({
   interval,
   selected,
   onSelect,

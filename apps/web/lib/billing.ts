@@ -1,8 +1,17 @@
 import type { BillingSeats, BillingSubscription, BillingTier, SeatPrice } from '@/lib/backend-api';
 
-/** Buying or changing seats, apart from the plan picker at /dashboard/upgrade.
+/** Buying or changing seats, apart from the plan picker (the upgrade dialog).
  *  Every seat entry point links here, whatever plan the payer is on. */
 export const SEATS_PAGE_HREF = '/dashboard/seats';
+
+/** What Pro adds over Free, as the pricing page and the upgrade dialog list it. */
+export const PRO_PLAN_FEATURES: readonly string[] = [
+  'Unlimited machines',
+  'Unlimited automations',
+  'Teams & shared projects',
+  'Priority support',
+  'Early feature access',
+];
 
 export const BILLING_PLAN_LABELS: Record<string, string> = {
   free: 'Free',
@@ -19,6 +28,27 @@ export function getBillingPlanLabel(planType?: string | null, tier?: BillingTier
   if (planType === 'pro' && tier === 'team') return 'Vicoa Team';
 
   return BILLING_PLAN_LABELS[planType] || planType;
+}
+
+/**
+ * The account menu's plan row: the plan's name, a detail line, and what the
+ * row does. Free upgrades; any paid plan manages its billing, except a seat
+ * someone else pays for, which has nothing to manage.
+ */
+export function accountPlanSummary(subscription: BillingSubscription): {
+  label: string;
+  detail: string | null;
+  action: 'upgrade' | 'manage' | null;
+} {
+  const label = getBillingPlanLabel(subscription.plan_type, subscription.tier);
+  const coveredBy = subscription.covered_by ?? null;
+  if (coveredBy) return { label, detail: `Seat from ${coveredBy.name}`, action: null };
+  const seats = subscription.tier === 'team' ? subscription.seat_quantity ?? null : null;
+  return {
+    label,
+    detail: seats !== null ? `${seats} ${seats === 1 ? 'seat' : 'seats'}` : null,
+    action: subscription.plan_type === 'free' ? 'upgrade' : 'manage',
+  };
 }
 
 export function getBillingProviderLabel(

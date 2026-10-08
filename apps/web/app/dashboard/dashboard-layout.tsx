@@ -24,9 +24,6 @@ import {
   BookOpen,
   Bot,
   Layers2,
-  ArrowUpCircle,
-  CreditCard,
-  User,
   X,
   Plus,
   Sidebar,
@@ -36,6 +33,9 @@ import {
   Settings,
 } from 'lucide-react';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import { AccountPlanItem } from '@/components/billing/account-plan-item';
+import { UpgradeDialog } from '@/components/billing/upgrade-dialog';
+import { MENU_MAX_AGE_MS, refreshBillingSubscriptionIfOlderThan } from '@/lib/billing-subscription';
 import { AccountMenuInvitations, InvitationDot } from '@/components/dashboard/account-menu-invitations';
 import { AgentDashboardProvider, useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import useSWR from 'swr';
@@ -561,7 +561,11 @@ function DashboardSidebar({
           {user ? (
             <div className={cn('flex items-center', showSideBar ? 'gap-1' : 'flex-col')}>
             <div className={cn(showSideBar && 'min-w-0 flex-1')}>
-            <DropdownMenu>
+            <DropdownMenu
+              onOpenChange={(open) => {
+                if (open) refreshBillingSubscriptionIfOlderThan(MENU_MAX_AGE_MS);
+              }}
+            >
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
@@ -603,11 +607,18 @@ function DashboardSidebar({
                 className="w-60 p-0 overflow-hidden rounded-xl border border-border/60 bg-popover text-popover-foreground shadow-xl font-mono text-xs"
               >
                 <div className="px-4 py-3 bg-muted/40 flex items-center gap-3">
-                  <User className="h-4 w-4 text-muted-foreground" />
+                  <PrincipalAvatar principal={userPrincipal} size="sm" />
                   <div className="min-w-0">
-                    <div className="truncate text-muted-foreground">{userEmail || 'Account'}</div>
+                    <div className="truncate text-foreground" title={userDisplayName}>{userDisplayName}</div>
+                    {user.name && userEmail && (
+                      <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={userEmail}>
+                        {userEmail}
+                      </div>
+                    )}
                   </div>
                 </div>
+
+                <AccountPlanItem subscription={billingSubscription} className="mx-2 mt-2" />
 
                 <div className="py-1">
                   <AccountMenuInvitations
@@ -628,26 +639,6 @@ function DashboardSidebar({
                       <span>Settings</span>
                     </Link>
                   </DropdownMenuItem>
-                  {/* On Pro (your own, per seat, or a seat someone pays for)
-                      there is nothing to upgrade to; Billing is where seats
-                      and the subscription are managed. */}
-                  <DropdownMenuItem
-                    asChild
-                    className="cursor-pointer px-4 py-2.5 text-xs text-foreground/80"
-                  >
-                    {billingSubscription?.plan_type === 'pro' ? (
-                      <Link href="/dashboard/settings?tab=billing" className="flex w-full items-center gap-2">
-                        <CreditCard className="h-4 w-4" />
-                        <span>Billing</span>
-                      </Link>
-                    ) : (
-                      <Link href="/dashboard/upgrade" className="flex w-full items-center gap-2">
-                        <ArrowUpCircle className="h-4 w-4" />
-                        <span>Upgrade plan</span>
-                      </Link>
-                    )}
-                  </DropdownMenuItem>
-
                   <DropdownMenuItem
                     asChild
                     className="cursor-pointer px-4 py-2.5 text-xs text-foreground/80"
@@ -1000,6 +991,8 @@ function DashboardShell({
       />
 
       <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
+
+      <UpgradeDialog />
     </>
   );
 }

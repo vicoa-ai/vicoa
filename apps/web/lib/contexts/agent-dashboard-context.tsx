@@ -10,6 +10,7 @@ import { useDesktopForegroundPresence } from '@/lib/hooks/use-desktop-foreground
 import type { NewMessageBody } from '@/lib/ws-client';
 import { useCurrentUserId } from '@/lib/hooks/use-current-user-id';
 import { addsSomeoneToRow } from '@/lib/session-people';
+import { useBillingSubscription } from '@/lib/billing-subscription';
 
 const AGENT_INSTANCE_PAGE_SIZE = 50;
 
@@ -47,13 +48,14 @@ interface AgentDashboardProviderProps {
 
 export function AgentDashboardProvider({ children }: AgentDashboardProviderProps) {
   const [api, setApi] = useState<ReturnType<typeof getBackendAPI> | null>(null);
+  // Read once per app load and shared through SWR's cache, so a remount of
+  // this provider (or another billing surface) doesn't fetch it again.
+  const billingSubscription = useBillingSubscription(api !== null) ?? null;
   const [recentInstances, setRecentInstances] = useState<AgentInstanceResponse[]>([]);
-  const [billingSubscription, setBillingSubscription] = useState<BillingSubscription | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMoreInstances, setIsLoadingMoreInstances] = useState(false);
   const [hasMoreInstances, setHasMoreInstances] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const billingFetchedRef = useRef(false);
   const [activeOnly, setActiveOnlyState] = useState(() => {
     if (typeof window === 'undefined') return true;
     return localStorage.getItem('sidebar-show-closed') !== 'true';
@@ -143,15 +145,11 @@ export function AgentDashboardProvider({ children }: AgentDashboardProviderProps
       setIsLoading(true);
       setError(null);
 
-      const fetchBilling = !billingFetchedRef.current;
-      const [firstPage, billing] = await Promise.all([
-        api.listAllAgentInstancesPage({
-          limit: AGENT_INSTANCE_PAGE_SIZE,
-          offset: 0,
-          activeOnly,
-        }).catch(() => null),
-        fetchBilling ? api.getBillingSubscription().catch(() => null) : Promise.resolve(null),
-      ]);
+      const firstPage = await api.listAllAgentInstancesPage({
+        limit: AGENT_INSTANCE_PAGE_SIZE,
+        offset: 0,
+        activeOnly,
+      }).catch(() => null);
 
       if (firstPage) {
         setRecentInstances((prev) => {
@@ -159,11 +157,6 @@ export function AgentDashboardProvider({ children }: AgentDashboardProviderProps
           return mergeInstances(firstPage.items, prev.slice(firstPage.items.length));
         });
         setHasMoreInstances(firstPage.isPaginated ? firstPage.hasMore : false);
-      }
-
-      if (fetchBilling) {
-        setBillingSubscription(billing);
-        billingFetchedRef.current = true;
       }
     } catch (err) {
       console.error('Failed to refresh data:', err);

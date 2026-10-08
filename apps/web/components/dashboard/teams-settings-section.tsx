@@ -38,6 +38,7 @@ import {
 import { ConfirmChargeDialog } from '@/components/billing/confirm-charge-dialog';
 import { BILLING_SEATS_KEY } from '@/components/billing/seats-card';
 import { SeatLimitNotice } from '@/components/billing/seat-limit-notice';
+import { openUpgradeDialog } from '@/components/billing/upgrade-dialog';
 import { AvatarEditor } from '@/components/dashboard/avatar-editor';
 import { ConfirmDeleteDialog } from '@/components/dashboard/session-dialogs';
 import {
@@ -80,6 +81,7 @@ import {
   type UserProfile,
 } from '@/lib/backend-api';
 import { SEATS_PAGE_HREF, formatSeatPrice } from '@/lib/billing';
+import { BILLING_SUBSCRIPTION_KEY } from '@/lib/billing-subscription';
 import { useCopyToClipboard } from '@/lib/hooks/use-session-operations';
 import type { Principal } from '@/lib/principals';
 import { isDesktopLocal } from '@/lib/runtime-config';
@@ -203,8 +205,8 @@ function TeamOwnOffer({ className }: { className?: string }) {
         <Button asChild size="sm" className="h-8 cursor-pointer text-xs">
           <Link href={SEATS_PAGE_HREF}>Get Vicoa Team</Link>
         </Button>
-        <Button asChild size="sm" variant="outline" className="h-8 cursor-pointer text-xs">
-          <Link href="/dashboard/upgrade">Get Pro</Link>
+        <Button size="sm" variant="outline" className="h-8 cursor-pointer text-xs" onClick={openUpgradeDialog}>
+          Get Pro
         </Button>
       </div>
     </div>
@@ -1074,7 +1076,7 @@ function InviteSeatLimit({
         cancel_url: here,
       });
       void mutate(BILLING_SEATS_KEY);
-      void mutate('billing-subscription');
+      void mutate(BILLING_SUBSCRIPTION_KEY);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : 'Failed to add a seat.');
       return;

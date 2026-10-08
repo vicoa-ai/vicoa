@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Plus, Loader2, LogIn, LogOut, PanelLeft, ListTodo, CalendarClock, BookOpen, Bot, Settings, ArrowUpCircle, CreditCard, Smartphone, Flag, Search } from 'lucide-react';
+import { Plus, Loader2, LogIn, LogOut, PanelLeft, ListTodo, CalendarClock, BookOpen, Bot, Settings, Smartphone, Flag, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -34,6 +34,8 @@ import { SetupChecklist } from '@/components/dashboard/setup-checklist';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import { AccountMenuInvitations, InvitationDot } from '@/components/dashboard/account-menu-invitations';
 import type { AuthUser } from '@/lib/auth/user';
+import { AccountPlanItem } from '@/components/billing/account-plan-item';
+import { MENU_MAX_AGE_MS, refreshBillingSubscriptionIfOlderThan } from '@/lib/billing-subscription';
 import { useTerminalSessions } from '@/components/terminal-pane/terminal-sessions';
 
 // Selected-row highlight for the nav buttons (New Session / Mobile / Tasks).
@@ -400,17 +402,45 @@ function LocalAccountArea() {
   );
 }
 
-/** Cloud (logged-in) mode: account email + sign out via the Electron bridge. */
+const ACCOUNT_NAME_KEY = 'vicoa.account-name';
+
+/** The name last shown for this account; keyed by user id so a different
+ *  account signing in never sees it. */
+function readCachedAccountName(userId: string): string | null {
+  try {
+    const raw = localStorage.getItem(ACCOUNT_NAME_KEY);
+    const cached = raw ? (JSON.parse(raw) as { userId?: unknown; name?: unknown }) : null;
+    return cached?.userId === userId && typeof cached.name === 'string' && cached.name ? cached.name : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedAccountName(userId: string, name: string | null): void {
+  try {
+    if (name) localStorage.setItem(ACCOUNT_NAME_KEY, JSON.stringify({ userId, name }));
+    else localStorage.removeItem(ACCOUNT_NAME_KEY);
+  } catch {
+    // Storage full or unavailable: the row just shows the email until the profile loads.
+  }
+}
+
+/** Cloud (logged-in) mode: the account (name, else email), its plan, and sign
+ *  out via the Electron bridge. */
 function CloudAccountArea() {
   const { billingSubscription } = useAgentDashboard();
   const [email, setEmail] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  // The name to show until the profile loads: the last one shown for this
+  // account, else the sign-in provider's. Without it the row would read the
+  // email for a moment on every launch, then switch to the name.
+  const [fallbackName, setFallbackName] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [reportIssueOpen, setReportIssueOpen] = useState(false);
-  // The avatar lives in our backend, not in the Supabase session, so it is
-  // fetched separately; until it arrives (or when there is none)
-  // `<PrincipalAvatar>` falls back to initials, then to the person glyph this
-  // row used to render unconditionally.
+  // The avatar and display name live in our backend, not in the Supabase
+  // session, so they are fetched separately; until the avatar arrives (or when
+  // there is none) `<PrincipalAvatar>` falls back to initials, then to the
+  // person glyph this row used to render unconditionally.
   const { data: profile } = useSWR<AuthUser>('/api/supabase-user', (url: string) =>
     fetch(url).then((res) => (res.ok ? res.json() : null)),
   );
@@ -422,18 +452,30 @@ function CloudAccountArea() {
       if (cancelled) return;
       // Cloud mode always carries a validated Supabase session now (the gate
       // enforces it), so identity comes straight from the session.
+      const id = session?.user?.id ?? null;
+      const metadataName = session?.user?.user_metadata?.name;
       setEmail(session?.user?.email ?? null);
-      setUserId(session?.user?.id ?? null);
+      setUserId(id);
+      setFallbackName(
+        (id && readCachedAccountName(id)) || (typeof metadataName === 'string' && metadataName) || null,
+      );
     });
     return () => {
       cancelled = true;
     };
   }, []);
 
+  useEffect(() => {
+    if (userId && profile) writeCachedAccountName(userId, profile.name || null);
+  }, [userId, profile]);
+
+  // The profile's name wins once it has loaded (null means the read failed).
+  const name = profile ? profile.name || null : fallbackName;
+
   const principal = {
     type: 'user' as const,
     id: userId ?? profile?.id,
-    name: profile?.name || email,
+    name: name || email,
     avatarImageUri: profile?.avatarImageUri,
     emoji: profile?.avatarEmoji,
     updatedAt: profile?.updatedAt,
@@ -468,7 +510,11 @@ function CloudAccountArea() {
   return (
     <>
     <div className="flex items-center gap-0.5">
-    <DropdownMenu>
+    <DropdownMenu
+      onOpenChange={(open) => {
+        if (open) refreshBillingSubscriptionIfOlderThan(MENU_MAX_AGE_MS);
+      }}
+    >
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -482,18 +528,26 @@ function CloudAccountArea() {
             <InvitationDot className="size-1.5" />
           </span>
           <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground" title={email ?? undefined}>
-            {email ?? 'Signed in'}
+            {name || email || 'Signed in'}
           </span>
           {signingOut && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="top" className="w-56 font-mono text-xs">
-        <div className="flex items-center gap-2 bg-muted/40 px-3 py-2">
-          <PrincipalAvatar principal={principal} size="sm" className="size-4" />
-          <span className="min-w-0 truncate text-muted-foreground" title={email ?? undefined}>
-            {email ?? 'Account'}
-          </span>
+        <div className="flex items-center gap-2.5 bg-muted/40 px-3 py-2">
+          <PrincipalAvatar principal={principal} size="sm" />
+          <div className="min-w-0">
+            <div className="truncate text-foreground" title={name || email || undefined}>
+              {name || email || 'Account'}
+            </div>
+            {name && email && (
+              <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={email}>
+                {email}
+              </div>
+            )}
+          </div>
         </div>
+        <AccountPlanItem subscription={billingSubscription} className="mx-1 mt-1" />
         <AccountMenuInvitations itemClassName="gap-2 text-xs text-foreground/80" />
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild className="cursor-pointer gap-2 text-xs text-foreground/80">
@@ -501,21 +555,6 @@ function CloudAccountArea() {
             <Settings className="h-4 w-4" />
             <span>Settings</span>
           </Link>
-        </DropdownMenuItem>
-        {/* On Pro (your own, per seat, or a seat someone pays for) there is
-            nothing to upgrade to; Billing manages seats and the subscription. */}
-        <DropdownMenuItem asChild className="cursor-pointer gap-2 text-xs text-foreground/80">
-          {billingSubscription?.plan_type === 'pro' ? (
-            <Link href="/dashboard/settings?tab=billing" className="flex w-full items-center gap-2">
-              <CreditCard className="h-4 w-4" />
-              <span>Billing</span>
-            </Link>
-          ) : (
-            <Link href="/dashboard/upgrade" className="flex w-full items-center gap-2">
-              <ArrowUpCircle className="h-4 w-4" />
-              <span>Upgrade plan</span>
-            </Link>
-          )}
         </DropdownMenuItem>
         <DropdownMenuItem
           className="cursor-pointer gap-2 text-xs text-foreground/80"

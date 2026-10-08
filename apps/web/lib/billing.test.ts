@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatSeatPrice, getBillingPlanLabel, seatSummary } from './billing';
+import type { BillingSubscription } from './backend-api';
+import { accountPlanSummary, formatSeatPrice, getBillingPlanLabel, seatSummary } from './billing';
 
 describe('seatSummary', () => {
   it('reads used of included', () => {
@@ -50,5 +51,47 @@ describe('getBillingPlanLabel', () => {
     expect(getBillingPlanLabel('pro', 'pro')).toBe('Pro');
     expect(getBillingPlanLabel('pro')).toBe('Pro');
     expect(getBillingPlanLabel(null)).toBe('Free');
+  });
+});
+
+describe('accountPlanSummary', () => {
+  const base: BillingSubscription = {
+    id: 'sub',
+    plan_type: 'free',
+    agent_limit: 1,
+    current_period_end: null,
+    cancel_at_period_end: false,
+    provider: null,
+  };
+
+  it('offers Upgrade on Free', () => {
+    expect(accountPlanSummary(base)).toEqual({ label: 'Free', detail: null, action: 'upgrade' });
+  });
+
+  it('manages a Pro bought anywhere', () => {
+    for (const provider of ['stripe', 'apple', 'google'] as const) {
+      expect(accountPlanSummary({ ...base, plan_type: 'pro', tier: 'pro', provider })).toEqual({
+        label: 'Pro',
+        detail: null,
+        action: 'manage',
+      });
+    }
+  });
+
+  it('counts the seats a Team payer buys', () => {
+    expect(
+      accountPlanSummary({ ...base, plan_type: 'pro', tier: 'team', provider: 'stripe', seat_quantity: 5 }),
+    ).toEqual({ label: 'Vicoa Team', detail: '5 seats', action: 'manage' });
+  });
+
+  it('names who pays for a covered seat, with nothing to manage', () => {
+    expect(
+      accountPlanSummary({
+        ...base,
+        plan_type: 'pro',
+        tier: 'team',
+        covered_by: { name: 'Acme', team_id: 'team' },
+      }),
+    ).toEqual({ label: 'Vicoa Team', detail: 'Seat from Acme', action: null });
   });
 });

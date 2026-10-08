@@ -2,7 +2,7 @@
 
 /**
  * The seats page (`/dashboard/seats`): buy seats or change them, on a page of
- * its own, apart from the plan picker at `/dashboard/upgrade`. Every seat
+ * its own, apart from the plan picker (the upgrade dialog). Every seat
  * entry point (the team page, Billing, a "Seat limit reached" notice) lands
  * here directly, so a payer already on per-seat billing never passes back
  * through the plans, and a Pro payer adding someone goes straight to Team.
@@ -47,12 +47,16 @@ import {
   getBillingProviderLabel,
   seatSummary,
 } from '@/lib/billing';
+import {
+  BILLING_SETTINGS_HREF,
+  BILLING_SUBSCRIPTION_KEY,
+  fetchBillingSubscription,
+} from '@/lib/billing-subscription';
 import { getDesktopAuthBridge } from '@/lib/desktop-auth';
 import { webOrigin } from '@/lib/desktop-paywall';
 import { cn } from '@/lib/utils';
 
-const BILLING_SUBSCRIPTION_KEY = 'billing-subscription';
-const BILLING_HREF = '/dashboard/settings?tab=billing';
+const BILLING_HREF = BILLING_SETTINGS_HREF;
 
 const MAX_SEATS = 1000;
 
@@ -143,7 +147,7 @@ export function SeatsCheckout() {
   );
   const { data: subscription } = useSWR<BillingSubscription>(
     BILLING_SUBSCRIPTION_KEY,
-    () => getBackendAPI(true).getBillingSubscription(),
+    fetchBillingSubscription,
     { shouldRetryOnError: false },
   );
   const [quantity, setQuantity] = useState(1);
