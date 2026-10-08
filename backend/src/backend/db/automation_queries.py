@@ -38,9 +38,11 @@ from shared.database import (
     Machine,
 )
 from shared.database.agent_profile_models import AgentProfile
+from shared.database.enums import AgentStatus
 from shared.database.project_matching import resolve_automation_project_ids
 from shared.database.task_models import Project, ProjectDirectory
 from shared.scheduling import compute_next_run, is_valid_frequency
+from shared.session_resume import expand_project_path, resume_agent_slug
 
 # Schedule-DEFINING fields that, when changed, force a `next_run_at` recompute
 # (and re-anchor interval schedules). `enabled` is deliberately excluded —
@@ -51,6 +53,16 @@ _SCHEDULE_FIELDS = {
     "timezone",
     "run_at",
 }
+
+# What an automation running in a session takes from it rather than from the
+# request (see `_session_target`).
+_SESSION_SUPPLIED_FIELDS = (
+    "machine_id",
+    "directory",
+    "worktree",
+    "session_config",
+    "agent_profile_id",
+)
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -86,12 +98,73 @@ class AutomationNotFoundError(Exception):
     """Raised when recording a run against a missing/foreign automation (404)."""
 
 
+class SessionNotFoundError(Exception):
+    """The target session doesn't exist, was deleted, or isn't the user's (404)."""
+
+
+class SessionNotResumableError(Exception):
+    """The target session has no machine or folder to relaunch it in (400)."""
+
+
 def _get_machine(db: Session, user_id: UUID, machine_id: UUID) -> Machine | None:
     return (
         db.query(Machine)
         .filter(Machine.id == machine_id, Machine.user_id == user_id)
         .first()
     )
+
+
+def _session_target(db: Session, user_id: UUID, instance_id: UUID) -> dict:
+    """The fields an automation running in `instance_id` snapshots from it.
+
+    Only the author's own session: the scheduler acts as the author, and the
+    agent-facing side stays owner-only. A session with no machine or folder
+    (a legacy terminal session) could never be resumed, so it is refused here
+    rather than failing at 3am."""
+    instance = (
+        db.query(AgentInstance)
+        .filter(
+            AgentInstance.id == instance_id,
+            AgentInstance.user_id == user_id,
+            AgentInstance.status != AgentStatus.DELETED,
+        )
+        .first()
+    )
+    if instance is None:
+        raise SessionNotFoundError("Session not found")
+    if instance.machine_id is None or not instance.project:
+        raise SessionNotResumableError(
+            "This session has no computer or folder recorded, so it cannot run automations"
+        )
+    config = dict(instance.session_config or {})
+    config["agent"] = resume_agent_slug(
+        instance.session_config, instance.agent_type.name
+    )
+    return {
+        "agent_instance_id": instance.id,
+        "machine_id": instance.machine_id,
+        "directory": expand_project_path(instance.project, instance.home_dir),
+        "session_config": config,
+        "worktree": None,
+        "agent_profile_id": None,
+    }
+
+
+def session_names(
+    db: Session, automations: Sequence[Automation]
+) -> dict[UUID, str | None]:
+    """Name of the session each automation runs in, keyed by automation id,
+    for the ones that run in a session. One query for the whole list."""
+    targets = {a.id: a.agent_instance_id for a in automations if a.agent_instance_id}
+    if not targets:
+        return {}
+    names: dict[UUID, str | None] = {
+        row.id: row.name
+        for row in db.query(AgentInstance.id, AgentInstance.name).filter(
+            AgentInstance.id.in_(set(targets.values()))
+        )
+    }
+    return {automation_id: names.get(iid) for automation_id, iid in targets.items()}
 
 
 def _resolve_next_run_at(
@@ -331,18 +404,33 @@ def get_visible_automation(
 
 
 def automation_for_instance(db: Session, instance_id: UUID) -> Automation | None:
-    """The automation whose run started this session, if one did. Runs link
-    their session only once it has registered (see `record_run`), so a run
-    that fired but never linked leaves its session looking hand-started."""
-    return (
+    """The automation whose run started this session, if one did, else one
+    that runs in it. Runs link their session only once it has registered (see
+    `record_run`), so a run that fired but never linked leaves its session
+    looking hand-started. A run of an automation that targets this session
+    links it too, but did not start it."""
+    started = (
         db.query(Automation)
         .join(AutomationRun, AutomationRun.automation_id == Automation.id)
         .filter(
             AutomationRun.agent_instance_id == instance_id,
             # A run is its author's, and so is the session it started.
             AutomationRun.user_id == Automation.user_id,
+            Automation.agent_instance_id.is_distinct_from(instance_id),
         )
         .order_by(AutomationRun.fired_at.asc())
+        .first()
+    )
+    if started is not None:
+        return started
+    return (
+        db.query(Automation)
+        .join(AgentInstance, AgentInstance.id == Automation.agent_instance_id)
+        .filter(
+            Automation.agent_instance_id == instance_id,
+            Automation.user_id == AgentInstance.user_id,
+        )
+        .order_by(Automation.created_at.asc())
         .first()
     )
 
@@ -353,17 +441,30 @@ def create_automation(
     *,
     title: str,
     prompt: str,
-    machine_id: UUID,
-    directory: str,
+    machine_id: UUID | None = None,
+    directory: str | None = None,
     worktree: dict | None = None,
-    session_config: dict,
+    session_config: dict | None = None,
     agent_profile_id: UUID | None = None,
+    agent_instance_id: UUID | None = None,
     schedule_kind: str,
     frequency: dict | None = None,
     timezone: str = "UTC",
     run_at: datetime | None = None,
     enabled: bool = True,
 ) -> Automation:
+    """`agent_instance_id` makes every run continue that session; the session
+    then supplies machine, folder and agent, and any sent alongside are
+    ignored. Without it all three are required (the request model enforces it)."""
+    if agent_instance_id is not None:
+        target = _session_target(db, user_id, agent_instance_id)
+        machine_id = target["machine_id"]
+        directory = target["directory"]
+        session_config = target["session_config"]
+        worktree = None
+        agent_profile_id = None
+    if machine_id is None or directory is None or session_config is None:
+        raise ValueError("machine_id, directory and session_config are required")
     if _get_machine(db, user_id, machine_id) is None:
         raise MachineNotFoundError("Machine not found")
     if agent_profile_id is not None:
@@ -388,6 +489,7 @@ def create_automation(
         worktree=worktree,
         session_config=session_config,
         agent_profile_id=agent_profile_id,
+        agent_instance_id=agent_instance_id,
         schedule_kind=schedule_kind,
         frequency=frequency,
         timezone=timezone,
@@ -411,6 +513,19 @@ def update_automation(
     automation = get_automation(db, user_id, automation_id)
     if automation is None:
         return None
+
+    # Pointing at a session (re)takes its snapshot; clearing the target leaves
+    # the snapshot as the new-session config unless the PATCH replaces it. While
+    # a session is the target, it alone decides where and how runs happen.
+    target_id = fields.pop("agent_instance_id", automation.agent_instance_id)
+    if target_id is not None:
+        for key in _SESSION_SUPPLIED_FIELDS:
+            fields.pop(key, None)
+        if target_id != automation.agent_instance_id:
+            for key, value in _session_target(db, user_id, target_id).items():
+                setattr(automation, key, value)
+    else:
+        automation.agent_instance_id = None
 
     if "machine_id" in fields:
         machine_id = fields.pop("machine_id")

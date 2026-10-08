@@ -112,6 +112,8 @@ class AutomationRefResponse(BaseModel):
 
     id: UUID
     title: str
+    # True when the automation runs in this session (it did not start it).
+    runs_here: bool = False
 
 
 # ============================================================================
@@ -1229,6 +1231,11 @@ class AutomationResponse(BaseModel):
     # resolves the profile at dispatch and `session_config` is the fallback
     # snapshot rather than the source of truth.
     agent_profile_id: UUID | None = None
+    # Set when every run continues this session instead of starting a new one;
+    # `machine_id` / `directory` / `session_config` are then its snapshot.
+    agent_instance_id: UUID | None = None
+    # That session's name, for display (None when it has none yet).
+    agent_instance_name: str | None = None
     schedule_kind: AutomationScheduleKindLiteral
     frequency: dict | None = None
     timezone: str
@@ -1265,11 +1272,16 @@ def _validate_session_config(config: dict) -> dict:
 class CreateAutomationRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     prompt: str = Field(..., min_length=1)
-    machine_id: UUID
-    directory: str = Field(..., min_length=1)
+    # Run every fire in this existing session (the author's own). When set, the
+    # session supplies machine, folder and agent, so the four fields below are
+    # optional and ignored; otherwise machine_id, directory and session_config
+    # are required.
+    agent_instance_id: UUID | None = None
+    machine_id: UUID | None = None
+    directory: str | None = Field(default=None, min_length=1)
     # {"mode": "none"|"new"|"existing", "path"?: str}
     worktree: dict | None = None
-    session_config: dict
+    session_config: dict | None = None
     agent_profile_id: UUID | None = None
     schedule_kind: AutomationScheduleKindLiteral
     # One-time: absolute instant (client sends a UTC-anchored ISO datetime).
@@ -1281,8 +1293,21 @@ class CreateAutomationRequest(BaseModel):
 
     @field_validator("session_config")
     @classmethod
-    def _check_session_config(cls, v: dict) -> dict:
-        return _validate_session_config(v)
+    def _check_session_config(cls, v: dict | None) -> dict | None:
+        return None if v is None else _validate_session_config(v)
+
+    @model_validator(mode="after")
+    def _check_target(self) -> "CreateAutomationRequest":
+        if self.agent_instance_id is None and (
+            self.machine_id is None
+            or self.directory is None
+            or self.session_config is None
+        ):
+            raise ValueError(
+                "machine_id, directory and session_config are required "
+                "unless agent_instance_id is set"
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_schedule(self) -> "CreateAutomationRequest":
@@ -1305,6 +1330,9 @@ class UpdateAutomationRequest(BaseModel):
     worktree: dict | None = None
     session_config: dict | None = None
     agent_profile_id: UUID | None = None
+    # Send a session id to run every fire in it, or null to go back to a new
+    # session per run.
+    agent_instance_id: UUID | None = None
     schedule_kind: AutomationScheduleKindLiteral | None = None
     run_at: datetime | None = None
     frequency: dict | None = None
@@ -1351,6 +1379,8 @@ class SearchSessionResult(BaseModel):
     agent_type_name: str | None = None
     status: AgentStatus
     project: str | None = None
+    # Lets a picker leave out sessions that could never be resumed.
+    machine_id: UUID | None = None
     started_at: datetime
     # Newest message regardless of match — the sidebar's title fallback for
     # unnamed sessions, so the palette can render the same title.

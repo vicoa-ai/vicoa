@@ -368,3 +368,85 @@ class TestAgentProfileFlag:
             == 0
         )
         assert [m for m, _, _ in api.sent] == ["GET", "PATCH"]
+
+
+_SESSION_ID = "33333333-3333-3333-3333-333333333333"
+
+
+class TestSessionFlag:
+    def test_create_targets_the_session_and_nothing_else(self, api):
+        code = _run(
+            [
+                "automation",
+                "create",
+                "T",
+                "--prompt",
+                "p",
+                "--hourly",
+                "--session",
+                _SESSION_ID,
+            ]
+        )
+        assert code == 0
+        ((method, _, body),) = api.sent
+        assert method == "POST"
+        assert body["agent_instance_id"] == _SESSION_ID
+        # The session brings its own machine, folder and agent.
+        for key in ("machine_id", "directory", "session_config", "worktree"):
+            assert key not in body
+        assert body["frequency"] == {"kind": "hourly", "minute": 0}
+
+    def test_create_refuses_new_session_flags_next_to_a_session(self, api, capsys):
+        code = _run(
+            [
+                "automation",
+                "create",
+                "T",
+                "--prompt",
+                "p",
+                "--daily",
+                "--session",
+                _SESSION_ID,
+                "--agent",
+                "codex",
+                "--directory",
+                "/repo",
+            ]
+        )
+        assert code == 2
+        assert api.sent == []
+        err = capsys.readouterr().err
+        assert "--agent" in err and "--directory" in err
+
+    def test_update_retargets(self, api):
+        assert (
+            _run(["automation", "update", _AUTOMATION_ID, "--session", _SESSION_ID])
+            == 0
+        )
+        ((_, _, body),) = api.sent
+        assert body == {"agent_instance_id": _SESSION_ID}
+
+    def test_update_none_goes_back_to_new_sessions(self, api):
+        code = _run(
+            [
+                "automation",
+                "update",
+                _AUTOMATION_ID,
+                "--session",
+                "none",
+                "--directory",
+                "/repo",
+            ]
+        )
+        assert code == 0
+        ((_, _, body),) = api.sent
+        assert body == {"agent_instance_id": None, "directory": "/repo"}
+
+    def test_detail_says_where_it_runs(self):
+        assert A._runs_in({}) == "a new session each run"
+        assert (
+            A._runs_in(
+                {"agent_instance_id": _SESSION_ID, "agent_instance_name": "Fix CI"}
+            )
+            == f"session {_SESSION_ID} (Fix CI)"
+        )

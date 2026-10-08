@@ -32,6 +32,8 @@ from ..db.automation_queries import (
     AutomationNotFoundError,
     InvalidScheduleError,
     MachineNotFoundError,
+    SessionNotFoundError,
+    SessionNotResumableError,
     VisibleAutomation,
 )
 from shared.database.project_matching import resolve_automation_project_ids
@@ -74,6 +76,9 @@ def _responses_for(
     it); authors and unresolved projects are fetched in one batch each."""
     unresolved = [v.automation for v in visibles if v.project_id is None]
     projects = resolve_automation_project_ids(db, unresolved) if unresolved else {}
+    session_names = automation_queries.session_names(
+        db, [v.automation for v in visibles if v.role == "owner"]
+    )
     author_ids = {v.automation.user_id for v in visibles if v.role != "owner"}
     authors = (
         {u.id: u for u in db.query(User).filter(User.id.in_(author_ids))}
@@ -84,6 +89,7 @@ def _responses_for(
     for visible in visibles:
         response = AutomationResponse.model_validate(visible.automation)
         response.project_id = visible.project_id or projects.get(visible.automation.id)
+        response.agent_instance_name = session_names.get(visible.automation.id)
         if visible.role != "owner":
             _redact_for_collaborator(
                 response, authors.get(visible.automation.user_id), visible
@@ -111,6 +117,9 @@ def _redact_for_collaborator(
     # The author's own agent, or a team agent the caller may not belong to:
     # the display subset above already says which agent and model run.
     response.agent_profile_id = None
+    # The author's session, which need not be shared with the caller.
+    response.agent_instance_id = None
+    response.agent_instance_name = None
 
 
 @router.get("/automations", response_model=list[AutomationResponse])
@@ -170,17 +179,22 @@ def create_automation_endpoint(
             worktree=request.worktree,
             session_config=request.session_config,
             agent_profile_id=request.agent_profile_id,
+            agent_instance_id=request.agent_instance_id,
             schedule_kind=request.schedule_kind,
             frequency=request.frequency,
             timezone=request.timezone,
             run_at=request.run_at,
             enabled=request.enabled,
         )
-    except (MachineNotFoundError, AgentProfileNotFoundError) as exc:
+    except (
+        MachineNotFoundError,
+        AgentProfileNotFoundError,
+        SessionNotFoundError,
+    ) as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
-    except InvalidScheduleError as exc:
+    except (InvalidScheduleError, SessionNotResumableError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
@@ -231,11 +245,15 @@ def update_automation_endpoint(
         automation = automation_queries.update_automation(
             db, current_user.id, automation_id, fields
         )
-    except (MachineNotFoundError, AgentProfileNotFoundError) as exc:
+    except (
+        MachineNotFoundError,
+        AgentProfileNotFoundError,
+        SessionNotFoundError,
+    ) as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
-    except InvalidScheduleError as exc:
+    except (InvalidScheduleError, SessionNotResumableError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc

@@ -276,16 +276,26 @@ export function resumeSpawnMetadata(
 
 export interface ResumeResult {
   agentInstanceId?: string;
+  /**
+   * The daemon found the agent still running and reopened it instead of
+   * launching one. A reopen ignores `prompt`, so a caller that passed one has
+   * to send it as a message.
+   */
+  alreadyRunning?: boolean;
 }
 
 /**
  * Relaunch the session on its original machine.
  *
+ * `prompt`, when given, is posted by the relaunched agent as the session's
+ * next message (every wrapper does this for a launch prompt, resumed or not).
+ *
  * Throws on RPC failure so the caller can surface it; a silent failure here
  * would leave the user staring at a session that never comes back.
  */
 export async function resumeSession(
-  instance: ResumableInstance
+  instance: ResumableInstance,
+  options: { prompt?: string } = {}
 ): Promise<ResumeResult> {
   if (!instance.machine_id || !instance.project) {
     throw new Error('Session cannot be resumed: missing machine or folder');
@@ -295,6 +305,7 @@ export async function resumeSession(
   // Carry the stored model / effort / permission mode through the resume so the
   // relaunched session isn't silently reset to the daemon's defaults.
   const metadata = resumeSpawnMetadata(instance);
+  if (options.prompt) metadata.prompt = options.prompt;
   const result = await getWsClient().callRpc(instance.machine_id, 'spawn-session', {
     directory: expandProjectPath(instance.project, instance.home_dir),
     agent: resumeAgentSlug(instance),
@@ -310,5 +321,5 @@ export async function resumeSession(
   }
 
   markResumed(instance.id);
-  return { agentInstanceId: instance.id };
+  return { agentInstanceId: instance.id, alreadyRunning: result.already_running === true };
 }

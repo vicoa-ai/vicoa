@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { beforeEach } from 'vitest';
+
+const callRpc = vi.fn();
+vi.mock('@/lib/ws-client', () => ({ getWsClient: () => ({ callRpc }) }));
 
 import {
   agentSessionHandle,
@@ -12,6 +15,7 @@ import {
   resumeAgentSlug,
   resumeBlockedMessage,
   resumeBlockedReason,
+  resumeSession,
   resumeSpawnMetadata,
   type ResumableInstance,
 } from './session-resume';
@@ -277,5 +281,44 @@ describe('archived sessions', () => {
     expect(resumeBlockedReason(inst({ status: 'ACTIVE' }), 'live')).toBe(
       'already-running'
     );
+  });
+});
+
+describe('resumeSession with a prompt (automation run in a session)', () => {
+  beforeEach(() => {
+    callRpc.mockReset();
+    clearResumeGrace();
+  });
+
+  it('carries the prompt as the launch prompt', async () => {
+    callRpc.mockResolvedValue({ agent_instance_id: 'inst-1' });
+
+    const result = await resumeSession(
+      inst({ session_config: { agent: 'claude', model: 'opus' } }),
+      { prompt: 'Is CI green yet?' }
+    );
+
+    const [machineId, method, params] = callRpc.mock.calls[0];
+    expect(machineId).toBe('machine-1');
+    expect(method).toBe('spawn-session');
+    expect(params.resume).toEqual({ agent_instance_id: 'inst-1', agent_session_id: undefined });
+    expect(params.metadata).toMatchObject({ model: 'opus', prompt: 'Is CI green yet?' });
+    expect(result.alreadyRunning).toBe(false);
+  });
+
+  it('says when the daemon reopened a running agent instead', async () => {
+    callRpc.mockResolvedValue({ agent_instance_id: 'inst-1', already_running: true });
+
+    const result = await resumeSession(inst(), { prompt: 'go' });
+
+    expect(result.alreadyRunning).toBe(true);
+  });
+
+  it('sends no prompt for a plain Resume', async () => {
+    callRpc.mockResolvedValue({ agent_instance_id: 'inst-1' });
+
+    await resumeSession(inst({ session_config: { agent: 'claude', model: 'opus' } }));
+
+    expect(callRpc.mock.calls[0][2].metadata.prompt).toBeUndefined();
   });
 });

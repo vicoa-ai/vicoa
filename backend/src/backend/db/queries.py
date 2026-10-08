@@ -1052,7 +1052,8 @@ def get_agent_instance_detail(
 def _started_by_automation(
     db: Session, user_id: UUID, instance_id: UUID
 ) -> AutomationRefResponse | None:
-    """The automation that started this session, if the caller may see it.
+    """The automation that started this session, or one that runs in it, if
+    the caller may see it.
 
     Seeing the session is not enough: a collaborator reaches the automation
     only through the project its folder files it under, which is usually,
@@ -1064,7 +1065,11 @@ def _started_by_automation(
         automation_queries.get_visible_automation(db, user_id, automation.id) is None
     ):
         return None
-    return AutomationRefResponse(id=automation.id, title=automation.title)
+    return AutomationRefResponse(
+        id=automation.id,
+        title=automation.title,
+        runs_here=automation.agent_instance_id == instance_id,
+    )
 
 
 def _participants_by_instance(

@@ -22,6 +22,7 @@ import {
 import { ProjectIcon } from '@/components/dashboard/task-ui';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { isMachineOnline, sortMachinesOnlineFirst } from '@/lib/session-liveness';
+import { resumeSession } from '@/lib/session-resume';
 import { getWsClient, RpcError } from '@/lib/ws-client';
 import {
   AGENT_CATALOG_FALLBACK,
@@ -362,6 +363,23 @@ function AutomationPageInner() {
     [api, automations],
   );
 
+  // "Run now" on an automation that runs in a session continues it the way
+  // the scheduler does: the prompt as a message while its agent is live, else
+  // a resume that carries the prompt (and a message after all if the daemon
+  // finds the agent still running).
+  const continueSession = useCallback(
+    async (a: AutomationResponse, sessionId: string) => {
+      if (!api) return;
+      const instance = await api.getInstanceDetail(sessionId, 1);
+      if (instance.live_state !== 'live') {
+        const { alreadyRunning } = await resumeSession(instance, { prompt: a.prompt });
+        if (!alreadyRunning) return;
+      }
+      await api.createUserMessage(sessionId, { content: a.prompt });
+    },
+    [api],
+  );
+
   // "Run now" reuses the new-session spawn path (rpc_router is server-process
   // local), then records the outcome so it shows in Run history.
   const runNow = useCallback(
@@ -391,6 +409,18 @@ function AutomationPageInner() {
         selectedWorktreePath: a.worktree?.path,
       });
       try {
+        if (a.agent_instance_id) {
+          await continueSession(a, a.agent_instance_id);
+          await api
+            .recordAutomationRun(a.id, {
+              status: 'fired',
+              agent_instance_id: a.agent_instance_id,
+            })
+            .catch(() => {});
+          setHistoryKey((k) => k + 1);
+          void refresh();
+          return;
+        }
         const result = await getWsClient().callRpc(machineId, 'spawn-session', {
           directory: spawn.directory,
           agent: config.agent,
@@ -435,7 +465,8 @@ function AutomationPageInner() {
         setHistoryKey((k) => k + 1);
         void refresh();
       } catch (err) {
-        const code = err instanceof RpcError ? err.code : 'error';
+        const code =
+          err instanceof RpcError ? err.code : err instanceof Error ? err.message : 'error';
         const offline = code === 'no_handler' || code === 'not_connected';
         await api
           .recordAutomationRun(a.id, {
@@ -450,7 +481,7 @@ function AutomationPageInner() {
         setBusyId(null);
       }
     },
-    [api, refresh, agentProfiles],
+    [api, refresh, agentProfiles, continueSession],
   );
 
   const selectedId = selection && selection !== 'new' ? selection.id : null;

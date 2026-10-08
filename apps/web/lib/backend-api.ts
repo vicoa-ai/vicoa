@@ -355,6 +355,8 @@ export interface AgentInstanceDetail {
 export interface AutomationRef {
   id: string;
   title: string;
+  /** True when the automation runs in this session rather than started it. */
+  runs_here?: boolean;
 }
 
 export interface UserMessageRequest {
@@ -991,6 +993,12 @@ export interface AutomationResponse {
   /** Live reference to a saved agent. When set, the scheduler resolves it at
    *  dispatch and `session_config` above is only the fallback snapshot. */
   agent_profile_id?: string | null;
+  /** Set when every run continues this session instead of starting a new
+   *  one; `machine_id`, `directory` and `session_config` are then its
+   *  snapshot. Null on someone else's automation. */
+  agent_instance_id?: string | null;
+  /** That session's name, when it has one. */
+  agent_instance_name?: string | null;
   schedule_kind: AutomationScheduleKind;
   frequency: AutomationFrequency | null;
   timezone: string;
@@ -1020,6 +1028,8 @@ export interface SearchSessionResult {
   agent_type_name: string | null;
   status: keyof AgentStatus;
   project: string | null;
+  /** Null for a terminal session with no computer linked. */
+  machine_id?: string | null;
   started_at: string;
   latest_message: string | null;
   latest_message_at: string | null;
@@ -1293,10 +1303,13 @@ export interface AutomationRunResponse {
 export interface CreateAutomationRequest {
   title: string;
   prompt: string;
-  machine_id: string;
-  directory: string;
+  /** Run every fire in this session. It then supplies machine, folder and
+   *  agent, so those may be left out; without it they are required. */
+  agent_instance_id?: string | null;
+  machine_id?: string;
+  directory?: string;
   worktree?: AutomationWorktree | null;
-  session_config: Record<string, unknown>;
+  session_config?: Record<string, unknown>;
   agent_profile_id?: string | null;
   schedule_kind: AutomationScheduleKind;
   /** One-time: absolute ISO instant (UTC-anchored). */
@@ -1315,6 +1328,8 @@ export interface UpdateAutomationRequest {
   worktree?: AutomationWorktree | null;
   session_config?: Record<string, unknown>;
   agent_profile_id?: string | null;
+  /** A session id to run every fire in it, or null for a new session per run. */
+  agent_instance_id?: string | null;
   schedule_kind?: AutomationScheduleKind;
   run_at?: string | null;
   frequency?: AutomationFrequency | null;

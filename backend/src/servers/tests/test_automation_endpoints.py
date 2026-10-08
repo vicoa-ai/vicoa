@@ -5,6 +5,7 @@ same CRUD works under the agent RS256-JWT auth used by the CLI, including
 schedule handling, machine scoping, and user scoping.
 """
 
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -12,7 +13,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from shared.database.agent_profile_models import AgentProfile
-from shared.database.models import Machine, User
+from shared.database.enums import AgentStatus
+from shared.database.models import AgentInstance, AgentType, Machine, User
 from shared.database.session import get_db
 from servers.api.auth import get_current_user_id
 from servers.api.automations import automation_router
@@ -225,3 +227,118 @@ class TestScoping:
             "/api/v1/automations", json=_daily_body(test_machine)
         )
         assert resp.status_code == 404
+
+
+class TestSessionTarget:
+    """`agent_instance_id` runs every fire in one of the author's sessions,
+    which then supplies the machine, folder and agent."""
+
+    @pytest.fixture
+    def target(self, test_db, test_user, test_machine) -> AgentInstance:
+        row = AgentInstance(
+            id=uuid4(),
+            agent_type_id=test_db.query(AgentType).first().id,
+            user_id=test_user.id,
+            status=AgentStatus.COMPLETED,
+            started_at=datetime.now(timezone.utc),
+            name="Fix flaky test",
+            machine_id=test_machine.id,
+            project="~/repo",
+            home_dir="/Users/me",
+            session_config={"model": "opus", "permission_mode": "auto"},
+        )
+        test_db.add(row)
+        test_db.commit()
+        return row
+
+    def _body(self, **overrides):
+        body = {
+            "title": "Keep going",
+            "prompt": "Carry on",
+            "schedule_kind": "recurring",
+            "frequency": {"kind": "daily", "time": "09:00"},
+        }
+        body.update(overrides)
+        return body
+
+    def test_create_takes_the_sessions_machine_folder_and_agent(
+        self, client, test_machine, target
+    ):
+        resp = client.post(
+            "/api/v1/automations", json=self._body(agent_instance_id=str(target.id))
+        )
+
+        assert resp.status_code == 201, resp.text
+        a = resp.json()
+        assert a["agent_instance_id"] == str(target.id)
+        assert a["agent_instance_name"] == "Fix flaky test"
+        assert a["machine_id"] == str(test_machine.id)
+        assert a["directory"] == "/Users/me/repo"
+        # The agent comes from the agent type name when the config never
+        # recorded one ("Claude Code" in the shared fixture).
+        assert a["session_config"]["agent"] == "claude"
+        assert a["session_config"]["model"] == "opus"
+        assert a["worktree"] is None
+
+    def test_what_is_sent_alongside_a_session_is_ignored(
+        self, client, test_machine, target
+    ):
+        resp = client.post(
+            "/api/v1/automations",
+            json=_daily_body(
+                test_machine,
+                agent_instance_id=str(target.id),
+                directory="/elsewhere",
+                worktree={"mode": "new"},
+            ),
+        )
+
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["directory"] == "/Users/me/repo"
+        assert resp.json()["worktree"] is None
+
+    def test_without_a_session_the_new_session_fields_are_required(self, client):
+        resp = client.post("/api/v1/automations", json=self._body())
+        assert resp.status_code == 422
+
+    def test_another_users_session_is_404(self, test_db, target):
+        stranger = _make_client(test_db, uuid4())
+        resp = stranger.post(
+            "/api/v1/automations", json=self._body(agent_instance_id=str(target.id))
+        )
+        assert resp.status_code == 404
+
+    def test_a_deleted_session_is_404(self, client, test_db, target):
+        target.status = AgentStatus.DELETED
+        test_db.commit()
+        resp = client.post(
+            "/api/v1/automations", json=self._body(agent_instance_id=str(target.id))
+        )
+        assert resp.status_code == 404
+
+    def test_a_session_with_no_machine_is_400(self, client, test_db, target):
+        target.machine_id = None
+        test_db.commit()
+        resp = client.post(
+            "/api/v1/automations", json=self._body(agent_instance_id=str(target.id))
+        )
+        assert resp.status_code == 400
+
+    def test_switch_to_a_session_and_back(self, client, test_machine, target):
+        created = client.post(
+            "/api/v1/automations", json=_daily_body(test_machine)
+        ).json()
+        url = f"/api/v1/automations/{created['id']}"
+
+        to_session = client.patch(url, json={"agent_instance_id": str(target.id)})
+        assert to_session.status_code == 200, to_session.text
+        assert to_session.json()["directory"] == "/Users/me/repo"
+
+        # While a session is the target, it alone decides where runs happen.
+        ignored = client.patch(url, json={"directory": "/elsewhere"})
+        assert ignored.json()["directory"] == "/Users/me/repo"
+
+        back = client.patch(url, json={"agent_instance_id": None, "directory": "/repo"})
+        assert back.json()["agent_instance_id"] is None
+        assert back.json()["agent_instance_name"] is None
+        assert back.json()["directory"] == "/repo"

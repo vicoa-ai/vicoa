@@ -143,6 +143,10 @@ class AutomationsModel extends FlutterFlowModel<AutomationsWidget> {
     busyId = id;
     _bump();
     try {
+      final sessionId = autils.automationTargetSessionId(automation);
+      if (sessionId != null) {
+        return await _runInSession(id, sessionId, autils.automationPrompt(automation));
+      }
       final cfg =
           SessionConfig.fromJson(autils.automationSessionConfig(automation));
       final wt = autils.automationWorktree(automation);
@@ -195,6 +199,69 @@ class AutomationsModel extends FlutterFlowModel<AutomationsWidget> {
       _bump();
       unawaited(_refreshOne(id));
     }
+  }
+
+  /// "Run now" on an automation that runs in a session continues it the way
+  /// the scheduler does: the prompt as a message while its agent is live, else
+  /// a resume carrying the prompt (and a message after all if the daemon finds
+  /// the agent still running).
+  Future<Map<String, dynamic>> _runInSession(
+      String id, String sessionId, String prompt) async {
+    String status = 'fired';
+    String? detail;
+    final instance = await actions.apiGetInstanceById(sessionId);
+    if (instance is! Map) {
+      status = 'failed';
+      detail = 'session not found';
+    } else {
+      var send = instance['live_state'] == actions.kLiveStateLive;
+      if (!send) {
+        final config = instance['session_config'] is Map
+            ? Map<String, dynamic>.from(instance['session_config'] as Map)
+            : null;
+        final metadata = instance['instance_metadata'] is Map
+            ? Map<String, dynamic>.from(instance['instance_metadata'] as Map)
+            : null;
+        final resumed = await actions.apiResumeSession(
+          instance['machine_id']?.toString() ?? '',
+          sessionId,
+          actions.resumeExpandProjectPath(
+            instance['project']?.toString() ?? '',
+            instance['home_dir']?.toString(),
+          ),
+          agent: actions.resumeAgentSlug(
+            instance['agent_type_name']?.toString(),
+            sessionConfig: config,
+          ),
+          agentSessionId: actions.resumeAgentSessionHandle(metadata),
+          sessionConfig: config,
+          prompt: prompt,
+        );
+        if (resumed['success'] != true) {
+          final error = (resumed['error'] ?? '').toString();
+          final code = (resumed['errorCode'] ?? '').toString();
+          final offline = code == 'no_handler' ||
+              error.contains('no_handler') ||
+              error.contains('not_connected');
+          status = offline ? 'missed_offline' : 'failed';
+          detail = error;
+        } else {
+          actions.markResumed(sessionId);
+          send = resumed['alreadyRunning'] == true;
+        }
+      }
+      if (send && await actions.apiChatWithAgent(sessionId, prompt) == null) {
+        status = 'failed';
+        detail = 'could not send the prompt';
+      }
+    }
+    await actions.apiRecordAutomationRun(
+      id,
+      status: status,
+      agentInstanceId: instance is Map ? sessionId : null,
+      detail: detail,
+    );
+    return {'status': status, 'instanceId': sessionId};
   }
 
   void _replace(Map<String, dynamic> updated) {

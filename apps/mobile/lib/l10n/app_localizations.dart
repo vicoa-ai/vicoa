@@ -5468,11 +5468,23 @@ abstract class AppLocalizations {
   /// **'Skipped'**
   String get automationsRunStatusSkipped;
 
+  /// No description provided for @automationsRunsIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Runs in'**
+  String get automationsRunsIn;
+
   /// No description provided for @automationsRunsOn.
   ///
   /// In en, this message translates to:
   /// **'Runs on'**
   String get automationsRunsOn;
+
+  /// No description provided for @automationsUnnamedSession.
+  ///
+  /// In en, this message translates to:
+  /// **'Unnamed session'**
+  String get automationsUnnamedSession;
 
   /// No description provided for @automationsSaveFailed.
   ///

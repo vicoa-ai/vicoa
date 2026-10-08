@@ -48,6 +48,8 @@ class Automation(Base):
         Index("ix_automations_user", "user_id"),
         # The sweep's hot path: enabled rows ordered by when they're next due.
         Index("ix_automations_next_run", "next_run_at"),
+        # Spares the ON DELETE CASCADE FK a table scan on every session delete.
+        Index("ix_automations_agent_instance", "agent_instance_id"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -69,6 +71,19 @@ class Automation(Base):
         type_=PostgresUUID(as_uuid=True),
     )
     directory: Mapped[str] = mapped_column(Text)
+    # Set → every run continues this one session instead of starting a new
+    # one: the prompt is posted into it if its agent is running, else the
+    # session is resumed with the prompt. The session decides where and how it
+    # runs, so `machine_id` / `directory` / `session_config` hold a snapshot of
+    # it (taken when the target is set) for display and project filing, and
+    # `worktree` / `agent_profile_id` stay NULL. Always the author's own
+    # session. CASCADE for the reason `machine_id` cascades: an automation
+    # whose session is gone could never run again.
+    agent_instance_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_instances.id", ondelete="CASCADE"),
+        type_=PostgresUUID(as_uuid=True),
+        default=None,
+    )
     # Optional worktree spec {"mode": "none"|"new"|"existing", "path"?: str}.
     # NULL/none → run in `directory`; new → fresh worktree per run; existing →
     # run in `path`. Applied to the spawn params at dispatch time.

@@ -30,7 +30,12 @@ import '/l10n/app_localizations.dart';
 /// takes a cwd), so it only works against the original machine while its
 /// daemon is online.
 ///
-/// Returns `{success: true, agentInstanceId, contextLost}` or
+/// [prompt], when given, is posted by the relaunched agent as the session's
+/// next message (an automation running in this session). If the daemon finds
+/// the agent still running it reopens it instead and ignores the prompt; the
+/// result then says `alreadyRunning: true` so the caller can send it itself.
+///
+/// Returns `{success: true, agentInstanceId, contextLost, alreadyRunning}` or
 /// `{success: false, error}`.
 Future<Map<String, dynamic>> apiResumeSession(
   String machineId,
@@ -39,6 +44,7 @@ Future<Map<String, dynamic>> apiResumeSession(
   String agent = 'claude',
   String? agentSessionId,
   Map<String, dynamic>? sessionConfig,
+  String? prompt,
 }) async {
   try {
     if (machineId.isEmpty || agentInstanceId.isEmpty || directory.isEmpty) {
@@ -53,6 +59,7 @@ Future<Map<String, dynamic>> apiResumeSession(
     final metadata = (sessionConfig != null && sessionConfig.isNotEmpty)
         ? SessionConfig.fromJson({...sessionConfig, 'agent': agent}).toSpawnMetadata()
         : <String, dynamic>{};
+    if (prompt != null && prompt.isNotEmpty) metadata['prompt'] = prompt;
 
     final result = await VicoaWsClient.instance.callRpc(
       machineId,
@@ -78,6 +85,7 @@ Future<Map<String, dynamic>> apiResumeSession(
       // Claude needs no separate handle — its transcript is keyed by the
       // instance id — so a missing handle only means lost context elsewhere.
       'contextLost': (agentSessionId == null || agentSessionId.isEmpty) && agent != 'claude',
+      'alreadyRunning': result['already_running'] == true,
     };
   } on RpcException catch (e) {
     // Resume guards with resumeBlockedReason up front, but the machine can go

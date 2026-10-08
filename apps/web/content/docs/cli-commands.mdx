@@ -560,6 +560,11 @@ vicoa automation create "Hourly build check" \
   --prompt "Run the build and report failures" \
   --agent codex --hourly --minute 15
 
+# Keep going in one session instead of starting a new one each run
+vicoa automation create "Check CI" \
+  --prompt "Is CI green yet? If not, fix what broke." \
+  --session <SESSION_UUID> --hourly
+
 # Pause, resume, edit, delete
 vicoa automation update <AUTOMATION_UUID> --disable
 vicoa automation update <AUTOMATION_UUID> --enable --prompt "New prompt"
@@ -601,6 +606,7 @@ Give it a session config with the convenience flags, or a full JSON blob:
 | `--machine-id <id>` | this machine's registered daemon | Machine to run on |
 | `--directory <path>` | current dir | Working directory on that machine |
 | `--worktree-json <JSON>` | — | Worktree spec, e.g. `{"mode":"new"}` |
+| `--session <SESSION_UUID>` | — | Run every fire in this existing session instead of starting a new one. Each run sends the prompt to it, resuming the session first if it has stopped. The session brings its own machine, folder and agent, so it can't be combined with the flags above. On `update`, `none` goes back to a new session each run |
 | `--disabled` | | Create the automation paused (`enabled=false`) |
 
 > **An automation needs a machine to run on.** Run `vicoa daemon` on the target box first — it auto-registers and becomes the default target — or pass `--machine-id`. Also note `automation update` has no `--agent` flag; change the agent by replacing the whole config with `--session-config-json '{"agent":"…"}'`.

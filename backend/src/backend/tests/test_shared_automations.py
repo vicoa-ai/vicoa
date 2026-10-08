@@ -221,6 +221,32 @@ class TestCollaboratorRow:
         assert body["session_config"] == {"agent": "claude", "model": "opus"}
         assert body["agent_profile_id"] is None
 
+    def test_viewer_does_not_learn_which_session_it_runs_in(
+        self, client, test_db, test_user
+    ):
+        owner = test_user
+        viewer = _user(test_db, "Viewer")
+        project = _project(test_db, owner)
+        machine = _machine(test_db, owner)
+        _link(test_db, owner, project, machine, "/repo")
+        instance = _session(test_db, owner, None)
+        instance.name = "Private fix"
+        automation = _automation(
+            test_db, owner, machine, "/repo", agent_instance_id=instance.id
+        )
+        _grant(test_db, project, viewer, "viewer", by=owner)
+        test_db.commit()
+
+        with _as(client, owner) as c:
+            mine = c.get(f"/api/v1/automations/{automation.id}").json()
+        with _as(client, viewer) as c:
+            theirs = c.get(f"/api/v1/automations/{automation.id}").json()
+
+        assert mine["agent_instance_id"] == str(instance.id)
+        assert mine["agent_instance_name"] == "Private fix"
+        assert theirs["agent_instance_id"] is None
+        assert theirs["agent_instance_name"] is None
+
     def test_owner_row_is_untouched(self, authenticated_client, test_db, test_user):
         project = _project(test_db, test_user)
         machine = _machine(test_db, test_user)
@@ -559,11 +585,54 @@ class TestStartedByOnTheSession:
         _run(test_db, automation, instance)
         test_db.commit()
 
-        expected = {"id": str(automation.id), "title": "Nightly sweep"}
+        expected = {
+            "id": str(automation.id),
+            "title": "Nightly sweep",
+            "runs_here": False,
+        }
         for user in (owner, viewer):
             with _as(client, user) as c:
                 detail = c.get(f"/api/v1/agent-instances/{instance.id}").json()
             assert detail["automation"] == expected, user.display_name
+
+    def test_an_automation_running_in_the_session_did_not_start_it(
+        self, authenticated_client, test_db, test_user
+    ):
+        machine = _machine(test_db, test_user)
+        instance = _session(test_db, test_user, None)
+        automation = _automation(
+            test_db, test_user, machine, "/repo", agent_instance_id=instance.id
+        )
+        # Its runs link the session they continued.
+        _run(test_db, automation, instance)
+        test_db.commit()
+
+        detail = authenticated_client.get(
+            f"/api/v1/agent-instances/{instance.id}"
+        ).json()
+
+        assert detail["automation"] == {
+            "id": str(automation.id),
+            "title": "Nightly sweep",
+            "runs_here": True,
+        }
+
+    def test_the_automation_that_started_it_wins(
+        self, authenticated_client, test_db, test_user
+    ):
+        machine = _machine(test_db, test_user)
+        instance = _session(test_db, test_user, None)
+        starter = _automation(test_db, test_user, machine, "/repo", title="starter")
+        _run(test_db, starter, instance)
+        _automation(test_db, test_user, machine, "/repo", agent_instance_id=instance.id)
+        test_db.commit()
+
+        detail = authenticated_client.get(
+            f"/api/v1/agent-instances/{instance.id}"
+        ).json()
+
+        assert detail["automation"]["title"] == "starter"
+        assert detail["automation"]["runs_here"] is False
 
     def test_a_hand_started_session_names_none(
         self, authenticated_client, test_db, test_user

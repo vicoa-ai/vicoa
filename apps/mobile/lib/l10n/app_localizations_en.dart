@@ -3066,7 +3066,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get automationsRunStatusSkipped => 'Skipped';
 
   @override
+  String get automationsRunsIn => 'Runs in';
+
+  @override
   String get automationsRunsOn => 'Runs on';
+
+  @override
+  String get automationsUnnamedSession => 'Unnamed session';
 
   @override
   String get automationsSaveFailed => 'Couldn\'t save automation';

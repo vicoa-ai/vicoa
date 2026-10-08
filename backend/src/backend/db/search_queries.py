@@ -194,6 +194,7 @@ def _session_row(
         "agent_type_name": instance.agent_type.name if instance.agent_type else None,
         "status": instance.status,
         "project": instance.project,
+        "machine_id": instance.machine_id,
         "started_at": instance.started_at,
         "latest_message": instance_stats.get("latest_message"),
         "latest_message_at": instance_stats.get("latest_message_at"),

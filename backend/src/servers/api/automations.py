@@ -35,7 +35,10 @@ from backend.db.automation_queries import (
     AutomationNotFoundError,
     InvalidScheduleError,
     MachineNotFoundError,
+    SessionNotFoundError,
+    SessionNotResumableError,
 )
+from shared.database import Automation
 from backend.models import (
     AutomationResponse,
     AutomationRunResponse,
@@ -46,6 +49,16 @@ from backend.models import (
 from .auth import get_current_user_id
 
 automation_router = APIRouter(tags=["automations"])
+
+
+def _responses(db: Session, rows: list[Automation]) -> list[AutomationResponse]:
+    names = automation_queries.session_names(db, rows)
+    out: list[AutomationResponse] = []
+    for row in rows:
+        response = AutomationResponse.model_validate(row)
+        response.agent_instance_name = names.get(row.id)
+        out.append(response)
+    return out
 
 
 def _user_uuid(user_id: str) -> UUID:
@@ -65,7 +78,7 @@ def list_automations_endpoint(
     db: Session = Depends(get_db),
 ) -> list[AutomationResponse]:
     rows = automation_queries.list_automations(db, _user_uuid(user_id))
-    return [AutomationResponse.model_validate(r) for r in rows]
+    return _responses(db, rows)
 
 
 @automation_router.post(
@@ -89,21 +102,26 @@ def create_automation_endpoint(
             worktree=request.worktree,
             session_config=request.session_config,
             agent_profile_id=request.agent_profile_id,
+            agent_instance_id=request.agent_instance_id,
             schedule_kind=request.schedule_kind,
             frequency=request.frequency,
             timezone=request.timezone,
             run_at=request.run_at,
             enabled=request.enabled,
         )
-    except (MachineNotFoundError, AgentProfileNotFoundError) as exc:
+    except (
+        MachineNotFoundError,
+        AgentProfileNotFoundError,
+        SessionNotFoundError,
+    ) as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
-    except InvalidScheduleError as exc:
+    except (InvalidScheduleError, SessionNotResumableError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
-    return AutomationResponse.model_validate(automation)
+    return _responses(db, [automation])[0]
 
 
 @automation_router.get(
@@ -121,7 +139,7 @@ def get_automation_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found"
         )
-    return AutomationResponse.model_validate(automation)
+    return _responses(db, [automation])[0]
 
 
 @automation_router.patch(
@@ -138,11 +156,15 @@ def update_automation_endpoint(
         automation = automation_queries.update_automation(
             db, _user_uuid(user_id), automation_id, fields
         )
-    except (MachineNotFoundError, AgentProfileNotFoundError) as exc:
+    except (
+        MachineNotFoundError,
+        AgentProfileNotFoundError,
+        SessionNotFoundError,
+    ) as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
-    except InvalidScheduleError as exc:
+    except (InvalidScheduleError, SessionNotResumableError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
@@ -150,7 +172,7 @@ def update_automation_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found"
         )
-    return AutomationResponse.model_validate(automation)
+    return _responses(db, [automation])[0]
 
 
 @automation_router.delete(

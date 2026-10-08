@@ -74,6 +74,9 @@ class DispatchResult:
     status: str  # one of AUTOMATION_RUN_STATUSES
     agent_instance_id: str | None = None
     detail: str | None = None
+    # The automation can never run again (its session is gone): pause it
+    # rather than fail on every fire.
+    disable: bool = False
 
 
 def resolve_worktree_spawn(

@@ -2447,9 +2447,9 @@ function AgentInstanceContent() {
               viewerRole={isOwner ? null : instance.viewer_role}
               canPrompt={canPrompt}
             />
-            {/* Provenance: the automation whose run started this session. The
-                backend sends it only when the viewer may open that automation,
-                its own row or a read-only shared one. */}
+            {/* Provenance: the automation whose run started this session, or
+                one that runs in it. The backend sends it only when the viewer
+                may open that automation, its own row or a read-only shared one. */}
             {instance.automation && (
               <>
                 <span className="text-muted-foreground flex-shrink-0">·</span>
@@ -2465,7 +2465,13 @@ function AgentInstanceContent() {
                     </Link>
                   </TooltipTrigger>
                   <TooltipContent align="start">
-                    <p>Started by the automation &ldquo;{instance.automation.title}&rdquo;</p>
+                    <p>
+                      {instance.automation.runs_here
+                        ? 'The automation '
+                        : 'Started by the automation '}
+                      &ldquo;{instance.automation.title}&rdquo;
+                      {instance.automation.runs_here ? ' runs in this session' : ''}
+                    </p>
                   </TooltipContent>
                 </Tooltip>
               </>

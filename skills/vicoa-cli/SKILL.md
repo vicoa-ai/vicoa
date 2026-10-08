@@ -347,6 +347,11 @@ vicoa automation create "Hourly build check" \
   --prompt "Run the build and report failures" \
   --agent codex --hourly --minute 15         # add --model <slug> to pin a model
 
+# Continue one session every run instead of starting a new one: the prompt is
+# sent to it (resuming it if it stopped), so it keeps its context.
+vicoa automation create "Check CI" --prompt "Is CI green yet?" \
+  --session <SESSION_UUID> --hourly           # update ... --session none to undo
+
 # Auto-continue rate-limited sessions: a plain hourly automation whose prompt
 # drives the CLI. No special automation type — the spawned agent does the work.
 vicoa automation create "Continue rate-limited sessions" \

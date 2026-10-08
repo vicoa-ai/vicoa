@@ -196,6 +196,35 @@ _SESSION_FLAGS = (
 )
 
 
+# Flags that say where or how a new session runs. A session target supplies
+# all of that itself, so passing one next to --session is refused.
+_NEW_SESSION_FLAGS = (
+    *_SESSION_FLAGS,
+    ("agent_profile", "--agent-profile"),
+    ("machine_id", "--machine-id"),
+    ("directory", "--directory"),
+    ("worktree_json", "--worktree-json"),
+)
+
+
+def _target_session(args) -> tuple[bool, Optional[str]]:
+    """Resolve ``--session``: ``(False, None)`` when it wasn't passed,
+    ``(True, None)`` for ``none`` (back to a new session per run), ``(True,
+    id)`` to run every fire in that session."""
+    raw = getattr(args, "session", None)
+    if raw is None:
+        return False, None
+    if raw.strip().lower() == "none":
+        return True, None
+    passed = [flag for attr, flag in _NEW_SESSION_FLAGS if getattr(args, attr, None)]
+    if passed:
+        raise ValueError(
+            f"--session runs in that session, on its own machine and agent; "
+            f"drop {', '.join(passed)}"
+        )
+    return True, raw.strip()
+
+
 def _agent_profile(args, api_key: str) -> tuple[bool, Optional[dict]]:
     """Resolve ``--agent-profile``: ``(False, None)`` when it wasn't passed,
     ``(True, None)`` for ``none`` (unlink), ``(True, profile)`` for a name.
@@ -294,6 +323,14 @@ def _schedule_summary(a: dict) -> str:
     return "recurring"
 
 
+def _runs_in(a: dict) -> str:
+    session_id = a.get("agent_instance_id")
+    if not session_id:
+        return "a new session each run"
+    name = a.get("agent_instance_name")
+    return f"session {session_id}" + (f" ({name})" if name else "")
+
+
 def _print_automation_table(rows: list[dict]) -> None:
     if not rows:
         print("No automations found.")
@@ -319,6 +356,7 @@ def _print_automation_detail(a: dict) -> None:
         f"id:              {a.get('id')}",
         f"title:           {a.get('title')}",
         f"enabled:         {a.get('enabled')}",
+        f"runs_in:         {_runs_in(a)}",
         f"machine_id:      {a.get('machine_id')}",
         f"directory:       {a.get('directory')}",
         f"worktree:        {_json.dumps(a.get('worktree')) if a.get('worktree') else '—'}",
@@ -392,6 +430,18 @@ def _cmd_create(args, api_key: str) -> int:
                 file=sys.stderr,
             )
             return 2
+        _, session_id = _target_session(args)
+        if session_id is not None:
+            body: dict[str, Any] = {
+                "title": args.title,
+                "prompt": args.prompt,
+                "agent_instance_id": session_id,
+                "enabled": not getattr(args, "disabled", False),
+                **schedule,
+            }
+            return _print_created(
+                args, request(args, api_key, "POST", "/api/v1/automations", json=body)
+            )
         _, profile = _agent_profile(args, api_key)
         session_config = (
             _profile_snapshot(profile)
@@ -412,7 +462,7 @@ def _cmd_create(args, api_key: str) -> int:
         )
         return 2
 
-    body: dict[str, Any] = {
+    body = {
         "title": args.title,
         "prompt": args.prompt,
         "machine_id": machine_id,
@@ -426,7 +476,12 @@ def _cmd_create(args, api_key: str) -> int:
         body["worktree"] = worktree
     body.update(schedule)
 
-    a = request(args, api_key, "POST", "/api/v1/automations", json=body)
+    return _print_created(
+        args, request(args, api_key, "POST", "/api/v1/automations", json=body)
+    )
+
+
+def _print_created(args, a: dict) -> int:
     if getattr(args, "json", False):
         print(_json.dumps(a, indent=2))
     else:
@@ -434,12 +489,17 @@ def _cmd_create(args, api_key: str) -> int:
         print(
             f"  schedule: {_schedule_summary(a)}  next run: {a.get('next_run_at') or '—'}"
         )
+        if a.get("agent_instance_id"):
+            print(f"  runs in: {_runs_in(a)}")
     return 0
 
 
 def _cmd_update(args, api_key: str) -> int:
     try:
         body: dict[str, Any] = dict(_schedule_fields(args))
+        retarget, session_id = _target_session(args)
+        if retarget:
+            body["agent_instance_id"] = session_id
         relink, profile = _agent_profile(args, api_key)
         session_config = (
             _profile_snapshot(profile)
@@ -702,6 +762,16 @@ def add_automation_subparser(subparsers) -> None:
         ),
     )
     automation_create.add_argument(
+        "--session",
+        metavar="SESSION_ID",
+        help=(
+            "Run every fire in this existing session (full id, `vicoa session "
+            "ls`) instead of starting a new one: the prompt is sent to it, "
+            "resuming it if it has stopped. It brings its own machine, folder "
+            "and agent"
+        ),
+    )
+    automation_create.add_argument(
         "--disabled",
         action="store_true",
         help="Create paused (enabled=false); default is enabled",
@@ -730,6 +800,15 @@ def add_automation_subparser(subparsers) -> None:
         help=(
             "Run a saved agent (`vicoa agent ls`) from now on, or 'none' to unlink "
             "and keep its last config (or pass --session-config-json with it)"
+        ),
+    )
+    automation_update.add_argument(
+        "--session",
+        metavar="SESSION_ID|none",
+        help=(
+            "Run every fire in this existing session from now on, or 'none' to "
+            "start a new session each run again (in the session's last folder "
+            "and agent unless you pass others)"
         ),
     )
     automation_enable = automation_update.add_mutually_exclusive_group()

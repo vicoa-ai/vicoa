@@ -41,6 +41,19 @@ String? automationAgentProfileId(dynamic a) {
   return id is String && id.isNotEmpty ? id : null;
 }
 
+/// The session every run continues, or null when each run starts a new one.
+/// That session brings its own machine, folder and agent.
+String? automationTargetSessionId(dynamic a) {
+  final id = a is Map ? a['agent_instance_id'] : null;
+  return id is String && id.isNotEmpty ? id : null;
+}
+
+/// The target session's name, when it has one.
+String? automationTargetSessionName(dynamic a) {
+  final name = a is Map ? a['agent_instance_name'] : null;
+  return name is String && name.trim().isNotEmpty ? name : null;
+}
+
 /// 'once' | 'recurring'
 String automationScheduleKind(dynamic a) =>
     (a is Map ? a['schedule_kind'] : null)?.toString() ?? 'recurring';

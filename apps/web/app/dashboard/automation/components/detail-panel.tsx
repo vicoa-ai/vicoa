@@ -32,6 +32,7 @@ import {
 } from '../lib/frequency';
 import type { AutomationTemplate } from '../lib/templates';
 import { DetailsSection, type WorktreeDraft } from './details-section';
+import type { SessionTarget } from './session-target-picker';
 import { FrequencySection } from './frequency-section';
 import { RunHistorySection } from './run-history-section';
 
@@ -43,6 +44,23 @@ function recentDirsFor(m: MachineSummary | undefined): string[] {
 
 function initialDirectory(m: MachineSummary | undefined): string {
   return recentDirsFor(m)[0] ?? m?.home_dir ?? '~/';
+}
+
+/** The session an automation runs in, as the editor holds it. */
+interface TargetDraft {
+  id: string;
+  title: string;
+  /** Known when picked from a list that carries the session's config. */
+  agent?: string | null;
+}
+
+function targetOf(a: AutomationResponse): TargetDraft | null {
+  if (!a.agent_instance_id) return null;
+  return {
+    id: a.agent_instance_id,
+    title: a.agent_instance_name || 'Unnamed session',
+    agent: typeof a.session_config.agent === 'string' ? a.session_config.agent : null,
+  };
 }
 
 export function DetailPanel({
@@ -82,6 +100,8 @@ export function DetailPanel({
   // agent at dispatch, so editing the agent changes what the next run does.
   const [agentProfileId, setAgentProfileId] = useState<string | null>(null);
   const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
+  // Set ⇒ every run continues this session instead of starting a new one.
+  const [targetSession, setTargetSession] = useState<TargetDraft | null>(null);
   const [schedule, setSchedule] = useState<ScheduleDraft>(() => defaultScheduleDraft());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,6 +126,7 @@ export function DetailPanel({
         reconcileAgainst(automation.session_config as unknown as SessionConfig, catalog),
       );
       setAgentProfileId(automation.agent_profile_id ?? null);
+      setTargetSession(targetOf(automation));
       setSchedule(automationToDraft(automation));
     } else {
       // A template may already know a machine/directory (e.g. seeded from a
@@ -124,6 +145,7 @@ export function DetailPanel({
       setWorktree({ mode: 'none', path: null });
       setSessionConfig(defaultsFor(catalog, 'claude'));
       setAgentProfileId(null);
+      setTargetSession(null);
       setSchedule(
         template?.schedule
           ? { ...defaultScheduleDraft(), ...template.schedule }
@@ -152,6 +174,20 @@ export function DetailPanel({
     setDirty(true);
   };
 
+  // Picking a session points the prompt's @-mentions at its machine and
+  // folder. Going back to a new session keeps them, so a run that leaves the
+  // session starts out where the session was.
+  const onTargetSessionChange = (target: SessionTarget | null) => {
+    setTargetSession(
+      target ? { id: target.id, title: target.title, agent: target.agent } : null,
+    );
+    if (target) {
+      setMachineId(target.machine_id);
+      setDirectory(target.project);
+    }
+    setDirty(true);
+  };
+
   const onMachineChange = (id: string) => {
     setMachineId(id);
     setDirectory(initialDirectory(machines.find((m) => m.machine_id === id)));
@@ -165,18 +201,14 @@ export function DetailPanel({
   const selectedMachine = machines.find((m) => m.machine_id === machineId) ?? null;
   const machineOnline = selectedMachine ? isMachineOnline(selectedMachine) : false;
   const promptProjectPath = toAbsolutePath(directory.trim() || undefined, selectedMachine?.home_dir);
+  const promptAgent = targetSession?.agent ?? sessionConfig.agent;
   const promptAgentType: AgentType =
-    sessionConfig.agent === 'codex'
-      ? 'codex'
-      : sessionConfig.agent === 'opencode'
-        ? 'opencode'
-        : 'claude';
+    promptAgent === 'codex' ? 'codex' : promptAgent === 'opencode' ? 'opencode' : 'claude';
 
   const canSave =
     !!title.trim() &&
     !!prompt.trim() &&
-    !!machineId &&
-    !!directory.trim() &&
+    (!!targetSession || (!!machineId && !!directory.trim())) &&
     isDraftComplete(schedule) &&
     !saving;
 
@@ -184,19 +216,29 @@ export function DetailPanel({
     if (!canSave) return;
     setSaving(true);
     setError(null);
-    const base = {
-      title: title.trim(),
-      prompt: prompt.trim(),
-      machine_id: machineId,
-      directory: directory.trim(),
-      worktree: { mode: worktree.mode, path: worktree.path },
-      // Always sent, even when a profile is referenced: it doubles as the
-      // fallback snapshot the scheduler runs off if the profile is later
-      // archived or deleted, so a 3am run is never left without a config.
-      session_config: sessionConfig as unknown as Record<string, unknown>,
-      agent_profile_id: agentProfileId,
-      ...draftToScheduleApi(schedule),
-    };
+    // A session brings its own machine, folder and agent; the server takes
+    // them from it, so only the target goes up.
+    const base = targetSession
+      ? {
+          title: title.trim(),
+          prompt: prompt.trim(),
+          agent_instance_id: targetSession.id,
+          ...draftToScheduleApi(schedule),
+        }
+      : {
+          title: title.trim(),
+          prompt: prompt.trim(),
+          agent_instance_id: null,
+          machine_id: machineId,
+          directory: directory.trim(),
+          worktree: { mode: worktree.mode, path: worktree.path },
+          // Always sent, even when a profile is referenced: it doubles as the
+          // fallback snapshot the scheduler runs off if the profile is later
+          // archived or deleted, so a 3am run is never left without a config.
+          session_config: sessionConfig as unknown as Record<string, unknown>,
+          agent_profile_id: agentProfileId,
+          ...draftToScheduleApi(schedule),
+        };
     try {
       const saved = automation
         ? await api.updateAutomation(automation.id, base)
@@ -266,6 +308,9 @@ export function DetailPanel({
         />
 
         <DetailsSection
+          api={api}
+          targetSession={targetSession}
+          onTargetSessionChange={onTargetSessionChange}
           machines={machines}
           projects={projects}
           machineId={machineId}

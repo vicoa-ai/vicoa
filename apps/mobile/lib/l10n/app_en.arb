@@ -1376,7 +1376,9 @@
   "automationsRunStatusFired": "Ran",
   "automationsRunStatusMissedOffline": "Missed — offline",
   "automationsRunStatusSkipped": "Skipped",
+  "automationsRunsIn": "Runs in",
   "automationsRunsOn": "Runs on",
+  "automationsUnnamedSession": "Unnamed session",
   "automationsSaveFailed": "Couldn't save automation",
   "automationsScheduleOnceAt": "Once · {when}",
   "@automationsScheduleOnceAt": {

@@ -19,6 +19,7 @@ from shared.scheduling import compute_next_run
 from servers.profile_provenance import stamp_agent_profile_in_background
 
 from .dispatch import DispatchResult, dispatch_automation
+from .session_dispatch import dispatch_to_session
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ def _claim_due_blocking() -> list[dict]:
                     "agent_profile_id": (
                         row.agent_profile_id if resolved.from_profile else None
                     ),
+                    "agent_instance_id": row.agent_instance_id,
                     "prompt": row.prompt,
                     "planned_at": row.next_run_at,
                 }
@@ -125,9 +127,10 @@ def _record_run_blocking(
             detail=result.detail,
         )
         db.add(run)
-        db.query(Automation).filter(Automation.id == row["id"]).update(
-            {"last_run_at": now, "last_run_status": result.status}
-        )
+        changes: dict = {"last_run_at": now, "last_run_status": result.status}
+        if result.disable:
+            changes["enabled"] = False
+        db.query(Automation).filter(Automation.id == row["id"]).update(changes)
         db.commit()
 
 
@@ -181,6 +184,9 @@ class AutomationScheduler:
                 raise
 
     async def _process_row(self, row: dict) -> None:
+        if row.get("agent_instance_id") is not None:
+            await self._process_session_row(row)
+            return
         result = await dispatch_automation(
             user_id=row["user_id"],
             machine_id=row["machine_id"],
@@ -203,6 +209,18 @@ class AutomationScheduler:
                     str(row["agent_profile_id"]),
                 )
             linked = await self._await_instance(result.agent_instance_id)
+        await asyncio.to_thread(_record_run_blocking, row, result, linked)
+
+    async def _process_session_row(self, row: dict) -> None:
+        """A run of an automation that continues one session. The session
+        already exists, so the run links to it straight away."""
+        result = await dispatch_to_session(
+            user_id=row["user_id"],
+            automation_id=row["id"],
+            instance_id=row["agent_instance_id"],
+            prompt=row["prompt"],
+        )
+        linked = row["agent_instance_id"] if result.agent_instance_id else None
         await asyncio.to_thread(_record_run_blocking, row, result, linked)
 
     async def _await_instance(self, instance_id: str) -> UUID | None:

@@ -90,6 +90,11 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
   // agent this app couldn't list.
   String? _agentProfileId;
   String? _initialAgentProfileId;
+  // Set when every run continues this session (picked on the web or the
+  // CLI). It brings its own machine, folder and agent, so the sheet shows it
+  // in place of those rows and leaves them out of the save.
+  String? _targetSessionId;
+  String? _targetSessionName;
   List<dynamic> _agentProfiles = const [];
   Map<String, String> _teamNames = const {};
   bool _titleError = false;
@@ -134,6 +139,8 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
       _draft = autils.automationToDraft(a);
       _agentProfileId = autils.automationAgentProfileId(a);
       _initialAgentProfileId = _agentProfileId;
+      _targetSessionId = autils.automationTargetSessionId(a);
+      _targetSessionName = autils.automationTargetSessionName(a);
     } else {
       final defaultMachine = _machines.firstWhere(
         (m) => isMachineOnlineFromMap(m),
@@ -251,15 +258,15 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
   bool get _canSave =>
       _titleController.text.trim().isNotEmpty &&
       _promptController.text.trim().isNotEmpty &&
-      _machineId != null &&
-      _directory.trim().isNotEmpty &&
+      (_targetSessionId != null ||
+          (_machineId != null && _directory.trim().isNotEmpty)) &&
       _draft.isComplete;
 
   void _save() {
     // An automation needs a machine to run on. When none is selected — which,
     // given the auto-select on open, means no computer is connected — nudge the
     // user to connect one rather than silently doing nothing.
-    if (_machineId == null) {
+    if (_targetSessionId == null && _machineId == null) {
       SessionActions.showSnack(
           context, AppLocalizations.of(context).automationsConnectMachineFirst);
       return;
@@ -273,11 +280,13 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
     Navigator.pop(context, <String, dynamic>{
       'title': _titleController.text.trim(),
       'prompt': _promptController.text.trim(),
-      'machine_id': _machineId,
-      'directory': _directory.trim(),
-      'session_config': _sessionConfig.toJson(),
-      if (_agentProfileId != _initialAgentProfileId)
-        'agent_profile_id': _agentProfileId,
+      if (_targetSessionId == null) ...{
+        'machine_id': _machineId,
+        'directory': _directory.trim(),
+        'session_config': _sessionConfig.toJson(),
+        if (_agentProfileId != _initialAgentProfileId)
+          'agent_profile_id': _agentProfileId,
+      },
       ..._draft.toScheduleApi(),
     });
   }
@@ -778,6 +787,23 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
   }
 
   List<Widget> _detailRows(FlutterFlowTheme theme, AppLocalizations l10n) {
+    final sessionId = _targetSessionId;
+    if (sessionId != null) {
+      final open = widget.onOpenInstance;
+      return [
+        AutomationFieldRow(
+          label: l10n.automationsRunsIn,
+          value: _targetSessionName ?? l10n.automationsUnnamedSession,
+          showChevron: open != null,
+          onTap: open == null
+              ? null
+              : () {
+                  Navigator.pop(context);
+                  open(sessionId);
+                },
+        ),
+      ];
+    }
     return [
       AutomationFieldRow(
         label: l10n.automationsRunsOn,

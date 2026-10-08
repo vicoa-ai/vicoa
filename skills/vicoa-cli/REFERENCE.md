@@ -467,6 +467,7 @@ to recurring schedules — sending it alone on update re-times the next run).
 | `--machine-id <id>` | this machine's registered daemon | Machine to run on |
 | `--directory <path>` | current dir | Working directory on the machine |
 | `--worktree-json <JSON>` | — | Worktree spec, e.g. `{"mode":"new"}` or `{"mode":"existing","path":"..."}` |
+| `--session <SESSION_UUID>` | — | Run every fire in this existing session (full id) instead of a new one: the prompt is sent to it, resuming it if it has stopped. It brings its own machine, folder and agent, so the session-config and target flags above are refused next to it |
 
 Other: `--disabled` creates it paused (`enabled=false`). If no machine can be
 resolved (no `--machine-id` and no local daemon has registered), create fails —
@@ -487,6 +488,9 @@ convenience flag — change the agent via `--session-config-json` (which replace
 the config wholesale). `--agent-profile <NAME>` switches it to a saved agent and
 `--agent-profile none` unlinks it; while it is linked, a `--session-config-json`
 on its own is refused, since the saved agent's config is what runs.
+`--session <SESSION_UUID>` points it at a session from now on and `--session none`
+goes back to a new session each run (in the session's last folder and agent
+unless you pass others).
 
 ## `vicoa worktree setup [path]`
 

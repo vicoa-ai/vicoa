@@ -2941,7 +2941,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get automationsRunStatusSkipped => '已跳过';
 
   @override
+  String get automationsRunsIn => '运行于';
+
+  @override
   String get automationsRunsOn => '运行机器';
+
+  @override
+  String get automationsUnnamedSession => '未命名会话';
 
   @override
   String get automationsSaveFailed => '保存自动化失败';
