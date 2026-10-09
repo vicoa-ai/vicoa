@@ -1018,25 +1018,28 @@ class _HomeWidgetState extends State<HomeWidget>
         },
       );
     } else if (action == 'delete') {
+      var removedAt = -1;
       await SessionActions.deleteSession(
         context,
         instanceId: instanceId,
         firebaseEventName: 'HOME_PAGE_session_swipe_delete',
         onBeforeApi: () {
           // Optimistic removal so the item disappears immediately
-          _model.removeInstance(instanceId);
+          removedAt = _model.removeInstance(instanceId);
           setState(() {});
         },
         onSuccess: () async {
           _showHomeSnackBar(AppLocalizations.of(context).homeSessionDeleted);
         },
         onFailure: () async {
-          // Rollback the optimistic removal
+          // Roll back the optimistic removal right away so the session is there
+          // to retry, then refresh in case the server state moved meanwhile.
+          _model.restoreInstance(instance, index: removedAt);
+          if (!mounted) return;
+          setState(() {});
+          _showHomeErrorSnackBar(AppLocalizations.of(context).homeDeleteFailed);
           await _model.loadAgents(forceRefresh: true);
-          if (mounted) {
-            setState(() {});
-            _showHomeErrorSnackBar(AppLocalizations.of(context).homeDeleteFailed);
-          }
+          if (mounted) setState(() {});
         },
       );
     }

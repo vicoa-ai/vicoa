@@ -380,7 +380,7 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
       final preserveTail =
           !showLoading && !resetWindow && agentInstances.length > newInstances.length;
       final mergedInstances =
-          _mergeRefreshedInstances(newInstances, preserveExistingTail: preserveTail);
+          mergeRefreshedInstances(newInstances, preserveExistingTail: preserveTail);
       final responseHasMore = response['hasMore'] == true;
       final responseNextPage = response['nextPage'] as int?;
 
@@ -453,7 +453,8 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     }
   }
 
-  List<dynamic> _mergeRefreshedInstances(
+  @visibleForTesting
+  List<dynamic> mergeRefreshedInstances(
     List<dynamic> firstPageInstances, {
     required bool preserveExistingTail,
   }) {
@@ -925,14 +926,31 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     return selectedDateFilterLabel;
   }
 
-  // Optimistically remove an instance from the local list (e.g. deleted from chat page)
-  void removeInstance(String instanceId) {
+  // Optimistically remove an instance from the local list (e.g. deleted from chat page).
+  // Returns where it sat (-1 if absent), so a delete that fails can put it back.
+  int removeInstance(String instanceId) {
     _deletedInstanceIds.add(instanceId);
-    agentInstances.removeWhere((instance) => instance['id'] == instanceId);
+    final index = agentInstances.indexWhere((instance) => instance['id'] == instanceId);
+    if (index != -1) agentInstances.removeAt(index);
     final appState = FFAppState();
     appState.cachedAgentInstances = agentInstances;
     appState.cachedAgentInstancesTimestamp = DateTime.now();
     appState.clearChatDraft(instanceId);
+    return index;
+  }
+
+  // Undo [removeInstance] for a delete that failed: stop filtering the session
+  // out of refreshes and put it back at [index]. Restored locally rather than
+  // left to a refetch, which can't bring it back while offline.
+  void restoreInstance(Map<String, dynamic> instance, {int index = 0}) {
+    final instanceId = instance['id']?.toString();
+    if (instanceId == null) return;
+    _deletedInstanceIds.remove(instanceId);
+    if (agentInstances.any((i) => i is Map && i['id'] == instanceId)) return;
+    agentInstances = List<dynamic>.from(agentInstances)..insert(index.clamp(0, agentInstances.length), instance);
+    final appState = FFAppState();
+    appState.cachedAgentInstances = agentInstances;
+    appState.cachedAgentInstancesTimestamp = DateTime.now();
   }
 
   // Delete session/instance
