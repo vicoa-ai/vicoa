@@ -17,6 +17,10 @@ import '/pages/snack_bar/snack_bar_widget.dart';
 class SessionActions {
   SessionActions._();
 
+  /// How long a failure snack stays up: long enough to read a one-line error,
+  /// short enough not to sit over the list. Confirmations stay shorter.
+  static const int errorSnackMs = 3000;
+
   /// Shows a transient snack message using the shared [SnackBarWidget].
   /// Rendered as a modal route so it appears above bottom sheets and dialogs,
   /// unlike a native ScaffoldMessenger SnackBar.

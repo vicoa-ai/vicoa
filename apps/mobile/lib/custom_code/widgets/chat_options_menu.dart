@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/l10n/app_localizations.dart';
+import '/pages/common/session_actions.dart';
 
 class ChatOptionsMenu extends StatelessWidget {
   const ChatOptionsMenu({
@@ -140,7 +141,7 @@ class ChatOptionsMenu extends StatelessWidget {
           if (isDisabled) {
             // Explain instead of doing nothing — a dead tap reads as a bug.
             if (disabledReason != null) {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(disabledReason)));
+              SessionActions.showSnack(context, disabledReason, waitTime: SessionActions.errorSnackMs);
             }
             return;
           }

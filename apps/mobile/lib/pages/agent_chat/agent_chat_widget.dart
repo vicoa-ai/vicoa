@@ -2476,7 +2476,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     );
     if (!mounted) return;
     if (result['success'] != true) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result['error']?.toString() ?? l10n.sessionResumeFailed)));
+      _showSnackBarMessage(result['error']?.toString() ?? l10n.sessionResumeFailed, waitTime: SessionActions.errorSnackMs);
       return;
     }
     // Open a resume grace so both the composer and the home-list dot treat the
@@ -2730,7 +2730,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       onFailure: () async {
         await _showSnackBarMessage(
             AppLocalizations.of(context).agentChatRenameFailed,
-            waitTime: 2000);
+            waitTime: SessionActions.errorSnackMs);
       },
     );
   }
@@ -2748,7 +2748,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       onFailure: () async {
         await _showSnackBarMessage(
             AppLocalizations.of(context).agentChatCloseFailed,
-            waitTime: 2000);
+            waitTime: SessionActions.errorSnackMs);
       },
     );
   }
@@ -2765,7 +2765,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       onFailure: () async {
         await _showSnackBarMessage(
             AppLocalizations.of(context).agentChatDeleteFailed,
-            waitTime: 2000);
+            waitTime: SessionActions.errorSnackMs);
       },
     );
   }

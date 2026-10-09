@@ -220,12 +220,15 @@ class _HomeWidgetState extends State<HomeWidget>
     );
   }
 
-  void _showHomeSnackBar(String message) {
+  void _showHomeSnackBar(String message, {int waitTime = 1500}) {
     if (!mounted) {
       return;
     }
-    SessionActions.showSnack(context, message, waitTime: 1500);
+    SessionActions.showSnack(context, message, waitTime: waitTime);
   }
+
+  void _showHomeErrorSnackBar(String message) =>
+      _showHomeSnackBar(message, waitTime: SessionActions.errorSnackMs);
 
   /// Opens the New Session flow (shared by the app-bar + button and the
   /// getting-started checklist's "Start a session" step).
@@ -988,10 +991,7 @@ class _HomeWidgetState extends State<HomeWidget>
       },
       onFailure: () async {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(AppLocalizations.of(context).homeRenameFailed),
-            backgroundColor: Colors.red,
-          ));
+          _showHomeErrorSnackBar(AppLocalizations.of(context).homeRenameFailed);
         }
       },
     );
@@ -1013,10 +1013,7 @@ class _HomeWidgetState extends State<HomeWidget>
         },
         onFailure: () async {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(AppLocalizations.of(context).homeCloseFailed),
-              backgroundColor: Colors.red,
-            ));
+            _showHomeErrorSnackBar(AppLocalizations.of(context).homeCloseFailed);
           }
         },
       );
@@ -1038,10 +1035,7 @@ class _HomeWidgetState extends State<HomeWidget>
           await _model.loadAgents(forceRefresh: true);
           if (mounted) {
             setState(() {});
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(AppLocalizations.of(context).homeDeleteFailed),
-              backgroundColor: Colors.red,
-            ));
+            _showHomeErrorSnackBar(AppLocalizations.of(context).homeDeleteFailed);
           }
         },
       );
@@ -1067,7 +1061,7 @@ class _HomeWidgetState extends State<HomeWidget>
       setState(() {
         instance['pinned_at'] = wasPinned ? nowIso : null;
       });
-      _showHomeSnackBar(
+      _showHomeErrorSnackBar(
         wasPinned
             ? AppLocalizations.of(context).homeUnpinFailed
             : AppLocalizations.of(context).homePinFailed,
