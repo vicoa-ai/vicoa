@@ -226,6 +226,7 @@ class _GettingStartedChecklistState extends State<GettingStartedChecklist> {
                         l10n.gettingStartedTitle,
                         style: theme.titleSmall.override(
                           font: GoogleFonts.sourceSans3(),
+                          color: theme.primaryText,
                           fontWeight: FontWeight.w700,
                           fontSize: 16.0,
                           letterSpacing: 0.0,

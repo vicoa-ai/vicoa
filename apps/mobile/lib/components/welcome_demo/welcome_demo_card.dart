@@ -89,6 +89,7 @@ class WelcomeDemoCard extends StatelessWidget {
                         style: theme.titleMedium.override(
                           font: GoogleFonts.sourceSans3(
                               fontWeight: FontWeight.w600),
+                          color: theme.primaryText,
                           fontSize: 17.0,
                           fontWeight: FontWeight.w600,
                         ),
