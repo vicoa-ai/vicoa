@@ -7,8 +7,8 @@ import '/pages/common/filter_panel.dart';
 import 'automations_model.dart';
 
 /// Anchored filter dropdown for the Automations page, the same panel as the
-/// Tasks filter: a "Status" section (All / Active / Paused) and a single-select
-/// "Project" section, matched against each automation's derived project.
+/// Tasks filter: a single-select "Project" section first, matched against each
+/// automation's derived project, then "Status" (All / Active / Paused).
 Future<void> showAutomationFilterPanel({
   required BuildContext context,
   required AutomationsModel model,
@@ -57,6 +57,16 @@ class _AutomationFilterPanelState extends State<_AutomationFilterPanel> {
     return FilterPanelCard(
       children: [
         FilterPanelSection(
+          title: l10n.filterProject,
+          children: projectFilterOptions(
+            l10n: l10n,
+            projects: m.projects,
+            selected: m.projectFilter,
+            onSelect: _selectProject,
+          ),
+        ),
+        const FilterPanelDivider(),
+        FilterPanelSection(
           title: l10n.filterStatus,
           children: [
             statusRow('all', Icons.all_inclusive_rounded,
@@ -65,18 +75,6 @@ class _AutomationFilterPanelState extends State<_AutomationFilterPanel> {
                 l10n.automationsFilterActive),
             statusRow('paused', Icons.pause_circle_outline_rounded,
                 l10n.automationsFilterPaused),
-          ],
-        ),
-        const FilterPanelDivider(),
-        FilterPanelSection(
-          title: l10n.filterProject,
-          children: [
-            ...projectFilterOptions(
-              l10n: l10n,
-              projects: m.projects,
-              selected: m.projectFilter,
-              onSelect: _selectProject,
-            ),
             const SizedBox(height: 8.0),
           ],
         ),
