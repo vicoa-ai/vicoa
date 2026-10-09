@@ -9,6 +9,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:vicoa/components/principal_avatar/principal_avatar.dart';
 import 'package:vicoa/pages/home/project_group_icon.dart';
 import 'package:vicoa/pages/home/project_groups.dart';
+import 'package:vicoa/pages/tasks/task_glyphs.dart';
 
 Future<void> _pump(WidgetTester tester, SessionGroup group, {bool open = true}) async {
   await tester.pumpWidget(MaterialApp(
@@ -16,6 +17,10 @@ Future<void> _pump(WidgetTester tester, SessionGroup group, {bool open = true}) 
   ));
   await tester.pump();
 }
+
+/// The default folder glyph on screen, open or closed.
+Finder _folder({required bool open}) => find.byWidgetPredicate(
+    (w) => w is CustomPaint && w.painter is ProjectFolderPainter && (w.painter as ProjectFolderPainter).open == open);
 
 SessionGroup _group(Map<String, dynamic>? project, {String key = 'p-1'}) =>
     SessionGroup(key: key, label: 'app', sessions: const [], isProject: true, project: project);
@@ -27,21 +32,22 @@ void main() {
 
   testWidgets('a project without an image or emoji is a folder that opens with the group', (tester) async {
     await _pump(tester, _group({'id': 'p-1', 'name': 'app'}));
-    expect(find.byIcon(Icons.folder_open_outlined), findsOneWidget);
+    expect(_folder(open: true), findsOneWidget);
 
     await _pump(tester, _group({'id': 'p-1', 'name': 'app'}), open: false);
-    expect(find.byIcon(Icons.folder_outlined), findsOneWidget);
+    expect(_folder(open: false), findsOneWidget);
   });
 
   testWidgets('a folder no project claims is still a folder', (tester) async {
     await _pump(tester, _group(null, key: 'app'));
-    expect(find.byIcon(Icons.folder_open_outlined), findsOneWidget);
+    expect(_folder(open: true), findsOneWidget);
   });
 
   testWidgets('No project is not a folder', (tester) async {
     final groups = groupSessionsByProject([{'id': 's', 'project': null}], const []);
     await _pump(tester, groups.single);
-    expect(find.byIcon(Icons.folder_open_outlined), findsNothing);
+    expect(_folder(open: true), findsNothing);
+    expect(_folder(open: false), findsNothing);
     expect(find.byType(CustomPaint), findsWidgets);
   });
 

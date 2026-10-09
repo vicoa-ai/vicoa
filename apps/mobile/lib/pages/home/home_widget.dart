@@ -29,7 +29,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'home_model.dart';
-import 'project_group_icon.dart';
+import 'home_group_header.dart';
 export 'home_model.dart';
 import '/auth/supabase_auth/auth_util.dart';
 
@@ -343,53 +343,17 @@ class _HomeWidgetState extends State<HomeWidget>
 
     for (final group in groupedSessions) {
       final isCollapsed = _collapsedGroups[group.key] ?? false;
-      // A project's name is shown as is; the fixed group names (time, status,
-      // Pinned, No project) are translated.
-      final title = group.isProject && !group.isNoProject
-          ? group.label
-          : localizedFilterLabel(group.label);
 
       widgets.add(
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
+        HomeGroupHeader(
+          group: group,
+          collapsed: isCollapsed,
+          large: useLargeHeader,
           onTap: () {
             setState(() {
               _collapsedGroups[group.key] = !isCollapsed;
             });
           },
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(6.0, 6.0, 0.0, 8.0),
-            child: Row(
-              children: [
-                if (group.isProject) ...[
-                  ProjectGroupIcon(group: group, open: !isCollapsed),
-                  const SizedBox(width: 8.0),
-                ],
-                Flexible(
-                  child: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: FlutterFlowTheme.of(context).titleMedium.override(
-                          fontSize: useLargeHeader ? 17.0 : 16.0,
-                          color: FlutterFlowTheme.of(context).secondaryText,
-                        ),
-                  ),
-                ),
-                const SizedBox(width: 4.0),
-                AnimatedRotation(
-                  turns: isCollapsed ? -0.25 : 0.0,
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeInOut,
-                  child: Icon(
-                    Icons.expand_more_rounded,
-                    color: FlutterFlowTheme.of(context).secondaryText,
-                    size: useLargeHeader ? 20.0 : 18.0,
-                  ),
-                ),
-              ],
-            ),
-          ),
         ),
       );
 

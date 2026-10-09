@@ -215,7 +215,7 @@ class _PriorityPainter extends CustomPainter {
 
 /// A project's icon, in the web `ProjectIcon`'s fallback order: the uploaded /
 /// git-seeded image (`icon_image_uri`, fetched with the bearer like an
-/// attachment) → the emoji `icon` → a muted folder glyph → a dashed square
+/// attachment) → the emoji `icon` → a muted lucide folder → a dashed square
 /// when there is no project at all ("No project"; not a dashed circle, which
 /// is the Backlog status).
 class TaskProjectIcon extends StatelessWidget {
@@ -285,14 +285,89 @@ class TaskProjectIcon extends StatelessWidget {
       );
     }
     if (project != null) {
-      return Icon(open ? Icons.folder_open_outlined : Icons.folder_outlined,
-          size: size, color: theme.secondaryText);
+      return CustomPaint(
+        size: Size.square(size),
+        painter: ProjectFolderPainter(open: open, color: theme.secondaryText),
+      );
     }
     return CustomPaint(
       size: Size.square(size),
       painter: _DashedSquarePainter(color: theme.secondaryText),
     );
   }
+}
+
+/// lucide's `folder` / `folder-open` (the web `ProjectIcon`'s defaults) in
+/// their 24×24 space, stroke 2, round caps and joins. Drawn rather than taken
+/// from Material, whose open folder is indistinguishable from the closed one
+/// at header sizes.
+class ProjectFolderPainter extends CustomPainter {
+  ProjectFolderPainter({required this.open, required this.color});
+
+  final bool open;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.width / 24;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2 * s
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final path = Path();
+    void move(double x, double y) => path.moveTo(x * s, y * s);
+    void line(double x, double y) => path.lineTo(x * s, y * s);
+    // A radius-2 corner; `cw` is the SVG sweep flag.
+    void arc(double x, double y, {required bool cw}) =>
+        path.arcToPoint(Offset(x * s, y * s), radius: Radius.circular(2 * s), clockwise: cw);
+
+    if (open) {
+      // m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0
+      // 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81
+      // 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2
+      move(6, 14);
+      line(7.5, 11.1);
+      arc(9.24, 10, cw: true);
+      line(20, 10);
+      arc(21.94, 12.5, cw: true);
+      line(20.4, 18.5);
+      arc(18.45, 20, cw: true);
+      line(4, 20);
+      arc(2, 18, cw: true);
+      line(2, 5);
+      arc(4, 3, cw: true);
+      line(7.9, 3);
+      arc(9.59, 3.9, cw: true);
+      line(10.4, 5.1);
+      arc(12.07, 6, cw: false);
+      line(18, 6);
+      arc(20, 8, cw: true);
+      line(20, 10);
+    } else {
+      // M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2
+      // 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z
+      move(20, 20);
+      arc(22, 18, cw: false);
+      line(22, 8);
+      arc(20, 6, cw: false);
+      line(12.1, 6);
+      arc(10.41, 5.1, cw: true);
+      line(9.6, 3.9);
+      arc(7.93, 3, cw: false);
+      line(4, 3);
+      arc(2, 5, cw: false);
+      line(2, 18);
+      arc(4, 20, cw: false);
+      path.close();
+    }
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(ProjectFolderPainter old) =>
+      old.open != open || old.color != color;
 }
 
 /// lucide's `square-dashed` (the web's "No project" glyph) in its 24×24 space:
