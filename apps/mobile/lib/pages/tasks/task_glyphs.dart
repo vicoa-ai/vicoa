@@ -219,10 +219,19 @@ class _PriorityPainter extends CustomPainter {
 /// when there is no project at all ("No project"; not a dashed circle, which
 /// is the Backlog status).
 class TaskProjectIcon extends StatelessWidget {
-  const TaskProjectIcon({super.key, required this.project, this.size = 14.0});
+  const TaskProjectIcon({
+    super.key,
+    required this.project,
+    this.size = 14.0,
+    this.open = false,
+  });
 
   final dynamic project;
   final double size;
+
+  /// Draws the default folder open, for an expanded Home project group (the
+  /// web's `ProjectIcon open`). No effect on an image or emoji.
+  final bool open;
 
   /// The web's 3px radius at its 14px default, scaled with the icon.
   double get _radius => size * 3 / 14;
@@ -276,7 +285,8 @@ class TaskProjectIcon extends StatelessWidget {
       );
     }
     if (project != null) {
-      return Icon(Icons.folder_outlined, size: size, color: theme.secondaryText);
+      return Icon(open ? Icons.folder_open_outlined : Icons.folder_outlined,
+          size: size, color: theme.secondaryText);
     }
     return CustomPaint(
       size: Size.square(size),

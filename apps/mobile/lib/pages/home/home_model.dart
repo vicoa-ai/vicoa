@@ -25,8 +25,9 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
   // Agent instances (sessions) state
   List<dynamic> agentInstances = [];
   // The user's projects in the backend's order (their drag order first, then
-  // recency) — names + order for the "Project" grouping. Seeded from cache so
-  // the groups paint in the right order before the refresh lands.
+  // recency), archived ones included — names, icons + order for the "Project"
+  // grouping, and which sessions to hide. Seeded from cache so the groups
+  // paint in the right order before the refresh lands.
   List<dynamic> projects = [];
   LoadingState loadingState = LoadingState.initial;
   bool showFilters = false;
@@ -112,8 +113,8 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
   List<BranchProbeTarget> _branchProbeTargets() {
     final seen = <String>{};
     final targets = <BranchProbeTarget>[];
-    for (final group in getGroupedSessions().values) {
-      for (final s in group) {
+    for (final group in getGroupedSessions()) {
+      for (final s in group.sessions) {
         if (s is! Map<String, dynamic>) continue;
         if (sessionWorktreeBranch(s) != null) continue;
         if (s['live_state']?.toString() == actions.kLiveStateMachineOffline) continue;
@@ -359,7 +360,7 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
       // Best effort — `apiGetProjects` answers [] on failure, and an empty
       // answer never evicts the cached list (a user with no projects has no
       // linked sessions to group anyway).
-      final projectsFuture = actions.apiGetProjects();
+      final projectsFuture = actions.apiGetProjects(includeArchived: true);
       final response = await actions.apiGetAllAgentInstances(
         page: 1,
         pageSize: refreshFetchSize,
@@ -772,7 +773,7 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     return filtered;
   }
 
-  Map<String, List<dynamic>> getGroupedSessions() {
+  List<SessionGroup> getGroupedSessions() {
     int compareLatest(dynamic a, dynamic b) {
       final aDate = DateTime.tryParse(a['latest_message_at'] ?? a['started_at'] ?? '') ?? DateTime.now();
       final bDate = DateTime.tryParse(b['latest_message_at'] ?? b['started_at'] ?? '') ?? DateTime.now();
@@ -787,27 +788,31 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
       ..sort(compareLatest);
     final pinnedIds = pinned.map((s) => s['id']).toSet();
 
-    final unpinned = getFilteredSessions()
+    // Sessions of an archived project leave the list in every grouping, as
+    // on the web sidebar; pinned ones stay, like they skip the filters.
+    final unpinned = withoutArchivedProjects(getFilteredSessions(), projects)
         .where((s) => !pinnedIds.contains(s['id']))
         .toList()
       ..sort(compareLatest);
 
-    final Map<String, List<dynamic>> grouped =
-        LinkedHashMap<String, List<dynamic>>();
-    if (pinned.isNotEmpty) {
-      grouped['Pinned'] = pinned;
-    }
+    List<SessionGroup> byLabel(Map<String, List<dynamic>> grouped) => [
+          for (final e in grouped.entries)
+            SessionGroup(key: e.key, label: e.key, sessions: e.value),
+        ];
 
-    final Map<String, List<dynamic>> rest;
+    final List<SessionGroup> rest;
     if (selectedGroupBy == 'Project') {
-      rest = _groupByProject(unpinned);
+      rest = groupSessionsByProject(unpinned, projects);
     } else if (selectedGroupBy == 'Status') {
-      rest = _groupByStatus(unpinned);
+      rest = byLabel(_groupByStatus(unpinned));
     } else {
-      rest = _groupByTime(unpinned);
+      rest = byLabel(_groupByTime(unpinned));
     }
-    grouped.addAll(rest);
-    return grouped;
+    return [
+      if (pinned.isNotEmpty)
+        SessionGroup(key: 'Pinned', label: 'Pinned', sessions: pinned),
+      ...rest,
+    ];
   }
 
   Map<String, List<dynamic>> _groupByTime(List<dynamic> sessions) {
@@ -821,9 +826,6 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     }
     return grouped;
   }
-
-  Map<String, List<dynamic>> _groupByProject(List<dynamic> sessions) =>
-      groupSessionsByProject(sessions, projects);
 
   Map<String, List<dynamic>> _groupByStatus(List<dynamic> sessions) {
     const order = ['In progress', 'In review', 'Done', 'Closed'];
