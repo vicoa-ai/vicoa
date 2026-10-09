@@ -107,3 +107,32 @@ class TaskMetaChip extends StatelessWidget {
     );
   }
 }
+
+/// "VIC-42", the task's identifier, wherever a task is listed. Mirrors the
+/// web's `TaskIdentifier`: always shown (not behind the Display toggles), since
+/// it is the task's name, the thing you type into chat or a commit message.
+/// Renders nothing for a task without one (unfiled, or its project has no key
+/// yet); a placeholder would read as a reference that doesn't resolve.
+class TaskIdentifier extends StatelessWidget {
+  const TaskIdentifier({super.key, required this.task, this.fontSize = 11.0});
+
+  final dynamic task;
+  final double fontSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final identifier = tutils.taskIdentifier(task);
+    if (identifier == null) return const SizedBox.shrink();
+    final theme = FlutterFlowTheme.of(context);
+    return Text(
+      identifier,
+      maxLines: 1,
+      style: GoogleFonts.jetBrainsMono(
+        color: theme.secondaryText.withValues(alpha: 0.8),
+        fontSize: fontSize,
+        fontWeight: FontWeight.w500,
+        letterSpacing: 0.0,
+      ),
+    );
+  }
+}

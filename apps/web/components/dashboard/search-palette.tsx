@@ -50,7 +50,7 @@ import {
   getSessionTitle,
 } from '@/components/dashboard/session-display';
 import { SessionAgentIcon } from '@/components/dashboard/agent-type-icon';
-import { PriorityIcon, StatusIcon } from '@/components/dashboard/task-ui';
+import { PriorityIcon, StatusIcon, TaskIdentifier } from '@/components/dashboard/task-ui';
 
 const RECENT_SESSION_COUNT = 7;
 const LOCAL_FALLBACK_LIMIT = 20;
@@ -609,6 +609,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
                       <span className="min-w-0 flex-1 truncate">
                         <Highlight text={task.title} query={trimmedQuery} />
                       </span>
+                      <TaskIdentifier task={task} />
                       <PriorityIcon priority={task.priority} />
                     </div>
                     {task.snippet && (

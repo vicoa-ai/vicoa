@@ -1399,6 +1399,8 @@ class SearchSessionResult(BaseModel):
 
 class SearchTaskResult(BaseModel):
     id: UUID
+    # "VIC-42", or None under the same rules as TaskResponse.identifier.
+    identifier: str | None = None
     title: str
     status: TaskStatusLiteral
     priority: TaskPriorityLiteral
@@ -1406,7 +1408,8 @@ class SearchTaskResult(BaseModel):
     # 500 the whole search once any unfiled task matched.
     project_id: UUID | None = None
     updated_at: datetime
-    match_source: Literal["title", "description"]
+    # "identifier": the query named the task's key ("VIC-42"), not its text.
+    match_source: Literal["title", "description", "identifier"]
     snippet: str | None = None
 
 

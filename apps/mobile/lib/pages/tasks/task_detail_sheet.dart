@@ -9,11 +9,11 @@ import 'task_chips.dart';
 import 'task_glyphs.dart';
 import 'task_l10n.dart';
 
-/// Read-only detail sheet for a task: title, an optional parent breadcrumb,
-/// description, the status/priority/project/label chips, and (for a parent) a
-/// flush list of its sub-tasks. Actions (Start session / Edit / Delete) sit in
-/// one row at the bottom. Returns the chosen action ('start' | 'edit' |
-/// 'delete') or null if dismissed.
+/// Read-only detail sheet for a task: an optional parent breadcrumb, the
+/// "VIC-42" identifier, title, description, the status/priority/project/label
+/// chips, and (for a parent) a flush list of its sub-tasks. Actions (Start
+/// session / Edit / Delete) sit in one row at the bottom. Returns the chosen
+/// action ('start' | 'edit' | 'delete') or null if dismissed.
 Future<String?> showTaskDetailSheet({
   required BuildContext context,
   required dynamic task,
@@ -116,10 +116,15 @@ class _TaskDetailSheet extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8.0),
                         child: _ParentChip(
-                          title: tutils.taskTitle(parentTask),
+                          task: parentTask,
                           onTap: () => Navigator.pop(
                               context, 'open:${tutils.taskId(parentTask)}'),
                         ),
+                      ),
+                    if (tutils.taskIdentifier(task) != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4.0),
+                        child: TaskIdentifier(task: task, fontSize: 12.0),
                       ),
                     Text(
                       tutils.taskTitle(task),
@@ -196,11 +201,12 @@ class _TaskDetailSheet extends StatelessWidget {
   }
 }
 
-/// "↳ <parent title>" pill linking the task to its parent; tap to open it.
+/// "↳ VIC-12 <parent title>" pill linking the task to its parent; tap to open
+/// it.
 class _ParentChip extends StatelessWidget {
-  const _ParentChip({required this.title, required this.onTap});
+  const _ParentChip({required this.task, required this.onTap});
 
-  final String title;
+  final dynamic task;
   final VoidCallback onTap;
 
   @override
@@ -222,9 +228,13 @@ class _ParentChip extends StatelessWidget {
             Icon(Icons.subdirectory_arrow_right_rounded,
                 color: theme.secondaryText, size: 15.0),
             const SizedBox(width: 6.0),
+            if (tutils.taskIdentifier(task) != null) ...[
+              TaskIdentifier(task: task),
+              const SizedBox(width: 6.0),
+            ],
             Flexible(
               child: Text(
-                title,
+                tutils.taskTitle(task),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.labelMedium.override(
@@ -243,9 +253,10 @@ class _ParentChip extends StatelessWidget {
   }
 }
 
-/// The task's sub-tasks. Each row keeps the title flush-left (aligned with the
-/// rest of the sheet — no leading indent) with the status glyph trailing on the
-/// right, mirroring a normal task; tap a row to open that sub-task.
+/// The task's sub-tasks. Each row keeps the identifier and title flush-left
+/// (aligned with the rest of the sheet — no leading indent) with the status
+/// glyph trailing on the right, mirroring a normal task; tap a row to open that
+/// sub-task.
 class _SubtaskList extends StatelessWidget {
   const _SubtaskList({required this.subtasks});
 
@@ -283,6 +294,10 @@ class _SubtaskList extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(vertical: 8.0),
                 child: Row(
                   children: [
+                    if (tutils.taskIdentifier(st) != null) ...[
+                      TaskIdentifier(task: st),
+                      const SizedBox(width: 8.0),
+                    ],
                     Expanded(
                       child: Text(
                         tutils.taskTitle(st),

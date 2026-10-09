@@ -1040,13 +1040,16 @@ export interface SearchSessionResult {
 
 export interface SearchTaskResult {
   id: string;
+  /** "VIC-42"; null under the same rules as TaskResponse.identifier. */
+  identifier: string | null;
   title: string;
   status: TaskStatus;
   priority: TaskPriority;
   /** null = "No project" (unfiled), as on TaskResponse. */
   project_id: string | null;
   updated_at: string;
-  match_source: 'title' | 'description';
+  /** 'identifier': the query named the task's key ("VIC-42"), not its text. */
+  match_source: 'title' | 'description' | 'identifier';
   snippet: string | null;
 }
 

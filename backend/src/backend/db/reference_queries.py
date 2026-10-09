@@ -22,17 +22,7 @@ added (see `link_instance_to_task`).
 import re
 from uuid import UUID
 
-from sqlalchemy import (
-    ColumnElement,
-    String,
-    and_,
-    case,
-    cast,
-    false,
-    func,
-    or_,
-    select,
-)
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from shared.database import AgentInstance, Automation, Project, Task
@@ -40,7 +30,7 @@ from shared.database.enums import AgentStatus
 from shared.database.project_matching import resolve_automation_project_ids
 
 from .queries import CLOSED_STATUSES
-from .search_queries import _escape_like
+from .search_queries import _escape_like, _identifier_conditions
 from .task_queries import owned_task_filter
 from .task_serializers import serialize_task, serialize_tasks
 
@@ -64,11 +54,6 @@ MAX_PROMPT_CHARS = 2000
 MAX_TOKEN_CHARS = 32
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
-
-# A (lowercased) query shaped like a task identifier, or a prefix of one:
-# "vic", "vic-", "vic-3", "vic-38". The key half is bounded like
-# `task_identity._IDENTIFIER`; the 1-char floor lets "#v" start narrowing.
-_IDENTIFIER_QUERY = re.compile(r"^([a-z][a-z0-9]{0,7})(?:(-)([0-9]{0,9}))?$")
 
 
 def slugify_token(label: str, fallback: str) -> str:
@@ -164,36 +149,6 @@ def _session_candidates(
         }
         for instance in rows
     ]
-
-
-def _identifier_conditions(
-    user_id: UUID, lowered: str
-) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
-    """``(exact, partial)`` task filters for a query shaped like "vic-38".
-
-    The identifier is what a task is called everywhere else (the board, the
-    detail header, `vicoa task ls`), yet it is nowhere in the title, so title
-    matching alone can never find `#VIC-38`. ``partial`` also covers the
-    keystrokes on the way there ("vic", "vic-", "vic-3"), so the panel narrows
-    to that project's tasks instead of going blank until the number is
-    complete. Both are ``false()`` for any other query.
-    """
-    match = _IDENTIFIER_QUERY.match(lowered)
-    if match is None:
-        return false(), false()
-    key, dash, digits = match.group(1).upper(), match.group(2), match.group(3)
-    # Keys and digits are alphanumeric, so neither LIKE needs escaping.
-    project_key = func.upper(Project.key)
-    key_match = project_key == key if dash else project_key.like(f"{key}%")
-    in_project = Task.project_id.in_(
-        select(Project.id).where(Project.user_id == user_id, key_match)
-    )
-    if not digits:
-        return false(), in_project
-    return (
-        and_(in_project, Task.number == int(digits)),
-        and_(in_project, cast(Task.number, String).like(f"{digits}%")),
-    )
 
 
 def _task_candidates(

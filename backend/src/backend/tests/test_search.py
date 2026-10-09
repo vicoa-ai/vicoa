@@ -1,7 +1,7 @@
 """Tests for workspace search (`GET /api/v1/search`, the cmd+K palette)."""
 
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from shared.database import AgentInstance, Automation, Machine, Message, Task, User
 from shared.database.enums import AgentStatus, SenderType
@@ -49,6 +49,75 @@ class TestSearchAPI:
             "/api/v1/search", params={"q": "palette"}
         ).json()
         assert [t["project_id"] for t in body["tasks"]] == [project["id"]]
+
+    def _garden_tasks(self, client, titles=("Seed calendar", "Compost tracker")):
+        project = client.post(
+            "/api/v1/projects", json={"name": "Garden Planner"}
+        ).json()
+        return [
+            client.post(
+                "/api/v1/tasks", json={"title": title, "project_id": project["id"]}
+            ).json()
+            for title in titles
+        ]
+
+    def test_finds_a_task_by_its_identifier(self, authenticated_client):
+        """ "GAR-2" is how the task is named everywhere else, and it is
+        nowhere in its text, so text matching alone came back empty."""
+        self._garden_tasks(authenticated_client)
+
+        for q in ("GAR-2", "gar-2"):
+            tasks = authenticated_client.get("/api/v1/search", params={"q": q}).json()[
+                "tasks"
+            ]
+            assert [t["identifier"] for t in tasks] == ["GAR-2"]
+            assert tasks[0]["title"] == "Compost tracker"
+            assert tasks[0]["match_source"] == "identifier"
+            assert tasks[0]["snippet"] is None
+
+    def test_a_partial_identifier_narrows_to_the_project(self, authenticated_client):
+        self._garden_tasks(authenticated_client)
+
+        tasks = authenticated_client.get("/api/v1/search", params={"q": "gar-"}).json()[
+            "tasks"
+        ]
+        assert sorted(t["identifier"] for t in tasks) == ["GAR-1", "GAR-2"]
+
+    def test_a_bare_key_is_text_not_an_identifier(self, authenticated_client):
+        """Without the dash it is a text search: "gar" must not pull in every
+        task of the GAR project, only the ones whose text says it."""
+        self._garden_tasks(authenticated_client, ("Seed calendar", "Garlic bed"))
+
+        tasks = authenticated_client.get("/api/v1/search", params={"q": "gar"}).json()[
+            "tasks"
+        ]
+        assert [t["title"] for t in tasks] == ["Garlic bed"]
+        assert tasks[0]["match_source"] == "title"
+
+    def test_an_exact_identifier_leads_even_when_done(
+        self, authenticated_client, test_db
+    ):
+        first, second = self._garden_tasks(authenticated_client)
+        authenticated_client.patch(
+            f"/api/v1/tasks/{first['id']}", json={"status": "done"}
+        )
+        # GAR-10 also starts with "GAR-1", and it's open.
+        test_db.get(Task, UUID(second["id"])).number = 10
+        test_db.commit()
+
+        tasks = authenticated_client.get(
+            "/api/v1/search", params={"q": "GAR-1"}
+        ).json()["tasks"]
+        assert [t["identifier"] for t in tasks] == ["GAR-1", "GAR-10"]
+
+    def test_text_hits_carry_the_identifier(self, authenticated_client):
+        self._garden_tasks(authenticated_client)
+
+        tasks = authenticated_client.get(
+            "/api/v1/search", params={"q": "compost"}
+        ).json()["tasks"]
+        assert [t["identifier"] for t in tasks] == ["GAR-2"]
+        assert tasks[0]["match_source"] == "title"
 
     def test_groups_sessions_tasks_automations(
         self, authenticated_client, test_db, test_user, test_agent_type

@@ -14,17 +14,17 @@ import '/pages/agent_chat/agent_chat_widget.dart';
 import '/pages/common/session_actions.dart';
 import '/pages/confirm_dialog/confirm_dialog_widget.dart';
 import '/pages/main_tabs/main_tabs_controller.dart';
-import '/pages/tasks/task_pickers.dart'
-    show showAnchoredSingleSelect, PickerOption;
 import 'automation_card.dart';
 import 'automation_edit_sheet.dart';
+import 'automation_filter_panel.dart';
 import 'automations_model.dart';
 export 'automations_model.dart';
 
 /// Scheduled agent runs, ported from the web dashboard's Automation tab. A
-/// filterable list (All / Active / Paused) with pause/resume, run-now, and a
-/// bottom-sheet editor. The server computes all fire times; this page only
-/// edits the stored schedule. Rendered as a tab inside the main shell.
+/// list filterable by status (All / Active / Paused) and project, with
+/// pause/resume, run-now, and a bottom-sheet editor. The server computes all
+/// fire times; this page only edits the stored schedule. Rendered as a tab
+/// inside the main shell.
 class AutomationsWidget extends StatefulWidget {
   const AutomationsWidget({super.key});
 
@@ -179,39 +179,15 @@ class _AutomationsWidgetState extends State<AutomationsWidget> {
     }
   }
 
-  /// Anchored filter dropdown under the header icon (styled like the Tasks
-  /// filter): All / Active / Paused.
+  /// Anchored filter dropdown under the header icon (the Tasks filter's
+  /// panel): status (All / Active / Paused) and project.
   Future<void> _showFilterMenu() async {
     HapticFeedback.lightImpact();
-    final theme = FlutterFlowTheme.of(context);
-    final l10n = AppLocalizations.of(context);
-    Icon leading(IconData icon) =>
-        Icon(icon, size: 16.0, color: theme.secondaryText);
-    final picked = await showAnchoredSingleSelect<String>(
+    await showAutomationFilterPanel(
       context: context,
+      model: _model,
       anchorKey: _filterButtonKey,
-      selected: _model.filter,
-      alignRight: true,
-      width: 180.0,
-      options: [
-        PickerOption(
-          value: 'all',
-          leading: leading(Icons.all_inclusive_rounded),
-          label: l10n.automationsFilterAll,
-        ),
-        PickerOption(
-          value: 'active',
-          leading: leading(Icons.circle_outlined),
-          label: l10n.automationsFilterActive,
-        ),
-        PickerOption(
-          value: 'paused',
-          leading: leading(Icons.pause_circle_outline_rounded),
-          label: l10n.automationsFilterPaused,
-        ),
-      ],
     );
-    if (picked != null) _model.setFilter(picked);
   }
 
   /// ⋯ action sheet: Run now / Pause·Resume / Delete.
@@ -346,7 +322,7 @@ class _AutomationsWidgetState extends State<AutomationsWidget> {
                     fillColor: Colors.transparent,
                     icon: Icon(
                       Icons.filter_list_rounded,
-                      color: _model.filter != 'all'
+                      color: _model.isFiltered
                           ? theme.primary
                           : theme.primaryText,
                       size: 22.0,

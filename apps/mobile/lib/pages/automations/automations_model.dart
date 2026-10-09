@@ -7,18 +7,25 @@ import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/utils/automation_utils.dart' as autils;
 import '/custom_code/utils/machine_utils.dart';
 import '/custom_code/utils/worktree_selection.dart';
+import '/custom_code/utils/task_utils.dart' as tutils show kNoProjectFilter;
 import '/flutter_flow/flutter_flow_util.dart';
+import '/pages/common/filter_panel.dart' show filterByProject;
 import 'automations_widget.dart' show AutomationsWidget;
 
 class AutomationsModel extends FlutterFlowModel<AutomationsWidget> {
   List<dynamic> automations = [];
   List<dynamic> machines = [];
+  List<dynamic> projects = [];
   AgentCatalog? agentCatalog;
   bool isLoading = true;
   bool hasError = false;
 
   /// 'all' | 'active' | 'paused'
   String filter = 'all';
+
+  /// null → all projects; [tutils.kNoProjectFilter] → filed nowhere; otherwise
+  /// a project id, matched against the automation's derived `project_id`.
+  String? projectFilter;
 
   /// Automation id with an in-flight run-now/toggle/delete, for row spinners.
   String? busyId;
@@ -36,17 +43,26 @@ class AutomationsModel extends FlutterFlowModel<AutomationsWidget> {
   void dispose() {}
 
   List<dynamic> get filteredAutomations {
+    final inProject =
+        filterByProject(automations, projectFilter, autils.automationProjectId);
     if (filter == 'active') {
-      return automations.where(autils.automationEnabled).toList();
+      return inProject.where(autils.automationEnabled).toList();
     }
     if (filter == 'paused') {
-      return automations.where((a) => !autils.automationEnabled(a)).toList();
+      return inProject.where((a) => !autils.automationEnabled(a)).toList();
     }
-    return automations;
+    return inProject;
   }
+
+  bool get isFiltered => filter != 'all' || projectFilter != null;
 
   void setFilter(String value) {
     filter = value;
+    _bump();
+  }
+
+  void setProjectFilter(String? projectId) {
+    projectFilter = projectId;
     _bump();
   }
 
@@ -61,9 +77,11 @@ class AutomationsModel extends FlutterFlowModel<AutomationsWidget> {
     final results = await Future.wait<dynamic>([
       actions.apiGetAutomations(),
       actions.apiGetMachines(),
+      actions.apiGetProjects(),
     ]);
     final fetched = results[0] as List<dynamic>?;
     machines = sortMachinesByStatus(results[1]);
+    projects = results[2] as List<dynamic>;
     if (fetched == null) {
       hasError = automations.isEmpty;
     } else {

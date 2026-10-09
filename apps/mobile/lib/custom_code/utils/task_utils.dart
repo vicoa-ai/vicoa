@@ -38,6 +38,13 @@ String taskId(dynamic t) => (t is Map ? t['id'] : null)?.toString() ?? '';
 
 String taskTitle(dynamic t) => (t is Map ? t['title'] : null)?.toString() ?? '';
 
+/// The rendered "VIC-42", or null when the task has none: unfiled tasks and
+/// tasks whose project has no key yet carry no identifier.
+String? taskIdentifier(dynamic t) {
+  final s = (t is Map ? t['identifier'] : null)?.toString();
+  return (s == null || s.isEmpty) ? null : s;
+}
+
 String taskStatus(dynamic t) =>
     (t is Map ? t['status'] : null)?.toString() ?? 'backlog';
 

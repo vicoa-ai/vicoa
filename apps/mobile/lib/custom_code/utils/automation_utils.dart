@@ -24,6 +24,11 @@ String automationMachineId(dynamic a) =>
 String automationDirectory(dynamic a) =>
     (a is Map ? a['directory'] : null)?.toString() ?? '';
 
+/// The project the automation's folder files it under, derived server-side on
+/// read; null when it is filed nowhere.
+String? automationProjectId(dynamic a) =>
+    (a is Map ? a['project_id'] : null)?.toString();
+
 /// `{'mode': 'none'|'new'|'existing', 'path'?: ...}` or null.
 Map<String, dynamic>? automationWorktree(dynamic a) {
   final w = a is Map ? a['worktree'] : null;

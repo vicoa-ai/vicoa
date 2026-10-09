@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/utils/task_utils.dart' as tutils;
 import '/flutter_flow/flutter_flow_util.dart';
+import '/pages/common/filter_panel.dart' show filterByProject;
 import 'tasks_widget.dart' show TasksWidget;
 
 /// State for the Tasks list. Fetches tasks + projects + labels over REST, holds
@@ -60,14 +61,8 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
     }
   }
 
-  List<dynamic> get filteredTasks {
-    final filter = projectFilter;
-    if (filter == null) return tasks;
-    if (filter == tutils.kNoProjectFilter) {
-      return tasks.where((t) => tutils.taskProjectId(t) == null).toList();
-    }
-    return tasks.where((t) => tutils.taskProjectId(t) == filter).toList();
-  }
+  List<dynamic> get filteredTasks =>
+      filterByProject(tasks, projectFilter, tutils.taskProjectId);
 
   dynamic projectById(String? id) {
     if (id == null) return null;

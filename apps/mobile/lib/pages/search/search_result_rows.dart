@@ -6,6 +6,7 @@ import '/custom_code/utils/automation_utils.dart' as autils;
 import '/custom_code/utils/task_utils.dart' as tutils;
 import '/flutter_flow/custom_functions.dart' as functions;
 import '/flutter_flow/flutter_flow_theme.dart';
+import '/pages/tasks/task_chips.dart';
 import '/pages/tasks/task_glyphs.dart';
 
 /// Shared tappable result row: a leading glyph, a title with an optional
@@ -151,11 +152,23 @@ class SearchTaskRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final snippet = task['snippet']?.toString().trim() ?? '';
+    final priority = TaskPriorityIcon(priority: tutils.taskPriority(task), size: 14.0);
     return _ResultRow(
       leading: TaskStatusIcon(status: tutils.taskStatus(task), size: 18.0),
       title: tutils.taskTitle(task),
       subtitle: snippet.isNotEmpty ? snippet : null,
-      trailing: TaskPriorityIcon(priority: tutils.taskPriority(task), size: 14.0),
+      // The identifier trails the title, as in the `#` panel, so a "VIC-42"
+      // query visibly lands on the row it matched.
+      trailing: tutils.taskIdentifier(task) == null
+          ? priority
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TaskIdentifier(task: task, fontSize: 12.0),
+                const SizedBox(width: 10.0),
+                priority,
+              ],
+            ),
       onTap: onTap,
     );
   }
