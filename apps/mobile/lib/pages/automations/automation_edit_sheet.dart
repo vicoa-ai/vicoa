@@ -25,11 +25,14 @@ import 'automation_controls.dart';
 import 'automation_l10n.dart';
 import 'automation_run_history.dart';
 import 'automation_time_picker.dart';
+import 'session_target_picker_sheet.dart';
 
 /// Bottom-sheet editor for creating and editing an automation. Returns the
 /// request-body map ({title, prompt, machine_id, directory, session_config,
-/// schedule_kind, run_at?, frequency?, timezone}) on save, or null if
-/// dismissed. Does NOT call the API — the caller decides create vs. update.
+/// schedule_kind, run_at?, frequency?, timezone}, or agent_instance_id in
+/// place of the machine, folder and config when runs continue a session) on
+/// save, or null if dismissed. Does NOT call the API — the caller decides
+/// create vs. update.
 Future<Map<String, dynamic>?> showAutomationEditSheet({
   required BuildContext context,
   dynamic automation,
@@ -90,11 +93,15 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
   // agent this app couldn't list.
   String? _agentProfileId;
   String? _initialAgentProfileId;
-  // Set when every run continues this session (picked on the web or the
-  // CLI). It brings its own machine, folder and agent, so the sheet shows it
-  // in place of those rows and leaves them out of the save.
+  // Set when every run continues this session. It brings its own machine,
+  // folder and agent, so the sheet shows it in place of those rows and leaves
+  // them out of the save. Sent on save only when it changed, like the agent.
   String? _targetSessionId;
+  String? _initialTargetSessionId;
   String? _targetSessionName;
+  // The picked session's agent, for the prompt's `/` and `@`. Null on open:
+  // a saved target's agent is already in [_sessionConfig], its snapshot.
+  String? _targetSessionAgent;
   List<dynamic> _agentProfiles = const [];
   Map<String, String> _teamNames = const {};
   bool _titleError = false;
@@ -140,6 +147,7 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
       _agentProfileId = autils.automationAgentProfileId(a);
       _initialAgentProfileId = _agentProfileId;
       _targetSessionId = autils.automationTargetSessionId(a);
+      _initialTargetSessionId = _targetSessionId;
       _targetSessionName = autils.automationTargetSessionName(a);
     } else {
       final defaultMachine = _machines.firstWhere(
@@ -280,6 +288,8 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
     Navigator.pop(context, <String, dynamic>{
       'title': _titleController.text.trim(),
       'prompt': _promptController.text.trim(),
+      if (_targetSessionId != _initialTargetSessionId)
+        'agent_instance_id': _targetSessionId,
       if (_targetSessionId == null) ...{
         'machine_id': _machineId,
         'directory': _directory.trim(),
@@ -292,6 +302,30 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
   }
 
   // --- pickers ---------------------------------------------------------------
+
+  /// "Runs in": a new session each run, or one session every run continues.
+  /// Picking a session points the prompt's `@` and `/` at its machine, folder
+  /// and agent. Going back to a new session keeps the machine and folder, so a
+  /// run that leaves the session starts out where the session was (the web
+  /// editor does the same).
+  Future<void> _pickTargetSession() async {
+    dismissKeyboard();
+    final picked = await showSessionTargetPickerSheet(
+      context: context,
+      selectedId: _targetSessionId,
+    );
+    if (picked == null || !mounted) return;
+    final target = picked.target;
+    setState(() {
+      _targetSessionId = target?.id;
+      _targetSessionName = target?.title;
+      _targetSessionAgent = target?.agent;
+      if (target != null) {
+        _machineId = target.machineId;
+        _directory = target.project;
+      }
+    });
+  }
 
   Future<void> _pickDirectory() async {
     dismissKeyboard();
@@ -609,7 +643,9 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
                       controller: _promptController,
                       machineId: _machineId,
                       projectPath: _absolutePromptDirectory(),
-                      agentType: _sessionConfig.agent,
+                      agentType: _targetSessionId == null
+                          ? _sessionConfig.agent
+                          : _targetSessionAgent ?? _sessionConfig.agent,
                       maxLines: 5,
                       minLines: 2,
                       onChanged: (_) => setState(() {}),
@@ -786,25 +822,60 @@ class _AutomationEditSheetState extends State<_AutomationEditSheet> {
     );
   }
 
-  List<Widget> _detailRows(FlutterFlowTheme theme, AppLocalizations l10n) {
-    final sessionId = _targetSessionId;
-    if (sessionId != null) {
-      final open = widget.onOpenInstance;
-      return [
-        AutomationFieldRow(
-          label: l10n.automationsRunsIn,
-          value: _targetSessionName ?? l10n.automationsUnnamedSession,
-          showChevron: open != null,
-          onTap: open == null
-              ? null
-              : () {
-                  Navigator.pop(context);
-                  open(sessionId);
-                },
-        ),
-      ];
+  /// The "Runs in" value: the session's title behind the chat icon, or "New
+  /// session each run".
+  Widget _runsInValue(FlutterFlowTheme theme, AppLocalizations l10n) {
+    final style = theme.bodyMedium.override(
+      font: GoogleFonts.sourceSans3(),
+      letterSpacing: 0.0,
+      color: theme.secondaryText,
+    );
+    if (_targetSessionId == null) {
+      return Text(l10n.automationsNewSessionEachRun, textAlign: TextAlign.end, maxLines: 1, overflow: TextOverflow.ellipsis, style: style);
     }
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        Icon(Icons.chat_bubble_outline_rounded, size: 15.0, color: theme.secondaryText),
+        const SizedBox(width: 6.0),
+        Flexible(
+          child: Text(_targetSessionName ?? l10n.automationsUnnamedSession, maxLines: 1, overflow: TextOverflow.ellipsis, style: style),
+        ),
+      ],
+    );
+  }
+
+  /// Opens the session the automation runs in, closing the editor: the web
+  /// row's open-session link.
+  Widget? _openTargetButton(FlutterFlowTheme theme, AppLocalizations l10n) {
+    final sessionId = _targetSessionId;
+    final open = widget.onOpenInstance;
+    if (sessionId == null || open == null) return null;
+    return IconButton(
+      tooltip: l10n.automationsOpenSession,
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      // The steppers' height, so the row is as tall as the ones that hold one.
+      constraints: const BoxConstraints(minWidth: 36.0, minHeight: 30.0),
+      icon: Icon(Icons.open_in_new_rounded, size: 16.0, color: theme.secondaryText),
+      onPressed: () {
+        HapticFeedback.lightImpact();
+        Navigator.pop(context);
+        open(sessionId);
+      },
+    );
+  }
+
+  List<Widget> _detailRows(FlutterFlowTheme theme, AppLocalizations l10n) {
+    final runsIn = AutomationFieldRow(
+      label: l10n.automationsRunsIn,
+      valueWidget: _runsInValue(theme, l10n),
+      trailing: _openTargetButton(theme, l10n),
+      onTap: _pickTargetSession,
+    );
+    if (_targetSessionId != null) return [runsIn];
     return [
+      runsIn,
       AutomationFieldRow(
         label: l10n.automationsRunsOn,
         showChevron: false,

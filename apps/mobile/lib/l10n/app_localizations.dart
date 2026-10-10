@@ -5324,17 +5324,47 @@ abstract class AppLocalizations {
   /// **'New Automation'**
   String get automationsNew;
 
+  /// No description provided for @automationsNewSessionEachRun.
+  ///
+  /// In en, this message translates to:
+  /// **'New session each run'**
+  String get automationsNewSessionEachRun;
+
   /// No description provided for @automationsNextRun.
   ///
   /// In en, this message translates to:
   /// **'Next · {when}'**
   String automationsNextRun(String when);
 
+  /// No description provided for @automationsMatchingSessions.
+  ///
+  /// In en, this message translates to:
+  /// **'Matching sessions'**
+  String get automationsMatchingSessions;
+
   /// No description provided for @automationsNoRunsYet.
   ///
   /// In en, this message translates to:
   /// **'No runs yet.'**
   String get automationsNoRunsYet;
+
+  /// No description provided for @automationsNoSessionsMatch.
+  ///
+  /// In en, this message translates to:
+  /// **'No sessions match.'**
+  String get automationsNoSessionsMatch;
+
+  /// No description provided for @automationsNoSessionsYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No sessions yet.'**
+  String get automationsNoSessionsYet;
+
+  /// No description provided for @automationsOpenSession.
+  ///
+  /// In en, this message translates to:
+  /// **'Open session'**
+  String get automationsOpenSession;
 
   /// No description provided for @automationsPause.
   ///
@@ -5359,6 +5389,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Pull down to try again'**
   String get automationsPullToRefresh;
+
+  /// No description provided for @automationsRecentSessions.
+  ///
+  /// In en, this message translates to:
+  /// **'Recent sessions'**
+  String get automationsRecentSessions;
 
   /// No description provided for @automationsRepeat.
   ///
@@ -5491,6 +5527,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Couldn\'t save automation'**
   String get automationsSaveFailed;
+
+  /// No description provided for @automationsSearchSessions.
+  ///
+  /// In en, this message translates to:
+  /// **'Search sessions'**
+  String get automationsSearchSessions;
 
   /// No description provided for @automationsScheduleOnceAt.
   ///

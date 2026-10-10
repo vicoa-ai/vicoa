@@ -1349,15 +1349,21 @@
   "automationsFilterPaused": "Paused",
   "automationsMachineOffline": "Machine is offline — run could not start.",
   "automationsNew": "New Automation",
+  "automationsNewSessionEachRun": "New session each run",
   "automationsNextRun": "Next · {when}",
   "@automationsNextRun": {
     "placeholders": { "when": { "type": "String" } }
   },
+  "automationsMatchingSessions": "Matching sessions",
   "automationsNoRunsYet": "No runs yet.",
+  "automationsNoSessionsMatch": "No sessions match.",
+  "automationsNoSessionsYet": "No sessions yet.",
+  "automationsOpenSession": "Open session",
   "automationsPause": "Pause",
   "automationsProject": "Project",
   "automationsPromptPlaceholder": "Describe what the agent should do",
   "automationsPullToRefresh": "Pull down to try again",
+  "automationsRecentSessions": "Recent sessions",
   "automationsRepeat": "Repeat",
   "automationsRepeatCustom": "Custom",
   "automationsRepeatDaily": "Daily",
@@ -1380,6 +1386,7 @@
   "automationsRunsOn": "Runs on",
   "automationsUnnamedSession": "Unnamed session",
   "automationsSaveFailed": "Couldn't save automation",
+  "automationsSearchSessions": "Search sessions",
   "automationsScheduleOnceAt": "Once · {when}",
   "@automationsScheduleOnceAt": {
     "placeholders": { "when": { "type": "String" } }

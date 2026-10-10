@@ -265,6 +265,7 @@ class AutomationFieldRow extends StatelessWidget {
     this.onTap,
     this.showChevron = true,
     this.valueColor,
+    this.trailing,
   });
 
   final String label;
@@ -273,6 +274,8 @@ class AutomationFieldRow extends StatelessWidget {
   final VoidCallback? onTap;
   final bool showChevron;
   final Color? valueColor;
+  /// A second action after the value (before the chevron), with its own tap.
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -304,6 +307,7 @@ class AutomationFieldRow extends StatelessWidget {
                   ),
                 ),
           ),
+          if (trailing != null) trailing!,
           if (onTap != null && showChevron) ...[
             const SizedBox(width: 4.0),
             Icon(Icons.chevron_right_rounded,
