@@ -2991,12 +2991,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get automationsNew => 'New Automation';
 
   @override
+  String get automationsNewSessionEachRun => 'New session each run';
+
+  @override
   String automationsNextRun(String when) {
     return 'Next · $when';
   }
 
   @override
+  String get automationsMatchingSessions => 'Matching sessions';
+
+  @override
   String get automationsNoRunsYet => 'No runs yet.';
+
+  @override
+  String get automationsNoSessionsMatch => 'No sessions match.';
+
+  @override
+  String get automationsNoSessionsYet => 'No sessions yet.';
+
+  @override
+  String get automationsOpenSession => 'Open session';
 
   @override
   String get automationsPause => 'Pause';
@@ -3010,6 +3025,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get automationsPullToRefresh => 'Pull down to try again';
+
+  @override
+  String get automationsRecentSessions => 'Recent sessions';
 
   @override
   String get automationsRepeat => 'Repeat';
@@ -3076,6 +3094,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get automationsSaveFailed => 'Couldn\'t save automation';
+
+  @override
+  String get automationsSearchSessions => 'Search sessions';
 
   @override
   String automationsScheduleOnceAt(String when) {

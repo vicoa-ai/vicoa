@@ -2867,12 +2867,27 @@ class AppLocalizationsZh extends AppLocalizations {
   String get automationsNew => '新建自动化';
 
   @override
+  String get automationsNewSessionEachRun => '每次运行新建会话';
+
+  @override
   String automationsNextRun(String when) {
     return '下次 · $when';
   }
 
   @override
+  String get automationsMatchingSessions => '匹配的会话';
+
+  @override
   String get automationsNoRunsYet => '暂无运行记录。';
+
+  @override
+  String get automationsNoSessionsMatch => '没有匹配的会话。';
+
+  @override
+  String get automationsNoSessionsYet => '还没有会话。';
+
+  @override
+  String get automationsOpenSession => '打开会话';
 
   @override
   String get automationsPause => '暂停';
@@ -2885,6 +2900,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get automationsPullToRefresh => '下拉重试';
+
+  @override
+  String get automationsRecentSessions => '最近的会话';
 
   @override
   String get automationsRepeat => '重复';
@@ -2951,6 +2969,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get automationsSaveFailed => '保存自动化失败';
+
+  @override
+  String get automationsSearchSessions => '搜索会话';
 
   @override
   String automationsScheduleOnceAt(String when) {
