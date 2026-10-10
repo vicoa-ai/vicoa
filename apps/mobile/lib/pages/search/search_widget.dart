@@ -120,6 +120,11 @@ class _SearchWidgetState extends State<SearchWidget> {
           autofocus: true,
           onChanged: _model.onQueryChanged,
           textInputAction: TextInputAction.search,
+          // Queries are task ids, project names and keywords, not prose: iOS
+          // autocorrect turned "lig-1" into "log-1". Suggestions are a separate
+          // switch on Android keyboards, so both go off.
+          autocorrect: false,
+          enableSuggestions: false,
           cursorColor: theme.primary,
           style: theme.bodyLarge.override(
             font: GoogleFonts.sourceSans3(),
