@@ -16,8 +16,9 @@ terminal, no Changes/files panel, no git branch badge, no file search (each
 of those is routed by ``instance.machine_id``), plus a degraded project match.
 
 Both rows are created here now, once, so the two routes cannot drift again.
-Each router still owns the ``request_metadata`` it hands the daemon (prompt
-and agent-profile policy differ), its own broadcast, and its commit.
+Each router still owns the ``request_metadata`` it hands the daemon (the
+agent-profile lookup differs: the dashboard may run a team's agents, the
+agent-facing route only the caller's own), its own broadcast, and its commit.
 """
 
 from __future__ import annotations
@@ -111,17 +112,15 @@ def _notify_daemon(db: Session, spawn_request: MachineSpawnRequest) -> None:
     The channel is keyed off the machine row's own id, which is what the
     daemon's ``/spawn-requests/stream`` LISTENs on — a client that spelled the
     id differently in the URL used to NOTIFY a channel nobody was listening to.
+
+    The payload is the request id and nothing else. A daemon treats the event
+    as a wake-up and claims the row over ``/spawn-requests/next``, which is
+    where it reads the directory, agent and metadata from. PostgreSQL rejects a
+    NOTIFY payload of 8000 bytes or more, and ``request_metadata`` carries the
+    prompt and the agent profile's instructions, so a long prompt used to fail
+    the whole spawn here.
     """
 
-    payload = json.dumps(
-        {
-            "request_id": str(spawn_request.id),
-            "directory": spawn_request.directory,
-            "agent": spawn_request.agent,
-            "agent_instance_id": str(spawn_request.agent_instance_id),
-            "metadata": spawn_request.request_metadata,
-            "requested_at": spawn_request.created_at.isoformat() + "Z",
-        }
-    )
+    payload = json.dumps({"request_id": str(spawn_request.id)})
     channel = f"machine_spawn_{spawn_request.machine_id}"
     db.execute(text(f'NOTIFY "{channel}", :payload'), {"payload": payload})

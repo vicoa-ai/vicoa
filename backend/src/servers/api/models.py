@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -153,6 +154,15 @@ class SpawnSessionRequest(BaseModel):
     metadata: dict | None = Field(
         default=None,
         description="Additional metadata (e.g. UI request id) to attach to the request",
+    )
+    agent_profile_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Agent profile to start the session from (`vicoa session start "
+            "--agent-profile`). Recorded on the instance, and the source of the "
+            "session's system_prompt, which is resolved server-side and never "
+            "taken from `metadata`."
+        ),
     )
 
     @field_validator("agent", mode="before")

@@ -46,6 +46,7 @@ from shared.database.spawn_requests import queue_spawn_request
 from shared.database.project_matching import (
     resolve_or_create_project_id_for_session,
 )
+from backend.db import agent_profile_queries
 from integrations.headless.usage import project_rate_limited_until
 from shared.websocket.connection_manager import connection_manager
 from shared.websocket.envelope import (
@@ -578,6 +579,24 @@ def create_spawn_request_endpoint(
     machine = _get_machine_for_user(db, machine_id, user_id)
     user_uuid = UUID(user_id)
 
+    # `vicoa session start --agent-profile`: the instructions are resolved from
+    # the id server-side, as the dashboard route does. Owner-only, like every
+    # agent-facing route; the CLI only lists personal profiles, so that is all
+    # it can name.
+    profile = None
+    if request.agent_profile_id is not None:
+        profile = agent_profile_queries.get_agent_profile(
+            db, user_uuid, request.agent_profile_id
+        )
+        if profile is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found"
+            )
+        # Provider is identity: a profile for another agent is not this
+        # session's agent, so neither its name nor its instructions follow.
+        if profile.agent != (request.agent or "claude"):
+            profile = None
+
     request_metadata = (
         dict(request.metadata) if isinstance(request.metadata, dict) else {}
     )
@@ -588,6 +607,11 @@ def create_spawn_request_endpoint(
         request_metadata["prompt"] = request.prompt
     else:
         request_metadata.pop("prompt", None)
+
+    # Always server-set: a client-sent value never reaches the agent process.
+    request_metadata.pop("system_prompt", None)
+    if profile is not None and (profile.system_prompt or "").strip():
+        request_metadata["system_prompt"] = profile.system_prompt
 
     # Shared with the human-facing twin in `backend.api.machines` so the two
     # cannot drift again — that drift is what left CLI/agent-started sessions
@@ -602,6 +626,7 @@ def create_spawn_request_endpoint(
         name=request.metadata.get("name")
         if isinstance(request.metadata, dict)
         else None,
+        agent_profile_id=profile.id if profile else None,
     )
 
     # WebSocket spawn-request update to the machine room (§2.5). The
