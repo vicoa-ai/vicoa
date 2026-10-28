@@ -59,18 +59,22 @@ import { ProjectPeopleStack } from '@/components/dashboard/project-people-stack'
 import { isDesktopLocal } from '@/lib/runtime-config';
 import { projectRoleAtLeast } from '@/lib/backend-api';
 import { TaskDisplayMenu } from './task-display-menu';
-import { TaskListSkeleton } from './task-skeleton';
+import { TaskLabelFilter } from './task-label-filter';
+import { TaskBoardSkeleton, TaskListSkeleton } from './task-skeleton';
 import { getTasksCache, setTasksCache } from './task-cache';
 import {
   NO_PROJECT_FILTER,
   TaskView,
+  activeLabelFilter,
   cloneView,
   compareTasks,
   defaultView,
+  labelFilterOptions,
   loadActiveViewId,
   loadViews,
   saveActiveViewId,
   saveViews,
+  taskMatchesLabels,
 } from './task-views';
 
 /** ISO timestamp from a yyyy-mm-dd date input ('' → null). */
@@ -212,6 +216,11 @@ function TasksPageInner() {
   const sortBy = activeView.sortBy;
   const sortDirection = activeView.sortDirection;
   const collapsed = useMemo(() => new Set(activeView.collapsed), [activeView.collapsed]);
+  const labelOptions = useMemo(() => labelFilterOptions(labels, tasks), [labels, tasks]);
+  const labelFilter = useMemo(
+    () => activeLabelFilter(activeView.labelFilter, labelOptions),
+    [activeView.labelFilter, labelOptions],
+  );
 
   // Mutate the active view and persist. Guards on a loaded view id so the
   // pre-load default isn't accidentally written back as a real view.
@@ -495,6 +504,7 @@ function TasksPageInner() {
       } else if (projectFilter !== 'all' && t.project_id !== projectFilter) {
         return false;
       }
+      if (!taskMatchesLabels(t, labelFilter)) return false;
       // "Show sub-tasks" off → hide anything with a parent (parents only).
       if (!showSubTasks && t.parent_task_id) return false;
       return true;
@@ -503,7 +513,7 @@ function TasksPageInner() {
     // board) preserves this order as it buckets by status, so sorting the flat
     // list here drives both views.
     return [...filtered].sort((a, b) => compareTasks(a, b, sortBy, sortDirection));
-  }, [tasks, projectFilter, showSubTasks, sortBy, sortDirection]);
+  }, [tasks, projectFilter, labelFilter, showSubTasks, sortBy, sortDirection]);
 
   // task id -> task, for resolving a sub-task's parent chip. Built over ALL
   // tasks so a parent hidden by the current filter still resolves.
@@ -636,6 +646,29 @@ function TasksPageInner() {
           />
         </div>
 
+        {/* View mode (multica view dropdown). Leftmost: everything after it
+            narrows or tunes what this view shows. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
+              {view === 'board' ? <Columns3 className="size-3.5" /> : <List className="size-3.5" />}
+              <span className="hidden md:inline">{view === 'board' ? 'Board' : 'List'}</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-32 text-xs">
+            <DropdownMenuItem onSelect={() => updateActiveView({ mode: 'list' })}>
+              <List className="mr-2 size-3.5" />
+              List
+              {view === 'list' && <Check className="ml-auto h-3 w-3" />}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => updateActiveView({ mode: 'board' })}>
+              <Columns3 className="mr-2 size-3.5" />
+              Board
+              {view === 'board' && <Check className="ml-auto h-3 w-3" />}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
         {/* Project filter */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -685,28 +718,6 @@ function TasksPageInner() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* View mode (multica view dropdown) */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
-              {view === 'board' ? <Columns3 className="size-3.5" /> : <List className="size-3.5" />}
-              <span className="hidden md:inline">{view === 'board' ? 'Board' : 'List'}</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-32 text-xs">
-            <DropdownMenuItem onSelect={() => updateActiveView({ mode: 'list' })}>
-              <List className="mr-2 size-3.5" />
-              List
-              {view === 'list' && <Check className="ml-auto h-3 w-3" />}
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => updateActiveView({ mode: 'board' })}>
-              <Columns3 className="mr-2 size-3.5" />
-              Board
-              {view === 'board' && <Check className="ml-auto h-3 w-3" />}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
         {/* Display options — ordering + show sub-tasks + which properties show */}
         <TaskDisplayMenu
           showSubTasks={showSubTasks}
@@ -719,6 +730,12 @@ function TasksPageInner() {
           }
           onSortByChange={(value) => updateActiveView({ sortBy: value })}
           onSortDirectionChange={(value) => updateActiveView({ sortDirection: value })}
+        />
+
+        <TaskLabelFilter
+          labels={labelOptions}
+          selected={labelFilter}
+          onChange={(ids) => updateActiveView({ labelFilter: ids })}
         />
 
         {canShareBoard && filterProject && (
@@ -762,7 +779,7 @@ function TasksPageInner() {
 
       {/* Body */}
       {isLoading ? (
-        <TaskListSkeleton />
+        view === 'board' ? <TaskBoardSkeleton /> : <TaskListSkeleton />
       ) : error ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
           <span>{error}</span>
@@ -774,9 +791,22 @@ function TasksPageInner() {
         <div className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
           <ListTodo className="h-10 w-10 text-muted-foreground/40" />
           <p className="text-sm">
-            {projectFilter === 'all' ? 'No tasks yet' : 'No tasks in this project'}
+            {labelFilter.size > 0
+              ? `No tasks with ${labelFilter.size === 1 ? 'this label' : 'these labels'}`
+              : projectFilter === 'all'
+                ? 'No tasks yet'
+                : 'No tasks in this project'}
           </p>
-          {canCreateHere && (
+          {labelFilter.size > 0 ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-2 text-xs"
+              onClick={() => updateActiveView({ labelFilter: [] })}
+            >
+              Clear label filter
+            </Button>
+          ) : canCreateHere && (
             <>
               <p className="text-xs">Capture what needs doing, then start a session from a task.</p>
               <Button size="sm" className="mt-2 gap-1 text-xs" onClick={() => openCreateDialog()}>

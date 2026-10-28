@@ -43,7 +43,7 @@ import { cn } from '@/lib/utils';
 import { TaskViewProperties } from './task-views';
 import { columnDroppableId, useStatusColumnsDnd } from './use-status-dnd';
 
-const BOARD_COL_WIDTH = 280;
+export const BOARD_COL_WIDTH = 280;
 
 export type ChildProgressMap = Map<string, { done: number; total: number }>;
 export type TasksById = Map<string, TaskResponse>;

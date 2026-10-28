@@ -11,7 +11,12 @@
 // is also the future home for "Connect Linear / GitLab" integrations.
 
 import { getPref, setPref } from '@/lib/desktop-prefs';
-import type { TaskPriority, TaskResponse, TaskStatus } from '@/lib/backend-api';
+import type {
+  TaskLabelResponse,
+  TaskPriority,
+  TaskResponse,
+  TaskStatus,
+} from '@/lib/backend-api';
 
 export type TaskViewMode = 'list' | 'board';
 
@@ -139,12 +144,52 @@ export const TASK_PROPERTY_OPTIONS: { key: keyof TaskViewProperties; label: stri
  */
 export const NO_PROJECT_FILTER = 'none';
 
+/**
+ * Labels the filter can offer: the caller's vocabulary plus any label already
+ * on a task. A board shared by another person carries that owner's labels,
+ * which `listTaskLabels` does not return, so they come from the tasks. Deduped
+ * by id and sorted by name.
+ */
+export function labelFilterOptions(
+  vocabulary: TaskLabelResponse[],
+  tasks: TaskResponse[],
+): TaskLabelResponse[] {
+  const byId = new Map<string, TaskLabelResponse>();
+  for (const label of vocabulary) byId.set(label.id, label);
+  for (const task of tasks) {
+    for (const label of task.labels) {
+      if (!byId.has(label.id)) byId.set(label.id, label);
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * The view's label filter narrowed to labels that still exist. A label
+ * deleted after it was picked would otherwise leave the view matching
+ * nothing, with no chip in the menu to unpick.
+ */
+export function activeLabelFilter(
+  labelFilter: string[],
+  options: TaskLabelResponse[],
+): Set<string> {
+  const known = new Set(options.map((label) => label.id));
+  return new Set(labelFilter.filter((id) => known.has(id)));
+}
+
+/** A task passes when it carries any of the active labels (none active = all). */
+export function taskMatchesLabels(task: TaskResponse, active: Set<string>): boolean {
+  return active.size === 0 || task.labels.some((label) => active.has(label.id));
+}
+
 export interface TaskView {
   id: string;
   name: string;
   mode: TaskViewMode;
   /** 'all', NO_PROJECT_FILTER, or a project id. */
   projectFilter: string;
+  /** Label ids; a task shows when it has any of them. Empty = no label filter. */
+  labelFilter: string[];
   /** When false, sub-tasks (tasks with a parent) are hidden — parents only. */
   showSubTasks: boolean;
   /** Which optional properties render on rows/cards. */
@@ -175,8 +220,9 @@ export function defaultView(): TaskView {
   return {
     id: newId(),
     name: 'All tasks',
-    mode: 'list',
+    mode: 'board',
     projectFilter: 'all',
+    labelFilter: [],
     showSubTasks: true,
     properties: { ...DEFAULT_TASK_PROPERTIES },
     sortBy: DEFAULT_TASK_SORT,
@@ -192,8 +238,11 @@ function normalizeView(raw: Partial<TaskView> | null | undefined): TaskView | nu
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : base.id,
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name : base.name,
-    mode: raw.mode === 'board' ? 'board' : 'list',
+    mode: raw.mode === 'list' ? 'list' : 'board',
     projectFilter: typeof raw.projectFilter === 'string' ? raw.projectFilter : 'all',
+    labelFilter: Array.isArray(raw.labelFilter)
+      ? raw.labelFilter.filter((id): id is string => typeof id === 'string')
+      : [],
     showSubTasks: raw.showSubTasks !== false,
     // Merge over defaults so a property added in a newer build inherits `true`
     // for views saved before it existed.
@@ -233,6 +282,7 @@ export function cloneView(source: TaskView, name: string): TaskView {
     ...source,
     id: newId(),
     name,
+    labelFilter: [...source.labelFilter],
     properties: { ...source.properties },
     collapsed: [...source.collapsed],
   };
