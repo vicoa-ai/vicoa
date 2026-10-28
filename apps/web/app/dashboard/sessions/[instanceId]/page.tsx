@@ -46,6 +46,8 @@ import {
 } from '@/components/dashboard/session-transcript';
 import { getChatItemSearchText } from '@/lib/chat-search';
 import { buildForkTranscript, saveForkContext } from '@/lib/fork-session';
+import { createAnnotation, saveAnnotationHandoff } from '@/lib/chat-annotations';
+import { SelectionActionsMenu } from '@/components/dashboard/selection-actions-menu';
 import { loadFullHistory } from '@/lib/fork-history';
 import { FilesGitPanel, FilesGitPanelToggle, OpenInSubMenu, usePanelState, type OpenFileRequest, type PanelPendingAction } from '@/components/files-git-panel';
 import { ChatInput, PermissionModeValue, OpencodeAgentModeValue, type ChatUploadedAttachment, type ChatInputHandle } from '@/components/chat-input';
@@ -142,6 +144,25 @@ function getGitDiffStats(diffText: string): { additions: number; deletions: numb
  */
 function isHeadlessSpawnedSession(instance: { instance_metadata?: SessionInstanceMetadata | null } | null): boolean {
   return instance?.instance_metadata?.source === 'app';
+}
+
+/**
+ * New-session query params that start a run like this one: the same folder,
+ * machine and agent. A fork needs them because its carried-over history names
+ * paths on that machine; "Continue in new session" uses them for the owner.
+ */
+function sameRunParams(detail: AgentInstanceDetail): URLSearchParams {
+  const query = new URLSearchParams();
+  if (detail.project) query.set('directory', detail.project);
+  if (detail.machine_id) query.set('machineId', detail.machine_id);
+  // `session_config.agent` is the catalog id the daemon was spawned with;
+  // `agent_type_name` is the editable row name and only a fallback (same
+  // precedence the session gear uses).
+  const configuredAgent =
+    typeof detail.session_config?.agent === 'string' ? detail.session_config.agent.trim().toLowerCase() : '';
+  const agent = configuredAgent || (detail.agent_type_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (agent) query.set('agent', agent);
+  return query;
 }
 
 /** Legacy remote-session marker: headless spawns used to open with a
@@ -1549,20 +1570,39 @@ function AgentInstanceContent() {
         sourceInstanceId: instanceId,
         sourceTitle: detail.name || 'Untitled session',
       });
-      const query = new URLSearchParams({ fork: '1' });
-      if (detail.project) query.set('directory', detail.project);
-      if (detail.machine_id) query.set('machineId', detail.machine_id);
-      // `session_config.agent` is the catalog id the daemon was spawned with;
-      // `agent_type_name` is the editable row name and only a fallback (same
-      // precedence the session gear uses below).
-      const configuredAgent =
-        typeof detail.session_config?.agent === 'string' ? detail.session_config.agent.trim().toLowerCase() : '';
-      const forkAgent =
-        configuredAgent || (detail.agent_type_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (forkAgent) query.set('agent', forkAgent);
+      const query = sameRunParams(detail);
+      query.set('fork', '1');
       router.push(`/dashboard/sessions/new?${query.toString()}`);
     },
     [forkingMessageId, instance, instanceId, router],
+  );
+
+  // Selection menu → "Add to chat": the passage joins the composer's
+  // annotation pill (components/dashboard/annotations-chip.tsx) at once; the
+  // optional comment, and a ⌘⏎ send, follow from the menu's comment field.
+  const getTranscriptScroller = useCallback(() => scrollerElRef.current, []);
+  const handleAddAnnotation = useCallback(
+    (quote: string) => chatInputRef.current?.addAnnotation(quote) ?? null,
+    [],
+  );
+  const handleCommentAnnotation = useCallback((id: string, comment: string, send: boolean) => {
+    chatInputRef.current?.commentAnnotation(id, comment, { send });
+  }, []);
+
+  // Selection menu → "Continue in new session": only the selected text goes
+  // along, as an annotation in the new session's composer — not the history
+  // (that is what the footer's fork is for). The owner lands on this session's
+  // machine, folder and agent like a fork; anyone else starts from their own.
+  const handleContinueInNewSession = useCallback(
+    (quote: string) => {
+      const detail = instance;
+      if (!detail) return;
+      saveAnnotationHandoff([createAnnotation(quote)]);
+      const query = isOwner ? sameRunParams(detail) : new URLSearchParams();
+      query.set('annotations', '1');
+      router.push(`/dashboard/sessions/new?${query.toString()}`);
+    },
+    [instance, instanceId, isOwner, router],
   );
 
   // Focus mode: the files/git panel covers the transcript as a full-width layer
@@ -2798,6 +2838,16 @@ function AgentInstanceContent() {
             )}
             context={virtuosoContext}
             components={VIRTUOSO_COMPONENTS}
+          />
+        )}
+
+        {/* Copy / Add to chat / Continue in new session on a text selection. */}
+        {hasMessageItems && (
+          <SelectionActionsMenu
+            getContainer={getTranscriptScroller}
+            onAddToChat={canPrompt && instance.status !== 'COMPLETED' ? handleAddAnnotation : undefined}
+            onCommentAnnotation={handleCommentAnnotation}
+            onContinueInNewSession={handleContinueInNewSession}
           />
         )}
 

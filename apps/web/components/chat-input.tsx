@@ -37,17 +37,27 @@ import { comboInline, getShortcutCombo, matchesShortcut } from '@/lib/desktop-sh
 import { folderPathToMention } from '@/lib/chat-drop';
 import { collectComposerPaste, pasteTargetIsEditable } from '@/lib/chat-paste';
 import { FolderRefChip } from '@/components/folder-ref-chip';
+import { AnnotationsChip } from '@/components/dashboard/annotations-chip';
+import { useChatAnnotations } from '@/lib/hooks/use-chat-annotations';
+import { appendAnnotations, createAnnotation, type ChatAnnotation } from '@/lib/chat-annotations';
 import { getDesktopShellBridge } from '@/lib/desktop-shell';
 
-/** Imperative surface a parent drives via `ref` — focus, plus the drag-drop
- * entry points (the mid-panel owns the drop zone; the composer owns the
- * attachment + draft state the drop feeds). */
+/** Imperative surface a parent drives via `ref` — focus, the drag-drop entry
+ * points (the mid-panel owns the drop zone; the composer owns the attachment +
+ * draft state the drop feeds), and the transcript selection menu's annotations. */
 export interface ChatInputHandle {
   focus: (options?: FocusOptions) => void;
   /** Queue local files for upload (dropped files / a web-dropped folder's contents). */
   addFiles: (files: File[]) => void;
   /** Add desktop-dropped folders as `@path/` reference chips (absolute paths in). */
   addFolderRefs: (paths: string[]) => void;
+  /** Add a passage selected in the transcript; returns the annotation's id. */
+  addAnnotation: (quote: string) => string;
+  /**
+   * Set the comment on an annotation added above. With `send`, the message
+   * (draft + every annotation) goes out at once, if the composer could send it.
+   */
+  commentAnnotation: (id: string, comment: string, options?: { send?: boolean }) => void;
 }
 
 /** Upload response from POST /api/attachments — doubles as the optimistic
@@ -281,6 +291,18 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
   const pendingFolderRefsRef = useRef<string[]>([]);
   pendingFolderRefsRef.current = pendingFolderRefs;
 
+  // Transcript passages picked with "Add to chat" (lib/chat-annotations.ts),
+  // kept per session like the draft and folded under the message on send.
+  const {
+    annotations,
+    add: addAnnotationItem,
+    updateComment: updateAnnotationComment,
+    remove: removeAnnotation,
+    clear: clearAnnotations,
+  } = useChatAnnotations(instanceId);
+  const annotationsRef = useRef(annotations);
+  annotationsRef.current = annotations;
+
   // References still present in the draft. Recomputed per keystroke (the list
   // is at most a handful) so deleting a token updates the link hint below at
   // the same moment it stops attaching context.
@@ -298,9 +320,10 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
       : null;
   }, [liveRefs, sessionTaskId]);
 
-  // Anything the user could send right now — text, a finished upload, or a folder.
+  // Anything the user could send right now — text, a finished upload, a
+  // folder, or an annotation.
   const hasComposerContent =
-    !!message.trim() || hasUploadedAttachments || pendingFolderRefs.length > 0;
+    !!message.trim() || hasUploadedAttachments || pendingFolderRefs.length > 0 || annotations.length > 0;
   const showStopButton = shouldShowStopButton({
     canInterrupt: !!onInterrupt,
     agentActive,
@@ -459,14 +482,6 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
     [],
   );
 
-  // Imperative surface for parents (drag-drop feeds the composer through this).
-  useImperativeHandle(ref, () => ({
-    focus: (options?: FocusOptions) =>
-      textareaRef.current?.focus(options ?? { preventScroll: true }),
-    addFiles: (files: File[]) => addFilesToPending(files),
-    addFolderRefs: (paths: string[]) => addFolderRefs(paths),
-  }), [addFilesToPending, addFolderRefs]);
-
   // Coalesce auto-resize work into the next animation frame. Reading
   // `scrollHeight` after writing `height='auto'` forces a synchronous layout
   // flush, and on a page with many DOM nodes (long message list) that flush
@@ -608,13 +623,15 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
     });
   }, [message, slashCommands, setMessage]);
 
-  const handleSendMessage = useCallback(() => {
+  // `pendingAnnotations` is passed in rather than read here so a comment set in
+  // the same tick as the send (the selection menu's ⌘⏎) is in the message.
+  const sendComposer = useCallback((pendingAnnotations: ChatAnnotation[]) => {
     const trimmed = message.trim();
     const readyAttachments = pendingUploadsRef.current.filter(u => u.meta);
     const folderRefs = pendingFolderRefsRef.current;
-    // Text, an uploaded image, or a folder reference; never mid-upload (the
-    // pending id would be silently dropped from the message).
-    if ((!trimmed && readyAttachments.length === 0 && folderRefs.length === 0) ||
+    // Text, an uploaded image, a folder reference or an annotation; never
+    // mid-upload (the pending id would be silently dropped from the message).
+    if ((!trimmed && readyAttachments.length === 0 && folderRefs.length === 0 && pendingAnnotations.length === 0) ||
         pendingUploadsRef.current.some(u => u.uploading)) {
       return;
     }
@@ -628,7 +645,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
     // happened since the last keystroke.
     const refs = activeReferences(pendingRefsRef.current, trimmed);
     const outgoing = composeOutgoingMessage(
-      [trimmed, folderText].filter(Boolean).join(' '),
+      appendAnnotations([trimmed, folderText].filter(Boolean).join(' '), pendingAnnotations),
       refs,
     );
     // Referencing a task files the session under it — the same late link the
@@ -641,6 +658,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
     setPendingUploads(prev => prev.filter(u => !u.meta));
     setPendingFolderRefs([]);
     setPendingRefs([]);
+    clearAnnotations();
     clearDraft();
     // Reset textarea height and refocus
     if (textareaRef.current) {
@@ -651,7 +669,32 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
     requestAnimationFrame(() => {
       focusTextarea();
     });
-  }, [message, projectPath, sessionTaskId, onLinkTask, onSendMessage, clearDraft, focusTextarea]);
+  }, [message, projectPath, sessionTaskId, onLinkTask, onSendMessage, clearAnnotations, clearDraft, focusTextarea]);
+
+  const handleSendMessage = useCallback(() => sendComposer(annotationsRef.current), [sendComposer]);
+
+  // The same gate the Send button applies, for sends that don't go through it.
+  const canSendNow = !disabled && canSendMessage && !isSending;
+
+  // Imperative surface for parents: drag-drop and the transcript's selection
+  // menu feed the composer through this.
+  useImperativeHandle(ref, () => ({
+    focus: (options?: FocusOptions) =>
+      textareaRef.current?.focus(options ?? { preventScroll: true }),
+    addFiles: (files: File[]) => addFilesToPending(files),
+    addFolderRefs: (paths: string[]) => addFolderRefs(paths),
+    addAnnotation: (quote: string) => {
+      const annotation = createAnnotation(quote);
+      addAnnotationItem(annotation);
+      return annotation.id;
+    },
+    commentAnnotation: (id: string, comment: string, options?: { send?: boolean }) => {
+      const trimmed = comment.trim();
+      if (trimmed) updateAnnotationComment(id, trimmed);
+      if (!options?.send || !canSendNow) return;
+      sendComposer(annotationsRef.current.map((a) => (a.id === id ? { ...a, comment: trimmed } : a)));
+    },
+  }), [addFilesToPending, addFolderRefs, addAnnotationItem, updateAnnotationComment, canSendNow, sendComposer]);
 
   // Add-to-chat "+" → "Add files": open the system file picker. Deferred a
   // frame so the dropdown closes before the (focus-stealing) dialog opens.
@@ -877,9 +920,18 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
         </div>
       )}
 
-      {/* Pending attachments (uploads) + folder references (path chips) */}
-      {(pendingUploads.length > 0 || pendingFolderRefs.length > 0) && (
+      {/* Pending annotations (one pill) + attachments (uploads) + folder
+          references (path chips) */}
+      {(annotations.length > 0 || pendingUploads.length > 0 || pendingFolderRefs.length > 0) && (
         <div className="flex items-center gap-2 mb-2 flex-wrap">
+          {annotations.length > 0 && (
+            <AnnotationsChip
+              annotations={annotations}
+              onUpdateComment={updateAnnotationComment}
+              onRemove={removeAnnotation}
+              onClear={clearAnnotations}
+            />
+          )}
           {pendingFolderRefs.map((path) => (
             <FolderRefChip key={path} path={path} onRemove={() => removeFolderRef(path)} />
           ))}

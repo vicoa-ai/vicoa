@@ -124,6 +124,14 @@ import { collectComposerDrop, folderPathToMention } from '@/lib/chat-drop';
 import { collectComposerPaste, pasteTargetIsEditable } from '@/lib/chat-paste';
 import { FolderRefChip } from '@/components/folder-ref-chip';
 import { ForkContextChip } from '@/components/dashboard/fork-context-chip';
+import { AnnotationsChip } from '@/components/dashboard/annotations-chip';
+import {
+  appendAnnotations,
+  clearAnnotationHandoff,
+  loadAnnotationHandoff,
+  saveAnnotationHandoff,
+  type ChatAnnotation,
+} from '@/lib/chat-annotations';
 import { postInstanceMessage } from '@/lib/agent-instance-api';
 import { MAX_ATTACHMENTS_PER_MESSAGE, MAX_ATTACHMENT_BYTES, type ChatUploadedAttachment } from '@/components/chat-input';
 import { formatFileSize } from '@/components/chat-attachments';
@@ -367,6 +375,9 @@ function NewSessionContent() {
   // `?fork=1` marks the chat-history payload in sessionStorage as ours to pick
   // up (kept out of the URL — a transcript is far too big for a query string).
   const forkParam = searchParams.get('fork');
+  // `?annotations=1`: the chat page's "Continue in new session" left the
+  // selected text in sessionStorage the same way (lib/chat-annotations.ts).
+  const annotationsParam = searchParams.get('annotations');
 
   // `?taskId=` (the Tasks page's "Start session" action) preselects the Task
   // chip. Read reactively rather than snapshotted into a ref at first render
@@ -438,6 +449,9 @@ function NewSessionContent() {
   // Chat history carried over by a fork, shown as a removable composer chip and
   // prepended to the first message on submit.
   const [forkContext, setForkContext] = useState<ForkContext | null>(null);
+  // Text selected in another session, shown as the annotation pill and folded
+  // under the first message on submit.
+  const [handoffAnnotations, setHandoffAnnotations] = useState<ChatAnnotation[]>([]);
   // Task seeding this session (plan §6): its title/description + chosen sub-tasks
   // top the first prompt, and the spawned instance is linked back via task_id.
   const [selectedTask, setSelectedTask] = useState<TaskResponse | null>(null);
@@ -1224,6 +1238,40 @@ function NewSessionContent() {
     clearForkContext();
   }, []);
 
+  // Same lifecycle as the fork payload: kept in sessionStorage so a reload of
+  // `?annotations=1` restores the pill (edits included), dropped on spawn or
+  // once the last annotation is removed.
+  const consumedAnnotationsRef = useRef(false);
+  useEffect(() => {
+    if (consumedAnnotationsRef.current || annotationsParam !== '1') return;
+    consumedAnnotationsRef.current = true;
+    setHandoffAnnotations(loadAnnotationHandoff());
+  }, [annotationsParam]);
+
+  const updateHandoffAnnotations = useCallback(
+    (update: (annotations: ChatAnnotation[]) => ChatAnnotation[]) => {
+      setHandoffAnnotations((prev) => {
+        const next = update(prev);
+        saveAnnotationHandoff(next);
+        return next;
+      });
+    },
+    [],
+  );
+  const updateHandoffComment = useCallback(
+    (id: string, comment: string) =>
+      updateHandoffAnnotations((list) => list.map((a) => (a.id === id ? { ...a, comment: comment.trim() } : a))),
+    [updateHandoffAnnotations],
+  );
+  const removeHandoffAnnotation = useCallback(
+    (id: string) => updateHandoffAnnotations((list) => list.filter((a) => a.id !== id)),
+    [updateHandoffAnnotations],
+  );
+  const clearHandoffAnnotations = useCallback(() => {
+    setHandoffAnnotations([]);
+    clearAnnotationHandoff();
+  }, []);
+
   // A worktree selection is tied to a specific machine + directory; clear it
   // whenever either changes so a stale path can't carry into a different repo.
   // Exception: a pending preselection from the sidebar's per-worktree "+" — when
@@ -1603,8 +1651,10 @@ function NewSessionContent() {
       const refs = activeReferences(pendingRefs, trimmedPrompt).filter(
         (r) => !(r.kind === 'task' && r.id === selectedTask?.id),
       );
+      // Text carried over by "Continue in new session" sits under the prompt,
+      // as annotations do in the chat input.
       const typedPrompt = composeOutgoingMessage(
-        [composedPrompt, folderText].filter(Boolean).join(' '),
+        appendAnnotations([composedPrompt, folderText].filter(Boolean).join(' '), handoffAnnotations),
         refs,
       );
       // The task this session is filed under: the chip's, else the first
@@ -1672,9 +1722,11 @@ function NewSessionContent() {
       clearPromptDraft();
       // The worktree name is consumed by this spawn (it now exists as a branch).
       setNewWorktreeName('');
-      // The forked history is consumed by this spawn.
+      // The forked history and carried-over text are consumed by this spawn.
       clearForkContext();
       setForkContext(null);
+      clearAnnotationHandoff();
+      setHandoffAnnotations([]);
       // The task is consumed by this spawn — forget it so the next visit starts
       // task-free (machine/directory/worktree intentionally persist as context).
       restoredTaskIdRef.current = '';
@@ -1817,7 +1869,7 @@ function NewSessionContent() {
       setErrorMessage(message);
       setIsSubmitting(false);
     }
-  }, [api, selectedMachineId, directory, sessionConfig, prompt, selectedTask, subtasks, pendingImages, pendingFolderRefs, pendingRefs, forkContext, machines, isSubmitting, worktreeMode, selectedWorktreePath, newWorktreeName, repoListing, projects, selectedProfile, selectedProfileId, persistSelection, refreshData, router]);
+  }, [api, selectedMachineId, directory, sessionConfig, prompt, selectedTask, subtasks, pendingImages, pendingFolderRefs, pendingRefs, forkContext, handoffAnnotations, machines, isSubmitting, worktreeMode, selectedWorktreePath, newWorktreeName, repoListing, projects, selectedProfile, selectedProfileId, persistSelection, refreshData, router]);
 
   // Insert the highlighted command into the prompt (vs. the chat input, which
   // sends immediately — starting a session is heavier, so we let the user
@@ -2360,8 +2412,16 @@ function NewSessionContent() {
               {/* Pending attachments — previews only; these upload after the
                   session exists (see handleSubmit). Folder chips reference a
                   path and fold into the prompt on submit. */}
-              {(pendingImages.length > 0 || pendingFolderRefs.length > 0 || !!forkContext) && (
+              {(pendingImages.length > 0 || pendingFolderRefs.length > 0 || !!forkContext || handoffAnnotations.length > 0) && (
                 <div className="flex items-center gap-2 mb-2 flex-wrap">
+                  {handoffAnnotations.length > 0 && (
+                    <AnnotationsChip
+                      annotations={handoffAnnotations}
+                      onUpdateComment={updateHandoffComment}
+                      onRemove={removeHandoffAnnotation}
+                      onClear={clearHandoffAnnotations}
+                    />
+                  )}
                   {forkContext && (
                     <ForkContextChip
                       title={forkContext.sourceTitle}
