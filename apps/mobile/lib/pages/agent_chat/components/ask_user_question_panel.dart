@@ -3,7 +3,7 @@ import '/flutter_flow/flutter_flow_widgets.dart';
 import '/flutter_flow/app_locale.dart';
 import '/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'ask_user_question_preview.dart';
 
 class AskUserQuestionOption {
   final String label;
@@ -218,6 +218,9 @@ class _AskUserQuestionPanelState extends State<AskUserQuestionPanel> {
   final Map<int, TextEditingController> _textControllers = {};
   final Map<int, FocusNode> _textFocusNodes = {};
   final Map<int, GlobalKey> _textFieldKeys = {};
+  // Per question: the option whose preview shows under the list. Follows taps,
+  // and stays put while "Type something" is chosen.
+  final Map<int, int> _previewFocus = {};
   bool _isSubmitting = false;
   bool _isCancelling = false;
   bool _isAnyTextFieldFocused = false;
@@ -240,6 +243,7 @@ class _AskUserQuestionPanelState extends State<AskUserQuestionPanel> {
 
   void _resetAnswers() {
     _disposeTextInputs();
+    _previewFocus.clear();
     // Restore prior selections when the parent provides them (survives State
     // recreation after the panel scrolls out of a lazy list).
     final restored = widget.initialAnswers;
@@ -470,6 +474,9 @@ class _AskUserQuestionPanelState extends State<AskUserQuestionPanel> {
     final answer = _answers[questionIndex];
     final isMultiSelect = question.multiSelect;
     final selectedIndexes = answer.mode == 'option' ? (answer.optionIndexes ?? const <int>[]) : const <int>[];
+    final hasPreviews = question.options.any((option) => option.preview != null);
+    final focusedIndex = _previewFocus[questionIndex] ?? (answer.mode == 'option' && !isMultiSelect ? (answer.optionIndex ?? 0) : 0);
+    final focusedPreview = focusedIndex < question.options.length ? question.options[focusedIndex].preview : null;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -495,6 +502,10 @@ class _AskUserQuestionPanelState extends State<AskUserQuestionPanel> {
               isSelected: answer.mode == 'option' && (isMultiSelect ? selectedIndexes.contains(optionIndex) : answer.optionIndex == optionIndex),
             ),
           ),
+        if (hasPreviews && focusedPreview != null) ...[
+          const SizedBox(height: 8.0),
+          AskUserQuestionPreviewPane(preview: focusedPreview),
+        ],
         const SizedBox(height: 8.0),
         _buildTypeSomethingButton(context, question, questionIndex),
       ],
@@ -644,6 +655,7 @@ class _AskUserQuestionPanelState extends State<AskUserQuestionPanel> {
         onTap: () {
           _focusNodeForQuestion(questionIndex).unfocus();
           setState(() {
+            _previewFocus[questionIndex] = optionIndex;
             final current = _answers[questionIndex];
             if (question.multiSelect) {
               final existing = current.mode == 'option' ? List<int>.from(current.optionIndexes ?? const <int>[]) : <int>[];
@@ -667,7 +679,9 @@ class _AskUserQuestionPanelState extends State<AskUserQuestionPanel> {
             }
           });
           _emitAnswersChanged();
-          if (!question.multiSelect && _activeTab < widget.payload.questions.length - 1) {
+          // Tapping an option with a preview is how you read it, so stay on this question.
+          final hasPreviews = question.options.any((option) => option.preview != null);
+          if (!question.multiSelect && !hasPreviews && _activeTab < widget.payload.questions.length - 1) {
             Future.delayed(const Duration(milliseconds: 150), () {
               if (mounted) setState(() => _activeTab = _activeTab + 1);
             });
@@ -725,20 +739,6 @@ class _AskUserQuestionPanelState extends State<AskUserQuestionPanel> {
                             fontSize: 12,
                             fontWeight: FontWeight.w400,
                           ),
-                        ),
-                      ),
-                    if (option.preview != null)
-                      Container(
-                        width: double.infinity,
-                        margin: const EdgeInsetsDirectional.fromSTEB(0, 8, 0, 0),
-                        padding: const EdgeInsetsDirectional.fromSTEB(10, 8, 10, 8),
-                        decoration: BoxDecoration(
-                          color: FlutterFlowTheme.of(context).primaryBackground,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          option.preview!,
-                          style: GoogleFonts.jetBrainsMono().copyWith(color: FlutterFlowTheme.of(context).primaryText, fontSize: 12, height: 1.4),
                         ),
                       ),
                   ],

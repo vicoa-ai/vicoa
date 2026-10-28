@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:vicoa/pages/agent_chat/components/ask_user_question_panel.dart';
+import 'package:vicoa/pages/agent_chat/components/ask_user_question_preview.dart';
 
 Map<String, dynamic> _message(List<Map<String, dynamic>> options) => {
       'message_metadata': {
@@ -34,6 +35,18 @@ void main() {
         {'label': 'B', 'description': '', 'preview': 42},
       ]));
       expect(payload!.questions.first.options.map((o) => o.preview), [null, null]);
+    });
+  });
+
+  group('isGridPreview', () {
+    test('keeps box drawings and markdown tables on one line per row', () {
+      expect(isGridPreview('┌──────┐\n│ Tile │\n└──────┘'), isTrue);
+      expect(isGridPreview('| Plan | Seats |\n| --- | --- |\n| Team | 48 |'), isTrue);
+    });
+
+    test('lets prose and code wrap', () {
+      expect(isGridPreview('Lumen 2.4 makes search update as you type, and fixes exports.'), isFalse);
+      expect(isGridPreview('const total = a || b;\nif (x | y) return;'), isFalse);
     });
   });
 }

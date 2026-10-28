@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Check, ListChecks } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Check, ListChecks, Maximize2, X } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { MessageResponse } from '@/lib/backend-api';
 
 export type AskUserQuestionOption = {
@@ -45,6 +46,14 @@ export type AskUserQuestionSubmitPayload = {
 // app/globals.css); same family as chat code in components/ui/message-markdown.tsx.
 const PREVIEW_FONT_FAMILY =
   'var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace';
+
+// Box-drawing characters or markdown table rows: a grid whose columns must
+// stay aligned, so it scrolls sideways instead of wrapping. Prose and code wrap.
+const GRID_PREVIEW = /[\u2500-\u257F]|^\s*\|.*\|\s*$/m;
+
+export function isGridPreview(preview: string): boolean {
+  return GRID_PREVIEW.test(preview);
+}
 
 function encodeAskUserQuestionPayload(payload: AskUserQuestionSubmitPayload): string {
   const json = JSON.stringify(payload);
@@ -232,6 +241,91 @@ function initialAnswers(askUserQuestion: AskUserQuestionPayload | null): AskUser
   });
 }
 
+type ScrollEdges = { left: boolean; right: boolean };
+
+// Fade whichever edge still has content past it, so a sideways-scrolling grid
+// reads as "more this way" even where the scrollbar stays hidden (macOS).
+function edgeFadeMask({ left, right }: ScrollEdges): string | undefined {
+  if (!left && !right) return undefined;
+  const start = left ? 'transparent, black 2.5rem' : 'black';
+  const end = right ? 'black calc(100% - 2.5rem), transparent' : 'black';
+  return `linear-gradient(to right, ${start}, ${end})`;
+}
+
+function OptionPreviewPane({ preview, label }: { preview: string; label: string }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState<ScrollEdges>({ left: false, right: false });
+  const [expanded, setExpanded] = useState(false);
+  const grid = isGridPreview(preview);
+  const layoutClass = grid ? 'custom-scrollbar overflow-x-auto whitespace-pre' : 'whitespace-pre-wrap break-words';
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !grid) return;
+    const update = () =>
+      setEdges({
+        left: el.scrollLeft > 1,
+        right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+      });
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => {
+      el.removeEventListener('scroll', update);
+      observer.disconnect();
+    };
+  }, [grid, preview]);
+
+  const mask = edgeFadeMask(edges);
+  return (
+    // <div>s, not <pre>: globals.css forces a muted background on every <pre>.
+    <div className="relative min-w-0 rounded-lg bg-foreground/10 text-xs text-foreground">
+      <div
+        ref={scrollRef}
+        className={`select-text px-3 py-2.5 ${layoutClass}`}
+        style={{ fontFamily: PREVIEW_FONT_FAMILY, maskImage: mask, WebkitMaskImage: mask }}
+      >
+        {preview}
+      </div>
+      {(edges.left || edges.right) && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          aria-label="Expand preview"
+          title="Expand preview"
+          className="absolute right-1.5 top-1.5 cursor-pointer rounded-md bg-background/80 p-1 text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <Maximize2 className="size-3.5" aria-hidden="true" />
+        </button>
+      )}
+      <Dialog open={expanded} onOpenChange={setExpanded}>
+        <DialogContent className="w-max min-w-[min(95vw,28rem)] max-w-[95vw] gap-3 p-4">
+          <DialogHeader className="flex-row items-center justify-end space-y-0">
+            <DialogTitle className="sr-only">{label}</DialogTitle>
+            <button
+              type="button"
+              onClick={() => setExpanded(false)}
+              aria-label="Close"
+              className="cursor-pointer rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <X className="size-4" aria-hidden="true" />
+            </button>
+          </DialogHeader>
+          <div
+            className={`custom-scrollbar max-h-[80vh] select-text overflow-auto rounded-lg bg-foreground/5 px-4 py-3 text-xs text-foreground ${
+              grid ? 'whitespace-pre' : 'whitespace-pre-wrap break-words'
+            }`}
+            style={{ fontFamily: PREVIEW_FONT_FAMILY }}
+          >
+            {preview}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 type AskUserQuestionPanelProps = {
   message: MessageResponse;
   onSubmit?: (payload: AskUserQuestionSubmitPayload) => void;
@@ -247,15 +341,25 @@ export function AskUserQuestionPanel({ message, onSubmit, onCancel }: AskUserQue
   // Filling answers after paint made every remount grow the row a frame late,
   // which the list reacts to (see collapsible-user-message.tsx).
   const [answers, setAnswers] = useState<AskUserQuestionAnswer[]>(() => initialAnswers(askUserQuestion));
+  // Per question: the option whose preview fills the preview pane. Follows
+  // clicks, and stays put while "Type something" is chosen.
+  const [previewFocus, setPreviewFocus] = useState<Record<number, number>>({});
 
   useEffect(() => {
     setAnswers(initialAnswers(askUserQuestion));
     setActiveTab(0);
+    setPreviewFocus({});
   }, [askUserQuestion?.tool_use_id, askUserQuestion?.questions.length]);
 
   if (!askUserQuestion) {
     return null;
   }
+
+  const activeQuestion = askUserQuestion.questions[activeTab];
+  const hasPreviews = Boolean(activeQuestion?.options.some((option) => option.preview));
+  const focusedIndex = previewFocus[activeTab] ?? 0;
+  const focusedOption = activeQuestion?.options[focusedIndex];
+  const focusedPreview = focusedOption?.preview;
 
   const currentAnswerText = (answer: AskUserQuestionAnswer | undefined): string => {
     if (!answer || answer.mode !== 'text') {
@@ -314,7 +418,7 @@ export function AskUserQuestionPanel({ message, onSubmit, onCancel }: AskUserQue
   };
 
   return (
-    <div className="mt-3 rounded-xl border border-border bg-muted/30 p-3">
+    <div className="@container mt-3 rounded-xl border border-border bg-muted/30 p-3">
       {askUserQuestion.questions.length > 1 && (
         <div className="mb-3 flex items-center gap-1.5">
           {askUserQuestion.questions.map((question, questionIndex) => (
@@ -338,111 +442,126 @@ export function AskUserQuestionPanel({ message, onSubmit, onCancel }: AskUserQue
 
       <div>
         <div className="mb-3 select-text whitespace-pre-wrap text-xs font-mono text-foreground">
-          {askUserQuestion.questions[activeTab]?.question}
+          {activeQuestion?.question}
         </div>
-        <div className="space-y-2">
-          {askUserQuestion.questions[activeTab]?.options.map((option, optionIndex) => {
-            const currentAnswer = answers[activeTab];
-            const isMultiSelect = Boolean(askUserQuestion.questions[activeTab]?.multi_select);
-            const selectedIndexes =
-              currentAnswer?.mode === 'option' ? (currentAnswer.option_indexes ?? []) : [];
-            const isSelected = currentAnswer?.mode === 'option' && (
-              isMultiSelect
-                ? selectedIndexes.includes(optionIndex)
-                : currentAnswer.option_index === optionIndex
-            );
-            return (
-              <button
-                key={`${message.id}-ask-option-${activeTab}-${optionIndex}`}
-                onClick={() => {
-                  setAnswers((prev) => {
-                    const next = [...prev];
-                    if (isMultiSelect) {
-                      const existing =
-                        next[activeTab]?.mode === 'option'
-                          ? (next[activeTab].option_indexes ?? [])
-                          : [];
-                      const nextIndexes = existing.includes(optionIndex)
-                        ? existing.filter((idx) => idx !== optionIndex)
-                        : [...existing, optionIndex].sort((a, b) => a - b);
-                      next[activeTab] = {
-                        mode: 'option',
-                        option_indexes: nextIndexes,
-                        question_multi_select: true,
-                        option_count: askUserQuestion.questions[activeTab]?.options.length ?? 0,
-                      };
-                    } else {
-                      next[activeTab] = {
-                        mode: 'option',
-                        option_index: optionIndex,
-                        question_multi_select: false,
-                        option_count: askUserQuestion.questions[activeTab]?.options.length ?? 0,
-                      };
-                    }
-                    return next;
-                  });
-                }}
-                className={`block w-full rounded-lg px-3 py-2 text-left transition-colors ${
-                  isSelected ? 'bg-foreground/10' : 'hover:bg-muted/40'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="select-text text-xs font-medium text-foreground font-mono">{option.label}</div>
-                    <div className="mt-1 select-text text-xs text-muted-foreground font-mono whitespace-pre-wrap">{option.description}</div>
-                    {option.preview && (
-                      <pre
-                        className="mt-2 select-text whitespace-pre-wrap break-words rounded-md bg-background/60 px-2.5 py-2 text-xs text-foreground"
-                        style={{ fontFamily: PREVIEW_FONT_FAMILY }}
-                      >
-                        {option.preview}
-                      </pre>
-                    )}
+        {/* With previews: options and "Type something" on the left, one preview
+            pane spanning both rows on the right. A narrow panel stacks them as
+            options, preview, "Type something". */}
+        <div
+          className={`grid gap-y-2 ${
+            hasPreviews ? '@xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] @xl:grid-rows-[auto_1fr] @xl:gap-x-3' : ''
+          }`}
+        >
+          <div className="min-w-0 space-y-2 @xl:col-start-1 @xl:row-start-1">
+            {activeQuestion?.options.map((option, optionIndex) => {
+              const currentAnswer = answers[activeTab];
+              const isMultiSelect = Boolean(activeQuestion.multi_select);
+              const selectedIndexes =
+                currentAnswer?.mode === 'option' ? (currentAnswer.option_indexes ?? []) : [];
+              const isSelected = currentAnswer?.mode === 'option' && (
+                isMultiSelect
+                  ? selectedIndexes.includes(optionIndex)
+                  : currentAnswer.option_index === optionIndex
+              );
+              return (
+                <button
+                  key={`${message.id}-ask-option-${activeTab}-${optionIndex}`}
+                  onClick={() => {
+                    setPreviewFocus((prev) => ({ ...prev, [activeTab]: optionIndex }));
+                    setAnswers((prev) => {
+                      const next = [...prev];
+                      if (isMultiSelect) {
+                        const existing =
+                          next[activeTab]?.mode === 'option'
+                            ? (next[activeTab].option_indexes ?? [])
+                            : [];
+                        const nextIndexes = existing.includes(optionIndex)
+                          ? existing.filter((idx) => idx !== optionIndex)
+                          : [...existing, optionIndex].sort((a, b) => a - b);
+                        next[activeTab] = {
+                          mode: 'option',
+                          option_indexes: nextIndexes,
+                          question_multi_select: true,
+                          option_count: activeQuestion.options.length,
+                        };
+                      } else {
+                        next[activeTab] = {
+                          mode: 'option',
+                          option_index: optionIndex,
+                          question_multi_select: false,
+                          option_count: activeQuestion.options.length,
+                        };
+                      }
+                      return next;
+                    });
+                  }}
+                  className={`block w-full rounded-lg px-3 py-2 text-left transition-colors ${
+                    isSelected ? 'bg-foreground/10' : 'hover:bg-muted/40'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="select-text text-xs font-medium text-foreground font-mono">{option.label}</div>
+                      <div className="mt-1 select-text text-xs text-muted-foreground font-mono whitespace-pre-wrap">{option.description}</div>
+                    </div>
+                    {isSelected && <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground" />}
                   </div>
-                  {isSelected && <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground" />}
-                </div>
-              </button>
-            );
-          })}
-          <button
-            onClick={() => {
-              setAnswers((prev) => {
-                const next = [...prev];
-                next[activeTab] = {
-                  mode: 'text',
-                  text: currentAnswerText(next[activeTab]),
-                  option_count: askUserQuestion.questions[activeTab]?.options.length ?? 0,
-                };
-                return next;
-              });
-            }}
-            className={`block w-full rounded-lg px-3 py-2 text-left transition-colors ${
-              answers[activeTab]?.mode === 'text' ? 'bg-foreground/10' : 'hover:bg-muted/40'
-            }`}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-xs font-medium text-foreground font-mono">Type something</div>
-              {answers[activeTab]?.mode === 'text' && (
-                <Check className="h-3.5 w-3.5 shrink-0 text-foreground" />
-              )}
+                </button>
+              );
+            })}
+          </div>
+          {/* An option without a preview leaves the column empty, so the list doesn't shift. */}
+          {focusedPreview && (
+            <div className="min-w-0 @xl:col-start-2 @xl:row-span-2 @xl:row-start-1">
+              {/* Keyed so switching options starts the new preview scrolled to its left edge. */}
+              <OptionPreviewPane
+                key={`${activeTab}-${focusedIndex}`}
+                preview={focusedPreview}
+                label={focusedOption?.label ?? ''}
+              />
             </div>
-          </button>
-          {answers[activeTab]?.mode === 'text' && (
-            <textarea
-              value={currentAnswerText(answers[activeTab])}
-              onChange={(event) => {
-                const value = event.target.value;
+          )}
+          <div className="min-w-0 space-y-2 @xl:col-start-1 @xl:row-start-2">
+            <button
+              onClick={() => {
                 setAnswers((prev) => {
                   const next = [...prev];
-                  next[activeTab] = { mode: 'text', text: value };
+                  next[activeTab] = {
+                    mode: 'text',
+                    text: currentAnswerText(next[activeTab]),
+                    option_count: activeQuestion?.options.length ?? 0,
+                  };
                   return next;
                 });
               }}
-              rows={3}
-              className="custom-scrollbar w-full resize-y rounded-md bg-foreground/5 px-2.5 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
-              placeholder="Type your answer"
-            />
-          )}
+              className={`block w-full rounded-lg px-3 py-2 text-left transition-colors ${
+                answers[activeTab]?.mode === 'text' ? 'bg-foreground/10' : 'hover:bg-muted/40'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs font-medium text-foreground font-mono">Type something</div>
+                {answers[activeTab]?.mode === 'text' && (
+                  <Check className="h-3.5 w-3.5 shrink-0 text-foreground" />
+                )}
+              </div>
+            </button>
+            {answers[activeTab]?.mode === 'text' && (
+              <textarea
+                value={currentAnswerText(answers[activeTab])}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setAnswers((prev) => {
+                    const next = [...prev];
+                    next[activeTab] = { mode: 'text', text: value };
+                    return next;
+                  });
+                }}
+                rows={3}
+                className="custom-scrollbar w-full resize-y rounded-md bg-foreground/5 px-2.5 py-1.5 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
+                placeholder="Type your answer"
+              />
+            )}
+          </div>
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MessageResponse } from '@/lib/backend-api';
-import { parseAskUserQuestionPayload } from './ask-user-question-panel';
+import { isGridPreview, parseAskUserQuestionPayload } from './ask-user-question-panel';
 
 function msg(options: Array<Record<string, unknown>>): MessageResponse {
   return {
@@ -40,5 +40,17 @@ describe('parseAskUserQuestionPayload', () => {
       ])
     );
     expect(payload?.questions[0].options.map((option) => option.preview)).toEqual([undefined, undefined]);
+  });
+});
+
+describe('isGridPreview', () => {
+  it('keeps box drawings and markdown tables on one line per row', () => {
+    expect(isGridPreview('┌──────┐\n│ Tile │\n└──────┘')).toBe(true);
+    expect(isGridPreview('| Plan | Seats |\n| --- | --- |\n| Team | 48 |')).toBe(true);
+  });
+
+  it('lets prose and code wrap', () => {
+    expect(isGridPreview('Lumen 2.4 makes search update as you type, and fixes exports.')).toBe(false);
+    expect(isGridPreview('const total = a || b;\nif (x | y) return;')).toBe(false);
   });
 });
