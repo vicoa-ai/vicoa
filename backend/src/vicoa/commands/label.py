@@ -68,32 +68,54 @@ def resolve_label_names(args, api_key: str, names: list[str]) -> list[str]:
     if not names:
         return []
     labels = _list_labels(args, api_key)
-    ids: list[str] = []
-    for name in names:
-        wanted = name.strip().lower()
-        matches = [
-            lbl for lbl in labels if str(lbl.get("name", "")).strip().lower() == wanted
-        ]
-        if len(matches) == 1:
-            ids.append(str(matches[0]["id"]))
-            continue
-        if len(matches) > 1:
-            print(
-                f"Error: {len(matches)} labels are named '{name}'; rename one in "
-                "Settings → Tasks and retry.",
-                file=sys.stderr,
-            )
-            sys.exit(2)
-        known = (
-            ", ".join(sorted(str(lbl.get("name")) for lbl in labels)) or "(none yet)"
-        )
+    return [_resolve_one(labels, name) for name in names]
+
+
+def resolve_label_groups(args, api_key: str, values: list[str]) -> list[list[str]]:
+    """``task ls --label`` values → one group of ids per value.
+
+    A value is a label name, or comma-separated names meaning any of them
+    (``bug,docs``), the way GitHub search reads ``label:bug,docs``. A label
+    whose own name has a comma still works: the whole value is tried as one
+    name first and only split when no label is called that. Misses exit 2,
+    like :func:`resolve_label_names`; one GET for every value.
+    """
+    if not values:
+        return []
+    labels = _list_labels(args, api_key)
+    groups: list[list[str]] = []
+    for value in values:
+        names = [part.strip() for part in value.split(",") if part.strip()]
+        if _matching(labels, value) or not names:
+            names = [value]
+        groups.append(list(dict.fromkeys(_resolve_one(labels, n) for n in names)))
+    return groups
+
+
+def _matching(labels: list[dict], name: str) -> list[dict]:
+    wanted = name.strip().lower()
+    return [lbl for lbl in labels if str(lbl.get("name", "")).strip().lower() == wanted]
+
+
+def _resolve_one(labels: list[dict], name: str) -> str:
+    """One name → its id, exact and case-insensitive, or exit 2 naming it."""
+    matches = _matching(labels, name)
+    if len(matches) == 1:
+        return str(matches[0]["id"])
+    if len(matches) > 1:
         print(
-            f"Error: no label named '{name}'. Your labels: {known}.\n"
-            f"Create it with `vicoa label create {name!r}`.",
+            f"Error: {len(matches)} labels are named '{name}'; rename one in "
+            "Settings → Tasks and retry.",
             file=sys.stderr,
         )
         sys.exit(2)
-    return ids
+    known = ", ".join(sorted(str(lbl.get("name")) for lbl in labels)) or "(none yet)"
+    print(
+        f"Error: no label named '{name}'. Your labels: {known}.\n"
+        f"Create it with `vicoa label create {name!r}`.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 
 def _print_label_table(labels: list[dict]) -> None:

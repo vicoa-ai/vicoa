@@ -26,7 +26,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from vicoa.commands._api import RequestError, request, resolve_api_key
-from vicoa.commands.label import resolve_label_names
+from vicoa.commands.label import resolve_label_groups, resolve_label_names
 from vicoa.commands.project import resolve_project_ref
 
 # Mirrors shared.database.task_models; duplicated (not imported) to keep the CLI
@@ -234,11 +234,17 @@ def _cmd_ls(args, api_key: str) -> int:
         params["status"] = args.status
     if getattr(args, "priority", None):
         params["priority"] = args.priority
-    label_ids = _label_ids(args, api_key, "label")
-    if label_ids:
-        params["label_id"] = label_ids
+    # `--label bug,docs` is one any-of group; repeated `--label`s must all
+    # match. The server only ANDs repeated `label_id`s, so single-label groups
+    # narrow there and any-of groups apply locally below.
+    label_groups = resolve_label_groups(
+        args, api_key, getattr(args, "label", None) or []
+    )
+    single_ids = [group[0] for group in label_groups if len(group) == 1]
+    if single_ids:
+        params["label_id"] = single_ids
     tasks = _request(args, api_key, "GET", "/api/v1/tasks", params=params or None)
-    tasks = _apply_filters_locally(tasks or [], params.get("unfiled"), label_ids)
+    tasks = _apply_filters_locally(tasks or [], params.get("unfiled"), label_groups)
     if getattr(args, "json", False):
         print(_json.dumps(tasks, indent=2))
     else:
@@ -247,24 +253,25 @@ def _cmd_ls(args, api_key: str) -> int:
 
 
 def _apply_filters_locally(
-    tasks: list[dict], unfiled: Optional[str], label_ids: list[str]
+    tasks: list[dict], unfiled: Optional[str], label_groups: list[list[str]]
 ) -> list[dict]:
-    """Re-apply ``unfiled`` / ``label_id`` to the fetched list, in case the
-    server didn't.
+    """Re-apply ``unfiled`` and the label groups to the fetched list.
 
-    A backend older than those params ignores them and returns the whole
-    backlog — a silently wrong answer to "the unfiled ones". The list is not
-    paginated, so filtering here is exact; on a current server it's a no-op.
+    A task passes the labels when it carries at least one id from every group.
+    Any-of groups never reach the server, so this is where they apply. The
+    rest re-checks what the server already did: a backend older than
+    ``unfiled`` / ``label_id`` ignores them and returns the whole backlog — a
+    silently wrong answer to "the unfiled ones". The list is not paginated,
+    so filtering here is exact.
     """
-    if not unfiled and not label_ids:
+    if not unfiled and not label_groups:
         return tasks
-    wanted = set(label_ids)
 
     def _keep(t: dict) -> bool:
         if unfiled and t.get("project_id"):
             return False
         have = {str(lbl.get("id")) for lbl in t.get("labels") or []}
-        return wanted <= have
+        return all(have.intersection(group) for group in label_groups)
 
     return [t for t in tasks if _keep(t)]
 

@@ -1842,7 +1842,10 @@ Examples:
         "--label",
         action="append",
         metavar="NAME",
-        help="Only tasks carrying this label (repeatable: every one must match)",
+        help=(
+            "Only tasks carrying this label; `bug,docs` = any of them "
+            "(repeatable: every --label must match)"
+        ),
     )
 
     task_get = task_sub.add_parser(

@@ -3,7 +3,7 @@
 
 The endpoints are covered in ``servers/tests``; what is only reachable here is
 the client-side resolution — ``--project VIC`` / ``--project none``, ``--label
-growth`` — and the bulk ``task update`` loop with its ``VIC-20 → VIC2-2``
+growth`` / ``--label growth,bug`` — and the bulk ``task update`` loop with its ``VIC-20 → VIC2-2``
 rename line and keep-going-on-404 behaviour.
 """
 
@@ -179,6 +179,26 @@ class TestLabelRef:
             L.resolve_label_names(_args(), "k", ["nope"])
         assert "vicoa label create" in capsys.readouterr().err
 
+    def test_comma_value_is_one_any_of_group(self, server):
+        groups = L.resolve_label_groups(_args(), "k", ["growth, Bug", "bug"])
+        assert groups == [[LABELS[0]["id"], LABELS[1]["id"]], [LABELS[1]["id"]]]
+        assert [s[1] for s in server.sent] == ["/api/v1/task-labels"]
+
+    def test_stray_and_repeated_names_collapse(self, server):
+        groups = L.resolve_label_groups(_args(), "k", ["bug,", "bug,bug"])
+        assert groups == [[LABELS[1]["id"]], [LABELS[1]["id"]]]
+
+    def test_a_label_named_with_a_comma_wins_over_splitting(self, server, monkeypatch):
+        comma = {"id": "aaaaaaaa-0000-0000-0000-000000000003", "name": "growth,bug"}
+        monkeypatch.setattr(L, "_list_labels", lambda *a, **k: LABELS + [comma])
+        assert L.resolve_label_groups(_args(), "k", ["Growth,Bug"]) == [[comma["id"]]]
+
+    def test_unknown_name_in_a_group_exits_2_naming_it(self, server, capsys):
+        with pytest.raises(SystemExit) as exc:
+            L.resolve_label_groups(_args(), "k", ["growth,nope"])
+        assert exc.value.code == 2
+        assert "no label named 'nope'" in capsys.readouterr().err
+
     def test_create_uses_the_webs_colour_for_the_name(self, server):
         # Same hash → palette rule as apps/web inlineLabelColor.
         assert L.inline_label_color("growth") == L.inline_label_color("growth")
@@ -211,6 +231,33 @@ class TestTaskLs:
             "k",
         )
         assert server.sent[-1][2] == {"label_id": [LABELS[0]["id"], LABELS[1]["id"]]}
+
+    def test_any_of_group_filters_locally(self, server, capsys):
+        # The server ANDs repeated label_id, so an any-of group stays off the
+        # wire; VIC-20 (bug) passes, VIC-21 (no labels) does not.
+        T._cmd_ls(
+            _args(
+                project=None,
+                status=None,
+                priority=None,
+                label=["growth,bug"],
+                json=True,
+            ),
+            "k",
+        )
+        assert server.sent[-1][2] is None
+        assert [t["identifier"] for t in json.loads(capsys.readouterr().out)] == [
+            "VIC-20"
+        ]
+
+    def test_single_labels_still_narrow_on_the_server(self, server):
+        T._cmd_ls(
+            _args(
+                project=None, status=None, priority=None, label=["bug", "growth,bug"]
+            ),
+            "k",
+        )
+        assert server.sent[-1][2] == {"label_id": [LABELS[1]["id"]]}
 
     def test_table_has_a_project_column(self, server, capsys):
         T._cmd_ls(_args(project=None, status=None, priority=None, label=None), "k")
@@ -423,7 +470,18 @@ class TestOldServerGuard:
             {"project_id": "p", "labels": [{"id": "a"}, {"id": "b"}]},
             {"project_id": "p", "labels": [{"id": "a"}]},
         ]
-        assert T._apply_filters_locally(rows, None, ["a", "b"]) == [rows[0]]
+        assert T._apply_filters_locally(rows, None, [["a"], ["b"]]) == [rows[0]]
+
+    def test_each_group_needs_one_of_its_labels(self):
+        rows = [
+            {"project_id": "p", "labels": [{"id": "g"}, {"id": "bug"}]},
+            {"project_id": "p", "labels": [{"id": "g"}, {"id": "docs"}]},
+            {"project_id": "p", "labels": [{"id": "bug"}]},
+            {"project_id": "p", "labels": []},
+        ]
+        # growth AND (bug OR docs)
+        kept = T._apply_filters_locally(rows, None, [["g"], ["bug", "docs"]])
+        assert kept == rows[:2]
 
     def test_no_filters_is_a_no_op(self):
         rows = [{"project_id": None}]

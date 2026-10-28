@@ -282,7 +282,7 @@ Columns: `KEY` (`VIC-42`, or `—` for a task older than the identifiers),
 | `--project <REF>` | Only tasks in this project — key, name, or id; `none` = No project |
 | `--status <status>` | Filter by status (enum above) |
 | `--priority <priority>` | Filter by priority (enum above) |
-| `--label <NAME>` | Only tasks carrying this label (repeatable; **every** one must match) |
+| `--label <NAME>` | Only tasks carrying this label; `bug,docs` = **any** of them. Repeatable: **every** `--label` must match |
 | `--json` | Raw JSON — a bare array; rows carry `project_id` and `project_name` |
 
 ### Task references

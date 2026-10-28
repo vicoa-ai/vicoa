@@ -464,6 +464,8 @@ vicoa task ls                                   # all tasks
 vicoa task ls --project VIC                     # one project, by key, name, or id
 vicoa task ls --project none                    # the unfiled ones (No project)
 vicoa task ls --label growth --status todo      # tagged growth AND todo
+vicoa task ls --label bug,docs                  # tagged bug OR docs
+vicoa task ls --label growth --label bug,docs   # growth AND (bug OR docs)
 vicoa task ls --json
 vicoa task get VIC-42                           # full detail
 
@@ -492,7 +494,7 @@ vicoa task delete VIC-42 -y
 
 **Refer to a project by its key.** `--project` takes the project's task key (`VIC`, the prefix on every identifier), its name, or its id — `vicoa project ls` shows all three — and `none` for **No project**. Moving a task between projects **reassigns its identifier** (numbers are per project), and `update` prints the change as `VIC-20 → VIC2-2`. Moving a task to `none` drops its identifier.
 
-**Labels go by name.** `--label`, `--add-label`, and `--remove-label` take label names (`vicoa label ls`); every flag repeats. On `ls`, several `--label`s mean the task must carry *all* of them. On `update`, `--label` replaces the whole set, while `--add-label` / `--remove-label` keep the rest.
+**Labels go by name.** `--label`, `--add-label`, and `--remove-label` take label names (`vicoa label ls`); every flag repeats. On `ls`, a comma inside one `--label` means *any* of those labels (`--label bug,docs`), and several `--label`s mean the task must match *every* one of them, so `--label growth --label bug,docs` is growth and either bug or docs. A label whose own name has a comma still works: the whole value is tried as one name before it is split. On `update`, `--label` replaces the whole set, while `--add-label` / `--remove-label` keep the rest.
 
 `create` defaults to `status=backlog`, `priority=none`, and files under **No project** unless you pass `--project`.
 

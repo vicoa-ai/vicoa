@@ -252,6 +252,7 @@ Priorities: `urgent` `high` `medium` `low` `none`
 vicoa task ls                                  # all tasks
 vicoa task ls --status todo --priority high --json
 vicoa task ls --project VIC --label bug        # by project and label
+vicoa task ls --label bug,docs                 # bug OR docs
 vicoa task ls --project none                   # the unfiled ones
 vicoa task get VIC-42                          # full detail
 
@@ -296,9 +297,11 @@ vicoa label create regression --color '#ef4444'
 ```
 
 `--project` takes a key (`VIC`), a name, an id, or `none` for No project.
-Labels are one vocabulary per account, shared across projects — `--label` on
-`task ls` is repeatable and every one must match; on `task update`, `--label`
-*sets* the list while `--add-label` / `--remove-label` adjust it.
+Labels are one vocabulary per account, shared across projects. On `task ls`,
+`--label bug,docs` matches any of the comma-separated names, and repeated
+`--label`s must all match (`--label growth --label bug,docs` = growth AND
+(bug OR docs)). On `task update`, `--label` *sets* the list while
+`--add-label` / `--remove-label` adjust it.
 
 ### Comments
 
