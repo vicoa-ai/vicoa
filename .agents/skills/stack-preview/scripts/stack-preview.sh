@@ -10,11 +10,12 @@
 #   stack-preview.sh seed FILE            # run a seed script (.py or shell) against the preview
 #   stack-preview.sh run NAME -- CMD...   # start a side process (webhook forwarder, ...) that `down` stops
 #   stack-preview.sh restart [backend|server|web]...  # pick up code changes; the public URL stays
-#   stack-preview.sh down [--keep-db | --purge]
-#                                         # stop everything, delete the database container and
-#                                         # its volume, and the Postgres image if nothing else
-#                                         # uses it; --keep-db keeps the database for the next
-#                                         # `up`; --purge also deletes the state dir
+#   stack-preview.sh down [--keep-db | --delete-db | --purge]
+#                                         # stop everything. A worktree's preview also deletes
+#                                         # its database container, volume and the Postgres
+#                                         # image (if nothing else uses it); the main checkout
+#                                         # keeps its database. --keep-db / --delete-db override
+#                                         # that; --purge deletes it and the state dir
 #   stack-preview.sh prune                # delete stopped preview databases whose checkout is gone
 #
 #   --repo DIR   checkout to preview (default: the git checkout of the current directory)
@@ -67,7 +68,7 @@ usage() {
 
 CMD=${1:-}
 [ $# -gt 0 ] && shift
-REPO="" ENV_FILE="" ALLOW_SIGNUP=0 PROVIDER="" PURGE=0 KEEP_DB=0 AUTH=""
+REPO="" ENV_FILE="" ALLOW_SIGNUP=0 PROVIDER="" PURGE=0 KEEP_DB=0 DELETE_DB=0 AUTH=""
 ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
@@ -78,13 +79,15 @@ while [ $# -gt 0 ]; do
     --auth) AUTH=${2:?--auth needs builtin or supabase}; shift 2 ;;
     --purge) PURGE=1; shift ;;
     --keep-db) KEEP_DB=1; shift ;;
+    --delete-db) DELETE_DB=1; shift ;;
     -h | --help) usage ;;
     --) shift; ARGS+=("$@"); break ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done
 case $CMD in up | status | env | token | seed | run | restart | down | prune) ;; -h | --help | help) usage ;; *) usage 2 ;; esac
-[ "$KEEP_DB" = 1 ] && [ "$PURGE" = 1 ] && die "--keep-db keeps the database and --purge deletes it; pick one"
+[ "$KEEP_DB" = 1 ] && [ "$((PURGE + DELETE_DB))" -gt 0 ] &&
+  die "--keep-db keeps the database and --delete-db/--purge delete it; pick one"
 case $PROVIDER in "" | cloudflare | ngrok) ;; *) die "unknown --provider $PROVIDER (cloudflare or ngrok)" ;; esac
 case $AUTH in "" | builtin | supabase) ;; *) die "unknown --auth $AUTH (builtin or supabase)" ;; esac
 
@@ -761,8 +764,23 @@ remove_image_if_unused() {
   fi
 }
 
+# A linked worktree (`git worktree add`) has its own git dir under the main
+# checkout's common one; the main checkout's are the same.
+is_worktree() {
+  local dir common
+  dir=$(git -C "$REPO" rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
+  common=$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  [ "$dir" != "$common" ]
+}
+
 cmd_down() {
-  local docker_up=0 has_db=0
+  local docker_up=0 has_db=0 keep=$KEEP_DB why=""
+  # A worktree is short-lived, so its database goes with the preview; the main
+  # checkout lives on, so it keeps one for the next `up`.
+  if [ "$((KEEP_DB + DELETE_DB + PURGE))" = 0 ] && ! is_worktree; then
+    keep=1
+    why=" (main checkout; \`down --delete-db\` deletes it)"
+  fi
   docker info >/dev/null 2>&1 && docker_up=1
   [ "$docker_up" = 1 ] && docker container inspect "$PG_CONTAINER" >/dev/null 2>&1 && has_db=1
   # The container is named after the checkout, so it can be found even when the
@@ -772,10 +790,10 @@ cmd_down() {
     log "nothing to stop for $REPO"
     return 0
   fi
-  [ -d "$STATE" ] && stop_all
+  stop_all
   rm -f "$STATE/public"
-  if [ "$KEEP_DB" = 1 ]; then
-    log "stopped; database kept in container $PG_CONTAINER for the next \`up\`"
+  if [ "$keep" = 1 ]; then
+    log "stopped; database kept in container $PG_CONTAINER for the next \`up\`$why"
     return 0
   fi
   if [ "$has_db" = 1 ]; then

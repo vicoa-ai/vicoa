@@ -6,7 +6,7 @@ Started in this order by `up`:
 
 | Name | Command | Binds |
 |---|---|---|
-| postgres | `docker run postgres:16-alpine`, container `vicoa-preview-<slug>`, labelled `vicoa-stack-preview=<checkout>` (how `prune` tells whose it is); `down` deletes it | `127.0.0.1:base` |
+| postgres | `docker run postgres:16-alpine`, container `vicoa-preview-<slug>`, labelled `vicoa-stack-preview=<checkout>` (how `prune` tells whose it is); `down` deletes it for a worktree, keeps it for the main checkout | `127.0.0.1:base` |
 | proxy | `node scripts/proxy.mjs` | `127.0.0.1:base+4` |
 | tunnel | `cloudflared tunnel --url http://127.0.0.1:<proxy>` (or `ngrok http`) | public |
 | server | `uvicorn servers.app:app` with `ENABLE_WEBSOCKET=true` | `127.0.0.1:base+2` |
