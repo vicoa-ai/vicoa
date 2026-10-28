@@ -10,7 +10,12 @@
 #   stack-preview.sh seed FILE            # run a seed script (.py or shell) against the preview
 #   stack-preview.sh run NAME -- CMD...   # start a side process (webhook forwarder, ...) that `down` stops
 #   stack-preview.sh restart [backend|server|web]...  # pick up code changes; the public URL stays
-#   stack-preview.sh down [--purge]       # --purge also deletes the database and the state dir
+#   stack-preview.sh down [--keep-db | --purge]
+#                                         # stop everything, delete the database container and
+#                                         # its volume, and the Postgres image if nothing else
+#                                         # uses it; --keep-db keeps the database for the next
+#                                         # `up`; --purge also deletes the state dir
+#   stack-preview.sh prune                # delete stopped preview databases whose checkout is gone
 #
 #   --repo DIR   checkout to preview (default: the git checkout of the current directory)
 #   --auth       builtin (default, every `up` without the flag): seeded email/password
@@ -54,7 +59,7 @@ set -E
 trap '[ "$UP_IN_PROGRESS" != 1 ] || die "command failed at line $LINENO"' ERR
 
 usage() {
-  sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,/^#   Postgres (Docker)/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -62,7 +67,7 @@ usage() {
 
 CMD=${1:-}
 [ $# -gt 0 ] && shift
-REPO="" ENV_FILE="" ALLOW_SIGNUP=0 PROVIDER="" PURGE=0 AUTH=""
+REPO="" ENV_FILE="" ALLOW_SIGNUP=0 PROVIDER="" PURGE=0 KEEP_DB=0 AUTH=""
 ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
@@ -72,12 +77,14 @@ while [ $# -gt 0 ]; do
     --provider) PROVIDER=${2:?--provider needs cloudflare or ngrok}; shift 2 ;;
     --auth) AUTH=${2:?--auth needs builtin or supabase}; shift 2 ;;
     --purge) PURGE=1; shift ;;
+    --keep-db) KEEP_DB=1; shift ;;
     -h | --help) usage ;;
     --) shift; ARGS+=("$@"); break ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done
-case $CMD in up | status | env | token | seed | run | restart | down) ;; -h | --help | help) usage ;; *) usage 2 ;; esac
+case $CMD in up | status | env | token | seed | run | restart | down | prune) ;; -h | --help | help) usage ;; *) usage 2 ;; esac
+[ "$KEEP_DB" = 1 ] && [ "$PURGE" = 1 ] && die "--keep-db keeps the database and --purge deletes it; pick one"
 case $PROVIDER in "" | cloudflare | ngrok) ;; *) die "unknown --provider $PROVIDER (cloudflare or ngrok)" ;; esac
 case $AUTH in "" | builtin | supabase) ;; *) die "unknown --auth $AUTH (builtin or supabase)" ;; esac
 
@@ -299,6 +306,12 @@ start_postgres() {
     PG_PORT=$(docker port "$PG_CONTAINER" 5432/tcp | head -n1 | awk -F: '{print $NF}')
     log "postgres: reusing container $PG_CONTAINER on 127.0.0.1:$PG_PORT"
   else
+    # `down` deletes the image when nothing else uses it, so pull it visibly
+    # rather than let `docker run` stall silently on a 400 MB download.
+    if ! docker image inspect "$PG_IMAGE" >/dev/null 2>&1; then
+      log "pulling $PG_IMAGE"
+      docker pull -q "$PG_IMAGE" >/dev/null
+    fi
     docker run -d --name "$PG_CONTAINER" --label "vicoa-stack-preview=$REPO" \
       -p "127.0.0.1:$PG_PORT:5432" \
       -e POSTGRES_USER=vicoa -e POSTGRES_PASSWORD=vicoa -e POSTGRES_DB=vicoa \
@@ -631,6 +644,7 @@ print_result() { # STATUS MESSAGE
     "* pid: $(pid_of proxy)" \
     "* message: $2" \
     "* public_url: ${PUBLIC_URL:-null}" \
+    "* sign_in: $([ -n "${PUBLIC_URL:-}" ] && echo "$PUBLIC_URL/sign-in" || echo null)" \
     "* auth: ${AUTH:-builtin}" \
     "* owner: $([ "${AUTH:-builtin}" = builtin ] && echo "$OWNER_EMAIL / ${OWNER_PASSWORD:-?}" || echo "none (sign in with a hosted Supabase account)")" \
     "* viewer: $([ "${AUTH:-builtin}" = builtin ] && echo "$VIEWER_EMAIL / ${VIEWER_PASSWORD:-?}" || echo none)" \
@@ -733,19 +747,74 @@ cmd_restart() {
   done
 }
 
-cmd_down() {
-  [ -d "$STATE" ] || { log "nothing to stop for $REPO"; return 0; }
-  stop_all
-  if [ "$PURGE" = 1 ]; then
-    if docker container inspect "$PG_CONTAINER" >/dev/null 2>&1; then
-      docker rm -f -v "$PG_CONTAINER" >/dev/null
-    fi
-    case $STATE in "$STATE_ROOT"/?*) rm -rf "$STATE" ;; esac
-    log "stopped; removed $PG_CONTAINER and $STATE"
-  else
-    rm -f "$STATE/public"
-    log "stopped; database kept in container $PG_CONTAINER (down --purge removes it)"
+# Delete the Postgres image once no container uses it, running or stopped, from
+# any preview or project (the backend's compose file and integration tests use
+# the same image). No -f, and the check comes first, so another preview's or
+# project's container is never left without its image; whoever needs it next
+# pulls it again.
+remove_image_if_unused() {
+  docker image inspect "$PG_IMAGE" >/dev/null 2>&1 || return 0
+  if [ -n "$(docker ps -aq --filter "ancestor=$PG_IMAGE")" ]; then
+    log "kept image $PG_IMAGE: other containers use it"
+  elif docker image rm "$PG_IMAGE" >/dev/null 2>&1; then
+    log "removed image $PG_IMAGE"
   fi
+}
+
+cmd_down() {
+  local docker_up=0 has_db=0
+  docker info >/dev/null 2>&1 && docker_up=1
+  [ "$docker_up" = 1 ] && docker container inspect "$PG_CONTAINER" >/dev/null 2>&1 && has_db=1
+  # The container is named after the checkout, so it can be found even when the
+  # state dir is gone (a reboot empties /tmp). Bailing out on a missing state dir
+  # is what used to leave dead databases behind.
+  if [ ! -d "$STATE" ] && [ "$has_db" = 0 ]; then
+    log "nothing to stop for $REPO"
+    return 0
+  fi
+  [ -d "$STATE" ] && stop_all
+  rm -f "$STATE/public"
+  if [ "$KEEP_DB" = 1 ]; then
+    log "stopped; database kept in container $PG_CONTAINER for the next \`up\`"
+    return 0
+  fi
+  if [ "$has_db" = 1 ]; then
+    docker rm -f -v "$PG_CONTAINER" >/dev/null
+    log "removed container $PG_CONTAINER and its volume"
+    remove_image_if_unused
+  elif [ "$docker_up" = 0 ]; then
+    log "Docker is not running, so container $PG_CONTAINER may still exist; run \`down\` again once Docker is up"
+  fi
+  if [ "$PURGE" = 1 ]; then
+    case $STATE in "$STATE_ROOT"/?*) rm -rf "$STATE" ;; esac
+    log "removed $STATE"
+  elif [ -d "$STATE" ]; then
+    log "kept $STATE (logs, keys, and the account passwords the next \`up\` reuses)"
+  fi
+}
+
+# A preview whose checkout was deleted before anyone ran `down` (a removed
+# worktree) leaves a stopped database container that no `down` can reach any
+# more. Delete those, with their volumes. Running containers are never touched,
+# and neither is a container whose checkout still exists: `down` there is the
+# owner's call.
+cmd_prune() {
+  docker info >/dev/null 2>&1 || die "Docker is not running"
+  local id name repo n=0
+  while read -r id; do
+    [ -n "$id" ] || continue
+    repo=$(docker inspect -f '{{index .Config.Labels "vicoa-stack-preview"}}' "$id")
+    [ -n "$repo" ] && [ -d "$repo" ] && continue
+    name=$(docker inspect -f '{{.Name}}' "$id")
+    # No -f: if it was started in the meantime, leave it.
+    if docker rm -v "$id" >/dev/null; then
+      log "removed ${name#/} (checkout ${repo:-unknown} is gone)"
+      n=$((n + 1))
+    fi
+  done < <(docker ps -aq --filter label=vicoa-stack-preview \
+    --filter status=exited --filter status=created --filter status=dead)
+  log "pruned $n preview database(s)"
+  remove_image_if_unused
 }
 
 case $CMD in
@@ -757,4 +826,5 @@ case $CMD in
   run) cmd_run ;;
   restart) cmd_restart ;;
   down) cmd_down ;;
+  prune) cmd_prune ;;
 esac

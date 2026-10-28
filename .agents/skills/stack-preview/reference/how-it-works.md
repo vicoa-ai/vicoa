@@ -6,7 +6,7 @@ Started in this order by `up`:
 
 | Name | Command | Binds |
 |---|---|---|
-| postgres | `docker run postgres:16-alpine`, container `vicoa-preview-<slug>` | `127.0.0.1:base` |
+| postgres | `docker run postgres:16-alpine`, container `vicoa-preview-<slug>`, labelled `vicoa-stack-preview=<checkout>` (how `prune` tells whose it is); `down` deletes it | `127.0.0.1:base` |
 | proxy | `node scripts/proxy.mjs` | `127.0.0.1:base+4` |
 | tunnel | `cloudflared tunnel --url http://127.0.0.1:<proxy>` (or `ngrok http`) | public |
 | server | `uvicorn servers.app:app` with `ENABLE_WEBSOCKET=true` | `127.0.0.1:base+2` |
@@ -41,7 +41,7 @@ see the public hostname, exactly as with a direct tunnel. Responses carry
 | File | What |
 |---|---|
 | `ports`, `public` | ports; public URL and provider |
-| `accounts` | Ada's and Bea's passwords (mode 600, created once) |
+| `accounts` | Ada's and Bea's passwords (mode 600, created once; plain `down` keeps it, so a new database gets the same passwords) |
 | `backend.env` | the variables backend and server run with (mode 600) |
 | `env_file` | path of the `--env-file` in use, reused by `restart` |
 | `keys/` | RS256 keypair from `backend/scripts/generate-jwt-keys.sh` |
