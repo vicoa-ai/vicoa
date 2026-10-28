@@ -962,6 +962,42 @@ abstract class AppLocalizations {
   /// **'Email change confirmation email sent'**
   String get authEmailChangeConfirmationSent;
 
+  /// No description provided for @authAddEmailTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Add your email'**
+  String get authAddEmailTitle;
+
+  /// No description provided for @authAddEmailSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Add an email to finish signing in.'**
+  String get authAddEmailSubtitle;
+
+  /// No description provided for @authAddEmailHint.
+  ///
+  /// In en, this message translates to:
+  /// **'you@example.com'**
+  String get authAddEmailHint;
+
+  /// No description provided for @authAddEmailInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid email address.'**
+  String get authAddEmailInvalid;
+
+  /// No description provided for @authAddEmailTaken.
+  ///
+  /// In en, this message translates to:
+  /// **'This email already has a Vicoa account. Sign out, then sign in with that account.'**
+  String get authAddEmailTaken;
+
+  /// No description provided for @authAddEmailFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t save your email. Check your connection and try again.'**
+  String get authAddEmailFailed;
+
   /// No description provided for @authOptionsAndConnector.
   ///
   /// In en, this message translates to:

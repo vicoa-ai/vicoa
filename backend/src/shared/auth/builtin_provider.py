@@ -36,7 +36,7 @@ from .agent_tokens import (
     create_signed_jwt,
     decode_vicoa_jwt,
 )
-from .base import Principal, ProviderUser, TokenVerificationError
+from .base import AuthProviderError, Principal, ProviderUser, TokenVerificationError
 from .passwords import hash_password, needs_rehash, verify_password
 
 logger = logging.getLogger(__name__)
@@ -140,6 +140,10 @@ class BuiltinAuthProvider:
 
     def update_user_profile(self, user_id: UUID, display_name: str | None) -> None:
         """No-op: the caller already wrote the local row, and there is no copy."""
+
+    def set_user_email(self, user_id: UUID, email: str) -> None:
+        """Refused: built-in accounts sign up with an email, so none lacks one."""
+        raise AuthProviderError("The built-in provider does not add emails")
 
     def delete_user(self, user_id: UUID) -> None:
         """No-op: `user_credentials` and `auth_email_codes` cascade from `users`."""

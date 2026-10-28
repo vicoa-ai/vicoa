@@ -6,6 +6,7 @@ export '/pages/automations/automations_widget.dart' show AutomationsWidget;
 export '/onboarding/auth_options/auth_options_widget.dart'
     show AuthOptionsWidget;
 export '/onboarding/sign_up/sign_up_widget.dart' show SignUpWidget;
+export '/onboarding/add_email/add_email_widget.dart' show AddEmailWidget;
 export '/profile/account/account_widget.dart' show AccountWidget;
 export '/profile/usage_credits/usage_credits_widget.dart'
     show UsageCreditsWidget;

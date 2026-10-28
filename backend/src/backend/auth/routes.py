@@ -7,10 +7,11 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from shared.config import settings
 from shared.database.models import APIKey, User
 from shared.database.session import get_db
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..db.queries import delete_user_account as delete_user_db
@@ -21,6 +22,7 @@ from .dependencies import (
 )
 from shared.auth import (
     AuthProviderError,
+    EmailAlreadyInUse,
     Principal,
     get_auth_provider,
     resolve_auth_provider_name,
@@ -85,6 +87,14 @@ class SyncUserRequest(BaseModel):
     display_name: str | None
 
 
+class AddEmailRequest(BaseModel):
+    email: EmailStr
+
+
+class AddEmailResponse(BaseModel):
+    email: str
+
+
 class AuthConfigResponse(BaseModel):
     provider: str
     allow_signup: bool
@@ -135,6 +145,53 @@ async def sync_user(
         db.commit()
 
     return {"message": "User synced successfully"}
+
+
+@router.post("/email", response_model=AddEmailResponse)
+async def add_email(
+    request: AddEmailRequest,
+    claims: Principal = Depends(get_current_claims),
+    db: Session = Depends(get_db),
+):
+    """Give an account that signed in without an email one.
+
+    Some Apple IDs (phone-number accounts) hand us no address at all, and a
+    `users` row cannot exist without one, so every route behind
+    `get_current_user` turns them away. That is why this one reads only the
+    token's claims. The row then appears on the client's next request, once
+    its refreshed token carries the address, through the usual first-sign-in
+    path (invite claiming and signup hooks included).
+
+    Adding, never changing: an account that already has an email is refused,
+    so this cannot swap a known address for an unchecked one. The address is
+    not verified, the same as email sign-up on a deployment with autoconfirm.
+    """
+    provider = get_auth_provider()
+    try:
+        identity = provider.fetch_user(claims.user_id)
+    except AuthProviderError as exc:
+        logger.error(f"Auth provider lookup failed for {claims.user_id}: {exc}")
+        raise HTTPException(status_code=502, detail="auth_provider_unavailable")
+    if identity is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if identity.email:
+        raise HTTPException(status_code=409, detail="account_has_email")
+
+    email = request.email.strip().lower()
+    # A leftover row still holding the address would make the first-sign-in
+    # insert fail on `users_email_key` after the provider had accepted it.
+    if db.query(User.id).filter(func.lower(User.email) == email).first():
+        raise HTTPException(status_code=409, detail="email_taken")
+
+    try:
+        provider.set_user_email(claims.user_id, email)
+    except EmailAlreadyInUse:
+        raise HTTPException(status_code=409, detail="email_taken")
+    except AuthProviderError as exc:
+        logger.error(f"Failed to add an email for {claims.user_id}: {exc}")
+        raise HTTPException(status_code=502, detail="auth_provider_unavailable")
+
+    return AddEmailResponse(email=email)
 
 
 @router.get("/session")

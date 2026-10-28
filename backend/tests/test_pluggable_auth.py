@@ -436,3 +436,106 @@ def test_an_unknown_provider_name_fails_loudly(
 
     with pytest.raises(RuntimeError, match="Unknown AUTH_PROVIDER"):
         provider.get_auth_provider()
+
+
+# --- adding an email -----------------------------------------------------------
+
+
+class _Lookup:
+    """Stands in for GoTrue's admin user list (`GET /admin/users?filter=`)."""
+
+    def __init__(self, users: list[dict]) -> None:
+        self.users = users
+        self.urls: list[str] = []
+
+    def __call__(self, request, timeout=None):
+        import io
+        import json
+
+        self.urls.append(request.full_url)
+        return io.BytesIO(json.dumps({"users": self.users}).encode())
+
+
+@pytest.fixture
+def supabase_admin(monkeypatch: pytest.MonkeyPatch, supabase_configured):
+    from unittest.mock import Mock
+
+    from shared.auth import supabase_provider
+
+    client = Mock()
+    monkeypatch.setattr(
+        supabase_provider, "get_supabase_service_client", lambda: client
+    )
+    lookup = _Lookup([])
+    monkeypatch.setattr(supabase_provider.urllib.request, "urlopen", lookup)
+    return client, lookup
+
+
+def test_supabase_adds_an_email_already_confirmed(supabase_admin) -> None:
+    client, lookup = supabase_admin
+    user_id = uuid4()
+
+    SupabaseAuthProvider().set_user_email(user_id, "new@example.com")
+
+    assert "filter=new%40example.com" in lookup.urls[0]
+    client.auth.admin.update_user_by_id.assert_called_once_with(
+        str(user_id), {"email": "new@example.com", "email_confirm": True}
+    )
+
+
+def test_supabase_refuses_an_address_another_identity_holds(supabase_admin) -> None:
+    from shared.auth.base import EmailAlreadyInUse
+
+    client, lookup = supabase_admin
+    # GoTrue's admin update would hit the unique index and answer a bare 500,
+    # so the clash has to be found before the write.
+    lookup.users = [{"id": str(uuid4()), "email": "taken@example.com"}]
+
+    with pytest.raises(EmailAlreadyInUse):
+        SupabaseAuthProvider().set_user_email(uuid4(), "taken@example.com")
+    client.auth.admin.update_user_by_id.assert_not_called()
+
+
+def test_supabase_lookup_matches_the_whole_address(supabase_admin) -> None:
+    client, lookup = supabase_admin
+    user_id = uuid4()
+    # The filter is a substring match; neither of these is a clash.
+    lookup.users = [
+        {"id": str(uuid4()), "email": "xtaken@example.com"},
+        {"id": str(user_id), "email": "taken@example.com"},
+    ]
+
+    SupabaseAuthProvider().set_user_email(user_id, "taken@example.com")
+
+    client.auth.admin.update_user_by_id.assert_called_once()
+
+
+def test_supabase_maps_update_failures(supabase_admin) -> None:
+    from supabase_auth.errors import AuthApiError
+
+    from shared.auth.base import AuthProviderError, EmailAlreadyInUse
+
+    client, _ = supabase_admin
+    instance = SupabaseAuthProvider()
+
+    client.auth.admin.update_user_by_id.side_effect = AuthApiError(
+        "A user with this email address has already been registered",
+        422,
+        "email_exists",
+    )
+    with pytest.raises(EmailAlreadyInUse):
+        instance.set_user_email(uuid4(), "taken@example.com")
+
+    client.auth.admin.update_user_by_id.side_effect = AuthApiError(
+        "Error updating user", 500, "unexpected_failure"
+    )
+    with pytest.raises(AuthProviderError) as excinfo:
+        instance.set_user_email(uuid4(), "new@example.com")
+    assert not isinstance(excinfo.value, EmailAlreadyInUse)
+
+
+def test_the_builtin_provider_does_not_add_emails() -> None:
+    from shared.auth.base import AuthProviderError
+
+    with pytest.raises(AuthProviderError):
+        BuiltinAuthProvider().set_user_email(uuid4(), "new@example.com")

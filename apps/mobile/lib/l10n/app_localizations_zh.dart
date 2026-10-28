@@ -472,6 +472,24 @@ class AppLocalizationsZh extends AppLocalizations {
   String get authEmailChangeConfirmationSent => '更改邮箱的确认邮件已发送';
 
   @override
+  String get authAddEmailTitle => '添加邮箱';
+
+  @override
+  String get authAddEmailSubtitle => '添加邮箱即可完成登录。';
+
+  @override
+  String get authAddEmailHint => 'name@example.com';
+
+  @override
+  String get authAddEmailInvalid => '请输入有效的邮箱地址。';
+
+  @override
+  String get authAddEmailTaken => '这个邮箱已经有 Vicoa 账号了。请退出登录，然后用那个账号登录。';
+
+  @override
+  String get authAddEmailFailed => '邮箱保存失败，请检查网络后重试。';
+
+  @override
   String get authOptionsAndConnector => ' 和 ';
 
   @override

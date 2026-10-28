@@ -486,6 +486,26 @@ class AppLocalizationsEn extends AppLocalizations {
       'Email change confirmation email sent';
 
   @override
+  String get authAddEmailTitle => 'Add your email';
+
+  @override
+  String get authAddEmailSubtitle => 'Add an email to finish signing in.';
+
+  @override
+  String get authAddEmailHint => 'you@example.com';
+
+  @override
+  String get authAddEmailInvalid => 'Enter a valid email address.';
+
+  @override
+  String get authAddEmailTaken =>
+      'This email already has a Vicoa account. Sign out, then sign in with that account.';
+
+  @override
+  String get authAddEmailFailed =>
+      'Couldn\'t save your email. Check your connection and try again.';
+
+  @override
   String get authOptionsAndConnector => ' and ';
 
   @override

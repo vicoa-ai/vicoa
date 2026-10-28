@@ -119,7 +119,21 @@ class _AuthOptionsWidgetState extends State<AuthOptionsWidget> with RouteAware {
         });
       }
 
-      final supabaseUser = recoveredSupabaseUser;
+      // Some Apple IDs (registered with a phone number) share no email, and
+      // the backend cannot create an account without one, so collect it
+      // before anything below calls the backend. Backing out undoes the
+      // sign-in; the billing SDKs are not identified yet, so Supabase's
+      // session is all there is to undo.
+      if ((recoveredSupabaseUser?.email ?? user?.email ?? '').isEmpty) {
+        if (!mounted) return;
+        final added = await context.pushNamed<bool>(AddEmailWidget.routeName, extra: <String, dynamic>{'fromSignIn': true});
+        if (added != true) {
+          await SupaFlow.client.auth.signOut();
+          return;
+        }
+      }
+
+      final supabaseUser = SupaFlow.client.auth.currentUser;
       final metadata = supabaseUser?.userMetadata ?? const {};
       final resolvedEmail = supabaseUser?.email ?? currentUserEmail;
       final resolvedName = (metadata['full_name'] ?? metadata['name'] ?? metadata['display_name'] ?? currentUserDisplayName).toString();

@@ -31,6 +31,10 @@ class AuthProviderError(Exception):
     """Raised when an identity-provider admin call fails."""
 
 
+class EmailAlreadyInUse(AuthProviderError):
+    """Raised when an address being written to an identity belongs to another one."""
+
+
 PrincipalKind = Literal["user", "agent"]
 
 
@@ -82,6 +86,14 @@ class AuthProvider(Protocol):
 
     def update_user_profile(self, user_id: UUID, display_name: str | None) -> None:
         """Push a profile change back to the provider. No-op when it holds none."""
+        ...
+
+    def set_user_email(self, user_id: UUID, email: str) -> None:
+        """Give an identity that has no email one, already confirmed.
+
+        Raises `EmailAlreadyInUse` when another identity holds the address, and
+        `AuthProviderError` for any other refusal.
+        """
         ...
 
     def delete_user(self, user_id: UUID) -> None:

@@ -40,6 +40,7 @@ export 'api_cancel_queued_message.dart' show apiCancelQueuedMessage;
 export 'api_steer_queued_message.dart' show apiSteerQueuedMessage;
 export 'api_upload_attachment.dart' show apiUploadAttachment;
 export 'api_sync_user.dart' show apiSyncUser;
+export 'api_add_email.dart' show apiAddEmail, addEmailFailureOutcome, AddEmailOutcome;
 export 'api_get_mobile_subscription_status.dart' show apiGetMobileSubscriptionStatus;
 export 'api_get_agent_instances.dart' show apiGetAgentInstances;
 export 'api_delete_agent_instance.dart' show apiDeleteAgentInstance;

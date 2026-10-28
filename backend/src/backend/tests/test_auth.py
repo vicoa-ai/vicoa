@@ -395,3 +395,105 @@ class TestCreateCliKey:
         assert row.api_key != raw
         assert row.api_key.startswith("vic_")
         assert row.is_active is True
+
+
+class TestAddEmail:
+    """POST /auth/email: an account that signed in with no email adds one."""
+
+    @pytest.fixture
+    def emailless_client(self, client):
+        from backend.auth.dependencies import get_current_claims
+        from backend.main import app
+
+        user_id = uuid4()
+        app.dependency_overrides[get_current_claims] = lambda: TokenClaims(
+            user_id=user_id, email=None, display_name=None
+        )
+        yield client, user_id
+        del app.dependency_overrides[get_current_claims]
+
+    @pytest.fixture
+    def provider(self):
+        mock_provider = Mock()
+        with patch("backend.auth.routes.get_auth_provider", return_value=mock_provider):
+            yield mock_provider
+
+    def test_adds_the_email_to_the_identity(self, emailless_client, provider):
+        from shared.auth import ProviderUser
+
+        client, user_id = emailless_client
+        provider.fetch_user.return_value = ProviderUser(user_id=user_id, email=None)
+
+        response = client.post(
+            "/api/v1/auth/email", json={"email": " New@Example.com "}
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"email": "new@example.com"}
+        provider.set_user_email.assert_called_once_with(user_id, "new@example.com")
+
+    def test_an_account_with_an_email_cannot_change_it_here(
+        self, emailless_client, provider
+    ):
+        from shared.auth import ProviderUser
+
+        client, user_id = emailless_client
+        # The token can predate the address, so the provider's copy decides.
+        provider.fetch_user.return_value = ProviderUser(
+            user_id=user_id, email="old@example.com"
+        )
+
+        response = client.post("/api/v1/auth/email", json={"email": "new@example.com"})
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "account_has_email"
+        provider.set_user_email.assert_not_called()
+
+    def test_an_address_held_by_a_local_row_is_taken(
+        self, emailless_client, provider, test_user
+    ):
+        from shared.auth import ProviderUser
+
+        client, user_id = emailless_client
+        provider.fetch_user.return_value = ProviderUser(user_id=user_id, email=None)
+
+        response = client.post(
+            "/api/v1/auth/email", json={"email": test_user.email.upper()}
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "email_taken"
+        provider.set_user_email.assert_not_called()
+
+    def test_an_address_held_by_another_identity_is_taken(
+        self, emailless_client, provider
+    ):
+        from shared.auth import EmailAlreadyInUse, ProviderUser
+
+        client, user_id = emailless_client
+        provider.fetch_user.return_value = ProviderUser(user_id=user_id, email=None)
+        provider.set_user_email.side_effect = EmailAlreadyInUse("new@example.com")
+
+        response = client.post("/api/v1/auth/email", json={"email": "new@example.com"})
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "email_taken"
+
+    def test_a_malformed_address_is_rejected(self, emailless_client, provider):
+        client, _ = emailless_client
+
+        response = client.post("/api/v1/auth/email", json={"email": "not-an-email"})
+
+        assert response.status_code == 422
+        provider.fetch_user.assert_not_called()
+
+    def test_a_provider_failure_is_a_502(self, emailless_client, provider):
+        from shared.auth import AuthProviderError, ProviderUser
+
+        client, user_id = emailless_client
+        provider.fetch_user.return_value = ProviderUser(user_id=user_id, email=None)
+        provider.set_user_email.side_effect = AuthProviderError("boom")
+
+        response = client.post("/api/v1/auth/email", json={"email": "new@example.com"})
+
+        assert response.status_code == 502

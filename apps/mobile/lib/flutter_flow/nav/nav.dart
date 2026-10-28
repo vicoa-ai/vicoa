@@ -105,6 +105,10 @@ class AppStateNotifier extends ChangeNotifier {
   bool get loading => user == null || showSplashImage;
   bool get loggedIn => user?.loggedIn ?? false;
   bool get initiallyLoggedIn => initialUser?.loggedIn ?? false;
+  /// Signed in, but with no email: some Apple IDs (registered with a phone
+  /// number) share none, and the backend cannot create an account without
+  /// one. Such a session lands on AddEmail instead of the app.
+  bool get needsEmail => loggedIn && (user?.email ?? '').isEmpty;
   bool get shouldRedirect => loggedIn && _redirectLocation != null;
 
   String getRedirectLocation() => _redirectLocation!;
@@ -143,13 +147,13 @@ GoRouter createRouter(AppStateNotifier appStateNotifier) => GoRouter(
       refreshListenable: appStateNotifier,
       navigatorKey: appNavigatorKey,
       errorBuilder: (context, state) =>
-          appStateNotifier.loggedIn ? MainTabsWidget() : unauthedHome(),
+          appStateNotifier.loggedIn ? (appStateNotifier.needsEmail ? AddEmailWidget() : MainTabsWidget()) : unauthedHome(),
       routes: [
         FFRoute(
           name: '_initialize',
           path: '/',
           builder: (context, _) =>
-              appStateNotifier.loggedIn ? MainTabsWidget() : unauthedHome(),
+              appStateNotifier.loggedIn ? (appStateNotifier.needsEmail ? AddEmailWidget() : MainTabsWidget()) : unauthedHome(),
         ),
         FFRoute(
           name: ProfileWidget.routeName,
@@ -206,6 +210,17 @@ GoRouter createRouter(AppStateNotifier appStateNotifier) => GoRouter(
         // Home / Tasks / Automations render inside the tabbed shell — the
         // route name is kept so existing pushNamed/goNamed callers land on
         // the right tab.
+        FFRoute(
+          name: AddEmailWidget.routeName,
+          path: AddEmailWidget.routePath,
+          builder: (context, params) => AddEmailWidget(
+            fromSignIn: params.getParam(
+                  'fromSignIn',
+                  ParamType.bool,
+                ) ??
+                false,
+          ),
+        ),
         FFRoute(
           name: HomeWidget.routeName,
           path: HomeWidget.routePath,

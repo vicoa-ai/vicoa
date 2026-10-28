@@ -32,14 +32,20 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from uuid import UUID
 
 from jose import JWTError, jwt
 
 from shared.config.settings import settings
 
-from .base import AuthProviderError, Principal, ProviderUser, TokenVerificationError
+from .base import (
+    AuthProviderError,
+    EmailAlreadyInUse,
+    Principal,
+    ProviderUser,
+    TokenVerificationError,
+)
 from .supabase import get_supabase_anon_client, get_supabase_service_client
 
 logger = logging.getLogger(__name__)
@@ -48,6 +54,10 @@ SUPABASE_AUDIENCE = "authenticated"
 _ASYMMETRIC_ALGORITHMS = ("RS256", "ES256", "EdDSA")
 _JWKS_TTL = timedelta(minutes=10)
 _JWKS_TIMEOUT_SECONDS = 5
+_ADMIN_TIMEOUT_SECONDS = 10
+# Enough that a substring match on a short address cannot push the exact one
+# off the page.
+_EMAIL_LOOKUP_PAGE = 1000
 
 # Only the network fallback is cached. Local verification is microseconds and
 # re-reads `exp` every time, so caching it would only re-introduce the window
@@ -238,6 +248,52 @@ class SupabaseAuthProvider:
         except Exception as exc:
             raise AuthProviderError(f"Supabase profile update failed: {exc}") from exc
 
+    def set_user_email(self, user_id: UUID, email: str) -> None:
+        # The admin API, not the user's own `updateUser`: GoTrue always mails a
+        # confirmation for a signed-in user's email change, even with
+        # autoconfirm on, and the project does not verify addresses at sign-up
+        # either. `email_confirm` keeps the address usable for email sign-in.
+        #
+        # The admin update does not check for a clash itself: a taken address
+        # fails on GoTrue's unique index as a bare 500 ("Error updating user"),
+        # so look it up first to be able to say why.
+        if self._email_in_use(email, user_id):
+            raise EmailAlreadyInUse(email)
+        try:
+            get_supabase_service_client().auth.admin.update_user_by_id(
+                str(user_id), {"email": email, "email_confirm": True}
+            )
+        except Exception as exc:
+            if _is_email_taken(exc):
+                raise EmailAlreadyInUse(email) from exc
+            raise AuthProviderError(f"Supabase email update failed: {exc}") from exc
+
+    def _email_in_use(self, email: str, user_id: UUID) -> bool:
+        # GoTrue's admin list takes a `filter` (`email LIKE %filter%`) that the
+        # Python client does not expose, so this calls it directly.
+        url = (
+            settings.supabase_url.rstrip("/")
+            + "/auth/v1/admin/users?"
+            + urlencode({"filter": email, "per_page": _EMAIL_LOOKUP_PAGE})
+        )
+        key = settings.supabase_service_role_key
+        request = urllib.request.Request(
+            url, headers={"apikey": key, "Authorization": f"Bearer {key}"}
+        )
+        try:
+            with urllib.request.urlopen(  # noqa: S310 - fixed https project URL
+                request, timeout=_ADMIN_TIMEOUT_SECONDS
+            ) as response:
+                users = json.loads(response.read().decode("utf-8")).get("users") or []
+        except (urllib.error.URLError, ValueError, OSError) as exc:
+            raise AuthProviderError(f"Supabase user lookup failed: {exc}") from exc
+        # The filter is a substring match, so compare exactly.
+        return any(
+            (other.get("email") or "").lower() == email
+            and other.get("id") != str(user_id)
+            for other in users
+        )
+
     def delete_user(self, user_id: UUID) -> None:
         try:
             get_supabase_service_client().auth.admin.delete_user(str(user_id))
@@ -301,3 +357,11 @@ def _find_key(jwks: dict[str, Any], kid: str | None) -> dict[str, Any] | None:
 
 def _is_not_found(exc: Exception) -> bool:
     return "user not found" in str(exc).lower()
+
+
+def _is_email_taken(exc: Exception) -> bool:
+    # GoTrue tags this `email_exists`; older servers only say it in the message.
+    return (
+        getattr(exc, "code", None) == "email_exists"
+        or "already been registered" in str(exc).lower()
+    )

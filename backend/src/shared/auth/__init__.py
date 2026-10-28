@@ -13,6 +13,7 @@ from .agent_tokens import (
 from .base import (
     AuthProvider,
     AuthProviderError,
+    EmailAlreadyInUse,
     Principal,
     PrincipalKind,
     ProviderUser,
@@ -30,6 +31,7 @@ from .tokens import TokenClaims, verify_supabase_access_token
 __all__ = [
     "AuthProvider",
     "AuthProviderError",
+    "EmailAlreadyInUse",
     "Principal",
     "PrincipalKind",
     "ProviderUser",
