@@ -48,12 +48,17 @@ import {
   buildSessionActions,
   type SessionActionsConfig,
 } from '@/components/dashboard/session-actions-menu';
-import { fileableProjects, sessionProjectChoices } from '@/components/dashboard/session-project-choices';
+import {
+  createProjectForFolder,
+  fileableProjects,
+  sessionProjectChoices,
+} from '@/components/dashboard/session-project-choices';
 import { NewSessionButton } from '@/components/dashboard/new-session-button';
 import { WorktreeSubGroupHeader } from '@/components/dashboard/worktree-sub-group-header';
 import type { AgentInstanceResponse, ProjectResponse } from '@/lib/backend-api';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
 import { projectSettingsHref as settingsHrefForProject } from '@/lib/project-settings-route';
+import { newProjectFolder } from '@/lib/project-paths';
 import { useProjects } from '@/lib/use-projects';
 import {
   formatSidebarTime,
@@ -405,6 +410,22 @@ export function SidebarSessions({
       console.error(`Failed to move ${instance.id} to another project:`, error);
     }
   }, [api, refreshData]);
+
+  // "New project “<folder>”": a project of its own for the folder, then the
+  // session moved into it.
+  const handleMoveToNewProject = useCallback(async (instance: AgentInstanceResponse, folder: string) => {
+    if (!api || !instance.machine_id) return;
+    try {
+      const project = await createProjectForFolder(api, {
+        folder,
+        machineId: instance.machine_id,
+        gitRemoteUrl: instance.instance_metadata?.git_remote_url,
+      });
+      await handleMoveToProject(instance, project.id);
+    } catch (error) {
+      console.error(`Failed to create a project for ${folder}:`, error);
+    }
+  }, [api, handleMoveToProject]);
 
   // Filters + group-by, persisted to the same localStorage keys as before so
   // the two sidebars stay in sync. Read post-mount to keep SSR stable.
@@ -1200,10 +1221,14 @@ export function SidebarSessions({
     const people = sessionRowPeople(instance);
     const ownerName = foreign ? instance.owner?.name?.trim() || null : null;
 
+    const newFolder = newProjectFolder(instance, loadedProjects ?? []);
     const projectChoices = sessionProjectChoices(
       fileable,
       instance.project_id ?? null,
       (projectId) => void handleMoveToProject(instance, projectId),
+      newFolder
+        ? { folder: newFolder, onCreate: () => void handleMoveToNewProject(instance, newFolder) }
+        : undefined,
     );
 
     // One config drives both the hover three-dot (SessionActionsMenu) and the
@@ -1391,7 +1416,9 @@ export function SidebarSessions({
     handleUnread,
     handleResumeInstance,
     handleMoveToProject,
+    handleMoveToNewProject,
     fileable,
+    loadedProjects,
     copySessionId,
     copiedSessionId,
     resumingId,

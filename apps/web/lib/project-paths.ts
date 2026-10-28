@@ -99,6 +99,55 @@ export function resolveProjectForDirectory(
   return best;
 }
 
+/** The fields of a session `newProjectFolder` reads. */
+export interface SessionFolderFields {
+  machine_id?: string | null;
+  project?: string | null;
+  home_dir?: string | null;
+  instance_metadata?: { repo_root?: string | null; [key: string]: unknown } | null;
+}
+
+/**
+ * The folder a session's Project menu offers to make a project of its own
+ * ("New project “scratch”"), or `null` to leave the entry out. It is the
+ * folder the backend names a fresh project after: the repo root for a git
+ * session, else its working folder. Null when the session has no machine
+ * (someone else's, or registered before its daemon), the folder is the home
+ * folder or `/` (the backend never mints those), a project is already linked
+ * on that machine at the folder or inside it (then it is a choice already, or
+ * the repo is split into subfolder projects), or a project carries the
+ * session's git remote (its next session lands there by identity anyway).
+ * Archived projects count: the backend re-matches them rather than duplicate.
+ */
+export function newProjectFolder(
+  session: SessionFolderFields,
+  projects: readonly ProjectResponse[],
+): string | null {
+  const machineId = session.machine_id;
+  const folder = (session.instance_metadata?.repo_root || session.project)?.trim();
+  if (!machineId || !folder) return null;
+  const home = session.home_dir;
+  const canonical = canonicalPath(folder, home);
+  if (
+    canonical === '~' ||
+    canonical === '/' ||
+    (home && canonical === canonicalPath(home)) ||
+    !pathBasename(canonical)
+  ) {
+    return null;
+  }
+  const remote = session.instance_metadata?.git_remote_url;
+  for (const project of projects) {
+    if (!takesMySessions(project)) continue;
+    if (typeof remote === 'string' && remote && project.git_remote_url === remote) return null;
+    for (const link of project.directories) {
+      if (link.machine_id !== machineId) continue;
+      if (relativeSubpath(link.local_path, folder, home) !== null) return null;
+    }
+  }
+  return folder;
+}
+
 /** The projects linked to a folder on `machineId` (the picker's list), each
  * with that folder: the user's drag order first (`position`, from the
  * sidebar), then newest activity, then name — the backend's own list order. */

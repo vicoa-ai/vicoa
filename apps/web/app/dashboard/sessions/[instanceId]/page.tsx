@@ -62,7 +62,12 @@ import {
 import { extractChatAttachments } from '@/components/chat-attachments';
 import { SessionEmptyState } from '@/components/dashboard/session-empty-state';
 import { SessionActionsMenu } from '@/components/dashboard/session-actions-menu';
-import { fileableProjects, sessionProjectChoices } from '@/components/dashboard/session-project-choices';
+import {
+  createProjectForFolder,
+  fileableProjects,
+  sessionProjectChoices,
+} from '@/components/dashboard/session-project-choices';
+import { newProjectFolder } from '@/lib/project-paths';
 import { NO_PROJECT_LABEL } from '@/components/dashboard/task-ui';
 import { useProjects } from '@/lib/use-projects';
 import { SessionCreatedTasks } from '@/components/dashboard/session-created-tasks';
@@ -708,6 +713,32 @@ function AgentInstanceContent() {
       alert("Couldn't move the session to that project");
     }
   }, [instance?.project_id, instanceId, dashboardContext]);
+
+  // "New project “<folder>”": a project of its own for the session's folder
+  // (see `newProjectFolder`), then the session moved into it.
+  const newFolder = useMemo(
+    () => (isOwner && instance ? newProjectFolder(instance, projects) : null),
+    [isOwner, instance, projects],
+  );
+  const handleMoveToNewProject = useCallback(async () => {
+    const api = dashboardContext.api;
+    const machineId = instance?.machine_id;
+    if (!api || !machineId || !newFolder) return;
+    let projectId: string;
+    try {
+      const project = await createProjectForFolder(api, {
+        folder: newFolder,
+        machineId,
+        gitRemoteUrl: instance?.instance_metadata?.git_remote_url,
+      });
+      projectId = project.id;
+    } catch (err) {
+      console.error('Failed to create a project for the session folder:', err);
+      alert("Couldn't create the project");
+      return;
+    }
+    await handleMoveToProject(projectId);
+  }, [dashboardContext.api, instance?.machine_id, instance?.instance_metadata, newFolder, handleMoveToProject]);
   
   // Handle streaming connection
   const {
@@ -2615,6 +2646,9 @@ function AgentInstanceContent() {
                 fileable,
                 instance.project_id ?? null,
                 (projectId) => void handleMoveToProject(projectId),
+                newFolder
+                  ? { folder: newFolder, onCreate: () => void handleMoveToNewProject() }
+                  : undefined,
               )}
               onResume={() => void handleResumeSession()}
               showResume={canResume}

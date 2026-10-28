@@ -44,6 +44,15 @@ export function refreshProjects(): void {
   void globalMutate(PROJECTS_KEY);
 }
 
+/** Append a project the server just created to the shared list, so every
+ *  reader shows it now, then revalidate. */
+export function addCachedProject(next: ProjectResponse): void {
+  void globalMutate<ProjectResponse[]>(
+    PROJECTS_KEY,
+    (list) => (list && !list.some((p) => p.id === next.id) ? [...list, next] : list),
+  );
+}
+
 /** Write a project row the server just returned into the shared list, so
  *  every reader shows it now, then revalidate. */
 export function replaceCachedProject(next: ProjectResponse): void {

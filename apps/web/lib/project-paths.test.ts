@@ -4,6 +4,7 @@ import {
   canonicalPath,
   directoryChipLabel,
   joinSubpath,
+  newProjectFolder,
   pathBasename,
   projectsOnMachine,
   relativeSubpath,
@@ -205,5 +206,77 @@ describe('directoryChipLabel', () => {
   it("is the folder's own name when no project claims it", () => {
     expect(directoryChipLabel('~/scratch/thing/', null)).toBe('thing');
     expect(pathBasename('/')).toBe('/');
+  });
+});
+
+describe('newProjectFolder', () => {
+  const M = 'machine-a';
+  const projects = [project('projects', [{ machine_id: M, local_path: '~/projects' }])];
+  const session = (fields: {
+    project?: string;
+    repo_root?: string;
+    git_remote_url?: string;
+    machine_id?: string | null;
+  }) => ({
+    machine_id: fields.machine_id === undefined ? M : fields.machine_id,
+    project: fields.project,
+    home_dir: HOME,
+    instance_metadata: { repo_root: fields.repo_root, git_remote_url: fields.git_remote_url },
+  });
+
+  it('offers a plain subfolder that sits under a parent folder project', () => {
+    expect(newProjectFolder(session({ project: '~/projects/scratch' }), projects)).toBe(
+      '~/projects/scratch',
+    );
+  });
+
+  it('offers the repo root for a git session, not its subfolder', () => {
+    expect(
+      newProjectFolder(session({ project: '~/projects/hq/src', repo_root: '~/projects/hq' }), projects),
+    ).toBe('~/projects/hq');
+  });
+
+  it('hides once a project is linked at the folder, in either path form', () => {
+    expect(newProjectFolder(session({ project: '~/projects' }), projects)).toBeNull();
+    expect(newProjectFolder(session({ project: '/Users/nick/projects' }), projects)).toBeNull();
+  });
+
+  it('hides when a project is linked inside the folder (a split monorepo)', () => {
+    const web = [project('web', [{ machine_id: M, local_path: '~/mono/apps/web' }])];
+    expect(
+      newProjectFolder(session({ project: '~/mono/apps/web/src', repo_root: '~/mono' }), web),
+    ).toBeNull();
+  });
+
+  it('counts only links on the session machine', () => {
+    const elsewhere = [project('scratch', [{ machine_id: 'machine-b', local_path: '~/projects/scratch' }])];
+    expect(newProjectFolder(session({ project: '~/projects/scratch' }), elsewhere)).toBe(
+      '~/projects/scratch',
+    );
+  });
+
+  it('counts archived projects', () => {
+    const archived = [
+      project('scratch', [{ machine_id: M, local_path: '~/projects/scratch' }], { is_archived: true }),
+    ];
+    expect(newProjectFolder(session({ project: '~/projects/scratch' }), archived)).toBeNull();
+  });
+
+  it('hides when a project already carries the session remote', () => {
+    const remote = 'git@github.com:someone/hq.git';
+    const hq = [project('hq', [], { git_remote_url: remote })];
+    expect(
+      newProjectFolder(
+        session({ project: '~/projects/hq', repo_root: '~/projects/hq', git_remote_url: remote }),
+        hq,
+      ),
+    ).toBeNull();
+  });
+
+  it('never offers the home folder or root, or a session with no machine', () => {
+    expect(newProjectFolder(session({ project: '~' }), [])).toBeNull();
+    expect(newProjectFolder(session({ project: HOME }), [])).toBeNull();
+    expect(newProjectFolder(session({ project: '/' }), [])).toBeNull();
+    expect(newProjectFolder(session({ project: '~/scratch', machine_id: null }), [])).toBeNull();
   });
 });
