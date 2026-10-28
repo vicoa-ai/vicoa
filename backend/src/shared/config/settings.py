@@ -182,12 +182,12 @@ class Settings(BaseSettings):
     jwt_private_key_file: str = ""
     jwt_public_key_file: str = ""
 
-    # Anthropic API for LLM features (primary path for session titles —
-    # see shared.llms.utils).
+    # Anthropic API — last resort for session titles, after the OpenRouter
+    # models (see shared.llms.utils).
     anthropic_api_key: str = ""
-    # OpenRouter — single-API multi-provider gateway. Used as the fallback
-    # chain for session-title generation (DeepSeek v3.2 → Gemini-flash-lite)
-    # when Anthropic is unavailable, and by the bench_title_models script.
+    # OpenRouter — single-API multi-provider gateway. The primary path for
+    # session-title generation (DeepSeek v3.2 → Gemini-flash-lite), and used
+    # by the bench_title_models script.
     openrouter_api_key: str = ""
     jwt_public_key: str = ""
     deepgram_api_key: str = ""

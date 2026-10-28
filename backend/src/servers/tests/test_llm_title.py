@@ -1,8 +1,8 @@
 """Unit tests for session-title generation in shared.llms.utils.
 
-Covers the provider fallback chain (Anthropic Haiku 4.5 → OpenRouter DeepSeek
-v3.2 → OpenRouter Gemini-flash-lite) and the JSON title parser, including
-markdown-fence stripping for Anthropic's wrapped output.
+Covers the provider chain (OpenRouter DeepSeek v3.2 → OpenRouter
+Gemini-flash-lite → Anthropic Haiku 4.5). The prompt and JSON title parser are
+covered in test_openrouter.py.
 """
 
 from unittest.mock import MagicMock, patch
@@ -13,13 +13,12 @@ from shared.llms.utils import (
     _call_openrouter_deepseek_title,
     _call_openrouter_gemini_title,
     _call_openrouter_title,
-    _parse_title_json,
     generate_conversation_title,
 )
 
 
 class TestGenerateConversationTitleFallback:
-    """Chain: Anthropic → OpenRouter DeepSeek v3.2 → OpenRouter Gemini-lite.
+    """Chain: OpenRouter DeepSeek v3.2 → OpenRouter Gemini-lite → Anthropic.
 
     `generate_conversation_title` must never raise. It returns the first
     successful provider's title, or None if every provider is unconfigured
@@ -33,48 +32,22 @@ class TestGenerateConversationTitleFallback:
             mock_settings.openrouter_api_key = ""
             assert generate_conversation_title("any message") is None
 
-    def test_anthropic_success_short_circuits_fallbacks(self):
+    def test_deepseek_success_short_circuits_fallbacks(self):
         with (
-            patch("shared.llms.utils.settings") as mock_settings,
-            patch(
-                "shared.llms.utils._call_anthropic_title",
-                return_value="Anthropic Title",
-            ) as mock_anthropic,
-            patch("shared.llms.utils._call_openrouter_deepseek_title") as mock_deepseek,
-            patch("shared.llms.utils._call_openrouter_gemini_title") as mock_gemini,
-        ):
-            mock_settings.anthropic_api_key = "sk-ant-xxx"
-            mock_settings.openrouter_api_key = "sk-or-xxx"
-
-            assert generate_conversation_title("Fix bug") == "Anthropic Title"
-            mock_anthropic.assert_called_once_with("Fix bug")
-            mock_deepseek.assert_not_called()
-            mock_gemini.assert_not_called()
-
-    def test_falls_through_to_deepseek_when_anthropic_returns_none(self):
-        with (
-            patch("shared.llms.utils.settings") as mock_settings,
-            patch(
-                "shared.llms.utils._call_anthropic_title", return_value=None
-            ) as mock_anthropic,
             patch(
                 "shared.llms.utils._call_openrouter_deepseek_title",
                 return_value="DeepSeek Title",
             ) as mock_deepseek,
             patch("shared.llms.utils._call_openrouter_gemini_title") as mock_gemini,
+            patch("shared.llms.utils._call_anthropic_title") as mock_anthropic,
         ):
-            mock_settings.anthropic_api_key = ""
-            mock_settings.openrouter_api_key = "sk-or-xxx"
-
             assert generate_conversation_title("Fix bug") == "DeepSeek Title"
-            mock_anthropic.assert_called_once_with("Fix bug")
             mock_deepseek.assert_called_once_with("Fix bug")
             mock_gemini.assert_not_called()
+            mock_anthropic.assert_not_called()
 
-    def test_falls_through_to_gemini_when_deepseek_also_fails(self):
+    def test_falls_through_to_gemini_when_deepseek_fails(self):
         with (
-            patch("shared.llms.utils.settings") as mock_settings,
-            patch("shared.llms.utils._call_anthropic_title", return_value=None),
             patch(
                 "shared.llms.utils._call_openrouter_deepseek_title",
                 return_value=None,
@@ -83,18 +56,15 @@ class TestGenerateConversationTitleFallback:
                 "shared.llms.utils._call_openrouter_gemini_title",
                 return_value="Gemini Title",
             ) as mock_gemini,
+            patch("shared.llms.utils._call_anthropic_title") as mock_anthropic,
         ):
-            mock_settings.anthropic_api_key = ""
-            mock_settings.openrouter_api_key = "sk-or-xxx"
-
             assert generate_conversation_title("Fix bug") == "Gemini Title"
             mock_deepseek.assert_called_once_with("Fix bug")
             mock_gemini.assert_called_once_with("Fix bug")
+            mock_anthropic.assert_not_called()
 
-    def test_returns_none_when_all_three_providers_fail(self):
+    def test_falls_through_to_anthropic_when_openrouter_fails(self):
         with (
-            patch("shared.llms.utils.settings") as mock_settings,
-            patch("shared.llms.utils._call_anthropic_title", return_value=None),
             patch(
                 "shared.llms.utils._call_openrouter_deepseek_title",
                 return_value=None,
@@ -103,58 +73,42 @@ class TestGenerateConversationTitleFallback:
                 "shared.llms.utils._call_openrouter_gemini_title",
                 return_value=None,
             ),
+            patch(
+                "shared.llms.utils._call_anthropic_title",
+                return_value="Anthropic Title",
+            ) as mock_anthropic,
         ):
-            mock_settings.anthropic_api_key = "sk-ant-xxx"
-            mock_settings.openrouter_api_key = "sk-or-xxx"
+            assert generate_conversation_title("Fix bug") == "Anthropic Title"
+            mock_anthropic.assert_called_once_with("Fix bug")
+
+    def test_returns_none_when_all_three_providers_fail(self):
+        with (
+            patch(
+                "shared.llms.utils._call_openrouter_deepseek_title",
+                return_value=None,
+            ),
+            patch(
+                "shared.llms.utils._call_openrouter_gemini_title",
+                return_value=None,
+            ),
+            patch("shared.llms.utils._call_anthropic_title", return_value=None),
+        ):
             assert generate_conversation_title("Fix bug") is None
 
     def test_provider_exception_falls_through_to_next(self):
         with (
-            patch("shared.llms.utils.settings") as mock_settings,
             patch(
-                "shared.llms.utils._call_anthropic_title",
+                "shared.llms.utils._call_openrouter_deepseek_title",
                 side_effect=RuntimeError("boom"),
             ),
             patch(
-                "shared.llms.utils._call_openrouter_deepseek_title",
-                return_value="DeepSeek Title",
+                "shared.llms.utils._call_openrouter_gemini_title",
+                return_value="Gemini Title",
             ),
-            patch("shared.llms.utils._call_openrouter_gemini_title") as mock_gemini,
+            patch("shared.llms.utils._call_anthropic_title") as mock_anthropic,
         ):
-            mock_settings.anthropic_api_key = "sk-ant-xxx"
-            mock_settings.openrouter_api_key = "sk-or-xxx"
-            assert generate_conversation_title("Fix bug") == "DeepSeek Title"
-            mock_gemini.assert_not_called()
-
-
-class TestParseTitleJson:
-    """JSON title-payload parsing, including markdown-fence stripping."""
-
-    def test_well_formed_payload(self):
-        assert _parse_title_json('{"title": "Auth bug fix"}') == "Auth bug fix"
-
-    def test_long_title_returned_verbatim(self):
-        # No server-side cap — the LLM owns title length. A long title that
-        # used to be chopped at the 40-char boundary now comes through whole.
-        long_title = "Refactor auth middleware permission gate logic"
-        assert _parse_title_json('{"title": "%s"}' % long_title) == long_title
-
-    def test_whitespace_only_title_returns_none(self):
-        assert _parse_title_json('{"title": "   "}') is None
-
-    def test_bad_json_returns_none(self):
-        assert _parse_title_json("not json at all") is None
-
-    def test_missing_title_field_returns_none(self):
-        assert _parse_title_json('{"summary": "nope"}') is None
-
-    def test_strips_markdown_json_fence(self):
-        # Anthropic Haiku 4.5+ wraps JSON output in ```json ... ``` even
-        # when asked for raw JSON.
-        assert _parse_title_json('```json\n{"title": "Auth fix"}\n```') == "Auth fix"
-
-    def test_strips_plain_markdown_fence(self):
-        assert _parse_title_json('```\n{"title": "Auth fix"}\n```') == "Auth fix"
+            assert generate_conversation_title("Fix bug") == "Gemini Title"
+            mock_anthropic.assert_not_called()
 
 
 class TestAnthropicProvider:

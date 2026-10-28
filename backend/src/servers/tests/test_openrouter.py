@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 from shared.llms.openrouter import (
-    MAX_AUTO_TITLE_CHARS,
     _parse_title_json,
     call_openrouter,
     generate_title_via_openrouter,
@@ -138,10 +137,10 @@ class TestParseTitleJson:
     def test_well_formed(self):
         assert _parse_title_json('{"title": "Auth bug fix"}') == "Auth bug fix"
 
-    def test_caps_to_40_chars(self):
-        result = _parse_title_json('{"title": "%s"}' % ("A" * 80))
-        assert result is not None
-        assert len(result) == MAX_AUTO_TITLE_CHARS
+    def test_long_title_returned_verbatim(self):
+        # No server-side cap: cutting at 40 chars left titles ending mid-word.
+        long_title = "Refactor auth middleware permission gate logic"
+        assert _parse_title_json('{"title": "%s"}' % long_title) == long_title
 
     def test_bad_json_returns_none(self):
         assert _parse_title_json("not json") is None
@@ -156,8 +155,8 @@ class TestParseTitleJson:
         assert _parse_title_json('{"title": "   "}') is None
 
     def test_strips_markdown_json_fence(self):
-        # Anthropic Haiku 4.5+ wraps JSON output in ```json ... ``` even when
-        # asked for raw JSON. Parser must unwrap before json.loads.
+        # Some models wrap JSON output in ```json ... ``` even when asked for
+        # raw JSON. Parser must unwrap before json.loads.
         assert _parse_title_json('```json\n{"title": "Auth fix"}\n```') == "Auth fix"
 
     def test_strips_plain_markdown_fence(self):
@@ -211,3 +210,24 @@ class TestGenerateTitleViaOpenRouter:
             assert result.title is None
             assert result.error is not None
             assert "404" in result.error
+
+    def test_prompt_sets_no_char_limit(self):
+        # A "<= 40 chars" instruction made the LLM chase the boundary.
+        with (
+            patch("shared.llms.openrouter.settings") as mock_settings,
+            patch("openai.OpenAI") as mock_openai_cls,
+        ):
+            mock_settings.openrouter_api_key = "sk-or-xxx"
+            client = MagicMock()
+            client.chat.completions.create.return_value = _mock_completion(
+                '{"title": "Auth fix"}'
+            )
+            mock_openai_cls.return_value = client
+
+            generate_title_via_openrouter("Fix the auth bug")
+
+            call_kwargs = client.chat.completions.create.call_args.kwargs
+            prompt = call_kwargs["messages"][-1]["content"]
+            assert "Fix the auth bug" in prompt
+            assert "40" not in prompt
+            assert call_kwargs["model"] == "deepseek/deepseek-v3.2"

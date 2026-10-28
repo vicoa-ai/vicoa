@@ -8,8 +8,8 @@ the `model` param (e.g. `"anthropic/claude-3.5-haiku"`,
 
 This module is reusable across LLM features (titles, summaries, classification).
 The session-title-specific helper `generate_title_via_openrouter` lives here too
-— production wires it as the OpenRouter-routed fallback chain (DeepSeek v3.2 →
-Gemini-flash-lite) in `shared.llms.utils.generate_conversation_title`.
+— production wires it as the title chain (DeepSeek v3.2 → Gemini-flash-lite) in
+`shared.llms.utils.generate_conversation_title`.
 """
 
 from __future__ import annotations
@@ -29,15 +29,14 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_REFERER = "https://vicoa.ai"
 DEFAULT_APP_TITLE = "vicoa-backend"
 
-# Reuse the same prompt template + char cap as shared.llms.utils so titles
-# generated via OpenRouter are directly comparable to titles from the
-# direct-provider path.
-_TITLE_PROMPT = """Generate a short descriptive title for a coding session that just started with this user message. Reply with JSON only, no prose, in the form {{"title": "..."}}. The title must be <= 40 chars and capture the user's intent.
+# Shared with the Anthropic last-resort path in shared.llms.utils.
+# No server-side char cap: a hard limit makes the LLM chase the boundary and
+# the cut lands mid-word ("Refactor auth middlew…"). Asking for a concise
+# title and trusting the LLM produces clean, fully-worded results.
+_TITLE_PROMPT = """Generate a short descriptive title for a coding session that just started with this user message. Reply with JSON only, no prose, in the form {{"title": "..."}}. Aim for a concise title (a few words) that captures the user's intent. Write the title in the same language as the user's message; if the language is unclear, use English.
 
 User message:
 {message}"""
-
-MAX_AUTO_TITLE_CHARS = 40
 
 
 @dataclass
@@ -183,11 +182,11 @@ def _strip_markdown_fence(raw: str) -> str:
 
 
 def _parse_title_json(raw: str | None) -> str | None:
-    """Parse `{"title": "..."}` payload, capped at MAX_AUTO_TITLE_CHARS.
+    """Parse a `{"title": "..."}` payload.
 
-    Mirrors `shared.llms.utils._parse_title_json` so OpenRouter-routed titles
-    behave identically to direct-provider titles. Strips markdown fences
-    first since Anthropic's newer models wrap JSON output.
+    Strips markdown fences first, since some models wrap JSON output even in
+    JSON mode. Titles are returned verbatim — the prompt steers the LLM
+    toward a few words, and a hard cap would just chop a partial word.
     """
     if raw is None:
         return None
@@ -204,7 +203,7 @@ def _parse_title_json(raw: str | None) -> str | None:
     title = title.strip()
     if not title:
         return None
-    return title[:MAX_AUTO_TITLE_CHARS]
+    return title
 
 
 @dataclass
@@ -227,17 +226,15 @@ class TitleResult:
 def generate_title_via_openrouter(
     user_message: str,
     *,
-    model: str = "anthropic/claude-3.5-haiku",
+    model: str = "deepseek/deepseek-v3.2",
     api_key: str | None = None,
     include_usage_cost: bool = True,
     max_tokens: int = 60,
 ) -> TitleResult:
     """Generate a session title for `user_message` via the given OpenRouter model.
 
-    Uses the same prompt and char cap as production (`shared.llms.utils`).
-    Suitable both for benchmarking different models and (eventually) for
-    swapping the production direct-provider path to OpenRouter if a
-    cheaper model proves good enough.
+    This is the production title path (`shared.llms.utils` picks the model)
+    and also what benchmarks call to compare models on the same prompt.
 
     `max_tokens` controls the per-call output budget; bump it (e.g. 300) when
     benchmarking reasoning/thinking models that consume budget on hidden
