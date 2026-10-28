@@ -260,7 +260,7 @@ export function QueuedMessagesBar({
   return (
     <div className="mx-auto w-[90%] rounded-t-3xl bg-menu px-3 pt-2 pb-1.5 border-b border-menu-border">
       <TooltipProvider delayDuration={300}>
-        <div className="flex max-h-40 flex-col gap-1 overflow-y-auto">
+        <div className="custom-scrollbar flex max-h-40 flex-col gap-1 overflow-y-auto">
           {items.map((item) => (
             <QueuedMessageRow
               key={item.id}

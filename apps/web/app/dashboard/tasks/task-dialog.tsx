@@ -389,7 +389,7 @@ export function TaskDialog({
         </div>
 
         {/* Description + sub-tasks */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5">
+        <div className="custom-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-5">
           <MentionPromptField
             value={values.description}
             onChange={(value) => set('description', value)}

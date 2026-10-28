@@ -65,7 +65,7 @@ export function MdxPre({ children, className = '', ...props }: MdxPreProps) {
           {languageLabel}
         </span>
       )}
-      <pre ref={preRef} className={codeClassName} {...props}>
+      <pre ref={preRef} className={`custom-scrollbar ${codeClassName}`.trim()} {...props}>
         {codeChildren}
       </pre>
     </div>

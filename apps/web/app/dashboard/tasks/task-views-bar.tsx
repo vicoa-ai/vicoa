@@ -57,7 +57,7 @@ export function TaskViewsBar({
   };
 
   return (
-    <div className="flex items-center gap-1 overflow-x-auto">
+    <div className="custom-scrollbar flex items-center gap-1 overflow-x-auto">
       {views.map((view) => {
         const active = view.id === activeViewId;
         if (editingId === view.id) {

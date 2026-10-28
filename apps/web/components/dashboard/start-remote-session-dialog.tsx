@@ -270,7 +270,7 @@ export function StartRemoteSessionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto font-mono sm:max-w-2xl">
+      <DialogContent className="custom-scrollbar max-h-[85vh] overflow-y-auto font-mono sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Start Remote Session</DialogTitle>
           <DialogDescription>

@@ -1243,7 +1243,7 @@ export function LabelPickerPill({
             className="w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground"
           />
         </div>
-        <div className="max-h-56 overflow-y-auto p-1">
+        <div className="custom-scrollbar max-h-56 overflow-y-auto p-1">
           {visible.map((label) => (
             <PickerItem
               key={label.id}

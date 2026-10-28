@@ -62,7 +62,7 @@ export function ActivityHeatmap({
   };
 
   return (
-    <div className={cn('overflow-x-auto', className)}>
+    <div className={cn('custom-scrollbar overflow-x-auto', className)}>
       <div className="inline-flex min-w-full flex-col gap-1.5">
         {/* Cell grid */}
         <div className="flex gap-[3px]">

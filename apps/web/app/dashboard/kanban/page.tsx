@@ -266,7 +266,7 @@ function InstanceCard({
 
         <CardContent className="space-y-2 pt-0">
           {preview ? (
-            <div className="rounded-md border border-dashed border-border/70 bg-muted/25 p-3 text-xs leading-relaxed text-message-text whitespace-pre-wrap max-h-48 min-h-28 overflow-y-auto">
+            <div className="rounded-md border border-dashed border-border/70 bg-muted/25 p-3 text-xs leading-relaxed text-message-text whitespace-pre-wrap max-h-48 min-h-28 overflow-y-auto custom-scrollbar">
               {preview}
             </div>
           ) : null}
@@ -717,7 +717,7 @@ export default function AgentManagerPage() {
                 </div>
               </div>
 
-              <div className="flex-1 space-y-3 overflow-x-hidden overflow-y-auto px-0 py-3">
+              <div className="custom-scrollbar flex-1 space-y-3 overflow-x-hidden overflow-y-auto px-0 py-3">
                 {instances.length === 0 ? (
                   <div className="mx-0 flex h-40 flex-col items-center justify-center rounded-xl border border-dashed border-border/80 bg-background/40 px-4 text-center">
                     <MessageCircleMore className="mb-3 size-5 text-muted-foreground" />
