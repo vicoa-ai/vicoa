@@ -7,6 +7,8 @@ import { MessageResponse } from '@/lib/backend-api';
 export type AskUserQuestionOption = {
   label: string;
   description: string;
+  /** Draft, mockup or snippet the agent attached for comparing options. */
+  preview?: string;
 };
 
 export type AskUserQuestionItem = {
@@ -37,6 +39,12 @@ export type AskUserQuestionSubmitPayload = {
   answers: AskUserQuestionAnswer[];
   display_answers?: Array<{ header: string; label: string; question?: string }>;
 };
+
+// Previews are drafts and ASCII mockups whose columns must line up, so they
+// stay monospace past the app-wide Geist Sans sweep of `font-mono` (see
+// app/globals.css); same family as chat code in components/ui/message-markdown.tsx.
+const PREVIEW_FONT_FAMILY =
+  'var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace';
 
 function encodeAskUserQuestionPayload(payload: AskUserQuestionSubmitPayload): string {
   const json = JSON.stringify(payload);
@@ -158,8 +166,11 @@ export function parseAskUserQuestionPayload(message: MessageResponse): AskUserQu
               const optionRecord = option as Record<string, unknown>;
               const label = typeof optionRecord.label === 'string' ? optionRecord.label : '';
               const description = typeof optionRecord.description === 'string' ? optionRecord.description : '';
+              const preview = optionRecord.preview;
               if (!label.trim()) return null;
-              return { label, description };
+              return typeof preview === 'string' && preview.trim()
+                ? { label, description, preview }
+                : { label, description };
             })
             .filter((option): option is AskUserQuestionOption => option !== null)
         : [];
@@ -379,6 +390,14 @@ export function AskUserQuestionPanel({ message, onSubmit, onCancel }: AskUserQue
                   <div className="min-w-0">
                     <div className="select-text text-xs font-medium text-foreground font-mono">{option.label}</div>
                     <div className="mt-1 select-text text-xs text-muted-foreground font-mono whitespace-pre-wrap">{option.description}</div>
+                    {option.preview && (
+                      <pre
+                        className="mt-2 select-text whitespace-pre-wrap break-words rounded-md bg-background/60 px-2.5 py-2 text-xs text-foreground"
+                        style={{ fontFamily: PREVIEW_FONT_FAMILY }}
+                      >
+                        {option.preview}
+                      </pre>
+                    )}
                   </div>
                   {isSelected && <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-foreground" />}
                 </div>

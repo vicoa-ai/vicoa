@@ -212,6 +212,8 @@ class ClaudeWrapper:
             send_message_lock=self.send_message_lock,
             requested_input_messages=self.requested_input_messages,
             normalize_options_map_func=self._normalize_options_map,
+            # jsonl_monitor is created below; resolve it at dispatch time.
+            tool_input_func=lambda: self.jsonl_monitor.last_ask_user_question,
         )
 
         # Initialize JSONL monitor with all dependencies. vicoa_client lets it

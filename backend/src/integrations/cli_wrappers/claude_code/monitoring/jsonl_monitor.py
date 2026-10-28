@@ -98,6 +98,12 @@ class JSONLMonitor:
         self.pending_permission_options = pending_permission_options or {}
         self.terminal_ask_dispatched_func = terminal_ask_dispatched_func
 
+        # Exact input of the latest AskUserQuestion tool_use, in the shape of
+        # message_metadata["ask_user_question"]. The terminal path dispatches
+        # the prompt, but its screen scrape keeps only labels and short
+        # descriptions; it reads this to send the full text and previews.
+        self.last_ask_user_question: Optional[Dict[str, Any]] = None
+
         self.claude_jsonl_path: Optional[Path] = None
         self.running = True
         self.thread: Optional[threading.Thread] = None
@@ -585,14 +591,19 @@ class JSONLMonitor:
 
         for block in content_blocks:
             if isinstance(block, dict):
-                # AskUserQuestion is handled entirely by the terminal path.
+                # AskUserQuestion is dispatched by the terminal path.
                 # Skip the block without adding it to tools_used — otherwise the
                 # JSONL entry registers as a tool use and makes the wrapper's
                 # fast-path prompt check busy-spin while the user is responding.
+                # Keep its exact input for that path to send instead of the
+                # lossy screen scrape.
                 if (
                     block.get("type") == "tool_use"
                     and block.get("name") == "AskUserQuestion"
                 ):
+                    self.last_ask_user_question = (
+                        self._extract_ask_user_question_metadata(block)
+                    )
                     continue
 
                 ask_metadata = self._extract_ask_user_question_metadata(block)
@@ -687,7 +698,12 @@ class JSONLMonitor:
                     description = str(option.get("description") or "").strip()
                     if not label:
                         continue
-                    parsed_options.append({"label": label, "description": description})
+                    parsed_option = {"label": label, "description": description}
+                    # Mockups and drafts the user compares; whitespace matters.
+                    preview = option.get("preview")
+                    if isinstance(preview, str) and preview.strip():
+                        parsed_option["preview"] = preview
+                    parsed_options.append(parsed_option)
 
             if not question_text:
                 continue

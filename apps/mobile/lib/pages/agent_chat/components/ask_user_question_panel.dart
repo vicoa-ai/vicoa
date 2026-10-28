@@ -3,14 +3,18 @@ import '/flutter_flow/flutter_flow_widgets.dart';
 import '/flutter_flow/app_locale.dart';
 import '/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class AskUserQuestionOption {
   final String label;
   final String description;
+  // Draft, mockup or snippet the agent attached for comparing options.
+  final String? preview;
 
   const AskUserQuestionOption({
     required this.label,
     required this.description,
+    this.preview,
   });
 }
 
@@ -150,7 +154,9 @@ AskUserQuestionPayload? parseAskUserQuestionPayload(dynamic message) {
         final label = (optionRaw['label'] ?? '').toString().trim();
         if (label.isEmpty) continue;
         final description = (optionRaw['description'] ?? '').toString();
-        options.add(AskUserQuestionOption(label: label, description: description));
+        final previewRaw = optionRaw['preview'];
+        final preview = previewRaw is String && previewRaw.trim().isNotEmpty ? previewRaw : null;
+        options.add(AskUserQuestionOption(label: label, description: description, preview: preview));
       }
     }
 
@@ -719,6 +725,20 @@ class _AskUserQuestionPanelState extends State<AskUserQuestionPanel> {
                             fontSize: 12,
                             fontWeight: FontWeight.w400,
                           ),
+                        ),
+                      ),
+                    if (option.preview != null)
+                      Container(
+                        width: double.infinity,
+                        margin: const EdgeInsetsDirectional.fromSTEB(0, 8, 0, 0),
+                        padding: const EdgeInsetsDirectional.fromSTEB(10, 8, 10, 8),
+                        decoration: BoxDecoration(
+                          color: FlutterFlowTheme.of(context).primaryBackground,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          option.preview!,
+                          style: GoogleFonts.jetBrainsMono().copyWith(color: FlutterFlowTheme.of(context).primaryText, fontSize: 12, height: 1.4),
                         ),
                       ),
                   ],

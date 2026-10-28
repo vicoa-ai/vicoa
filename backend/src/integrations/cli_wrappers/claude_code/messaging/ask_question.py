@@ -3,7 +3,7 @@
 import select
 import time
 import uuid
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 from ..terminal.terminal_parser import TerminalRenderer
 
@@ -24,6 +24,7 @@ class AskQuestionCollector:
         send_message_lock,
         requested_input_messages: set,
         normalize_options_map_func: Callable,
+        tool_input_func: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
     ):
         self._pty = pty_manager
         self._buffer = terminal_buffer
@@ -36,6 +37,9 @@ class AskQuestionCollector:
         self._send_message_lock = send_message_lock
         self._requested_input_messages = requested_input_messages
         self._normalize_options_map = normalize_options_map_func
+        # Latest AskUserQuestion input read from Claude's JSONL, already in
+        # metadata shape (see JSONLMonitor.last_ask_user_question).
+        self._tool_input = tool_input_func
 
         # Suppress re-detection while a Vicoa response is pending.
         # Readable by the wrapper's _check_for_prompts.
@@ -44,7 +48,10 @@ class AskQuestionCollector:
     def handle(self, data: dict) -> None:
         """Dispatch an AskUserQuestion prompt to Vicoa."""
         all_tabs = data.get("_all_tabs", [data])
-        ask_metadata = build_ask_question_metadata(all_tabs)
+        ask_metadata = prefer_tool_input(
+            build_ask_question_metadata(all_tabs),
+            self._tool_input() if self._tool_input else None,
+        )
         message_content = "🔧 Using tool: AskUserQuestion"
         first_tab = all_tabs[0] if all_tabs else data
         options = first_tab.get("options", [])
@@ -191,4 +198,47 @@ def build_ask_question_metadata(all_tabs: list) -> dict:
     return {
         "tool_use_id": str(uuid.uuid4()),
         "questions": parsed_questions,
+    }
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.split()).lower()
+
+
+def _is_same_question(scraped: dict, exact: dict) -> bool:
+    """Whether a scraped tab shows the same question as the tool input.
+
+    The scrape keeps one line of a wrapped question, so match it as a
+    substring; failing that, every scraped option label must be an exact one.
+    """
+    scraped_text = _normalize(str(scraped.get("question") or ""))
+    if len(scraped_text) >= 10 and scraped_text in _normalize(
+        str(exact.get("question") or "")
+    ):
+        return True
+    labels = [_normalize(o.get("label", "")) for o in scraped.get("options") or []]
+    exact_labels = {_normalize(o.get("label", "")) for o in exact.get("options") or []}
+    return bool(labels) and all(label in exact_labels for label in labels)
+
+
+def prefer_tool_input(scraped: dict, exact: Optional[Dict[str, Any]]) -> dict:
+    """Return the tool's own AskUserQuestion input when it is the one on screen.
+
+    The terminal scrape keeps one line of each question and the label and
+    short description of each option. Option previews never survive it: Claude
+    draws them in a side-by-side box. The JSONL tool input has all of it, in
+    the order the TUI lists the options, so answers still map by index. Fall
+    back to the scrape when the JSONL entry hasn't been read yet or belongs to
+    an earlier call.
+    """
+    if not exact or not exact.get("questions"):
+        return scraped
+    scraped_questions = scraped.get("questions") or []
+    if not scraped_questions or not _is_same_question(
+        scraped_questions[0], exact["questions"][0]
+    ):
+        return scraped
+    return {
+        "tool_use_id": exact.get("tool_use_id") or scraped.get("tool_use_id"),
+        "questions": exact["questions"],
     }

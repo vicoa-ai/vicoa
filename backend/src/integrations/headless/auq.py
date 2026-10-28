@@ -181,7 +181,8 @@ def build_metadata(
     """Shape the metadata block the web/mobile pickers parse.
 
     Mirrors ``parseAskUserQuestionPayload`` in the web/Flutter UIs: keys are
-    snake_case, options are ``{"label", "description"}`` only.
+    snake_case, options are ``{"label", "description"}`` plus ``"preview"``
+    when the agent attached one.
     """
     normalized_questions: List[Dict[str, Any]] = []
     for index, question in enumerate(questions):
@@ -200,12 +201,15 @@ def build_metadata(
             if not isinstance(label, str) or not label.strip():
                 continue
             description = option.get("description")
-            options.append(
-                {
-                    "label": label,
-                    "description": description if isinstance(description, str) else "",
-                }
-            )
+            normalized_option = {
+                "label": label,
+                "description": description if isinstance(description, str) else "",
+            }
+            # Claude's mockups / drafts to compare; whitespace matters.
+            preview = option.get("preview")
+            if isinstance(preview, str) and preview.strip():
+                normalized_option["preview"] = preview
+            options.append(normalized_option)
         # Claude's schema uses camelCase ``multiSelect``; the dashboard expects
         # ``multi_select``. Accept either on input.
         multi_select = bool(question.get("multi_select") or question.get("multiSelect"))

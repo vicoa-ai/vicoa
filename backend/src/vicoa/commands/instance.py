@@ -120,7 +120,7 @@ def _ask_user_question_lines(aq: dict) -> list[str]:
     ``message_metadata["ask_user_question"]`` (the message body is just the
     ``Using tool`` header), so it would otherwise render blank. Shape is shared
     across wrappers: ``{questions: [{question, header, options:[{label,
-    description}], multi_select}]}``.
+    description, preview?}], multi_select}]}``.
     """
     out: list[str] = []
     for q in aq.get("questions", []) if isinstance(aq, dict) else []:
@@ -134,6 +134,9 @@ def _ask_user_question_lines(aq: dict) -> list[str]:
             label = (opt.get("label") or "").strip()
             desc = (opt.get("description") or "").strip()
             out.append(f"   • {label} — {desc}" if desc else f"   • {label}")
+            preview = opt.get("preview")
+            if isinstance(preview, str) and preview.strip():
+                out.extend(f"       {line}".rstrip() for line in preview.splitlines())
     return out
 
 

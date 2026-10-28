@@ -65,6 +65,32 @@ class TestSplitToolUse:
         assert header == "🔧 Using tool: AskUserQuestion"
         assert payload == ""
 
+    def test_ask_user_question_lines_include_option_previews(self):
+        lines = I._ask_user_question_lines(
+            {
+                "questions": [
+                    {
+                        "question": "Ship which draft?",
+                        "options": [
+                            {
+                                "label": "A",
+                                "description": "short",
+                                "preview": "line 1\n  line 2",
+                            },
+                            {"label": "B", "description": ""},
+                        ],
+                    }
+                ]
+            }
+        )
+        assert lines == [
+            "❓ Ship which draft?",
+            "   • A — short",
+            "       line 1",
+            "         line 2",
+            "   • B",
+        ]
+
     def test_plain_prefix_without_emoji(self):
         header, payload = I._split_tool_use("Using tool: Bash - `ls`\noutput line")
         assert header == "Using tool: Bash - `ls`"
