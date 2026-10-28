@@ -1317,6 +1317,82 @@ class TestProjectAutoMatch:
             == project.id
         )
 
+    def test_nested_repo_skips_the_parent_folder_link(self, test_db, test_user):
+        """A repo of its own inside a linked folder is not that folder's."""
+        from shared.database.project_matching import resolve_project_id_for_session
+
+        machine = _make_machine(test_db, test_user.id)
+        self._link(test_db, test_user.id, machine.id, "~/projects", name="projects")
+        for cwd in ("~/projects/hq", "~/projects/hq/src"):
+            assert (
+                resolve_project_id_for_session(
+                    test_db,
+                    test_user.id,
+                    machine.id,
+                    cwd,
+                    repo_root="~/projects/hq",
+                    home_dir="/home/nick",
+                )
+                is None
+            )
+        # A worktree of that nested repo: cwd elsewhere, repo root nested.
+        assert (
+            resolve_project_id_for_session(
+                test_db,
+                test_user.id,
+                machine.id,
+                "~/vicoa/workspaces/hq-worktrees/feat/hq",
+                repo_root="~/projects/hq",
+                home_dir="/home/nick",
+            )
+            is None
+        )
+
+    def test_same_repo_and_plain_subfolders_keep_the_link(self, test_db, test_user):
+        """Only a nested *repo* escapes: the linked repo's own subdirectories,
+        a monorepo linked at a subfolder, and non-git subfolders still match."""
+        from shared.database.project_matching import resolve_project_id_for_session
+
+        machine = _make_machine(test_db, test_user.id)
+        repo = self._link(test_db, test_user.id, machine.id, "~/alpha", name="alpha")
+        web = self._link(test_db, test_user.id, machine.id, "~/mono/apps/web")
+        folder = self._link(test_db, test_user.id, machine.id, "~/projects")
+        cases = [
+            ("~/alpha/backend", "~/alpha", repo),  # subdir of the linked repo
+            ("~/mono/apps/web/src", "~/mono", web),  # repo root above the link
+            ("~/projects/scratch", None, folder),  # non-git subfolder
+        ]
+        for cwd, root, expected in cases:
+            assert (
+                resolve_project_id_for_session(
+                    test_db,
+                    test_user.id,
+                    machine.id,
+                    cwd,
+                    repo_root=root,
+                    home_dir="/home/nick",
+                )
+                == expected.id
+            ), cwd
+
+    def test_nested_repo_still_matches_its_own_link(self, test_db, test_user):
+        from shared.database.project_matching import resolve_project_id_for_session
+
+        machine = _make_machine(test_db, test_user.id)
+        self._link(test_db, test_user.id, machine.id, "~/projects", name="projects")
+        hq = self._link(test_db, test_user.id, machine.id, "~/projects/hq", name="hq")
+        assert (
+            resolve_project_id_for_session(
+                test_db,
+                test_user.id,
+                machine.id,
+                "~/projects/hq/src",
+                repo_root="~/projects/hq",
+                home_dir="/home/nick",
+            )
+            == hq.id
+        )
+
     def test_remote_tier_matches_across_paths(self, test_db, test_user):
         from shared.database.project_matching import resolve_project_id_for_session
 
@@ -1450,6 +1526,56 @@ class TestProjectAutoCreate:
         test_db.commit()
         assert first == second
         assert self._count(test_db, test_user.id) == 1
+
+    def test_repo_inside_a_folder_project_gets_its_own(self, test_db, test_user):
+        """A session in ``~/projects`` (no repo) mints ``projects``; a later
+        session in ``~/projects/hq`` (its own repo) mints ``hq`` instead of
+        filing under ``projects``."""
+        from shared.database.project_matching import (
+            resolve_or_create_project_id_for_session,
+        )
+
+        machine = _make_machine(test_db, test_user.id)
+        remote = "git@github.com:someone/hq.git"
+        parent = resolve_or_create_project_id_for_session(
+            test_db, test_user.id, machine.id, "~/projects", home_dir="/home/nick"
+        )
+        test_db.commit()
+        hq = resolve_or_create_project_id_for_session(
+            test_db,
+            test_user.id,
+            machine.id,
+            "~/projects/hq/src",
+            git_remote_url=remote,
+            repo_root="~/projects/hq",
+            home_dir="/home/nick",
+        )
+        test_db.commit()
+        assert parent is not None and hq is not None and hq != parent
+        hq_project = test_db.get(Project, hq)
+        assert hq_project.name == "hq"
+        assert hq_project.git_remote_url == remote
+        # The folder project is left alone: no remote borrowed from the repo.
+        assert test_db.get(Project, parent).git_remote_url is None
+        links = {
+            d.local_path
+            for d in test_db.query(ProjectDirectory).filter(
+                ProjectDirectory.project_id == hq
+            )
+        }
+        assert links == {"~/projects/hq"}
+        # A plain subfolder of the folder still files under it.
+        assert (
+            resolve_or_create_project_id_for_session(
+                test_db,
+                test_user.id,
+                machine.id,
+                "~/projects/scratch",
+                home_dir="/home/nick",
+            )
+            == parent
+        )
+        assert self._count(test_db, test_user.id) == 2
 
     def test_register_into_archived_project_unarchives(self, test_db, test_user):
         from shared.database.project_matching import (
@@ -1890,7 +2016,8 @@ class TestProjectRemoteBackfill:
 
     def test_parent_folder_link_is_not_stamped(self, test_db, test_user):
         """An umbrella folder linked as a project holds many repos; a session
-        in one of them must not brand the umbrella with that repo's remote."""
+        in one of them gets that repo's own project and must not brand the
+        umbrella with its remote."""
         from shared.database.project_matching import (
             resolve_or_create_project_id_for_session,
         )
@@ -1908,9 +2035,10 @@ class TestProjectRemoteBackfill:
             home_dir="/Users/nick",
         )
         test_db.commit()
-        assert pid == umbrella.id  # longest link still wins for attribution…
+        assert pid is not None and pid != umbrella.id  # a nested repo is its own
+        assert test_db.get(Project, pid).name == "vicoa"
         test_db.refresh(umbrella)
-        assert umbrella.git_remote_url is None  # …but its identity is untouched
+        assert umbrella.git_remote_url is None  # the umbrella's identity untouched
 
     def test_existing_remote_is_never_overwritten(self, test_db, test_user):
         from shared.database.project_matching import (
@@ -2161,6 +2289,46 @@ class TestProjectLinkAdoption:
         test_db.commit()
         test_db.refresh(taken)
         assert taken.project_id == other.id
+
+    def test_backfill_skips_sessions_in_a_nested_repo(
+        self, test_db, test_user, test_agent_type
+    ):
+        """Linking a folder of checkouts adopts its own sessions, not the
+        repos inside it (same rule as the matcher)."""
+        from shared.database.project_matching import backfill_project_id_for_directory
+
+        machine = _make_machine(test_db, test_user.id)
+        project = Project(user_id=test_user.id, name="projects")
+        test_db.add(project)
+        test_db.flush()
+        own = self._instance(
+            test_db, test_user.id, test_agent_type.id, machine.id, "~/projects"
+        )
+        scratch = self._instance(
+            test_db, test_user.id, test_agent_type.id, machine.id, "~/projects/scratch"
+        )
+        nested = self._instance(
+            test_db,
+            test_user.id,
+            test_agent_type.id,
+            machine.id,
+            "~/projects/hq/src",
+            metadata={"repo_root": "~/projects/hq"},
+        )
+        stamped = backfill_project_id_for_directory(
+            test_db,
+            user_id=test_user.id,
+            project_id=project.id,
+            machine_id=machine.id,
+            local_path="~/projects",
+        )
+        test_db.commit()
+        assert stamped == 2
+        for inst in (own, scratch, nested):
+            test_db.refresh(inst)
+        assert own.project_id == project.id
+        assert scratch.project_id == project.id
+        assert nested.project_id is None
 
     def test_autocreate_does_not_adopt_earlier_sessions(
         self, test_db, test_user, test_agent_type

@@ -41,6 +41,15 @@ Match order (identity strength, high → low):
      linked main checkout, but its repo root does. Works for non-git folders
      too (repo_root simply absent), so a remote is never required.
 
+     A linked folder covers its subfolders, but not a *separate repository*
+     that lives inside it: when the session's ``repo_root`` sits strictly
+     below a linked path, that link is skipped. ``~/projects`` (a plain folder
+     of checkouts that once got a session of its own) must not swallow
+     ``~/projects/hq``, which is its own repo and gets its own project. A
+     subdirectory of the linked repo (repo root == link) and a monorepo linked
+     at a subfolder (repo root above the link) still match; a non-git
+     subfolder (no repo root) still belongs to the folder it sits in.
+
      Paths are compared in a canonical form (``~`` expanded with the session's
      ``home_dir``, ``\\`` folded to ``/``, no trailing slash) because the two
      sides come from different writers: wrappers report ``~``-collapsed paths,
@@ -135,6 +144,21 @@ def _path_at_or_under(session_path: str, local_path: str) -> bool:
     return session == base or session.startswith(base + "/")
 
 
+def _is_nested_repo(repo_root: str | None, local_path: str) -> bool:
+    """True when the session's repo is a different one *inside* ``local_path``.
+
+    A repo root strictly below the linked folder means the session runs in a
+    repository of its own that merely lives under the link, so the link does
+    not cover it (see the module docstring). No repo root (non-git folder,
+    older client) is never nested. Both sides in canonical form.
+    """
+    return (
+        repo_root is not None
+        and repo_root != local_path.rstrip("/")
+        and _path_at_or_under(repo_root, local_path)
+    )
+
+
 def _attachable_projects(
     user_id: UUID,
 ) -> tuple[Select[tuple[UUID]], Select[tuple[UUID]]]:
@@ -219,6 +243,7 @@ def _match_project(
     candidates = [_normalize_path(p, home_dir) for p in (project_path, repo_root) if p]
     if not candidates:
         return None
+    root = _normalize_path(repo_root, home_dir) if repo_root else None
     query = db.query(ProjectDirectory).filter(
         ProjectDirectory.user_id == user_id,
         or_(
@@ -233,6 +258,8 @@ def _match_project(
     for row in query.all():
         local = _normalize_path(row.local_path, home_dir)
         if not any(_path_at_or_under(c, local) for c in candidates):
+            continue
+        if _is_nested_repo(root, local):
             continue
         if len(local) > best_len:
             best, best_len = [row], len(local)
@@ -497,6 +524,10 @@ def backfill_project_id_for_directory(
     session's own ``home_dir``, see :func:`_normalize_path`) so a wrapper that
     reported an absolute path still matches a ``~``-relative link.
 
+    Skips sessions in a separate repo nested under ``local_path`` (repo root
+    strictly below it), as the matcher does, so linking a folder of checkouts
+    never pulls in the repos inside it.
+
     Only touches rows with ``project_id IS NULL`` — never steals a session
     already matched to another project. Returns the number of rows updated.
     """
@@ -524,6 +555,9 @@ def backfill_project_id_for_directory(
     adopt: list[UUID] = []
     for instance_id, cwd, home_dir, repo_root in rows:
         local = _normalize_path(local_path, home_dir)
+        root = _normalize_path(repo_root, home_dir) if repo_root else None
+        if _is_nested_repo(root, local):
+            continue
         candidates = [_normalize_path(p, home_dir) for p in (cwd, repo_root) if p]
         if any(_path_at_or_under(c, local) for c in candidates):
             adopt.append(instance_id)
@@ -553,6 +587,9 @@ def resolve_automation_project_ids(
     Derived rather than stored so it can't go stale: the first run of an
     automation in a fresh folder is what auto-creates the project and its
     directory row, and a column stamped at create time would have missed it.
+    An automation knows no repo root, so the nested-repo rule can't apply: one
+    in ``~/projects/hq`` reads as ``~/projects``'s project until a session
+    there creates hq's own (longer) link, from then on it reads as hq.
 
     Feeds the dashboard's shared automation lists (who may see an automation
     follows from this project) and the ``#`` picker's project icon. Three
