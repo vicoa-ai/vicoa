@@ -13,6 +13,7 @@ from testcontainers.postgres import PostgresContainer
 from shared.config import settings
 from shared.database.models import Base, User, AgentType, AgentInstance
 from shared.database.enums import AgentStatus
+from shared.database.utils import json_dumps_without_nul
 from shared.database.testing import (
     COMMITTED_DB_MARKER,
     committed_session,
@@ -39,7 +40,11 @@ def postgres_container():
 @pytest.fixture(scope="session")
 def test_engine(postgres_container):
     """One engine, and one `create_all`, for the whole run."""
-    engine = create_engine(postgres_container.get_connection_url())
+    engine = create_engine(
+        postgres_container.get_connection_url(),
+        # Same as the app engine (`shared/database/session.py`).
+        json_serializer=json_dumps_without_nul,
+    )
     Base.metadata.create_all(bind=engine)
     yield engine
     engine.dispose()

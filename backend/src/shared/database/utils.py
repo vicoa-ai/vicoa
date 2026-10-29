@@ -1,7 +1,8 @@
 """Database utility functions."""
 
+import json
 import re
-from typing import Optional
+from typing import Any, Optional
 
 
 def is_valid_git_diff(diff: Optional[str]) -> bool:
@@ -94,3 +95,32 @@ def sanitize_git_diff(diff: Optional[str]) -> Optional[str]:
         diff = diff[: max_size - 100] + "\n\n... [TRUNCATED - DIFF TOO LARGE] ..."
 
     return diff
+
+
+def _strip_nul(value: Any) -> Any:
+    """Copy of a JSON value with U+0000 removed from every string and key."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
+        return {_strip_nul(k): _strip_nul(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_strip_nul(v) for v in value]
+    return value
+
+
+def json_dumps_without_nul(value: Any) -> str:
+    """The engine's ``json_serializer``: ``json.dumps`` minus U+0000.
+
+    Postgres jsonb rejects ``\\u0000``, so one NUL in a client-supplied
+    string failed the whole write (a binary SKILL.md made ``/commands/sync``
+    500 every time). Stripping here covers every JSON/JSONB column, from any
+    caller or client version, the same way `sanitize_git_diff` does for the
+    diff column.
+    """
+    text = json.dumps(value)
+    # json.dumps writes U+0000 as the escape `\u0000`, so if that text is
+    # absent there is no NUL. A hit can also be a literal backslash followed by
+    # "u0000", which the slow path below leaves intact.
+    if "\\u0000" not in text:
+        return text
+    return json.dumps(_strip_nul(value))

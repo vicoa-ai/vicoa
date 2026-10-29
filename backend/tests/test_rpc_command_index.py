@@ -106,6 +106,57 @@ def test_scan_ignores_skill_md_nested_inside_a_skill(home: Path, tmp_path: Path)
     assert not any(":" in name for name in scanned)
 
 
+def test_scan_skips_command_and_skill_files_that_are_not_text(
+    home: Path, tmp_path: Path
+):
+    """A ZIP renamed to SKILL.md once reached the server as a description full
+    of NULs and failed the whole sync. Non-text files are skipped, not listed
+    with a garbage description, and the rest of the scan is unaffected."""
+    skills_root = home / ".claude" / "skills"
+    _write_skill(skills_root, "review", "Review things")
+    (skills_root / "zipped").mkdir()
+    (skills_root / "zipped" / "SKILL.md").write_bytes(
+        b"PK\x03\x04\x14\x00\x08\x00\x08\x00" + bytes(range(256))
+    )
+    commands_dir = home / ".claude" / "commands"
+    commands_dir.mkdir(parents=True)
+    (commands_dir / "ship.md").write_text("# Ship it\n", encoding="utf-8")
+    # Decodes as UTF-8 without error, with a NUL after every character.
+    (commands_dir / "wide.md").write_bytes("# Wide\n".encode("utf-16-le"))
+    (commands_dir / "latin.md").write_bytes("# Caf\xe9\n".encode("latin-1"))
+
+    scanned = scan_claude_commands(project_root=tmp_path / "project")
+
+    assert set(scanned) == {"review", "ship"}
+
+
+def test_scan_reads_front_matter_behind_a_bom(home: Path, tmp_path: Path):
+    skill_dir = home / ".claude" / "skills" / "bom"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: bom\ndescription: Saved by Notepad\n---\n", encoding="utf-8-sig"
+    )
+
+    scanned = scan_claude_commands(project_root=tmp_path / "project")
+
+    assert scanned["bom"]["description"] == "Saved by Notepad"
+
+
+def test_scan_reads_a_large_file_cut_inside_a_multibyte_character(
+    home: Path, tmp_path: Path
+):
+    """Only the start of a file is read; a cut through a multi-byte character
+    must not make a long, valid file look like binary."""
+    commands_dir = home / ".claude" / "commands"
+    commands_dir.mkdir(parents=True)
+    body = "---\ndescription: Long one\n---\n" + "中" * 40_000
+    (commands_dir / "long.md").write_text(body, encoding="utf-8")
+
+    scanned = scan_claude_commands(project_root=tmp_path / "project")
+
+    assert scanned["long"]["description"] == "Long one"
+
+
 def test_codex_scan_reads_prompts_and_all_skill_dirs(home: Path, tmp_path: Path):
     prompts = home / ".codex" / "prompts"
     prompts.mkdir(parents=True)

@@ -6,12 +6,44 @@ put in the composer when the entry is picked (Codex invokes skills with
 ``$name``, not ``/name``).
 """
 
+import codecs
 import os
 from pathlib import Path
 
 # YAML block-scalar indicators: `description: >` (or `|`, with optional
 # chomping +/-) puts the actual text on the following indented lines.
 _BLOCK_SCALARS = {">", "|", ">-", "|-", ">+", "|+"}
+
+# A description only ever comes from the front matter or the first line, so
+# the start of the file is enough, and a stray huge file isn't read in full
+# on every `/` panel open.
+_READ_CAP = 64 * 1024
+
+
+def _read_text_head(path: Path) -> str | None:
+    """Return the start of a command/skill file, or None if it isn't text.
+
+    Text means no NUL byte and strict UTF-8. Both checks are needed: a ZIP
+    renamed to SKILL.md fails the decode, while UTF-16 text decodes cleanly
+    with a NUL after every character. Anything else is skipped rather than
+    decoded with ``errors="replace"``, which listed binary files as skills
+    with a garbage description, and the NUL in it failed the whole
+    ``/commands/sync`` upload in Postgres.
+
+    ``utf-8-sig`` drops a BOM, which would otherwise hide the front matter.
+    """
+    with open(path, "rb") as f:
+        data = f.read(_READ_CAP)
+    if b"\x00" in data:
+        return None
+    try:
+        # Not final when the cap was hit: the cut may split a multi-byte
+        # character, which is not an encoding error.
+        return codecs.getincrementaldecoder("utf-8-sig")().decode(
+            data, final=len(data) < _READ_CAP
+        )
+    except UnicodeDecodeError:
+        return None
 
 
 def _extract_command_description(content: str, command_name: str) -> str:
@@ -98,8 +130,10 @@ def _scan_commands_dir(commands_dir: Path) -> dict:
         command_parts = list(rel_path.parts[:-1]) + [file_path.stem]
         command_name = ":".join(command_parts)
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = _read_text_head(file_path)
+            if content is None:
+                print(f"Warning: Skipping command file {file_path}: not UTF-8 text")
+                continue
 
             description = _extract_command_description(content, command_name)
             commands[command_name] = {"description": description, "kind": "command"}
@@ -143,9 +177,12 @@ def _scan_skills_dir_detailed(skills_dir: Path) -> dict:
             # is_dir()/is_file() follow symlinks, so symlinked skills resolve.
             if not (child.is_dir() and skill_file.is_file()):
                 continue
-            content = skill_file.read_text(encoding="utf-8", errors="replace")
+            content = _read_text_head(skill_file)
         except OSError as e:
             print(f"Warning: Could not read skill file {skill_file}: {e}")
+            continue
+        if content is None:
+            print(f"Warning: Skipping skill file {skill_file}: not UTF-8 text")
             continue
         skills[name] = {
             "description": _extract_command_description(content, name),

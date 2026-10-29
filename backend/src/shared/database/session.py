@@ -4,9 +4,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..config.settings import settings
+from .utils import json_dumps_without_nul
 
 engine = create_engine(
     settings.database_url,
+    # Every JSON/JSONB write goes through here; jsonb cannot hold U+0000.
+    json_serializer=json_dumps_without_nul,
     pool_size=20,
     max_overflow=20,
     # Fail fast when the pool is exhausted. Every checkout happens on a
