@@ -49,6 +49,7 @@ import type { AutomationResponse, ProjectResponse } from '@/lib/backend-api';
 import { principalDisplayName, principalFromResponse } from '@/lib/principals';
 import { summarizeSchedule } from '../lib/frequency';
 import { groupByProject, NO_PROJECT } from '../lib/group-by-project';
+import { matchesScheduleFilter, type ScheduleFilter } from '../lib/schedule-filter';
 
 export type AutomationFilter = 'all' | 'active' | 'paused';
 
@@ -71,9 +72,15 @@ const restrictToGroup: Modifier = ({ transform, draggingNodeRect, containerNodeR
 // activation distance would drag the row instead of toggling or opening the menu.
 const stopDragStart = (e: React.PointerEvent) => e.stopPropagation();
 
-function matches(a: AutomationResponse, filter: AutomationFilter, q: string): boolean {
+function matches(
+  a: AutomationResponse,
+  filter: AutomationFilter,
+  schedule: ScheduleFilter,
+  q: string,
+): boolean {
   if (filter === 'active' && !a.enabled) return false;
   if (filter === 'paused' && a.enabled) return false;
+  if (!matchesScheduleFilter(a, schedule)) return false;
   if (q && !a.title.toLowerCase().includes(q)) return false;
   return true;
 }
@@ -83,6 +90,7 @@ export function AutomationList({
   groupProjects = null,
   emptyLabel = 'No automations yet.',
   filter,
+  scheduleFilter,
   selectedId,
   onSelect,
   onRunNow,
@@ -99,6 +107,7 @@ export function AutomationList({
   groupProjects?: ProjectResponse[] | null;
   emptyLabel?: string;
   filter: AutomationFilter;
+  scheduleFilter: ScheduleFilter;
   selectedId: string | null;
   onSelect: (a: AutomationResponse) => void;
   onRunNow: (a: AutomationResponse) => void;
@@ -113,8 +122,8 @@ export function AutomationList({
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return automations.filter((a) => matches(a, filter, q));
-  }, [automations, filter, query]);
+    return automations.filter((a) => matches(a, filter, scheduleFilter, q));
+  }, [automations, filter, scheduleFilter, query]);
 
   const groups = useMemo(
     () => (groupProjects ? groupByProject(visible, groupProjects) : null),

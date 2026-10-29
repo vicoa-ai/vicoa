@@ -16,6 +16,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -49,6 +50,12 @@ import { SharedDetailPanel } from './components/shared-detail-panel';
 import type { AutomationTemplate } from './lib/templates';
 import { NO_PROJECT } from './lib/group-by-project';
 import { reorderRows } from './lib/order';
+import {
+  recurringOptions,
+  SCHEDULE_FILTER_LABELS,
+  type RecurringOption,
+  type ScheduleFilter,
+} from './lib/schedule-filter';
 
 type Selection = AutomationResponse | 'new' | null;
 
@@ -130,6 +137,7 @@ function AutomationPageInner() {
   const [selection, setSelection] = useState<Selection>(null);
   const [historyKey, setHistoryKey] = useState(0);
   const [filter, setFilter] = useState<AutomationFilter>('all');
+  const [scheduleFilter, setScheduleFilter] = useState<ScheduleFilter>('all');
   const [deleteTarget, setDeleteTarget] = useState<AutomationResponse | null>(null);
   // Template to seed create mode; null = start from scratch.
   const [newTemplate, setNewTemplate] = useState<AutomationTemplate | null>(null);
@@ -496,6 +504,15 @@ function AutomationPageInner() {
     projectFilter === null
       ? automations
       : automations.filter((a) => (a.project_id ?? NO_PROJECT) === projectFilter);
+  const recurringItems = recurringOptions(rows, scheduleFilter);
+  // The filter button names what is narrowed: "Paused · Weekly", or "All".
+  const filterLabel =
+    [
+      filter !== 'all' && FILTER_LABELS[filter],
+      scheduleFilter !== 'all' && SCHEDULE_FILTER_LABELS[scheduleFilter],
+    ]
+      .filter(Boolean)
+      .join(' · ') || 'All';
   const pickerLabel =
     projectFilter === null
       ? 'All automations'
@@ -590,7 +607,9 @@ function AutomationPageInner() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-7 min-w-0 max-w-[220px] cursor-pointer gap-1.5 text-xs"
+                  // `shrink` undoes Button's shrink-0, so a long project name
+                  // truncates instead of pushing "New" out of the header.
+                  className="h-7 min-w-0 max-w-[220px] shrink cursor-pointer gap-1.5 text-xs"
                   title={pickerLabel}
                   aria-label={pickerLabel}
                 >
@@ -637,24 +656,46 @@ function AutomationPageInner() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            {/* Status and schedule share one menu: the list column can be as
+                narrow as 280px, which has no room for another button. */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="outline"
                   size="sm"
                   className="h-7 shrink-0 cursor-pointer gap-1.5 text-xs"
-                  title={`Show: ${FILTER_LABELS[filter]}`}
-                  aria-label={`Show: ${FILTER_LABELS[filter]}`}
+                  title={`Show: ${filterLabel}`}
+                  aria-label={`Show: ${filterLabel}`}
                 >
                   <ListFilter className="size-3.5 text-muted-foreground" />
-                  <span className="@max-sm:hidden">{FILTER_LABELS[filter]}</span>
+                  <span className="@max-sm:hidden">{filterLabel}</span>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40 text-xs">
+              <DropdownMenuContent align="end" className="w-44 text-xs">
+                <DropdownMenuLabel className="text-[0.8rem] font-normal text-muted-foreground">
+                  Status
+                </DropdownMenuLabel>
                 {(['all', 'active', 'paused'] as AutomationFilter[]).map((f) => (
                   <DropdownMenuItem key={f} onSelect={() => setFilter(f)}>
                     {FILTER_LABELS[f]}
                     {filter === f && <Check className="ml-auto h-3 w-3" />}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-[0.8rem] font-normal text-muted-foreground">
+                  Schedule
+                </DropdownMenuLabel>
+                {/* Recurring's cadences, then Custom, sit indented under it;
+                    only the ones the listed rows use are offered. */}
+                {(['all', 'once', 'recurring', ...recurringItems] as ScheduleFilter[]).map((f) => (
+                  <DropdownMenuItem
+                    key={f}
+                    // `data-inset="false"` still indents; undefined drops it.
+                    inset={recurringItems.includes(f as RecurringOption) ? true : undefined}
+                    onSelect={() => setScheduleFilter(f)}
+                  >
+                    {SCHEDULE_FILTER_LABELS[f]}
+                    {scheduleFilter === f && <Check className="ml-auto h-3 w-3" />}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -698,6 +739,7 @@ function AutomationPageInner() {
                 : undefined
             }
             filter={filter}
+            scheduleFilter={scheduleFilter}
             selectedId={selectedId}
             onSelect={(a) => setSelection(a)}
             onRunNow={runNow}
