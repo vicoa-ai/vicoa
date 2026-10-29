@@ -13,22 +13,30 @@
 // back what was there.
 //
 // `@` files and `/` skills come from the same hooks and panels as the task
-// dialog's MentionPromptField; trigger-suggestions only finds the trigger.
+// dialog's MentionPromptField, and `#` references from the chat composer's;
+// trigger-suggestions only finds the trigger. A picked reference is written
+// as a link to its page (lib/reference-links), since stored text has nowhere
+// else to keep the id.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
+import { useRouter } from 'next/navigation';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import { Placeholder } from '@tiptap/extensions';
 import 'highlight.js/styles/atom-one-dark.css';
 import './rich-markdown.css';
 
 import { FileMentionSuggestions } from '@/components/dashboard/file-mention-suggestions';
+import { ReferenceSuggestions } from '@/components/dashboard/reference-suggestions';
 import { SlashCommandSuggestions } from '@/components/dashboard/slash-command-suggestions';
-import type { FileMention } from '@/lib/backend-api';
+import type { FileMention, ReferenceCandidate, ReferenceKind } from '@/lib/backend-api';
 import type { SlashCommand } from '@/lib/constants/slash-commands';
 import { matchFileMentions, searchableFileMentions } from '@/lib/file-mention-match';
 import { useFileMentions } from '@/lib/hooks/use-file-mentions';
+import { useReferenceCandidates } from '@/lib/hooks/use-references';
 import { useSlashCommands } from '@/lib/hooks/use-slash-commands';
 import type { ProjectMentionTarget } from '@/lib/project-mention-target';
+import { isReferenceHref, referenceHref } from '@/lib/reference-links';
 import { commandInsertText, slashCommandMatches } from '@/lib/slash-command-utils';
 import { cn } from '@/lib/utils';
 
@@ -56,13 +64,20 @@ export interface RichMarkdownEditorProps {
   contentClassName?: string;
   /** Where `@` searches. Without one, `@` is just a character. */
   mentionTarget?: ProjectMentionTarget;
+  /** Turn on `#` references (sessions, tasks, automations). */
+  referencesEnabled?: boolean;
+  /** The thing this field describes, left out of its own `#` list. */
+  referenceSelf?: { kind: ReferenceKind; id: string };
   onFocusChange?: (focused: boolean) => void;
   className?: string;
 }
 
 type PanelItems =
   | { kind: 'file'; items: FileMention[] }
-  | { kind: 'command'; items: SlashCommand[] };
+  | { kind: 'command'; items: SlashCommand[] }
+  | { kind: 'reference'; items: ReferenceCandidate[] };
+
+type PanelItem = PanelItems['items'][number];
 
 export function RichMarkdownEditor({
   value,
@@ -71,9 +86,12 @@ export function RichMarkdownEditor({
   placeholder,
   contentClassName,
   mentionTarget,
+  referencesEnabled = false,
+  referenceSelf,
   onFocusChange,
   className,
 }: RichMarkdownEditorProps) {
+  const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -109,56 +127,106 @@ export function RichMarkdownEditor({
     projectPath: mentionTarget?.path,
     enabled: editable,
   });
+  // `#` rows come from the server per query (debounced), not a local index.
+  const referenceQuery = focused && trigger?.kind === 'reference' ? trigger.query : null;
+  const {
+    items: referenceRows,
+    isLoading: referencesLoading,
+    unavailable: referencesUnavailable,
+  } = useReferenceCandidates({ query: referenceQuery, enabled: editable && referencesEnabled });
+  const references = useMemo(
+    () =>
+      referenceSelf
+        ? referenceRows.filter((r) => !(r.kind === referenceSelf.kind && r.id === referenceSelf.id))
+        : referenceRows,
+    [referenceRows, referenceSelf],
+  );
+  const referencesOn = editable && referencesEnabled && !referencesUnavailable;
 
   // The plugin asks "anything to list?" on every transaction inside a trigger,
   // and the panel asks again to render: answer both from one cached match.
-  const matchCacheRef = useRef<{ key: string; files: FileMention[]; commands: SlashCommand[]; result: PanelItems } | null>(null);
+  const matchCacheRef = useRef<{
+    key: string;
+    files: FileMention[];
+    commands: SlashCommand[];
+    references: ReferenceCandidate[];
+    result: PanelItems;
+  } | null>(null);
   const match = useCallback(
     (kind: TriggerKind, query: string): PanelItems => {
       const key = `${kind}\0${query}`;
       const cached = matchCacheRef.current;
-      if (cached && cached.key === key && cached.files === searchableFiles && cached.commands === commands) {
+      if (
+        cached &&
+        cached.key === key &&
+        cached.files === searchableFiles &&
+        cached.commands === commands &&
+        cached.references === references
+      ) {
         return cached.result;
       }
+      // `#` rows already answer the current query (the server matched them).
       const result: PanelItems =
         kind === 'file'
           ? { kind, items: mentionTarget ? matchFileMentions(searchableFiles, query) : [] }
-          : { kind, items: commands.filter((cmd) => slashCommandMatches(cmd, query)) };
-      matchCacheRef.current = { key, files: searchableFiles, commands, result };
+          : kind === 'command'
+            ? { kind, items: commands.filter((cmd) => slashCommandMatches(cmd, query)) }
+            : { kind, items: references };
+      matchCacheRef.current = { key, files: searchableFiles, commands, references, result };
       return result;
     },
-    [searchableFiles, commands, mentionTarget],
+    [searchableFiles, commands, references, mentionTarget],
   );
 
   const panel = trigger && focused ? match(trigger.kind, trigger.query) : null;
-  const panelOpen = !!panel && panel.items.length > 0;
+  // The `#` panel shows while it searches and when nothing matches, as in chat.
+  const panelOpen = !!panel && (panel.kind === 'reference' || panel.items.length > 0);
 
   // ── Plugin ↔ React ─────────────────────────────────────────────────────
   // The extension is built once with the editor; it reaches the current
   // render's state through this ref.
-  const latest = useRef({ editable, match, panel, selectedIndex });
+  const latest = useRef({ editable, match, panel, panelOpen, selectedIndex, referencesOn });
   useLayoutEffect(() => {
-    latest.current = { editable, match, panel, selectedIndex };
+    latest.current = { editable, match, panel, panelOpen, selectedIndex, referencesOn };
   });
 
-  const pick = useCallback((editor: Editor, item: FileMention | SlashCommand) => {
+  const pick = useCallback((editor: Editor, item: PanelItem) => {
     const active = triggerRef.current;
     if (!active) return;
-    const text = active.kind === 'file' ? `@${(item as FileMention).path}` : commandInsertText(item as SlashCommand);
     const { doc } = editor.state;
     const next = doc.textBetween(active.range.to, Math.min(active.range.to + 1, doc.content.size), '\n');
+    const space = /^\s/.test(next) ? [] : [{ type: 'text', text: ' ' }];
+    if (active.kind === 'reference') {
+      const ref = item as ReferenceCandidate;
+      editor
+        .chain()
+        .focus()
+        .insertContentAt(active.range, [
+          {
+            type: 'text',
+            text: `#${ref.token}`,
+            marks: [{ type: 'link', attrs: { href: referenceHref(ref.kind, ref.id) } }],
+          },
+          ...space,
+        ])
+        .run();
+      return;
+    }
+    const text = active.kind === 'file' ? `@${(item as FileMention).path}` : commandInsertText(item as SlashCommand);
     editor
       .chain()
       .focus()
-      .insertContentAt(active.range, { type: 'text', text: /^\s/.test(next) ? text : `${text} ` })
+      .insertContentAt(active.range, [{ type: 'text', text }, ...space])
       .run();
   }, []);
 
   const editorRef = useRef<Editor | null>(null);
   const bridge = useMemo<TriggerBridge>(
     () => ({
-      hasMatches: (kind, query) =>
-        latest.current.editable && latest.current.match(kind, query).items.length > 0,
+      shouldOpen: (kind, query) =>
+        kind === 'reference'
+          ? latest.current.referencesOn
+          : latest.current.editable && latest.current.match(kind, query).items.length > 0,
       onChange: (kind, next) => {
         const current = triggerRef.current;
         // Two plugins, one panel: an exit from the one that isn't showing
@@ -171,7 +239,9 @@ export function RichMarkdownEditor({
       onKeyDown: (event) => {
         const { panel: open, selectedIndex: index } = latest.current;
         const editor = editorRef.current;
-        if (!open || open.items.length === 0 || !editor) return false;
+        // Without rows the keys keep their usual meaning (an empty `#` panel
+        // only says "no matches"); Escape still closes it, in the plugin.
+        if (!open || open.items.length === 0 || !editor) return event.key === 'Escape';
         const count = open.items.length;
         if (event.key === 'ArrowDown') {
           setSelectedIndex((index + 1) % count);
@@ -199,10 +269,12 @@ export function RichMarkdownEditor({
   const onCommitRef = useRef(onCommit);
   const onFocusChangeRef = useRef(onFocusChange);
   const placeholderRef = useRef(placeholder ?? '');
+  const routerRef = useRef(router);
   useLayoutEffect(() => {
     onCommitRef.current = onCommit;
     onFocusChangeRef.current = onFocusChange;
     placeholderRef.current = placeholder ?? '';
+    routerRef.current = router;
   });
 
   const adopt = useCallback((editor: Editor, markdown: string) => {
@@ -272,7 +344,7 @@ export function RichMarkdownEditor({
           return true;
         }
         // An open panel owns the rest of its keys (its plugin runs next).
-        if (latest.current.panel?.items.length) return false;
+        if (latest.current.panelOpen) return false;
         if (event.key === 'Escape') {
           adopt(current, incomingRef.current ?? adoptedRef.current);
           current.commands.blur();
@@ -281,16 +353,27 @@ export function RichMarkdownEditor({
         return false;
       },
       handleDOMEvents: {
+        // ⌘/Ctrl-mousedown is ProseMirror's "select this node" gesture (and
+        // would focus and move the caret); on a link it means "follow", so
+        // ProseMirror doesn't see it at all and the click below does the rest.
+        mousedown: (view, event) => {
+          if (!view.editable || !(event.metaKey || event.ctrlKey)) return false;
+          if (!(event.target as HTMLElement | null)?.closest('a')) return false;
+          event.preventDefault();
+          return true;
+        },
         // Editing, a click places the caret and ⌘/Ctrl-click follows the link;
-        // read-only, a click follows it. Either way only a web or mail link
-        // opens, in a new tab: a relative path has no page here.
+        // read-only, a click follows it. A `#` reference navigates in the app
+        // (a new tab would hand it to the OS browser on desktop); a web or mail
+        // link opens in a new tab; anything else (a relative path) has no page.
         click: (view, event) => {
           const anchor = (event.target as HTMLElement | null)?.closest('a');
           if (!anchor) return false;
           if (view.editable && !event.metaKey && !event.ctrlKey) return false;
           event.preventDefault();
           const href = anchor.getAttribute('href') ?? '';
-          if (OPENABLE_HREF.test(href)) window.open(href, '_blank', 'noopener,noreferrer');
+          if (isReferenceHref(href)) routerRef.current.push(href);
+          else if (OPENABLE_HREF.test(href)) window.open(href, '_blank', 'noopener,noreferrer');
           return true;
         },
       },
@@ -427,7 +510,25 @@ export function RichMarkdownEditor({
         // Rows are chosen with the editor still focused: a mousedown that
         // moved focus to the panel would end the edit (and save it) first.
         <div onMouseDown={(e) => e.preventDefault()}>
-          {panel.kind === 'file' ? (
+          {panel.kind === 'reference' ? (
+            // Same panel box as the textarea composers' portalled `#` panel.
+            createPortal(
+              <div
+                style={panelStyle}
+                className="fixed z-50 max-h-[320px] overflow-y-auto rounded-lg border border-border bg-popover shadow-lg custom-scrollbar"
+              >
+                <ReferenceSuggestions
+                  items={panel.items}
+                  selectedIndex={selectedIndex}
+                  isLoading={referencesLoading}
+                  onSelect={(item) => pick(editor, item)}
+                  onHover={setSelectedIndex}
+                  listRef={listRef}
+                />
+              </div>,
+              document.body,
+            )
+          ) : panel.kind === 'file' ? (
             <FileMentionSuggestions
               files={panel.items}
               selectedIndex={selectedIndex}

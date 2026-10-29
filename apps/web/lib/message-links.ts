@@ -23,6 +23,7 @@
  * and Copy / Open / Reveal all fail on it (vicoa-ai/vicoa#67).
  */
 
+import { isReferenceHref } from '@/lib/reference-links';
 import { toAbsolutePath } from '@/lib/utils';
 
 /** A file inside the session's workspace, as the files panel wants it. */
@@ -36,6 +37,9 @@ export interface WorkspaceFileLink {
 export type MessageLink =
   /** A real web URL — safe to open in the browser. */
   | { kind: 'external'; href: string }
+  /** A page of this app: a `#` reference to a task, session or automation
+   *  (lib/reference-links). Followed in the app, never in a browser tab. */
+  | { kind: 'app'; href: string }
   /** A file under the session's working directory. */
   | { kind: 'file'; file: WorkspaceFileLink }
   /** A local path, but not under the working directory — refuse to follow it. */
@@ -220,6 +224,8 @@ export function parseMessageLink(
   if (raw === '' || raw.startsWith('#')) return { kind: 'inert' };
   // Protocol-relative (`//host/x`) is a web URL we can't vouch for, not a path.
   if (raw.startsWith('//')) return { kind: 'inert' };
+  // Before the path rules, which would read `/dashboard/…` as an absolute path.
+  if (isReferenceHref(raw)) return { kind: 'app', href: raw };
 
   let candidate = raw;
   let fromFileUrl = false;

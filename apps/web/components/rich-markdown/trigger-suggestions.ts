@@ -2,13 +2,13 @@ import { Extension, type Range } from '@tiptap/core';
 import { PluginKey, type EditorState } from '@tiptap/pm/state';
 import { Suggestion } from '@tiptap/suggestion';
 
-// The `@` (files) and `/` (skills) pickers, as ProseMirror plugins that only
-// detect the trigger. What a query matches and what the panel looks like stay
-// in React, with the same hooks and panels the textarea composers use, so this
-// side is just: where is the trigger, what has been typed after it, which keys
-// does the open panel claim.
+// The `@` (files), `/` (skills) and `#` (references) pickers, as ProseMirror
+// plugins that only detect the trigger. What a query matches and what the
+// panel looks like stay in React, with the same hooks and panels the textarea
+// composers use, so this side is just: where is the trigger, what has been
+// typed after it, which keys does the open panel claim.
 
-export type TriggerKind = 'file' | 'command';
+export type TriggerKind = 'file' | 'command' | 'reference';
 
 export interface ActiveTrigger {
   kind: TriggerKind;
@@ -21,21 +21,32 @@ export interface ActiveTrigger {
 }
 
 export interface TriggerBridge {
-  /** Is there anything to list? A trigger with no rows is plain typing, the
-   *  way the textarea composers treat it: Enter, Escape and the arrows keep
-   *  their usual meaning instead of serving an invisible panel. */
-  hasMatches: (kind: TriggerKind, query: string) => boolean;
+  /** Should the trigger open? For `@` and `/`, only when there is something
+   *  to list: a trigger with no rows is plain typing, the way the textarea
+   *  composers treat it. `#` searches the server as you type, so it opens
+   *  whenever references are available and says when nothing matches. */
+  shouldOpen: (kind: TriggerKind, query: string) => boolean;
   onChange: (kind: TriggerKind, trigger: ActiveTrigger | null) => void;
   /** Keys while a panel is open; true when the panel used the key. */
   onKeyDown: (event: KeyboardEvent) => boolean;
 }
 
-const TRIGGER_CHAR: Record<TriggerKind, string> = { file: '@', command: '/' };
+// `#` and a heading don't collide: a heading is `#` then a space at the start
+// of a line, which ends this trigger's token (it allows no spaces) and then
+// lets the heading input rule fire; a reference is `#` then a name.
+const TRIGGER_CHAR: Record<TriggerKind, string> = { file: '@', command: '/', reference: '#' };
 
 /** Code is literal: `@` in an inline code span or a fenced block is text. */
 function inCode(state: EditorState, pos: number): boolean {
   const $pos = state.doc.resolve(pos);
   return !!$pos.parent.type.spec.code || $pos.marks().some((mark) => !!mark.type.spec.code);
+}
+
+/** Already a link: a picked `#` reference is `#VIC-42` linked to its page, and
+ *  putting the caret in it must not search for it all over again. */
+function inLink(state: EditorState, range: Range): boolean {
+  const link = state.schema.marks.link;
+  return !!link && state.doc.rangeHasMark(range.from, range.to, link);
 }
 
 export function triggerSuggestions(bridge: TriggerBridge) {
@@ -60,7 +71,8 @@ export function triggerSuggestions(bridge: TriggerBridge) {
           allowedPrefixes: [' ', '\n', '\t'],
           allow: ({ state, range }) =>
             !inCode(state, range.from) &&
-            bridge.hasMatches(kind, state.doc.textBetween(range.from + char.length, range.to)),
+            !inLink(state, range) &&
+            bridge.shouldOpen(kind, state.doc.textBetween(range.from + char.length, range.to)),
           render: () => ({
             onStart: report,
             onUpdate: report,

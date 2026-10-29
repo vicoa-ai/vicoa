@@ -98,6 +98,26 @@ describe('parseMessageLink — web URLs', () => {
   });
 });
 
+describe('parseMessageLink — references to the app', () => {
+  const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
+
+  test('task, session and automation pages stay in the app', () => {
+    for (const href of [
+      `/dashboard/tasks/${id}`,
+      `/dashboard/sessions/${id}`,
+      `/dashboard/automation?automation=${id}`,
+    ]) {
+      expect(resolve(href)).toEqual({ kind: 'app', href });
+    }
+  });
+
+  test('only those exact pages: anything else under /dashboard is still a path', () => {
+    expect(resolve('/dashboard/tasks/not-an-id').kind).not.toBe('app');
+    expect(resolve(`/dashboard/tasks/${id}/extra`).kind).not.toBe('app');
+    expect(resolve(`/dashboard/settings`).kind).not.toBe('app');
+  });
+});
+
 describe('parseMessageLink — workspace files', () => {
   test('relative paths resolve against the working directory', () => {
     expect(resolve('src/foo.ts')).toEqual({ kind: 'file', file: { path: 'src/foo.ts' } });

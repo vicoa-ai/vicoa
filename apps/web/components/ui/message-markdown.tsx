@@ -1,4 +1,5 @@
 import React, { createContext, memo, useContext, useMemo } from 'react';
+import Link from 'next/link';
 import ReactMarkdown, { type Components, type Options as ReactMarkdownOptions } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
@@ -423,6 +424,21 @@ const MARKDOWN_COMPONENTS: Components = {
         >
           {children}
         </a>
+      );
+    }
+    // A `#` reference to a task, session or automation: navigate in the app.
+    if (link.kind === 'app') {
+      return (
+        <Link
+          href={link.href}
+          className={LINK_CLASS}
+          draggable={false}
+          onClick={(e) => {
+            if (isTextSelectionClick(e)) e.preventDefault();
+          }}
+        >
+          {children}
+        </Link>
       );
     }
     if (link.kind === 'file' && fileLinks.openFile) {

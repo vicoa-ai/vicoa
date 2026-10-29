@@ -16,7 +16,7 @@
 // Linear, Notion and GitHub's title field all commit on blur. Escape reverts,
 // so the destructive-feeling case still has an undo that doesn't need a dialog.
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 
 import { RichMarkdownEditor } from '@/components/rich-markdown/rich-markdown-editor';
@@ -141,6 +141,7 @@ export function EditableDescription({
   onSave,
   readOnly = false,
   mentionTarget,
+  taskId,
 }: {
   value: string | null;
   onSave: (next: string | null) => void;
@@ -148,6 +149,8 @@ export function EditableDescription({
   readOnly?: boolean;
   /** Where `@` searches: the task's project folder, when it has one. */
   mentionTarget?: ProjectMentionTarget;
+  /** The task being described, left out of its own `#` list. */
+  taskId: string;
 }) {
   const [focused, setFocused] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -157,6 +160,7 @@ export function EditableDescription({
   const [overflowing, setOverflowing] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const hidden = readOnly && !value;
+  const selfReference = useMemo(() => ({ kind: 'task' as const, id: taskId }), [taskId]);
 
   useLayoutEffect(() => {
     const el = bodyRef.current;
@@ -198,11 +202,13 @@ export function EditableDescription({
             editable={!readOnly}
             placeholder={
               mentionTarget
-                ? 'Add a description… @ for files, / for skills'
-                : 'Add a description… / for skills'
+                ? 'Add a description… @ for files, # for tasks or sessions, / for skills'
+                : 'Add a description… # for tasks or sessions, / for skills'
             }
             contentClassName={cn('px-2 py-1.5', !readOnly && 'cursor-text')}
             mentionTarget={mentionTarget}
+            referencesEnabled
+            referenceSelf={selfReference}
             onFocusChange={setFocused}
           />
         </div>

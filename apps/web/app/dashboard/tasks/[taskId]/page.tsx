@@ -460,6 +460,7 @@ export default function TaskDetailPage() {
               onSave={(description) => void patchTask({ description })}
               readOnly={!canEdit}
               mentionTarget={mentionTarget}
+              taskId={task.id}
             />
             {/* The task itself is reactable, like an issue's opening post. */}
             <ReactionRow

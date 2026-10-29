@@ -22,6 +22,7 @@ afterEach(() => {
 });
 
 const roundTrip = (markdown: string) => serializeMarkdown(load(markdown));
+const ID = '0f8fad5b-d9cb-469f-a165-70867728950e';
 
 describe('serializeMarkdown keeps what was typed', () => {
   const unchanged: Record<string, string> = {
@@ -43,6 +44,9 @@ describe('serializeMarkdown keeps what was typed', () => {
     'a bare URL': 'See [docs](https://example.com) and https://a.example.com/a_b.',
     'a bold URL glued to CJK text': '**https://x.dev/pull/54**（rebase）',
     'an escaped heading marker': '\\# not a heading',
+    'a bare # token at the start of a line': '#LIG-1 fix the legend',
+    '# reference links': `see [#LIG-1](/dashboard/tasks/${ID}) and [#nightly](/dashboard/automation?automation=${ID})`,
+    'a # reference link opening a line': `[#zesty-quartz](/dashboard/sessions/${ID}) picked this up`,
   };
   for (const [name, markdown] of Object.entries(unchanged)) {
     it(name, () => expect(roundTrip(markdown)).toBe(markdown));
