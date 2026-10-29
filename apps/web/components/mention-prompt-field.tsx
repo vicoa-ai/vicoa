@@ -6,6 +6,7 @@ import { SlashCommandSuggestions } from '@/components/dashboard/slash-command-su
 import { useSlashCommands } from '@/lib/hooks/use-slash-commands';
 import { applySlashCommandSelection, commandInsertText, detectSlashCommand, slashCommandMatches } from '@/lib/slash-command-utils';
 import type { AgentType } from '@/lib/constants/slash-commands';
+import type { MentionTextareaProps } from '@/components/mention-textarea';
 import { getCaretViewportRect } from '@/lib/textarea-caret';
 
 const SLASH_PANEL_MAX_HEIGHT = 320;
@@ -22,6 +23,10 @@ interface MentionPromptFieldProps {
   mentionsEnabled?: boolean;
   /** Enables the `/` slash-command menu. */
   commandsEnabled?: boolean;
+  /** Enables `#` references; see MentionTextarea for these three. */
+  referencesEnabled?: boolean;
+  referenceExclude?: MentionTextareaProps['referenceExclude'];
+  referenceText?: MentionTextareaProps['referenceText'];
   placeholder?: string;
   /** Classes for the underlying textarea. */
   className?: string;
@@ -34,9 +39,9 @@ interface MentionPromptFieldProps {
 }
 
 /**
- * A description/prompt textarea with both `@` file mentions and `/` slash
- * commands + skills, sharing the exact fuzzy-file index and command index the
- * chat composer uses.
+ * A description/prompt textarea with `@` file mentions, `/` slash commands +
+ * skills and, where turned on, `#` references, sharing the exact fuzzy-file
+ * index, command index and reference search the chat composer uses.
  *
  * `@` is delegated wholesale to `MentionTextarea`; this component layers the
  * slash menu on top (mutually exclusive with the mention panel) and reuses the
@@ -55,6 +60,9 @@ export function MentionPromptField({
   machine,
   mentionsEnabled = true,
   commandsEnabled = true,
+  referencesEnabled = false,
+  referenceExclude,
+  referenceText,
   placeholder,
   className,
   wrapperClassName,
@@ -248,6 +256,9 @@ export function MentionPromptField({
         machineId={machineId}
         machine={machine}
         mentionsEnabled={mentionsEnabled}
+        referencesEnabled={referencesEnabled}
+        referenceExclude={referenceExclude}
+        referenceText={referenceText}
         portalMentionPanel
         containerClassName={containerClassName}
         placeholder={placeholder}

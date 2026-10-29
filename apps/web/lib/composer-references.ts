@@ -118,13 +118,27 @@ export function replaceTriggerToken(
   trigger: string,
   value: string,
 ): { text: string; cursor: number } {
+  return replaceTokenWith(text, token, `${trigger}${value}`);
+}
+
+/**
+ * Replace `token`'s slice with `inserted` as written, plus a space unless one
+ * follows, leaving the caret after it. For a pick that leaves more than the
+ * bare token behind (a stored description writes a link, see
+ * lib/reference-links).
+ */
+export function replaceTokenWith(
+  text: string,
+  token: TriggerToken,
+  inserted: string,
+): { text: string; cursor: number } {
   const before = text.slice(0, token.start);
   const after = text.slice(token.end);
   const needsSpace = after === '' || !after.startsWith(' ');
-  const inserted = `${trigger}${value}${needsSpace ? ' ' : ''}`;
+  const written = `${inserted}${needsSpace ? ' ' : ''}`;
   return {
-    text: `${before}${inserted}${after}`,
-    cursor: before.length + inserted.length,
+    text: `${before}${written}${after}`,
+    cursor: before.length + written.length,
   };
 }
 

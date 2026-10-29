@@ -1,4 +1,4 @@
-import type { ReferenceKind } from '@/lib/backend-api';
+import type { ReferenceCandidate, ReferenceKind } from '@/lib/backend-api';
 
 // A `#` reference kept in stored markdown (a task description) is a link, not
 // a bare `#VIC-42`: the chat composer can carry the referenced id beside the
@@ -34,4 +34,11 @@ const APP_LINK = new RegExp(
  */
 export function isReferenceHref(href: string): boolean {
   return APP_LINK.test(href);
+}
+
+/** A pick as markdown source, for a field that holds markdown as plain text
+ *  (the task dialog's textarea): `[#VIC-42](/dashboard/tasks/…)`. */
+export function referenceMarkdown(item: Pick<ReferenceCandidate, 'kind' | 'id' | 'token'>): string {
+  const label = `#${item.token}`.replace(/[\\[\]]/g, '\\$&');
+  return `[${label}](${referenceHref(item.kind, item.id)})`;
 }

@@ -6,6 +6,7 @@ import {
   candidateToComposerReference,
   composeOutgoingMessage,
   detectTriggerToken,
+  replaceTokenWith,
   replaceTriggerToken,
   taskLinkForSend,
   type ComposerReference,
@@ -171,5 +172,17 @@ describe('candidateToComposerReference', () => {
     expect(composed.context).toBe('Task "Fix the diff editor"\nVicoa · id: task-1');
     // A send in the fetch window still carries something resolvable.
     expect(buildReferenceBlock([composed])).toContain('id: task-1');
+  });
+});
+
+describe('replaceTokenWith', () => {
+  it('writes the given text in place of the token, then a space', () => {
+    const text = 'blocked by #VI';
+    const token = detectTriggerToken(text, text.length, '#')!;
+    const link = '[#VIC-42](/dashboard/tasks/x)';
+    expect(replaceTokenWith(text, token, link)).toEqual({
+      text: `blocked by ${link} `,
+      cursor: 11 + link.length + 1,
+    });
   });
 });

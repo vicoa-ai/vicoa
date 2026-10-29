@@ -200,11 +200,8 @@ export function EditableDescription({
             // NULL rather than storing "".
             onCommit={(markdown) => onSave(markdown || null)}
             editable={!readOnly}
-            placeholder={
-              mentionTarget
-                ? 'Add a description… @ for files, # for tasks or sessions, / for skills'
-                : 'Add a description… # for tasks or sessions, / for skills'
-            }
+            // Every trigger, as in the task dialog and the chat box.
+            placeholder="Add a description… @ for files, # for tasks or sessions, / for skills"
             contentClassName={cn('px-2 py-1.5', !readOnly && 'cursor-text')}
             mentionTarget={mentionTarget}
             referencesEnabled

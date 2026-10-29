@@ -34,6 +34,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Switch } from '@/components/ui/switch';
 import { MentionPromptField } from '@/components/mention-prompt-field';
 import { projectMentionTarget } from '@/lib/project-mention-target';
+import { referenceMarkdown } from '@/lib/reference-links';
 import { getPref, setPref } from '@/lib/desktop-prefs';
 import { labelOwnerForProject, labelsForProject } from '@/lib/project-vocabulary';
 import {
@@ -222,6 +223,11 @@ export function TaskDialog({
     () => projectMentionTarget(projects.find((p) => p.id === values.project_id)),
     [projects, values.project_id],
   );
+  // Editing a task: it doesn't reference itself.
+  const selfReference = useMemo(
+    () => (task ? { kind: 'task' as const, id: task.id } : undefined),
+    [task],
+  );
   const mentionPath = mentionTarget?.path;
 
   // Which optional properties currently show inline: a field appears once it
@@ -387,11 +393,14 @@ export function TaskDialog({
             projectPath={mentionPath}
             machineId={mentionTarget?.machineId}
             mentionsEnabled={!!mentionPath}
-            placeholder={
-              mentionPath
-                ? 'Add description… @ for files, / for skills (for the agent to handle this task)'
-                : 'Add description… / for skills (for the agent to handle this task)'
-            }
+            // A pick is written as a link to its page, as in the description
+            // editor on the task page: this text is all that's stored.
+            referencesEnabled
+            referenceText={referenceMarkdown}
+            referenceExclude={selfReference}
+            // Every trigger, as the chat box lists them; `@` finds files once
+            // the project has a linked folder.
+            placeholder="Add description… @ for files, # for tasks or sessions, / for skills (for the agent to handle this task)"
             // The wrapper must flex-grow for the textarea to fill the free
             // space; without this the description sits at min-h-24 and leaves
             // dead space above the pills. With it, the description takes ALL

@@ -15,8 +15,8 @@ import { createPortal } from 'react-dom';
 import { useFileMentions } from '@/lib/hooks/use-file-mentions';
 import { useReferenceCandidates } from '@/lib/hooks/use-references';
 import { ReferenceSuggestions } from '@/components/dashboard/reference-suggestions';
-import { detectTriggerToken, replaceTriggerToken } from '@/lib/composer-references';
-import type { FileMention, ReferenceCandidate } from '@/lib/backend-api';
+import { detectTriggerToken, replaceTokenWith } from '@/lib/composer-references';
+import type { FileMention, ReferenceCandidate, ReferenceKind } from '@/lib/backend-api';
 import { getCaretViewportRect } from '@/lib/textarea-caret';
 import { isImeComposing } from '@/lib/ime';
 import { matchFileMentions, searchableFileMentions } from '@/lib/file-mention-match';
@@ -46,6 +46,15 @@ export interface MentionTextareaProps
   referencesEnabled?: boolean;
   /** Session doing the referencing; dropped from the candidates. */
   referenceExcludeSessionId?: string | null;
+  /** Any other item to leave out of the list (the task being edited). */
+  referenceExclude?: { kind: ReferenceKind; id: string };
+  /**
+   * The text a `#` pick leaves in place of what was typed. Defaults to the
+   * token itself (`#VIC-42`), which a composer pairs with the reference it
+   * carries alongside; a field whose text is all that's kept (a task
+   * description) writes a link instead (`referenceMarkdown`).
+   */
+  referenceText?: (item: ReferenceCandidate) => string;
   /**
    * A `#` row was chosen. The token is already in the text by the time this
    * fires — the caller's job is the *reference* (fetching its context block,
@@ -83,6 +92,8 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
       mentionsEnabled = true,
       referencesEnabled = false,
       referenceExcludeSessionId = null,
+      referenceExclude,
+      referenceText,
       onReferencePick,
       onMentionOpenChange,
       openMentionSignal,
@@ -125,7 +136,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
     const [selectedRefIndex, setSelectedRefIndex] = useState(0);
     const refListRef = useRef<HTMLDivElement>(null);
     const {
-      items: referenceItems,
+      items: referenceCandidates,
       isLoading: referencesLoading,
       unavailable: referencesUnavailable,
     } = useReferenceCandidates({
@@ -133,6 +144,15 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
       excludeSessionId: referenceExcludeSessionId,
       enabled: referencesEnabled,
     });
+    const referenceItems = useMemo(
+      () =>
+        referenceExclude
+          ? referenceCandidates.filter(
+              (r) => !(r.kind === referenceExclude.kind && r.id === referenceExclude.id),
+            )
+          : referenceCandidates,
+      [referenceCandidates, referenceExclude],
+    );
     const showReferences = referenceQuery !== null;
 
     useImperativeHandle(ref, () => textareaRef.current as HTMLTextAreaElement, []);
@@ -281,11 +301,12 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
       (item: ReferenceCandidate) => {
         const cursor = textareaRef.current?.selectionStart ?? value.length;
         const token = detectTriggerToken(value, cursor, '#');
+        const inserted = referenceText ? referenceText(item) : `#${item.token}`;
         const next = token
-          ? replaceTriggerToken(value, token, '#', item.token)
+          ? replaceTokenWith(value, token, inserted)
           : {
-              text: `${value}#${item.token} `,
-              cursor: value.length + item.token.length + 2,
+              text: `${value}${inserted} `,
+              cursor: value.length + inserted.length + 1,
             };
         pendingCursorRef.current = next.cursor;
         onChange(next.text);
@@ -293,7 +314,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
         onReferencePick?.(item);
         focusTextarea();
       },
-      [value, onChange, onReferencePick, focusTextarea]
+      [value, onChange, onReferencePick, focusTextarea, referenceText]
     );
 
     const insertFileMention = useCallback(
