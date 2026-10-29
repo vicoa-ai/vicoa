@@ -578,9 +578,11 @@ export function SidebarSessions({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(DEFAULT_STATUS_FILTER);
   const [agentFilter, setAgentFilter] = useState<string>('all');
   const [groupBy, setGroupBy] = useState<GroupBy>('project');
-  // Split each project group by worktree (desktop-local only). Off by default so
-  // the flat project list stays the baseline view.
-  const [displayWorktrees, setDisplayWorktrees] = useState(false);
+  // Split each project group by worktree. On by default: the branch rows are
+  // where a session's checkout and its PR state show. A saved choice (only
+  // ever written by the Display toggle) wins, so whoever turned it off keeps
+  // the flat list.
+  const [displayWorktrees, setDisplayWorktrees] = useState(true);
   const worktreesOn = enableWorktrees && displayWorktrees;
 
   // Custom project order (drag-and-drop when grouped by project): the full
