@@ -193,4 +193,33 @@ void main() {
       expect(directoryChipLabel('~/scratch/thing/', null), 'thing');
     });
   });
+
+  group('projectStartFolder', () {
+    final p = project('vicoa', [
+      {'machine_id': 'm1', 'local_path': '/a'},
+      {'machine_id': 'm2', 'local_path': '/b'},
+      {'machine_id': 'm3', 'local_path': '/c'},
+    ]);
+    final machines = [
+      {'machine_id': 'm1', 'online': false},
+      {'machine_id': 'm2', 'online': true},
+    ];
+    bool online(dynamic m) => m['online'] == true;
+
+    test("is the selected machine's folder when it has one", () {
+      final start = projectStartFolder(p, 'm1', machines, online);
+      expect(start?.machineId, 'm1');
+      expect(start?.path, '/a');
+    });
+
+    test('else a folder on an online machine, else on any of the machines', () {
+      expect(projectStartFolder(p, 'other', machines, online)?.machineId, 'm2');
+      expect(projectStartFolder(p, 'other', machines, (_) => false)?.machineId, 'm1');
+    });
+
+    test('is null when none of the machines has a folder for it', () {
+      expect(projectStartFolder(p, null, [{'machine_id': 'm9'}], online), isNull);
+      expect(projectStartFolder(null, 'm1', machines, online), isNull);
+    });
+  });
 }

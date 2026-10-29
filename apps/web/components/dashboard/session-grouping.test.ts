@@ -10,6 +10,7 @@ import {
   projectGroupKey,
   rankProjects,
   splitProjectByWorktree,
+  withEmptyProjectGroups,
   worktreeSessionPaths,
   type LiveWorktree,
 } from './session-grouping';
@@ -215,6 +216,62 @@ describe('groupSessions archived projects', () => {
     const map = projectMap(proj({ id: 'PA', name: 'Alpha Project' }));
     const groups = groupSessions([a], 'all', 'project', 'all', [], map);
     expect(groups.find((g) => g.key === 'PA')?.label).toBe('Alpha Project');
+  });
+});
+
+describe('withEmptyProjectGroups', () => {
+  const dir = [{ machine_id: 'm1', machine_name: null, local_path: '~/code/x' }];
+  const principal = (type: 'user' | 'team', id: string) => ({
+    type,
+    id,
+    name: id,
+    avatar_image_uri: null,
+    emoji: null,
+    updated_at: null,
+  });
+
+  it('adds a project with no loaded session as an empty group, in project order', () => {
+    const a = make({ id: 'a', project: '/x/alpha', project_id: 'PA' });
+    const pinned = make({ id: 'p', project: '/x/alpha', project_id: 'PA', pinned_at: '2026-01-01T00:00:00.000Z' });
+    const groups = groupSessions([a, pinned], 'not_closed', 'project', 'all', ['PB', 'PA']);
+    const out = withEmptyProjectGroups(
+      groups,
+      [proj({ id: 'PA', directories: dir }), proj({ id: 'PB', name: 'Beta', directories: dir })],
+      [a, pinned],
+      ['PB', 'PA'],
+    );
+    expect(out.map((g) => g.key)).toEqual(['PINNED', 'PB', 'PA']);
+    expect(out[1]).toEqual({ key: 'PB', label: 'Beta', instances: [] });
+  });
+
+  it('leaves out a project whose sessions are only filtered out or pinned', () => {
+    const running = make({ id: 'r', project: '/x/alpha', project_id: 'PA', status: 'ACTIVE' });
+    const pinned = make({ id: 'p', project: '/x/beta', project_id: 'PB', pinned_at: '2026-01-01T00:00:00.000Z' });
+    const groups = groupSessions([running, pinned], 'in_review', 'project', 'all', []);
+    const out = withEmptyProjectGroups(
+      groups,
+      [proj({ id: 'PA', directories: dir }), proj({ id: 'PB', directories: dir })],
+      [running, pinned],
+      [],
+    );
+    expect(out.map((g) => g.key)).toEqual(['PINNED']);
+  });
+
+  it('only adds projects a session can be started in from here', () => {
+    const out = withEmptyProjectGroups(
+      [],
+      [
+        proj({ id: 'own', directories: dir }),
+        proj({ id: 'archived', directories: dir, is_archived: true }),
+        proj({ id: 'no-folder' }),
+        proj({ id: 'shared', directories: dir, owner: principal('user', 'u2'), followed: true, role: 'editor' }),
+        proj({ id: 'team-editor', directories: dir, owner: principal('team', 't1'), is_team_member: true, role: 'editor' }),
+        proj({ id: 'team-viewer', directories: dir, owner: principal('team', 't1'), is_team_member: true, role: 'viewer' }),
+      ],
+      [],
+      [],
+    );
+    expect(out.map((g) => g.key).sort()).toEqual(['own', 'team-editor']);
   });
 });
 

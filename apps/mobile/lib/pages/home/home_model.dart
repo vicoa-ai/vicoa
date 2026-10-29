@@ -774,6 +774,11 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     return filtered;
   }
 
+  /// Whether the Project grouping lists a project with no session: Home shows
+  /// the list then rather than an empty state, so the row can start one.
+  bool get hasEmptyProjectGroups =>
+      selectedGroupBy == 'Project' && getGroupedSessions().any((g) => g.isEmptyProject);
+
   List<SessionGroup> getGroupedSessions() {
     int compareLatest(dynamic a, dynamic b) {
       final aDate = DateTime.tryParse(a['latest_message_at'] ?? a['started_at'] ?? '') ?? DateTime.now();
@@ -803,7 +808,7 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
 
     final List<SessionGroup> rest;
     if (selectedGroupBy == 'Project') {
-      rest = groupSessionsByProject(unpinned, projects);
+      rest = groupSessionsByProject(unpinned, projects, loaded: agentInstances);
     } else if (selectedGroupBy == 'Status') {
       rest = byLabel(_groupByStatus(unpinned));
     } else {

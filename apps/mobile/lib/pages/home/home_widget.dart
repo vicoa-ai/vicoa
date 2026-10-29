@@ -231,9 +231,10 @@ class _HomeWidgetState extends State<HomeWidget>
   void _showHomeErrorSnackBar(String message) =>
       _showHomeSnackBar(message, waitTime: SessionActions.errorSnackMs);
 
-  /// Opens the New Session flow (shared by the app-bar + button and the
-  /// getting-started checklist's "Start a session" step).
-  Future<void> _startNewSessionFlow() async {
+  /// Opens the New Session flow (shared by the app-bar + button, the
+  /// getting-started checklist's "Start a session" step, and the row of a
+  /// project with no session, which passes [projectId] to start there).
+  Future<void> _startNewSessionFlow({String? projectId}) async {
     logFirebaseEvent('HOME_PAGE_add_button_ON_TAP');
     HapticFeedback.mediumImpact();
     final result = await context.pushNamed(
@@ -244,6 +245,7 @@ class _HomeWidgetState extends State<HomeWidget>
           transitionType: PageTransitionType.rightToLeft,
           duration: Duration(milliseconds: 300),
         ),
+        if (projectId != null) 'projectId': projectId,
       },
     );
 
@@ -352,11 +354,13 @@ class _HomeWidgetState extends State<HomeWidget>
           group: group,
           collapsed: isCollapsed,
           large: useLargeHeader,
-          onTap: () {
-            setState(() {
-              _collapsedGroups[group.key] = !isCollapsed;
-            });
-          },
+          onTap: group.isEmptyProject
+              ? () => _startNewSessionFlow(projectId: group.key)
+              : () {
+                  setState(() {
+                    _collapsedGroups[group.key] = !isCollapsed;
+                  });
+                },
         ),
       );
 
@@ -714,12 +718,14 @@ class _HomeWidgetState extends State<HomeWidget>
                       )
                     else if (_model.getFilteredSessions().isEmpty &&
                         _model.agentInstances.isNotEmpty &&
+                        !_model.hasEmptyProjectGroups &&
                         _model.loadingState == LoadingState.loaded &&
                         !_model.hasError)
                       EmptyFilterStateWidget(
                         statusLabel: _model.selectedTab == 'All' ? '' : localizedFilterLabel(_model.selectedTab),
                       )
                     else if (_model.getFilteredSessions().isEmpty &&
+                        !_model.hasEmptyProjectGroups &&
                         _model.loadingState == LoadingState.loaded &&
                         !_model.hasError)
                       Column(

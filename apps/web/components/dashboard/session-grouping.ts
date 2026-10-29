@@ -1,4 +1,9 @@
-import type { AgentInstanceResponse, ProjectResponse } from '@/lib/backend-api';
+import {
+  projectRoleAtLeast,
+  type AgentInstanceResponse,
+  type ProjectResponse,
+} from '@/lib/backend-api';
+import { isOwnTeamProject } from '@/lib/shared-with-me';
 import { isManagedWorktreePath } from '@/lib/worktree-selection';
 
 /**
@@ -349,6 +354,43 @@ export function compareProjectKeys(projectOrder: string[]): (a: string, b: strin
     if (rankB !== -1) return 1;
     return a.localeCompare(b);
   };
+}
+
+/**
+ * The project groups plus an empty one for each project of the user's that has
+ * no session in the loaded list, so a project stays in the sidebar between
+ * sessions (its row starts a session rather than collapsing). Only projects a
+ * session can be started in from here: the user's own, or their team's with
+ * editor standing, not archived, with a folder on one of their machines (the
+ * new-session page starts from it). `loaded` is the unfiltered list, so a
+ * project whose sessions are only filtered out or pinned is not empty and stays
+ * hidden as before. New groups take their place by `projectOrder`; "Pinned"
+ * stays first.
+ */
+export function withEmptyProjectGroups(
+  groups: SessionGroup[],
+  projects: readonly ProjectResponse[],
+  loaded: readonly AgentInstanceResponse[],
+  projectOrder: string[],
+): SessionGroup[] {
+  const present = new Set(groups.map((group) => group.key));
+  for (const instance of loaded) present.add(projectGroupKey(instance));
+  const added: SessionGroup[] = projects
+    .filter(
+      (p) =>
+        !present.has(p.id) &&
+        !p.is_archived &&
+        p.directories.length > 0 &&
+        (!p.owner || (isOwnTeamProject(p) && projectRoleAtLeast(p.role, 'editor'))),
+    )
+    .map((p) => ({ key: p.id, label: p.name, instances: [] }));
+  if (added.length === 0) return groups;
+  const pinned = groups.filter((group) => group.key === 'PINNED');
+  const compareKeys = compareProjectKeys(projectOrder);
+  const rest = [...groups.filter((group) => group.key !== 'PINNED'), ...added].sort((a, b) =>
+    compareKeys(a.key, b.key),
+  );
+  return [...pinned, ...rest];
 }
 
 /**

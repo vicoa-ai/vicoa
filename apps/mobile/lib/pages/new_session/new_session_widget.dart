@@ -37,7 +37,7 @@ export 'new_session_model.dart';
 
 class NewSessionWidget extends StatefulWidget {
   const NewSessionWidget(
-      {super.key, this.taskId, this.initialPrompt, this.subtaskIds, this.forkContext});
+      {super.key, this.taskId, this.initialPrompt, this.subtaskIds, this.forkContext, this.projectId});
 
   /// When launched from a task, the spawned session is linked back to this task
   /// (its `task_id` is set) and the task is advanced to in_progress on success.
@@ -54,6 +54,10 @@ class NewSessionWidget extends StatefulWidget {
   /// Backlog/todo sub-tasks bundled into this session — advanced to in_progress
   /// on success alongside the parent task.
   final List<String>? subtaskIds;
+
+  /// Opened from Home's row for a project with no session yet: start in that
+  /// project's folder, on a machine that has it.
+  final String? projectId;
 
   static String routeName = 'NewSession';
   static String routePath = '/new-session';
@@ -74,7 +78,7 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _model = createModel(context, () => NewSessionModel(forkContext: widget.forkContext, seedTaskId: widget.taskId));
+    _model = createModel(context, () => NewSessionModel(forkContext: widget.forkContext, seedTaskId: widget.taskId, seedProjectId: widget.projectId));
     _model.onStateChanged = () {
       if (mounted) setState(() {});
     };

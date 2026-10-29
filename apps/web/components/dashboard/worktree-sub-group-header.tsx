@@ -14,7 +14,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { NewSessionButton } from '@/components/dashboard/new-session-button';
+import { NewSessionButton, newSessionHref } from '@/components/dashboard/new-session-button';
 import { PrHoverCard } from '@/components/dashboard/pr-hover-card';
 import { prPresentation, type PrInfo } from '@/components/dashboard/pr-status';
 
@@ -35,6 +35,9 @@ export interface WorktreeSubGroupHeaderProps {
   /** Preselect this worktree on the new-session page; absent for main. */
   worktreePath?: string;
   worktreeBranch?: string;
+  /** No session runs in this worktree. With a "+" target, clicking the row
+      does what the "+" does, since there is nothing to collapse. */
+  empty?: boolean;
   /** Git no longer has a checkout at this folder: the row reads as deleted.
       Its actions are unchanged — "Delete" still archives the sessions that
       were started in it, and the (already gone) folder counts as removed. */
@@ -67,6 +70,7 @@ export function WorktreeSubGroupHeader({
   newSessionDirectory,
   worktreePath,
   worktreeBranch,
+  empty = false,
   missing = false,
   onNavigate,
   onRequestDelete,
@@ -81,6 +85,11 @@ export function WorktreeSubGroupHeader({
   // first paints, so a size that depended on it would jog every branch row in
   // the list a second after load; only the glyph and colour may change.
   const branchIcon = <BranchIcon className={cn('h-3 w-3 shrink-0', branchIconClassName)} />;
+  const newSessionTarget = newSessionDirectory
+    ? newSessionHref({ directory: newSessionDirectory, worktreePath, worktreeBranch })
+    : null;
+  // An empty row with a "+" target starts a session on click instead.
+  const startTarget = empty ? newSessionTarget : null;
 
   const header = (
     // The hover card's panel is portaled out, so its own buttons never nest
@@ -91,9 +100,9 @@ export function WorktreeSubGroupHeader({
       <div className="group/label flex w-full select-none items-center gap-1 py-0.5 pl-3 pr-2">
         <button
           type="button"
-          onClick={onToggleCollapsed}
-          aria-expanded={!collapsed}
-          className="flex min-w-0 flex-1 items-center gap-1 text-left"
+          onClick={startTarget ? () => onNavigate(startTarget) : onToggleCollapsed}
+          aria-expanded={startTarget ? undefined : !collapsed}
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left"
         >
           {branchIcon}
           <span
@@ -112,12 +121,14 @@ export function WorktreeSubGroupHeader({
               deleted
             </span>
           )}
-          <ChevronRight
-            className={cn(
-              'h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform group-hover/label:text-muted-foreground',
-              !collapsed && 'rotate-90',
-            )}
-          />
+          {!startTarget && (
+            <ChevronRight
+              className={cn(
+                'h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform group-hover/label:text-muted-foreground',
+                !collapsed && 'rotate-90',
+              )}
+            />
+          )}
         </button>
         {actions.length > 0 && (
           <DropdownMenu>
@@ -141,14 +152,8 @@ export function WorktreeSubGroupHeader({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-        {newSessionDirectory && (
-          <NewSessionButton
-            directory={newSessionDirectory}
-            label={label}
-            worktreePath={worktreePath}
-            worktreeBranch={worktreeBranch}
-            onNavigate={onNavigate}
-          />
+        {newSessionTarget && (
+          <NewSessionButton href={newSessionTarget} label={label} onNavigate={onNavigate} />
         )}
       </div>
     </PrHoverCard>

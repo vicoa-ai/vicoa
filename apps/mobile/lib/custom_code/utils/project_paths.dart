@@ -179,6 +179,45 @@ List<ProjectPickerEntry> projectsOnMachine(
   return rows;
 }
 
+/// Where New Session starts for [project] when opened on it (Home's empty
+/// project row) — the web new-session page's `?projectId=` rule: its folder on
+/// [selectedMachineId], else on a machine [isOnline] says is up, else on any
+/// of [machines], so the offline notice explains why nothing can start. Null
+/// when none of the user's machines has a folder for it.
+({String machineId, String path})? projectStartFolder(
+  dynamic project,
+  String? selectedMachineId,
+  List<dynamic> machines,
+  bool Function(dynamic machine) isOnline,
+) {
+  final links = [
+    for (final link in _directoriesOf(project))
+      if ((link['local_path']?.toString() ?? '').isNotEmpty) link,
+  ];
+  dynamic machineOf(Map<String, dynamic> link) {
+    for (final m in machines) {
+      if (m is Map && (m['machine_id'] ?? m['id'])?.toString() == link['machine_id']?.toString()) return m;
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? pick(bool Function(Map<String, dynamic> link) test) {
+    for (final link in links) {
+      if (test(link)) return link;
+    }
+    return null;
+  }
+
+  final link = pick((l) => selectedMachineId != null && l['machine_id']?.toString() == selectedMachineId) ??
+      pick((l) {
+        final m = machineOf(l);
+        return m != null && isOnline(m);
+      }) ??
+      pick((l) => machineOf(l) != null);
+  if (link == null) return null;
+  return (machineId: link['machine_id'].toString(), path: link['local_path'].toString());
+}
+
 /// Chip label for the picker: the project's name, with the subfolder when the
 /// directory sits below the root (`vicoa · apps/web`); the folder's own name
 /// when no project claims it yet.

@@ -2,6 +2,26 @@
 
 import { Plus } from 'lucide-react';
 
+/** What a "+" starts a session in: a folder (optionally with one of its
+    worktrees preselected), or a project with no session yet, whose folder the
+    new-session page picks per machine. */
+export type NewSessionTarget =
+  | { directory: string; worktreePath?: string; worktreeBranch?: string }
+  | { projectId: string };
+
+/** Where a project or worktree header's "+" goes. Shared with the header rows
+    themselves: an empty project or worktree row navigates here on click, since
+    it has nothing to collapse. */
+export function newSessionHref(target: NewSessionTarget): string {
+  if ('projectId' in target) {
+    return `/dashboard/sessions/new?${new URLSearchParams({ projectId: target.projectId })}`;
+  }
+  const params = new URLSearchParams({ directory: target.directory });
+  if (target.worktreePath) params.set('worktreePath', target.worktreePath);
+  if (target.worktreeBranch) params.set('worktreeBranch', target.worktreeBranch);
+  return `/dashboard/sessions/new?${params.toString()}`;
+}
+
 /** Hover-revealed "+" on a project or worktree header: starts a session in that
     group's project folder. On a worktree header, `worktreePath` + `worktreeBranch`
     ride along so the new-session page opens on the project's root with that
@@ -11,23 +31,15 @@ import { Plus } from 'lucide-react';
     Reveal is driven by the parent header's `group/label` hover, so it must be
     rendered inside such a group. */
 export function NewSessionButton({
-  directory,
+  href,
   label,
-  worktreePath,
-  worktreeBranch,
   onNavigate,
 }: {
-  /** The project's folder (the repo's main checkout), never a worktree. */
-  directory: string;
+  /** From `newSessionHref`. */
+  href: string;
   label: string;
-  worktreePath?: string;
-  worktreeBranch?: string;
   onNavigate: (href: string) => void;
 }) {
-  const params = new URLSearchParams({ directory });
-  if (worktreePath) params.set('worktreePath', worktreePath);
-  if (worktreeBranch) params.set('worktreeBranch', worktreeBranch);
-  const href = `/dashboard/sessions/new?${params.toString()}`;
   return (
     <button
       type="button"

@@ -24,7 +24,8 @@ import 'dart:convert';
 
 class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
     with FileMentionMixin, SlashCommandMixin, ComposerReferenceMixin {
-  NewSessionModel({this.forkContext, this.seedTaskId});
+  NewSessionModel({this.forkContext, this.seedTaskId, String? seedProjectId})
+      : _pendingProjectId = seedProjectId;
 
   /// The task this session was started from (Tasks → Start session). Its title
   /// and description already top the prompt and the session is linked to it,
@@ -42,6 +43,14 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
   /// Whether the fork's agent won over the remembered one, so the async
   /// preference restore below does not undo it.
   bool _forkAgentApplied = false;
+
+  /// The project Home's empty project row opened this screen on, until its
+  /// folder is applied (see [_applySeedProject]).
+  String? _pendingProjectId;
+
+  /// Whether [_loadMachines] has restored the machine and folder, which the
+  /// seed project then overrides (the 30s refresh can fill [machines] first).
+  bool _machinesRestored = false;
 
   List<dynamic> machines = [];
   bool isLoadingMachines = true;
@@ -306,6 +315,25 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
   Future<void> loadProjects() async {
     final list = await actions.apiGetProjects();
     projects = list;
+    _applySeedProject();
+    onStateChanged?.call();
+  }
+
+  /// Start at the seed project's folder ([projectStartFolder]) once both the
+  /// machines and the projects have loaded, over whatever was restored.
+  void _applySeedProject() {
+    final projectId = _pendingProjectId;
+    if (projectId == null || !_machinesRestored || machines.isEmpty || projects.isEmpty) return;
+    _pendingProjectId = null;
+    final project = projects.firstWhere(
+      (p) => p is Map && p['id']?.toString() == projectId,
+      orElse: () => null,
+    );
+    final start = projectStartFolder(project, selectedMachineId, machines, isMachineOnline);
+    if (start == null) return;
+    if (start.machineId != selectedMachineId) selectMachine(start.machineId);
+    directoryController.text = start.path;
+    onDirectoryChanged();
     onStateChanged?.call();
   }
 
@@ -647,6 +675,8 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
       onStateChanged?.call();
       _reloadDirectoryDerivedState();
       unawaited(_loadMachineAgentModels(selectedMachineId));
+      _machinesRestored = true;
+      _applySeedProject();
     } catch (e) {
       debugPrint('Error loading machines: $e');
       machines = [];

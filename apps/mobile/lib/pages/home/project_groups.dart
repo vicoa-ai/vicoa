@@ -28,6 +28,11 @@ class SessionGroup {
 
   /// The group for sessions with no folder at all.
   bool get isNoProject => key == _noProjectKey;
+
+  /// A project of the user's with no session in the list (see
+  /// [groupSessionsByProject]'s `loaded`): tapping it starts one there instead
+  /// of collapsing nothing.
+  bool get isEmptyProject => isProject && sessions.isEmpty && project != null;
 }
 
 /// Stable identity of the project a session belongs to: its linked
@@ -83,10 +88,18 @@ List<dynamic> withoutArchivedProjects(
 /// an arrangement made on desktop or web over to the phone. Groups the
 /// project list doesn't know (unlinked folders, a project not loaded yet)
 /// trail alphabetically; "No project" is always last.
+///
+/// With [loaded] (every session loaded, before any filter), each project of
+/// the user's that has none of them also gets an empty group, so a project
+/// stays listed between sessions — the web sidebar's `withEmptyProjectGroups`.
+/// Only projects a session can be started in from here (see
+/// [_startsSessionsHere]); one whose sessions are only filtered out or pinned
+/// is not empty and stays hidden.
 List<SessionGroup> groupSessionsByProject(
   List<dynamic> sessions,
-  List<dynamic> projects,
-) {
+  List<dynamic> projects, {
+  List<dynamic>? loaded,
+}) {
   final byId = _projectsById(projects);
   final rank = <String, int>{};
   for (final id in byId.keys) {
@@ -106,6 +119,15 @@ List<SessionGroup> groupSessionsByProject(
       return basename.isEmpty ? key : basename;
     });
     byKey.putIfAbsent(key, () => []).add(session);
+  }
+  if (loaded != null) {
+    final present = {...byKey.keys, for (final s in loaded) if (s is Map) sessionProjectKey(s)};
+    for (final entry in byId.entries) {
+      if (present.contains(entry.key) || !_startsSessionsHere(entry.value)) continue;
+      byKey[entry.key] = [];
+      final name = entry.value['name']?.toString().trim() ?? '';
+      labelByKey[entry.key] = name.isEmpty ? entry.key : name;
+    }
   }
 
   final keys = byKey.keys.toList()
@@ -130,4 +152,17 @@ List<SessionGroup> groupSessionsByProject(
         project: byId[key],
       ),
   ];
+}
+
+const _editorRoles = {'editor', 'admin', 'owner'};
+
+/// Whether the user can start a session in [project] from Home: their own, or
+/// their team's with editor standing, not archived, with a folder on one of
+/// their machines (New Session starts from it).
+bool _startsSessionsHere(Map<String, dynamic> project) {
+  if (project['is_archived'] == true) return false;
+  final dirs = project['directories'];
+  if (dirs is! List || dirs.isEmpty) return false;
+  if (project['owner'] == null) return true;
+  return project['is_team_member'] == true && _editorRoles.contains(project['role']);
 }

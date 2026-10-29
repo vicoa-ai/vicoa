@@ -328,6 +328,8 @@ GoRouter createRouter(AppStateNotifier appStateNotifier) => GoRouter(
             final forkContext = params.getParam('forkContext', ParamType.JSON);
             return NewSessionWidget(
               forkContext: ForkSessionContext.fromJson(forkContext),
+              // Home's row for a project with no session yet.
+              projectId: params.getParam('projectId', ParamType.String),
               taskId: taskContext is Map
                   ? taskContext['taskId']?.toString()
                   : null,

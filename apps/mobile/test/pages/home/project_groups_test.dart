@@ -123,4 +123,52 @@ void main() {
       expect(sessionProjectKey({'project': null}), isNot('y'));
     });
   });
+
+  group('groupSessionsByProject with loaded (empty projects)', () {
+    Map<String, dynamic> linked(String id, String name, {Map<String, dynamic> extra = const {}}) => {
+          ...project(id, name),
+          'directories': [
+            {'machine_id': 'm1', 'local_path': '/x/$id'},
+          ],
+          ...extra,
+        };
+
+    test('adds a project with no loaded session as an empty group, in list order', () {
+      final s1 = session('s1', projectId: 'p-alpha', project: '/x/alpha');
+      final grouped = groupSessionsByProject(
+        [s1],
+        [linked('p-beta', 'Beta'), linked('p-alpha', 'Alpha')],
+        loaded: [s1],
+      );
+      expect(labels(grouped), ['Beta', 'Alpha']);
+      expect(grouped.first.isEmptyProject, isTrue);
+      expect(grouped.last.isEmptyProject, isFalse);
+    });
+
+    test('leaves out a project whose sessions are only filtered out', () {
+      final hidden = session('s1', projectId: 'p-alpha', project: '/x/alpha');
+      final grouped = groupSessionsByProject([], [linked('p-alpha', 'Alpha')], loaded: [hidden]);
+      expect(grouped, isEmpty);
+    });
+
+    test('only adds projects a session can be started in', () {
+      final grouped = groupSessionsByProject(
+        [],
+        [
+          linked('own', 'Own'),
+          linked('archived', 'Archived', extra: {'is_archived': true}),
+          project('no-folder', 'No folder'),
+          linked('shared', 'Shared', extra: {'owner': {'id': 'u2'}, 'followed': true, 'role': 'editor'}),
+          linked('team-editor', 'Team editor', extra: {'owner': {'id': 't1'}, 'is_team_member': true, 'role': 'editor'}),
+          linked('team-viewer', 'Team viewer', extra: {'owner': {'id': 't1'}, 'is_team_member': true, 'role': 'viewer'}),
+        ],
+        loaded: [],
+      );
+      expect(labels(grouped), ['Own', 'Team editor']);
+    });
+
+    test('adds nothing without loaded', () {
+      expect(groupSessionsByProject([], [linked('own', 'Own')]), isEmpty);
+    });
+  });
 }

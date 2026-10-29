@@ -7,7 +7,9 @@ import 'project_groups.dart';
 
 /// The tappable header above each Home group: a project group leads with its
 /// icon (see [ProjectGroupIcon]), then the title and a chevron that turns as
-/// the group collapses. [large] is the Project/Status size.
+/// the group collapses. An empty project's row has nothing to collapse, so it
+/// has no chevron (its tap starts a session). [large] is the Project/Status
+/// size.
 class HomeGroupHeader extends StatelessWidget {
   const HomeGroupHeader({
     super.key,
@@ -39,7 +41,7 @@ class HomeGroupHeader extends StatelessWidget {
         child: Row(
           children: [
             if (group.isProject) ...[
-              ProjectGroupIcon(group: group, open: !collapsed),
+              ProjectGroupIcon(group: group, open: !collapsed && !group.isEmptyProject),
               const SizedBox(width: 8.0),
             ],
             Flexible(
@@ -53,17 +55,19 @@ class HomeGroupHeader extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 4.0),
-            AnimatedRotation(
-              turns: collapsed ? -0.25 : 0.0,
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeInOut,
-              child: Icon(
-                Icons.expand_more_rounded,
-                color: theme.secondaryText,
-                size: large ? 20.0 : 18.0,
+            if (!group.isEmptyProject) ...[
+              const SizedBox(width: 4.0),
+              AnimatedRotation(
+                turns: collapsed ? -0.25 : 0.0,
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
+                child: Icon(
+                  Icons.expand_more_rounded,
+                  color: theme.secondaryText,
+                  size: large ? 20.0 : 18.0,
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),

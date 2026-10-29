@@ -53,7 +53,7 @@ import {
   fileableProjects,
   sessionProjectChoices,
 } from '@/components/dashboard/session-project-choices';
-import { NewSessionButton } from '@/components/dashboard/new-session-button';
+import { NewSessionButton, newSessionHref } from '@/components/dashboard/new-session-button';
 import { WorktreeSubGroupHeader } from '@/components/dashboard/worktree-sub-group-header';
 import type { AgentInstanceResponse, ProjectResponse } from '@/lib/backend-api';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
@@ -78,6 +78,7 @@ import {
   rankProjects,
   normalizeWorktreePath,
   splitProjectByWorktree,
+  withEmptyProjectGroups,
   worktreeSessionPaths,
   GROUP_BY_STORAGE_KEY,
   PROJECT_ORDER_STORAGE_KEY,
@@ -797,13 +798,27 @@ export function SidebarSessions({
   // data, so grouping itself stays a pure function of the sessions.
   const sidebarGroups = useMemo(
     () =>
-      withTeamOnlyGroups(
-        groupSessions(recentInstances, statusFilter, groupBy, agentFilter, projectOrder, projectsById),
-        teamByProject,
+      withEmptyProjectGroups(
+        withTeamOnlyGroups(
+          groupSessions(recentInstances, statusFilter, groupBy, agentFilter, projectOrder, projectsById),
+          teamByProject,
+          projectOrder,
+          projectsById,
+        ),
+        groupBy === 'project' ? loadedProjects ?? [] : [],
+        recentInstances,
         projectOrder,
-        projectsById,
       ),
-    [recentInstances, statusFilter, groupBy, agentFilter, projectOrder, projectsById, teamByProject],
+    [
+      recentInstances,
+      statusFilter,
+      groupBy,
+      agentFilter,
+      projectOrder,
+      projectsById,
+      teamByProject,
+      loadedProjects,
+    ],
   );
 
   // Bumped after a worktree is removed so the per-project git views refetch
@@ -1187,11 +1202,24 @@ export function SidebarSessions({
           !(isOwnTeamProject(dbProject) && projectRoleAtLeast(dbProject.role, 'editor'));
         const flatDirectory =
           isDraggableProject && !foreignProject ? instances[0]?.project ?? null : null;
+        // No one's session is in this project (withEmptyProjectGroups added
+        // it): the row starts one there instead of collapsing nothing, and the
+        // new-session page picks the project's folder per machine.
+        const empty =
+          isDraggableProject &&
+          !foreignProject &&
+          instances.length === 0 &&
+          (teamByProject.get(key)?.length ?? 0) === 0;
         const notSplit = {
           group,
           isDraggableProject,
           split: false,
-          newSessionDirectory: flatDirectory,
+          empty,
+          newSessionTarget: empty
+            ? newSessionHref({ projectId: key })
+            : flatDirectory
+              ? newSessionHref({ directory: flatDirectory })
+              : null,
           subs: [] as RenderedSubGroup[],
         };
 
@@ -1280,9 +1308,16 @@ export function SidebarSessions({
         // Even when split, keep a "+" on the project label; it starts a session
         // in the repo's main checkout (falling back to any session's cwd).
         const splitDirectory = foreignProject ? null : mainDirectory ?? instances[0]?.project ?? null;
-        return { group, isDraggableProject, split: true, newSessionDirectory: splitDirectory, subs };
+        return {
+          group,
+          isDraggableProject,
+          split: true,
+          empty: false,
+          newSessionTarget: splitDirectory ? newSessionHref({ directory: splitDirectory }) : null,
+          subs,
+        };
       }),
-    [sidebarGroups, worktreesOn, groupBy, projectGitViews, removingWorktrees, projectsById],
+    [sidebarGroups, worktreesOn, groupBy, projectGitViews, removingWorktrees, projectsById, teamByProject],
   );
 
   // Session-switching shortcuts: ⌘1–⌘9 jump to the nth session in the list
@@ -1718,7 +1753,9 @@ export function SidebarSessions({
                 </div>
               ))}
             </div>
-          ) : recentInstances.length === 0 && teamByProject.size === 0 ? (
+          ) : recentInstances.length === 0 &&
+            teamByProject.size === 0 &&
+            !renderLayout.some((entry) => entry.empty) ? (
             <div className="flex flex-col items-center px-4 pt-10 pb-4 text-center">
               <MessageCircleMore className="h-8 w-8 text-muted-foreground" strokeWidth={1.5} />
               <p className="mt-3 text-xs font-medium text-foreground">No sessions yet</p>
@@ -1730,10 +1767,10 @@ export function SidebarSessions({
             <div className="space-y-1 pb-2">
               {renderLayout.map((entry) => {
                 const { key, label, instances } = entry.group;
-                const { isDraggableProject, split, newSessionDirectory, subs } = entry;
+                const { isDraggableProject, split, empty, newSessionTarget, subs } = entry;
                 // Other people's open sessions here, under the Team row.
                 const team = teamByProject.get(key) ?? [];
-                if (!split && instances.length === 0 && team.length === 0) return null;
+                if (!split && !empty && instances.length === 0 && team.length === 0) return null;
                 const isGroupCollapsed = label !== null && collapsedGroups.has(key);
                 // The DB project this group maps to (only meaningful when
                 // grouping by project — time/status keys aren't project ids).
@@ -1793,9 +1830,13 @@ export function SidebarSessions({
                   >
                     <button
                       type="button"
-                      onClick={() => toggleGroupCollapsed(key)}
-                      aria-expanded={!isGroupCollapsed}
-                      className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                      onClick={
+                        empty && newSessionTarget
+                          ? () => router.push(newSessionTarget)
+                          : () => toggleGroupCollapsed(key)
+                      }
+                      aria-expanded={empty ? undefined : !isGroupCollapsed}
+                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
                     >
                       {/* Project groups show the DB project's image/emoji, or a
                           folder that opens with the group; time/status groups
@@ -1805,24 +1846,26 @@ export function SidebarSessions({
                           <ProjectIconWithOwner
                             project={dbProject}
                             owner={dbProject.owner}
-                            open={!isGroupCollapsed}
+                            open={!isGroupCollapsed && !empty}
                           />
                         ) : (
                           <ProjectIcon
                             project={dbProject ?? { id: key, name: label }}
-                            open={!isGroupCollapsed}
+                            open={!isGroupCollapsed && !empty}
                             className="size-4"
                           />
                         ))}
                       <span className="truncate text-[0.8rem] font-normal text-muted-foreground">
                         {label}
                       </span>
-                      <ChevronRight
-                        className={cn(
-                          'h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform group-hover/label:text-muted-foreground',
-                          !isGroupCollapsed && 'rotate-90',
-                        )}
-                      />
+                      {!empty && (
+                        <ChevronRight
+                          className={cn(
+                            'h-3 w-3 shrink-0 text-muted-foreground/50 transition-transform group-hover/label:text-muted-foreground',
+                            !isGroupCollapsed && 'rotate-90',
+                          )}
+                        />
+                      )}
                     </button>
                     {(projectSettingsHref ||
                       canArchiveProject ||
@@ -1915,9 +1958,9 @@ export function SidebarSessions({
                         </DropdownMenuContent>
                       </DropdownMenu>
                     )}
-                    {newSessionDirectory && (
+                    {newSessionTarget && (
                       <NewSessionButton
-                        directory={newSessionDirectory}
+                        href={newSessionTarget}
                         label={label}
                         onNavigate={router.push}
                       />
@@ -1978,6 +2021,7 @@ export function SidebarSessions({
                                     newSessionDirectory={rsub.directory}
                                     worktreePath={rsub.worktreePath}
                                     worktreeBranch={rsub.worktreeBranch}
+                                    empty={rsub.instances.length === 0}
                                     missing={rsub.missing}
                                     pr={rsub.pr}
                                     onNavigate={router.push}

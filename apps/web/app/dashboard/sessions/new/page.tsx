@@ -354,6 +354,12 @@ function NewSessionContent() {
   // that machine's own default instead of snapping back to the link's folder.
   const directoryParam = searchParams.get('directory');
   const pendingDirectoryRef = useRef<string | null>(directoryParam);
+  // `?projectId=` (a sidebar project with no session yet) stands in for
+  // `?directory=`: the project-link effect below resolves the project's folder
+  // per machine. The ref tells loadMachines a link is coming, so it doesn't
+  // carry the persisted folder's worktree/task context over either.
+  const projectIdParam = searchParams.get('projectId');
+  const pendingProjectLinkRef = useRef<string | null>(projectIdParam);
   // The sidebar's per-worktree "+" links here with `?directory=<project root>
   // &worktreePath=<worktree>&worktreeBranch=<branch>`; we land on the project's
   // folder with that worktree preselected instead of "current branch". The
@@ -924,6 +930,8 @@ function NewSessionContent() {
         setSelectedMachineId(preferredMachine.machine_id);
         const pendingDirectory = pendingDirectoryRef.current;
         pendingDirectoryRef.current = null;
+        const projectLinked = pendingProjectLinkRef.current !== null;
+        pendingProjectLinkRef.current = null;
         // Restore the directory last used on THIS machine (persisted per
         // `lastMachineId`); a `?directory=` link still wins, and a different
         // machine falls back to its own default.
@@ -934,7 +942,12 @@ function NewSessionContent() {
         setDirectory(restoredDirectory);
         // Only when the persisted directory is what we actually restored (no
         // link override) do we carry its worktree + task context:
-        if (!pendingDirectory && persistedDirectory !== undefined && restoredDirectory === persistedDirectory) {
+        if (
+          !pendingDirectory &&
+          !projectLinked &&
+          persistedDirectory !== undefined &&
+          restoredDirectory === persistedDirectory
+        ) {
           // Arm the worktree restore for the clear/restore effect to apply once
           // machine+directory match (skipped for a plain 'none' selection).
           if (persisted.lastWorktree && persisted.lastWorktree.mode !== 'none') {
@@ -1143,7 +1156,7 @@ function NewSessionContent() {
   // Applied at most once per (task, machine) pair so a folder the user edits
   // afterwards is never clobbered, while switching machines still re-resolves.
   useEffect(() => {
-    if (!selectedTask || directoryParam || machines.length === 0) return;
+    if (!selectedTask || directoryParam || projectIdParam || machines.length === 0) return;
     const key = `${selectedTask.id}:${selectedMachineId}`;
     if (appliedTaskDirectoriesRef.current.has(key)) return;
 
@@ -1171,6 +1184,7 @@ function NewSessionContent() {
     machines,
     selectedMachineId,
     directoryParam,
+    projectIdParam,
     isMachineOnline,
     persistSelection,
   ]);
@@ -1328,14 +1342,54 @@ function NewSessionContent() {
   const appliedDirectoryLinkRef = useRef<string | null>(
     directoryParam ? `${directoryParam}|${worktreePathParam ?? ''}|${worktreeBranchParam ?? ''}` : null,
   );
+  // The project link last applied (below). Each kind of link clears the
+  // other's, so going back to a link already followed applies it again.
+  const appliedProjectLinkRef = useRef<string | null>(null);
   useEffect(() => {
     if (!directoryParam) return;
     const key = `${directoryParam}|${worktreePathParam ?? ''}|${worktreeBranchParam ?? ''}`;
     if (appliedDirectoryLinkRef.current === key) return;
     appliedDirectoryLinkRef.current = key;
+    appliedProjectLinkRef.current = null;
     pendingWorktreeRef.current = readWorktreePreselect(searchParams);
     setDirectory(directoryParam);
   }, [directoryParam, worktreePathParam, worktreeBranchParam, searchParams]);
+
+  // `?projectId=`: start at that project's folder, by the task-link rule above
+  // (the selected machine's folder for it, else one on an online machine,
+  // switching to it), and else at its folder on an offline machine, so the
+  // offline notice says why nothing can start rather than leaving another
+  // project's folder in place. Waits for loadMachines' restore (hydratedRef:
+  // a `machine-update` frame can fill `machines` before it lands), which it
+  // then overrides, and for the project list; applied once per link.
+  useEffect(() => {
+    if (!projectIdParam || directoryParam || !hydratedRef.current) return;
+    if (appliedProjectLinkRef.current === projectIdParam) return;
+    const links = projects.find((p) => p.id === projectIdParam)?.directories;
+    if (!links) return;
+    appliedProjectLinkRef.current = projectIdParam;
+    appliedDirectoryLinkRef.current = null;
+    const onMachine = (d: { machine_id: string }, online: boolean) =>
+      machines.some((m) => m.machine_id === d.machine_id && (!online || isMachineOnline(m)));
+    const link =
+      links.find((d) => d.machine_id === selectedMachineId) ??
+      links.find((d) => onMachine(d, true)) ??
+      links.find((d) => onMachine(d, false));
+    if (!link) return;
+    if (link.machine_id !== selectedMachineId) {
+      setSelectedMachineId(link.machine_id);
+      persistSelection({ machineId: link.machine_id });
+    }
+    setDirectory(link.local_path);
+  }, [
+    projectIdParam,
+    directoryParam,
+    projects,
+    machines,
+    selectedMachineId,
+    isMachineOnline,
+    persistSelection,
+  ]);
 
   // Persist the machine/directory/worktree setup whenever it changes, so it is
   // restored on the next visit (agent + per-agent config persist separately via
