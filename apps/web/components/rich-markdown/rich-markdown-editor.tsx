@@ -14,9 +14,9 @@
 //
 // `@` files and `/` skills come from the same hooks and panels as the task
 // dialog's MentionPromptField, and `#` references from the chat composer's;
-// trigger-suggestions only finds the trigger. A picked reference is written
-// as a link to its page (lib/reference-links), since stored text has nowhere
-// else to keep the id.
+// trigger-suggestions only finds the trigger. A picked reference is a chip
+// with the item's live title (reference-node), written as a link to its page
+// (lib/reference-links), since stored text has nowhere else to keep the id.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
@@ -36,13 +36,14 @@ import { useFileMentions } from '@/lib/hooks/use-file-mentions';
 import { useReferenceCandidates } from '@/lib/hooks/use-references';
 import { useSlashCommands } from '@/lib/hooks/use-slash-commands';
 import type { ProjectMentionTarget } from '@/lib/project-mention-target';
-import { isReferenceHref, referenceHref } from '@/lib/reference-links';
+import { isReferenceHref } from '@/lib/reference-links';
 import { commandInsertText, slashCommandMatches } from '@/lib/slash-command-utils';
 import { cn } from '@/lib/utils';
 
 import { markdownExtensions } from './extensions';
 import { MarkdownClipboard } from './markdown-clipboard';
 import { prepareMarkdown, serializeMarkdown } from './markdown-codec';
+import { ReferenceNodeWithChip } from './reference-node-view';
 import { triggerSuggestions, type ActiveTrigger, type TriggerBridge, type TriggerKind } from './trigger-suggestions';
 
 /** Keep in sync with the panels' `max-h-[320px]` class. */
@@ -202,11 +203,7 @@ export function RichMarkdownEditor({
         .chain()
         .focus()
         .insertContentAt(active.range, [
-          {
-            type: 'text',
-            text: `#${ref.token}`,
-            marks: [{ type: 'link', attrs: { href: referenceHref(ref.kind, ref.id) } }],
-          },
+          { type: 'reference', attrs: { kind: ref.kind, id: ref.id, label: `#${ref.token}` } },
           ...space,
         ])
         .run();
@@ -315,7 +312,7 @@ export function RichMarkdownEditor({
   // Built once: useEditor only reads extensions at creation, and fresh option
   // objects each render would make it re-apply props it already has.
   const [extensions] = useState(() => [
-    ...markdownExtensions(),
+    ...markdownExtensions({ reference: ReferenceNodeWithChip }),
     MarkdownClipboard,
     triggerSuggestions(bridge),
     // Read at draw time: the hint can change after mount (the `@` part

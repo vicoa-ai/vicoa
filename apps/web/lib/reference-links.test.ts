@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { isReferenceHref, referenceHref, referenceMarkdown } from './reference-links';
+import { isReferenceHref, parseReferenceHref, referenceHref, referenceMarkdown } from './reference-links';
 
 const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
 
@@ -30,5 +30,18 @@ describe('referenceMarkdown', () => {
 
   test('escapes brackets that would end the link text early', () => {
     expect(referenceMarkdown({ kind: 'session', id, token: 'a]b' })).toBe(`[#a\\]b](/dashboard/sessions/${id})`);
+  });
+});
+
+describe('parseReferenceHref', () => {
+  test('reads back what referenceHref wrote', () => {
+    for (const kind of ['task', 'session', 'automation'] as const) {
+      expect(parseReferenceHref(referenceHref(kind, id))).toEqual({ kind, id });
+    }
+  });
+
+  test('is null for anything else', () => {
+    expect(parseReferenceHref('/dashboard/tasks/42')).toBeNull();
+    expect(parseReferenceHref('https://example.com')).toBeNull();
   });
 });

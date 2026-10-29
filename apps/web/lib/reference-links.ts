@@ -22,9 +22,23 @@ export function referenceHref(kind: ReferenceKind, id: string): string {
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const APP_LINK = new RegExp(
-  `^/dashboard/(?:tasks/${UUID}|sessions/${UUID}|automation\\?automation=${UUID})$`,
+  `^/dashboard/(?:(tasks)/(${UUID})|(sessions)/(${UUID})|(automation)\\?automation=(${UUID}))$`,
   'i',
 );
+const KIND_OF_SEGMENT: Record<string, ReferenceKind> = {
+  tasks: 'task',
+  sessions: 'session',
+  automation: 'automation',
+};
+
+/** What a {@link referenceHref} page points at, or null for any other href. */
+export function parseReferenceHref(href: string): { kind: ReferenceKind; id: string } | null {
+  const m = APP_LINK.exec(href);
+  if (!m) return null;
+  const segment = (m[1] ?? m[3] ?? m[5]).toLowerCase();
+  const id = (m[2] ?? m[4] ?? m[6]).toLowerCase();
+  return { kind: KIND_OF_SEGMENT[segment], id };
+}
 
 /**
  * Is `href` exactly one of {@link referenceHref}'s pages? Such a link stays in
@@ -36,9 +50,14 @@ export function isReferenceHref(href: string): boolean {
   return APP_LINK.test(href);
 }
 
+/** A reference as markdown: `[<label>](<page>)`, the label escaped so a `]`
+ *  in it can't end the link text early. */
+export function referenceLinkMarkdown(kind: ReferenceKind, id: string, label: string): string {
+  return `[${label.replace(/[\\[\]]/g, '\\$&')}](${referenceHref(kind, id)})`;
+}
+
 /** A pick as markdown source, for a field that holds markdown as plain text
  *  (the task dialog's textarea): `[#VIC-42](/dashboard/tasks/…)`. */
 export function referenceMarkdown(item: Pick<ReferenceCandidate, 'kind' | 'id' | 'token'>): string {
-  const label = `#${item.token}`.replace(/[\\[\]]/g, '\\$&');
-  return `[${label}](${referenceHref(item.kind, item.id)})`;
+  return referenceLinkMarkdown(item.kind, item.id, `#${item.token}`);
 }

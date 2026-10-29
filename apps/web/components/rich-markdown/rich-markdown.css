@@ -56,19 +56,27 @@
   color: hsl(var(--foreground));
 }
 
-/* a: text-blue-600 hover:text-blue-800 underline */
-.rich-markdown-content a {
+/* a: text-blue-600 hover:text-blue-800 underline. Not a `#` reference chip,
+   which is a link too but draws itself (components/dashboard/reference-chip). */
+.rich-markdown-content a:not([data-reference-chip]) {
   color: var(--color-blue-600, oklch(54.6% 0.245 262.881));
   text-decoration: underline;
   cursor: text;
 }
-.rich-markdown-content a:hover {
+.rich-markdown-content a:not([data-reference-chip]):hover {
   color: var(--color-blue-800, oklch(42.4% 0.199 265.638));
 }
 /* Read-only, or with ⌘/Ctrl held: the click follows the link. */
 .rich-markdown-content[contenteditable='false'] a,
 .rich-markdown-follow-links .rich-markdown-content a {
   cursor: pointer;
+}
+
+/* A reference chip picked out by the keyboard (arrowed onto, about to be
+   deleted): the same ring a selected image gets. */
+.rich-markdown-reference.is-selected > a > span {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 1px;
 }
 
 /* Inline code: text-sm, the inline-code token, Geist Mono. */

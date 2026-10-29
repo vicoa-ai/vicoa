@@ -61,6 +61,42 @@ describe('serializeMarkdown keeps what was typed', () => {
   });
 });
 
+describe('# references', () => {
+  const inline = (editor: Editor): JSONContent[] =>
+    (editor.getJSON().content?.[0]?.content ?? []) as JSONContent[];
+  const nodesOf = (editor: Editor) => inline(editor).map((n) => n.type);
+
+  it('read in as reference nodes, written back as the same links', () => {
+    const markdown = `see [#LIG-1](/dashboard/tasks/${ID}) now`;
+    const editor = load(markdown);
+    expect(nodesOf(editor)).toEqual(['text', 'reference', 'text']);
+    expect(inline(editor)[1]?.attrs).toEqual({ kind: 'task', id: ID, label: '#LIG-1' });
+    expect(serializeMarkdown(editor)).toBe(markdown);
+  });
+
+  it('leave ordinary links to the link mark', () => {
+    const editor = load('see [docs](https://example.com) and [a file](src/a.ts)');
+    expect(nodesOf(editor)).not.toContain('reference');
+    expect(serializeMarkdown(editor)).toBe('see [docs](https://example.com) and [a file](src/a.ts)');
+  });
+
+  it('keep a label with brackets intact', () => {
+    const markdown = `[#a\\]b](/dashboard/sessions/${ID})`;
+    const editor = load(markdown);
+    expect(inline(editor)[0]?.attrs?.label).toBe('#a]b');
+    expect(serializeMarkdown(editor)).toBe(markdown);
+  });
+
+  // @tiptap/markdown puts an enclosing mark on the text around an inline node
+  // but not on the node, so the emphasis closes before the reference. The
+  // reference itself survives, and the chip never shows emphasis anyway.
+  it('stay references inside emphasis, which closes before them', () => {
+    expect(roundTrip(`**blocked by [#LIG-1](/dashboard/tasks/${ID})**`)).toBe(
+      `**blocked by** [#LIG-1](/dashboard/tasks/${ID})`,
+    );
+  });
+});
+
 describe('serializeMarkdown normalizes only where it must', () => {
   it('ends a URL followed by CJK punctuation with <…>', () => {
     expect(roundTrip('看 https://a.com/x_y，然后 继续')).toBe('看 <https://a.com/x_y>，然后 继续');

@@ -6,6 +6,7 @@ import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight';
 import { common, createLowlight } from 'lowlight';
+import { ReferenceNode } from './reference-node';
 
 // One lowlight for every editor: it is a registry of grammars, not state.
 // `common` is the same ~35-language set rehype-highlight registers for
@@ -21,7 +22,12 @@ const lowlight = createLowlight(common);
  * cannot write down: Underline (StarterKit turns it on, and ⌘U would produce a
  * mark that serializes as HTML or not at all) and table cell merging.
  */
-export function markdownExtensions(): AnyExtension[] {
+export function markdownExtensions({
+  reference = ReferenceNode,
+}: {
+  /** The `#` reference node; the editor passes it with its chip view. */
+  reference?: AnyExtension;
+} = {}): AnyExtension[] {
   return [
     StarterKit.configure({
       underline: false,
@@ -43,6 +49,7 @@ export function markdownExtensions(): AnyExtension[] {
     TableRow,
     TableHeader,
     TableCell,
+    reference,
     Markdown,
   ];
 }
