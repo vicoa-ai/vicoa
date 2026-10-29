@@ -3,13 +3,13 @@
 // Click-to-edit title and description for the task page.
 //
 // The rule both fields follow: **the edit surface sits in exactly the same box
-// as the read surface**. Same size, weight, leading and offset; the textarea
-// only swaps the background. If clicking a title made it jump a pixel or change
-// leading, the page would flinch on every edit — which is what makes inline
-// editing feel worse than a dialog rather than better. (The description is the
-// honest exception: rendered markdown and its source can't occupy identical
-// space, so it matches on box and type size and accepts reflow on lists and
-// headings, the same as GitHub and Linear.)
+// as the read surface**. Same size, weight, leading and offset; the title's
+// textarea only swaps the background. If clicking a title made it jump a pixel
+// or change leading, the page would flinch on every edit — which is what makes
+// inline editing feel worse than a dialog rather than better. The description
+// takes the rule all the way: it is one rich markdown editor that is never
+// swapped out, so the rendered text is what you edit and there is no source
+// view to reflow into (components/rich-markdown).
 //
 // Saving is on blur, not on a button. A Save button in a properties column is a
 // second thing to aim at for a change the user has already finished making;
@@ -19,8 +19,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 
-import { MessageMarkdown } from '@/components/ui/message-markdown';
+import { RichMarkdownEditor } from '@/components/rich-markdown/rich-markdown-editor';
 import { isImeComposing } from '@/lib/ime';
+import type { ProjectMentionTarget } from '@/lib/project-mention-target';
 import { cn } from '@/lib/utils';
 
 // How tall a collapsed description is allowed to be — roughly fourteen lines at
@@ -139,25 +140,23 @@ export function EditableDescription({
   value,
   onSave,
   readOnly = false,
+  mentionTarget,
 }: {
   value: string | null;
   onSave: (next: string | null) => void;
   /** See EditableTitle. An empty description renders nothing at all. */
   readOnly?: boolean;
+  /** Where `@` searches: the task's project folder, when it has one. */
+  mentionTarget?: ProjectMentionTarget;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value ?? '');
+  const [focused, setFocused] = useState(false);
   const [expanded, setExpanded] = useState(false);
   // Whether the rendered body is actually taller than the clamp. Measured, not
   // guessed from length: markdown expands unpredictably — 200 characters with a
   // code block is tall, 600 characters of prose is four lines.
   const [overflowing, setOverflowing] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const ref = useAutoResize(draft, editing);
-
-  useEffect(() => {
-    if (!editing) setDraft(value ?? '');
-  }, [value, editing]);
+  const hidden = readOnly && !value;
 
   useLayoutEffect(() => {
     const el = bodyRef.current;
@@ -165,116 +164,73 @@ export function EditableDescription({
     const measure = () => setOverflowing(el.scrollHeight > COLLAPSED_MAX_PX + 8);
     measure();
     // Markdown can reflow after mount (fonts, code highlighting, a container
-    // resize), so a single measurement at render time would be wrong as often
-    // as it was right.
+    // resize), and typing grows it, so a single measurement would be wrong
+    // as often as it was right.
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [value, editing]);
+  }, [hidden]);
 
-  const commit = useCallback(() => {
-    setEditing(false);
-    const next = draft.trim();
-    if (next === (value ?? '').trim()) return;
-    // Unlike the title, empty is a legitimate value — clearing a description
-    // sends null so the column goes back to NULL rather than storing "".
-    onSave(next || null);
-  }, [draft, value, onSave]);
+  if (hidden) return null;
 
-  if (readOnly && !value) return null;
-
-  if (!editing || readOnly) {
-    const clamped = overflowing && !expanded;
-    return (
-      // The toggle sits OUTSIDE the click-to-edit region rather than inside it
-      // with a stopPropagation: "show me the rest" and "let me rewrite it" are
-      // different intents, and one shouldn't have to defuse the other.
-      <div className="space-y-1">
-        <div
-          role={readOnly ? undefined : 'textbox'}
-          tabIndex={readOnly ? undefined : 0}
-          onClick={readOnly ? undefined : () => setEditing(true)}
-          onKeyDown={
-            readOnly
-              ? undefined
-              : (e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    setEditing(true);
-                  }
-                }
-          }
-          className={cn(
-            'relative -mx-2 overflow-hidden rounded-md px-2 py-1.5 text-sm leading-relaxed transition-colors',
-            !readOnly && 'cursor-text hover:bg-accent/40',
-          )}
-          style={clamped ? { maxHeight: COLLAPSED_MAX_PX } : undefined}
-        >
-          <div ref={bodyRef}>
-            {value ? (
-              <MessageMarkdown>{value}</MessageMarkdown>
-            ) : (
-              <span className="text-muted-foreground/60">Add a description…</span>
-            )}
-          </div>
-          {/* A hard cut mid-sentence looks like a rendering bug; the fade says
-              "there is more" without needing to be read. */}
-          {clamped && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-b from-transparent to-background" />
-          )}
+  // Editing shows all of it: a caret inside a clipped block could walk out of
+  // sight.
+  const clamped = overflowing && !expanded && !focused;
+  return (
+    // The toggle sits OUTSIDE the editable region: "show me the rest" and "let
+    // me rewrite it" are different intents, and one shouldn't have to defuse
+    // the other.
+    <div className="space-y-1">
+      <div
+        className={cn(
+          'relative -mx-2 overflow-hidden rounded-md transition-colors',
+          !readOnly && 'hover:bg-accent/40',
+          focused && 'bg-accent/40',
+        )}
+        style={clamped ? { maxHeight: COLLAPSED_MAX_PX } : undefined}
+      >
+        <div ref={bodyRef}>
+          <RichMarkdownEditor
+            value={value ?? ''}
+            // Clearing a description sends null so the column goes back to
+            // NULL rather than storing "".
+            onCommit={(markdown) => onSave(markdown || null)}
+            editable={!readOnly}
+            placeholder={
+              mentionTarget
+                ? 'Add a description… @ for files, / for skills'
+                : 'Add a description… / for skills'
+            }
+            contentClassName={cn('px-2 py-1.5', !readOnly && 'cursor-text')}
+            mentionTarget={mentionTarget}
+            onFocusChange={setFocused}
+          />
         </div>
-        {overflowing && (
-          // Centred, and full-width rather than a floating link. The page holds
-          // a strict left column — avatars, comment bodies and rail rows all
-          // share one edge — so a left-aligned link here would read as another
-          // item in that column. This isn't an item; it's the seam of the block
-          // above it, which is also what the full-width fade is drawing. Making
-          // the control span the same width and centring its label says "the
-          // block continues" instead of "here is one more thing to read".
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="-mx-2 flex w-[calc(100%+1rem)] cursor-pointer items-center justify-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
-          >
-            <ChevronDown
-              className={cn('size-3 transition-transform', expanded && 'rotate-180')}
-            />
-            {expanded ? 'Show less' : 'Show more'}
-          </button>
+        {/* A hard cut mid-sentence looks like a rendering bug; the fade says
+            "there is more" without needing to be read. */}
+        {clamped && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-b from-transparent to-background" />
         )}
       </div>
-    );
-  }
-
-  return (
-    <textarea
-      ref={ref}
-      autoFocus
-      value={draft}
-      rows={3}
-      placeholder="Add a description…"
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        // Enter breaks the line — this is markdown, and a description that
-        // couldn't hold a list would be a worse editor than the dialog's.
-        // ⌘/Ctrl+Enter is the explicit commit for anyone who doesn't want to
-        // click away.
-        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-          e.preventDefault();
-          e.currentTarget.blur();
-        }
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          setDraft(value ?? '');
-          setEditing(false);
-        }
-      }}
-      className={cn(
-        '-mx-2 w-[calc(100%+1rem)] resize-none overflow-hidden rounded-md border-0 bg-accent/40 px-2 py-1.5',
-        'text-sm leading-relaxed focus:outline-none focus:ring-0',
-        'placeholder:text-muted-foreground/60',
+      {overflowing && !focused && (
+        // Centred, and full-width rather than a floating link. The page holds
+        // a strict left column — avatars, comment bodies and rail rows all
+        // share one edge — so a left-aligned link here would read as another
+        // item in that column. This isn't an item; it's the seam of the block
+        // above it, which is also what the full-width fade is drawing. Making
+        // the control span the same width and centring its label says "the
+        // block continues" instead of "here is one more thing to read".
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="-mx-2 flex w-[calc(100%+1rem)] cursor-pointer items-center justify-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+        >
+          <ChevronDown
+            className={cn('size-3 transition-transform', expanded && 'rotate-180')}
+          />
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
       )}
-    />
+    </div>
   );
 }

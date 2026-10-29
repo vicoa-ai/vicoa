@@ -62,6 +62,7 @@ import { ParentTaskLink, SubTasksSection, subTaskProgress } from './sub-tasks';
 import { TaskDetailSkeleton } from './task-detail-skeleton';
 import { StartSessionDialog } from '../start-session-dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { projectMentionTarget } from '@/lib/project-mention-target';
 import { cn } from '@/lib/utils';
 
 // Slow on purpose: this is a single-player backlog, and the point of the poll
@@ -241,6 +242,12 @@ export default function TaskDetailPage() {
         ? allTasks.filter((t) => t.parent_task_id === task.parent_task_id)
         : [],
     [allTasks, task],
+  );
+  // `@` in the description searches the task's project folder, as in the
+  // dialog the task was written in.
+  const mentionTarget = useMemo(
+    () => projectMentionTarget(projects.find((p) => p.id === task?.project_id)),
+    [projects, task?.project_id],
   );
   const progressById = useMemo(() => {
     const byParent = new Map<string, TaskResponse[]>();
@@ -446,9 +453,13 @@ export default function TaskDetailPage() {
               sessionRef={sessionRefs.find((ref) => ref.id === task.created_in_instance_id)}
             />
             <EditableDescription
+              // One editor per task: its undo history and in-flight edit
+              // belong to the task they were made on.
+              key={task.id}
               value={task.description}
               onSave={(description) => void patchTask({ description })}
               readOnly={!canEdit}
+              mentionTarget={mentionTarget}
             />
             {/* The task itself is reactable, like an issue's opening post. */}
             <ReactionRow

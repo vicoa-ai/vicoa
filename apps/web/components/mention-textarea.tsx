@@ -12,7 +12,6 @@ import {
 } from 'react';
 import type { TextareaHTMLAttributes } from 'react';
 import { createPortal } from 'react-dom';
-import { Folder, FileText } from 'lucide-react';
 import { useFileMentions } from '@/lib/hooks/use-file-mentions';
 import { useReferenceCandidates } from '@/lib/hooks/use-references';
 import { ReferenceSuggestions } from '@/components/dashboard/reference-suggestions';
@@ -20,45 +19,11 @@ import { detectTriggerToken, replaceTriggerToken } from '@/lib/composer-referenc
 import type { FileMention, ReferenceCandidate } from '@/lib/backend-api';
 import { getCaretViewportRect } from '@/lib/textarea-caret';
 import { isImeComposing } from '@/lib/ime';
-
-/** Index entries for folders carry a trailing "/" (see the daemon's
- * `scan_project_files`); everything else is a file. */
-function isFolderPath(path: string): boolean {
-  return path.endsWith('/');
-}
+import { matchFileMentions, searchableFileMentions } from '@/lib/file-mention-match';
+import { FileMentionRows } from '@/components/dashboard/file-mention-suggestions';
 
 /** Keep in sync with the panel's `max-h-[320px]` class. */
 const MENTION_PANEL_MAX_HEIGHT = 320;
-
-// Cap fuzzy-match scan cost on huge repos. Browsing 20k file paths through
-// `fuzzyMatch` per keystroke pegs the main thread; the panel only shows 50
-// results anyway, so scanning the most-relevant 5k is plenty.
-const MENTION_SEARCH_CAP = 5000;
-
-function fuzzyMatch(search: string, target: string): number {
-  const searchLower = search.toLowerCase();
-  const targetLower = target.toLowerCase();
-
-  let searchIndex = 0;
-  let score = 0;
-  let consecutiveMatches = 0;
-
-  for (let i = 0; i < targetLower.length && searchIndex < searchLower.length; i++) {
-    if (targetLower[i] === searchLower[searchIndex]) {
-      searchIndex++;
-      consecutiveMatches++;
-      score += 1 + consecutiveMatches;
-      if (i > 0 && targetLower[i - 1] === '/') score += 5;
-      if (i === 0) score += 10;
-    } else {
-      consecutiveMatches = 0;
-    }
-  }
-
-  if (searchIndex < searchLower.length) return 0;
-  score -= target.length * 0.1;
-  return score;
-}
 
 export interface MentionTextareaProps
   extends Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'onChange' | 'value'> {
@@ -143,10 +108,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
 
     // Stable scan slice — recomputes only when the file list changes, not on
     // every keystroke. Avoids re-allocating a 5k-element array per char.
-    const searchableFiles = useMemo(
-      () => (fileMentions.length > MENTION_SEARCH_CAP ? fileMentions.slice(0, MENTION_SEARCH_CAP) : fileMentions),
-      [fileMentions],
-    );
+    const searchableFiles = useMemo(() => searchableFileMentions(fileMentions), [fileMentions]);
 
     const [showFileMentions, setShowFileMentions] = useState(false);
     const [filteredFiles, setFilteredFiles] = useState<FileMention[]>([]);
@@ -218,24 +180,7 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
         if (searchKey === lastSearchKeyRef.current && showFileMentions) return true;
         lastSearchKeyRef.current = searchKey;
 
-        if (searchText === '') {
-          const allFiles = searchableFiles.slice(0, 50);
-          if (allFiles.length === 0) return false;
-          startTransition(() => {
-            setFilteredFiles(allFiles);
-            setShowFileMentions(true);
-            setSelectedFileIndex(0);
-          });
-          return true;
-        }
-
-        const matches = searchableFiles
-          .map((file) => ({ file, score: fuzzyMatch(searchText, file.path) }))
-          .filter(({ score }) => score > 0)
-          .sort((a, b) => b.score - a.score)
-          .slice(0, 50)
-          .map(({ file }) => file);
-
+        const matches = matchFileMentions(searchableFiles, searchText);
         if (matches.length === 0) return false;
         startTransition(() => {
           setFilteredFiles(matches);
@@ -585,36 +530,16 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
             listRef={refListRef}
           />
         ) : (
-        filteredFiles.map((file, index) => {
-          const isSelected = index === selectedFileIndex;
-          const isFirst = index === 0;
-          const isLast = index === filteredFiles.length - 1;
-          const isFolder = isFolderPath(file.path);
-          return (
-            <button
-              key={file.path}
-              type="button"
-              onClick={() => {
-                insertFileMention(file.path);
-                setShowFileMentions(false);
-                focusTextarea();
-              }}
-              onMouseEnter={() => setSelectedFileIndex(index)}
-              className={`w-full px-4 py-2 text-left flex items-center gap-2.5 transition-colors duration-150 cursor-pointer ${
-                isSelected ? 'bg-primary/10' : 'hover:bg-accent/40'
-              } ${isFirst ? 'rounded-t-lg' : ''} ${isLast ? 'rounded-b-lg' : ''}`}
-            >
-              {isFolder ? (
-                <Folder className="w-3.5 h-3.5 flex-shrink-0 text-muted-foreground" />
-              ) : (
-                <FileText className="w-3.5 h-3.5 flex-shrink-0 text-muted-foreground" />
-              )}
-              <span className="font-mono text-sm text-primary flex-1 truncate">
-                {file.path}
-              </span>
-            </button>
-          );
-        })
+        <FileMentionRows
+          files={filteredFiles}
+          selectedIndex={selectedFileIndex}
+          onSelect={(file) => {
+            insertFileMention(file.path);
+            setShowFileMentions(false);
+            focusTextarea();
+          }}
+          onHover={setSelectedFileIndex}
+        />
         )}
       </div>
     );

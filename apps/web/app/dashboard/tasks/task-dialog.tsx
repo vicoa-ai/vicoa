@@ -33,7 +33,7 @@ import { EmojiPicker } from '@/components/ui/emoji-picker';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { MentionPromptField } from '@/components/mention-prompt-field';
-import { loadPersistedSelection } from '@/lib/agent-catalog';
+import { projectMentionTarget } from '@/lib/project-mention-target';
 import { getPref, setPref } from '@/lib/desktop-prefs';
 import { labelOwnerForProject, labelsForProject } from '@/lib/project-vocabulary';
 import {
@@ -217,21 +217,11 @@ export function TaskDialog({
   const selectedProject = projects.find((p) => p.id === values.project_id) ?? null;
 
   // `@` file search in the description runs against the selected project's
-  // linked folder. A project can be linked on several machines, so prefer the
-  // one whose machine you last started a session on; otherwise take the first.
-  // No link → a plain textarea, since there'd be no index to search.
-  //
-  // The machine goes along with the path: mentions try the live daemon index
-  // first. Here that usually misses — you compose a task while the laptop is
-  // asleep — and falls back to the CLI-synced DB copy, which is exactly what
-  // that fallback exists for.
-  const mentionTarget = useMemo(() => {
-    const links = projects.find((p) => p.id === values.project_id)?.directories ?? [];
-    if (links.length === 0) return undefined;
-    const lastMachineId = loadPersistedSelection().lastMachineId;
-    const link = links.find((d) => d.machine_id === lastMachineId) ?? links[0];
-    return { path: link.local_path, machineId: link.machine_id ?? null };
-  }, [projects, values.project_id]);
+  // linked folder (see projectMentionTarget). No link → a plain textarea.
+  const mentionTarget = useMemo(
+    () => projectMentionTarget(projects.find((p) => p.id === values.project_id)),
+    [projects, values.project_id],
+  );
   const mentionPath = mentionTarget?.path;
 
   // Which optional properties currently show inline: a field appears once it
