@@ -20,6 +20,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { ChevronDown } from 'lucide-react';
 
 import { MessageMarkdown } from '@/components/ui/message-markdown';
+import { isImeComposing } from '@/lib/ime';
 import { cn } from '@/lib/utils';
 
 // How tall a collapsed description is allowed to be — roughly fourteen lines at
@@ -113,6 +114,7 @@ export function EditableTitle({
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
+        if (isImeComposing(e)) return;
         // A title has no line breaks, so Enter is unambiguous: commit.
         if (e.key === 'Enter') {
           e.preventDefault();

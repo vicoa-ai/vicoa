@@ -19,6 +19,7 @@ import { ReferenceSuggestions } from '@/components/dashboard/reference-suggestio
 import { detectTriggerToken, replaceTriggerToken } from '@/lib/composer-references';
 import type { FileMention, ReferenceCandidate } from '@/lib/backend-api';
 import { getCaretViewportRect } from '@/lib/textarea-caret';
+import { isImeComposing } from '@/lib/ime';
 
 /** Index entries for folders carry a trailing "/" (see the daemon's
  * `scan_project_files`); everything else is a file. */
@@ -380,10 +381,8 @@ export const MentionTextarea = forwardRef<HTMLTextAreaElement, MentionTextareaPr
         // belong to the candidate window — they commit/navigate/cancel a
         // candidate, they don't send. Hand every key back to the textarea
         // natively: don't intercept the mention dropdown and don't delegate to
-        // the parent's onKeyDown (which would send). keyCode 229 is the legacy
-        // signal for Safari/older browsers that don't set isComposing on the
-        // committing keydown.
-        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+        // the parent's onKeyDown (which would send).
+        if (isImeComposing(e)) return;
 
         if (showFileMentions) {
           if (e.key === 'ArrowDown') {

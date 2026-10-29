@@ -60,6 +60,7 @@ import {
   StatusPickerPill,
   useAutoFocus,
 } from '@/components/dashboard/task-ui';
+import { isImeComposing } from '@/lib/ime';
 import { cn } from '@/lib/utils';
 
 /** Persisted (desktop settings.json / localStorage) dialog size preference. */
@@ -473,7 +474,7 @@ export function TaskDialog({
                   value={subtaskTitle}
                   onChange={(e) => setSubtaskTitle(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key !== 'Enter' || !subtaskTitle.trim() || addingSubtask) return;
+                    if (e.key !== 'Enter' || isImeComposing(e) || !subtaskTitle.trim() || addingSubtask) return;
                     e.preventDefault();
                     const title = subtaskTitle.trim();
                     if (task) {
@@ -773,7 +774,7 @@ export function CreateProjectDialog({
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') void handleSubmit();
+              if (e.key === 'Enter' && !isImeComposing(e)) void handleSubmit();
             }}
             placeholder="Project name"
             className="w-full bg-transparent text-lg font-semibold outline-none placeholder:text-muted-foreground/50"

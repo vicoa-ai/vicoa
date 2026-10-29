@@ -29,6 +29,7 @@ import {
   TaskResponse,
   TaskSessionRef,
   TaskStatus,
+  TaskTimelineResponse,
   UpdateTaskRequest,
   UserProfile,
 } from '@/lib/backend-api';
@@ -60,6 +61,7 @@ import { CommentComposer } from './comment-composer';
 import { ParentTaskLink, SubTasksSection, subTaskProgress } from './sub-tasks';
 import { TaskDetailSkeleton } from './task-detail-skeleton';
 import { StartSessionDialog } from '../start-session-dialog';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/utils';
 
 // Slow on purpose: this is a single-player backlog, and the point of the poll
@@ -121,6 +123,8 @@ export default function TaskDetailPage() {
     task: TaskResponse;
     subtasks: TaskResponse[];
   } | null>(null);
+  // The comment whose Delete was picked, while its confirmation is open.
+  const [deletingComment, setDeletingComment] = useState<TaskCommentResponse | null>(null);
 
   // The whole page's data. Kept in one function so focus-revalidation and the
   // interval can't drift apart from the initial load.
@@ -295,35 +299,58 @@ export default function TaskDetailPage() {
     [api, task, patchTask, projects],
   );
 
+  // Every comment and reaction mutation answers with the whole timeline.
+  const applyTimeline = useCallback((timeline: TaskTimelineResponse) => {
+    setComments(timeline.comments);
+    setActivity(timeline.activity);
+    setSessionRefs(timeline.sessions);
+    setTaskReactions(timeline.reactions);
+  }, []);
+
   const postComment = useCallback(
     async (body: string, parentCommentId?: string) => {
       if (!api || !task) return;
-      const timeline = await api.createTaskComment(task.id, body, parentCommentId);
       // The whole timeline comes back rather than the one new comment, so a
       // reply lands already spliced under its root instead of the client having
       // to guess where in the thread it goes.
-      setComments(timeline.comments);
-      setActivity(timeline.activity);
-      setSessionRefs(timeline.sessions);
-      setTaskReactions(timeline.reactions);
+      applyTimeline(await api.createTaskComment(task.id, body, parentCommentId));
     },
-    [api, task],
+    [api, task, applyTimeline],
+  );
+
+  const editComment = useCallback(
+    async (commentId: string, body: string) => {
+      if (!api || !task) return;
+      applyTimeline(await api.updateTaskComment(task.id, commentId, body));
+    },
+    [api, task, applyTimeline],
+  );
+
+  // A deleted comment leaves a tombstone, so its replies stay readable.
+  const deleteComment = useCallback(
+    async (commentId: string) => {
+      if (!api || !task) return;
+      try {
+        applyTimeline(await api.deleteTaskComment(task.id, commentId));
+      } catch (err) {
+        console.error('Failed to delete comment:', err);
+      }
+    },
+    [api, task, applyTimeline],
   );
 
   const toggleReaction = useCallback(
     async (targetType: 'task' | 'comment', targetId: string, emoji: string) => {
       if (!api || !task) return;
-      const timeline = await api.toggleTaskReaction(task.id, {
-        targetType,
-        targetId,
-        emoji,
-      });
-      setComments(timeline.comments);
-      setActivity(timeline.activity);
-      setSessionRefs(timeline.sessions);
-      setTaskReactions(timeline.reactions);
+      applyTimeline(
+        await api.toggleTaskReaction(task.id, {
+          targetType,
+          targetId,
+          emoji,
+        }),
+      );
     },
-    [api, task],
+    [api, task, applyTimeline],
   );
 
   // "Start session" seeds a new agent session from this task — the same path
@@ -459,6 +486,13 @@ export default function TaskDetailPage() {
               onReply={
                 canComment
                   ? (parentCommentId, body) => postComment(body, parentCommentId)
+                  : undefined
+              }
+              onEditComment={canComment ? editComment : undefined}
+              onDeleteComment={
+                canComment
+                  ? (commentId) =>
+                      setDeletingComment(comments.find((c) => c.id === commentId) ?? null)
                   : undefined
               }
             />
@@ -628,6 +662,25 @@ export default function TaskDetailPage() {
         subtasks={sessionDialog?.subtasks ?? []}
         onClose={() => setSessionDialog(null)}
         onConfirm={confirmStartSession}
+      />
+
+      <ConfirmDialog
+        open={deletingComment !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingComment(null);
+        }}
+        title="Delete comment"
+        description="Are you sure you want to delete this comment? This action cannot be undone."
+        preview={
+          deletingComment?.body && (
+            <div className="line-clamp-3 whitespace-pre-wrap [overflow-wrap:anywhere]">
+              {deletingComment.body}
+            </div>
+          )
+        }
+        onConfirm={() => {
+          if (deletingComment) void deleteComment(deletingComment.id);
+        }}
       />
     </div>
   );

@@ -31,6 +31,7 @@ import {
   principalForAvatar,
   principalFromResponse,
 } from '@/lib/principals';
+import { isImeComposing } from '@/lib/ime';
 import { cn } from '@/lib/utils';
 
 type Progress = { done: number; total: number };
@@ -221,6 +222,7 @@ function AddSubTaskInput({
           if (!title.trim() && !adding) onClose();
         }}
         onKeyDown={(e) => {
+          if (isImeComposing(e)) return;
           if (e.key === 'Escape') {
             e.preventDefault();
             onClose();

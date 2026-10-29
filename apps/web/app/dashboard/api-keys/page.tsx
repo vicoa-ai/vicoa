@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Eye, EyeOff, Copy, Check, Trash2, Plus, Loader2 } from 'lucide-react';
 import { getBackendAPI, APIKeyResponse } from '@/lib/backend-api';
 import { Terminal } from '@/components/terminal';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 export default function ApiKeysPage() {
   // Add CSS to hide scrollbar
@@ -29,6 +30,8 @@ export default function ApiKeysPage() {
   const [newKeyName, setNewKeyName] = useState('');
   const [creatingKey, setCreatingKey] = useState(false);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  // The key whose Delete was clicked, while its confirmation is open.
+  const [keyToDelete, setKeyToDelete] = useState<APIKeyResponse | null>(null);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
 
   const backendAPI = getBackendAPI();
@@ -79,10 +82,6 @@ export default function ApiKeysPage() {
   };
 
   const deleteApiKey = async (keyId: string) => {
-    if (!confirm('Are you sure you want to delete this API key?')) {
-      return;
-    }
-
     try {
       setError(null);
       setDeletingKey(keyId);
@@ -276,7 +275,7 @@ export default function ApiKeysPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => deleteApiKey(key.id)}
+                    onClick={() => setKeyToDelete(key)}
                     disabled={deletingKey === key.id}
                     className="text-red-700 hover:text-red-600 disabled:opacity-50"
                   >
@@ -324,6 +323,18 @@ export default function ApiKeysPage() {
         </div>
       )}
       </div>
+      <ConfirmDialog
+        open={keyToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setKeyToDelete(null);
+        }}
+        title="Delete API key"
+        description="Are you sure you want to delete this API key? This action cannot be undone."
+        preview={keyToDelete && <div className="font-medium">{keyToDelete.name}</div>}
+        onConfirm={() => {
+          if (keyToDelete) void deleteApiKey(keyToDelete.id);
+        }}
+      />
     </>
   );
 }

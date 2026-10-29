@@ -21,11 +21,15 @@
 // avatar is not decoration, it holds the row on the same column as the comments
 // above it and marks the box as part of that conversation rather than a control
 // floating under it.
+//
+// `CommentEditor` at the foot of the file is the same textarea opened in place
+// over a comment you wrote, for editing it.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUp, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { isImeComposing } from '@/lib/ime';
 import { cn } from '@/lib/utils';
 
 const MIN_HEIGHT = 36;
@@ -123,6 +127,8 @@ export function CommentComposer({
             autoResize();
           }}
           onKeyDown={(e) => {
+            // An IME's Enter picks a candidate, it doesn't send.
+            if (isImeComposing(e)) return;
             // Enter sends, Shift+Enter breaks the line — the same contract the
             // session composer teaches.
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -175,6 +181,110 @@ export function CommentComposer({
           ) : (
             <ArrowUp className={cn(inline ? 'h-3 w-3' : 'h-3.5 w-3.5')} />
           )}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A comment's own text, reopened for editing where it was. Enter saves and
+ * Escape cancels, so editing keeps the keys typing it taught; Save and Cancel
+ * are there for whoever reaches for the mouse. Saving unchanged text just
+ * closes it: an "(edited)" mark on a comment nobody changed is a false record.
+ */
+export function CommentEditor({
+  initialValue,
+  onSave,
+  onCancel,
+}: {
+  initialValue: string;
+  onSave: (body: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initialValue);
+  const [saving, setSaving] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const resize = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.max(MIN_HEIGHT, Math.min(el.scrollHeight, MAX_HEIGHT))}px`;
+  }, []);
+
+  // Open at the text's full height with the caret at its end, where an edit
+  // usually starts.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    resize();
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [resize]);
+
+  const body = value.trim();
+  const save = useCallback(async () => {
+    if (!body || saving) return;
+    if (body === initialValue.trim()) {
+      onCancel();
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(body);
+    } catch (err) {
+      // Stay open with the draft intact, so a failed save loses nothing.
+      console.error('Failed to save comment:', err);
+    } finally {
+      setSaving(false);
+    }
+  }, [body, saving, initialValue, onSave, onCancel]);
+
+  return (
+    <div className="mt-1.5 rounded-lg border border-border/50 bg-composer px-2 py-1.5 font-mono">
+      <textarea
+        ref={textareaRef}
+        value={value}
+        onChange={(e) => {
+          setValue(e.target.value);
+          resize();
+        }}
+        onKeyDown={(e) => {
+          if (isImeComposing(e)) return;
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            void save();
+          }
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+        disabled={saving}
+        rows={1}
+        aria-label="Edit comment"
+        style={{ minHeight: MIN_HEIGHT, maxHeight: MAX_HEIGHT }}
+        className="custom-scrollbar block w-full resize-none border-0 bg-transparent px-1 py-2 text-sm leading-5 focus:outline-none focus:ring-0 disabled:opacity-50"
+      />
+      <div className="flex items-center justify-end gap-1.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onCancel}
+          disabled={saving}
+          className="h-7 px-2.5 text-xs"
+        >
+          Cancel
+        </Button>
+        <Button
+          size="sm"
+          onClick={() => void save()}
+          disabled={saving || !body}
+          className="h-7 px-2.5 text-xs"
+        >
+          {saving && <RefreshCw className="size-3 animate-spin" />}
+          Save
         </Button>
       </div>
     </div>

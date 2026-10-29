@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp, Check } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { comboKeycaps, isMacPlatform, type ShortcutCombo } from '@/lib/desktop-shortcuts';
+import { isImeComposing } from '@/lib/ime';
 import { cn } from '@/lib/utils';
 
 const SUBMIT_COMBO: ShortcutCombo = { code: 'Enter', meta: false, shift: false, alt: false };
@@ -140,7 +141,7 @@ export function AnnotationCommentField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
+          if (e.key !== 'Enter' || e.shiftKey || isImeComposing(e)) return;
           e.preventDefault();
           submit(e);
         }}

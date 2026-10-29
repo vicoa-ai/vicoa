@@ -32,9 +32,14 @@
 //    reply…" row — click and type. A hover-revealed or click-to-open affordance
 //    costs a click to discover that it exists, and this page is also a phone
 //    browser, where hover does not exist at all.
+//
+// Your own comments carry a ⋯ menu (Edit, Delete) at the end of their byline.
+// Unlike the reply box it IS hover-revealed: it is a rare action on your own
+// words, and a ⋯ on every one of your comments is a column of noise. On a touch
+// screen, where nothing hovers, it simply stays visible.
 
 import { useMemo, useState } from 'react';
-import { ChevronDown, ExternalLink, SmilePlus } from 'lucide-react';
+import { ChevronDown, ExternalLink, MoreHorizontal, Pencil, SmilePlus, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
@@ -49,7 +54,14 @@ import {
   TaskSessionRef,
 } from '@/lib/backend-api';
 import { EmojiPicker } from '@/components/ui/emoji-picker';
-import { CommentComposer } from './comment-composer';
+import { CommentComposer, CommentEditor } from './comment-composer';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Tooltip,
@@ -443,21 +455,41 @@ export function ReactionRow({
   );
 }
 
+/** Callbacks for a comment the viewer wrote. Omitted on a read-only surface. */
+type CommentActions = {
+  onEdit?: (commentId: string, body: string) => Promise<void>;
+  onDelete?: (commentId: string) => void;
+};
+
 function CommentBody({
   comment,
   viewer,
   sessionRefs,
   onToggleReaction,
+  onEdit,
+  onDelete,
 }: {
   comment: TaskCommentResponse;
   viewer: Principal | null;
   sessionRefs: SessionRefs;
   onToggleReaction?: (commentId: string, emoji: string) => void;
-}) {
+} & CommentActions) {
+  const [editing, setEditing] = useState(false);
   const author = principalFromResponse(comment.author);
   const via = rowSessionRef(sessionRefs, comment.agent_instance_id);
+  // null once deleted: what's left is a tombstone.
+  const body = comment.deleted_at === null ? comment.body : null;
+  // Only the author may rewrite or remove a comment (the server holds the same
+  // line). A comment an agent posted with your key is the agent's, not yours.
+  const mine =
+    body !== null &&
+    !!viewer?.id &&
+    comment.author.type === 'user' &&
+    comment.author.id === viewer.id;
+  const canEdit = mine && !!onEdit;
+  const canDelete = mine && !!onDelete;
   return (
-    <>
+    <div className="group/comment">
       <div className="flex items-center gap-2">
         <PrincipalAvatar principal={principalForAvatar(author, viewer)} size="xs" />
         <span className="text-sm font-medium">
@@ -475,8 +507,37 @@ function CommentBody({
         {comment.edited_at && (
           <span className="text-xs text-muted-foreground/60">(edited)</span>
         )}
+        {(canEdit || canDelete) && !editing && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Comment actions"
+                // -my-1 keeps the 24px target from making the byline taller.
+                className="-my-1 ml-auto flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/comment:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
+              >
+                <MoreHorizontal className="size-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-36">
+              {canEdit && (
+                <DropdownMenuItem onSelect={() => setEditing(true)}>
+                  <Pencil />
+                  Edit
+                </DropdownMenuItem>
+              )}
+              {canEdit && canDelete && <DropdownMenuSeparator />}
+              {canDelete && (
+                <DropdownMenuItem variant="destructive" onSelect={() => onDelete(comment.id)}>
+                  <Trash2 />
+                  Delete
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
-      {comment.deleted_at || comment.body === null ? (
+      {body === null ? (
         // The tombstone stays: its replies are still on screen under it, and a
         // thread with a hole where its opening post was is unreadable.
         <div className="mt-1.5 text-sm italic text-muted-foreground/60">
@@ -488,9 +549,20 @@ function CommentBody({
               name — the indent buys nothing and costs the column. Agents
               write long unbroken runs (`A/B/C/…`, paths, ids); `anywhere`
               breaks them inside the card instead of past its edge. */}
-          <div className="mt-1.5 text-sm leading-relaxed [overflow-wrap:anywhere]">
-            <MessageMarkdown>{comment.body}</MessageMarkdown>
-          </div>
+          {editing && canEdit ? (
+            <CommentEditor
+              initialValue={body}
+              onCancel={() => setEditing(false)}
+              onSave={async (body) => {
+                await onEdit(comment.id, body);
+                setEditing(false);
+              }}
+            />
+          ) : (
+            <div className="mt-1.5 text-sm leading-relaxed [overflow-wrap:anywhere]">
+              <MessageMarkdown>{body}</MessageMarkdown>
+            </div>
+          )}
           <ReactionRow
             className="mt-2"
             reactions={comment.reactions}
@@ -499,7 +571,7 @@ function CommentBody({
           />
         </>
       )}
-    </>
+    </div>
   );
 }
 
@@ -509,13 +581,15 @@ function ThreadCard({
   sessionRefs,
   onToggleReaction,
   onReply,
+  onEdit,
+  onDelete,
 }: {
   thread: Thread;
   viewer: Principal | null;
   sessionRefs: SessionRefs;
   onToggleReaction?: (commentId: string, emoji: string) => void;
   onReply?: (parentCommentId: string, body: string) => Promise<void>;
-}) {
+} & CommentActions) {
   return (
     <div className={cn(CARD_ROW, 'px-0')}>
       <div className="px-3 py-2.5">
@@ -524,6 +598,8 @@ function ThreadCard({
           viewer={viewer}
           sessionRefs={sessionRefs}
           onToggleReaction={onToggleReaction}
+          onEdit={onEdit}
+          onDelete={onDelete}
         />
       </div>
       {/* Not indented (rule 4). The card's edge already says these belong
@@ -537,6 +613,8 @@ function ThreadCard({
             viewer={viewer}
             sessionRefs={sessionRefs}
             onToggleReaction={onToggleReaction}
+            onEdit={onEdit}
+            onDelete={onDelete}
           />
         </div>
       ))}
@@ -705,6 +783,8 @@ export function TaskTimeline({
   viewer,
   onToggleCommentReaction,
   onReply,
+  onEditComment,
+  onDeleteComment,
 }: {
   comments: TaskCommentResponse[];
   activity: TaskActivityResponse[];
@@ -717,6 +797,9 @@ export function TaskTimeline({
   onToggleCommentReaction?: (commentId: string, emoji: string) => void;
   /** Omitted on a read-only surface (P4's public board): no composer, no Reply. */
   onReply?: (parentCommentId: string, body: string) => Promise<void>;
+  /** Edit / Delete on the viewer's own comments. Omitted where there is no ⋯ menu. */
+  onEditComment?: (commentId: string, body: string) => Promise<void>;
+  onDeleteComment?: (commentId: string) => void;
 }) {
   const entries = useMemo(
     () => buildEntries(comments, activity, sessions),
@@ -739,6 +822,8 @@ export function TaskTimeline({
               sessionRefs={refs}
               onToggleReaction={onToggleCommentReaction}
               onReply={onReply}
+              onEdit={onEditComment}
+              onDelete={onDeleteComment}
             />
           );
         }

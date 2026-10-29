@@ -15,6 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { isImeComposing } from '@/lib/ime';
 import { cn } from '@/lib/utils';
 import type { TaskView } from './task-views';
 
@@ -69,6 +70,7 @@ export function TaskViewsBar({
               onChange={(e) => setDraft(e.target.value)}
               onBlur={commitRename}
               onKeyDown={(e) => {
+                if (isImeComposing(e)) return;
                 if (e.key === 'Enter') commitRename();
                 if (e.key === 'Escape') setEditingId(null);
               }}

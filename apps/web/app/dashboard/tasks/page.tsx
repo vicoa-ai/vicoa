@@ -48,6 +48,7 @@ import { DesktopCollapsedLead } from '@/components/desktop/window-chrome';
 import { TaskBoard } from './task-board';
 import { TaskList } from './task-list';
 import { StartSessionDialog } from './start-session-dialog';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { CreateProjectDialog, TaskDialog, TaskFormValues } from './task-dialog';
 import { TaskViewsBar } from './task-views-bar';
 import {
@@ -132,6 +133,8 @@ function TasksPageInner() {
     task: TaskResponse;
     subtasks: TaskResponse[];
   } | null>(null);
+  // The task whose Delete was picked, while its confirmation is open.
+  const [deletingTask, setDeletingTask] = useState<TaskResponse | null>(null);
 
   const refresh = useCallback(async () => {
     if (!api) return;
@@ -325,7 +328,6 @@ function TasksPageInner() {
   const deleteTask = useCallback(
     async (task: TaskResponse) => {
       if (!api) return;
-      if (!window.confirm(`Delete task "${task.title}"?`)) return;
       const before = tasks;
       setTasks((prev) => prev.filter((t) => t.id !== task.id));
       try {
@@ -827,7 +829,7 @@ function TasksPageInner() {
             manualOrder={sortBy === 'position'}
             onEdit={openEditDialog}
             onPatch={patchTask}
-            onDelete={deleteTask}
+            onDelete={setDeletingTask}
             onStartSession={startSession}
             onCreateAutomation={createAutomationFromTask}
             onCreate={canCreateHere ? (status) => openCreateDialog({ status }) : undefined}
@@ -847,7 +849,7 @@ function TasksPageInner() {
             onToggle={toggleSection}
             onEdit={openEditDialog}
             onPatch={patchTask}
-            onDelete={deleteTask}
+            onDelete={setDeletingTask}
             onStartSession={startSession}
             onCreateAutomation={createAutomationFromTask}
             onCreate={canCreateHere ? (status) => openCreateDialog({ status }) : undefined}
@@ -883,6 +885,18 @@ function TasksPageInner() {
         subtasks={sessionDialog?.subtasks ?? []}
         onClose={() => setSessionDialog(null)}
         onConfirm={confirmStartSession}
+      />
+      <ConfirmDialog
+        open={deletingTask !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingTask(null);
+        }}
+        title="Delete task"
+        description="Are you sure you want to delete this task? This action cannot be undone."
+        preview={deletingTask && <div className="font-medium">{deletingTask.title}</div>}
+        onConfirm={() => {
+          if (deletingTask) void deleteTask(deletingTask);
+        }}
       />
     </main>
   );
