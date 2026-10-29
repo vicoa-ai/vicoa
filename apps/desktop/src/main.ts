@@ -1088,8 +1088,9 @@ async function bootstrap(): Promise<void> {
   setDockIcon();
   buildAppMenu();
   // If the user installed the `vicoa` terminal command, silently re-point it at
-  // this build's binary (an app update or managed-daemon bump may have moved it).
-  // Fire-and-forget; never prompts. See cli-link.ts.
+  // this build's binary (an app update or managed-daemon bump may have moved it,
+  // or it may still run an older curl install). Fire-and-forget; never prompts.
+  // See cli-link.ts.
   void refreshCliLinkIfInstalled();
   // Install-by-default: on first run, expose the bundled `vicoa` command without
   // a Settings click. One-time, silent, won't clobber a user's own vicoa. For

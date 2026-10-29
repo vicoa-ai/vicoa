@@ -84,6 +84,22 @@ function bareVersion(version: string): string {
   return version.replace(/^v/i, '');
 }
 
+/** `1.9.13` → [1, 9, 13]; null for anything that isn't a plain x.y.z (a pre-release, `daemon`, …). */
+function parseVersion(version: string): [number, number, number] | null {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(bareVersion(version.trim()));
+  return match === null ? null : [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+/** Is `a` strictly older than `b`? False when either isn't a plain x.y.z. Exported for check.ts. */
+export function isOlderVersion(a: string, b: string): boolean {
+  const older = parseVersion(a);
+  const newer = parseVersion(b);
+  if (older === null || newer === null) {
+    return false;
+  }
+  return (older[0] - newer[0] || older[1] - newer[1] || older[2] - newer[2]) < 0;
+}
+
 // ---------------------------------------------------------------------------
 // Resolving the binary this app carries
 // ---------------------------------------------------------------------------
@@ -319,24 +335,65 @@ export async function installCliLink(): Promise<CliLinkResult> {
   }
 }
 
+/** Do `a` and `b` resolve to the same file? False when either is missing. */
+function sameFile(a: string, b: string): boolean {
+  try {
+    return fs.realpathSync(a) === fs.realpathSync(b);
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Silent self-heal on launch. If we manage the launcher but its runtime pointer
- * has gone stale — a managed-daemon version bump left `current` dangling, or the
- * app moved — re-register this build's binary. Never prompts; a no-op for the
- * common bundled case (the daemon dir path is version-stable, so `current`
- * survives app updates untouched). Safe to call on every boot.
+ * Should the self-heal move the launcher off `exe`, the vicoa it runs now, onto
+ * `binary`, this app's CLI at `version`? `versionLabel` is the runtime dir name
+ * `exe` is run from (`runtime/<version>`), or null when there isn't one.
+ *
+ * Yes when `exe` is gone (a managed-daemon bump or an app move left it
+ * dangling), or when it is a different CLI whose version is older than ours,
+ * typically a curl install from before the desktop app: both installers share
+ * the launcher, and that copy would otherwise pin the terminal's `vicoa` at its
+ * version through every app update. A same-version or newer standalone install
+ * is left alone, as is one we can't read a version for. Exported for check.ts.
+ */
+export function launcherTargetIsStale(
+  exe: string,
+  versionLabel: string | null,
+  binary: string,
+  version: string,
+): boolean {
+  if (!fs.existsSync(exe)) {
+    return true;
+  }
+  if (sameFile(exe, binary)) {
+    return false;
+  }
+  return versionLabel !== null && isOlderVersion(versionLabel, version);
+}
+
+/**
+ * Silent self-heal on launch. If we manage the launcher but it no longer runs
+ * this build's binary — `current` dangles after a managed-daemon bump or an app
+ * move, or it points at an older standalone install (see launcherTargetIsStale)
+ * — re-register this build's binary. Never prompts; a no-op for the common
+ * bundled case (the daemon dir path is version-stable, so `current` survives
+ * app updates untouched). Safe to call on every boot.
  */
 export async function refreshCliLinkIfInstalled(): Promise<void> {
   const status = getCliLinkStatus();
   if (!status.installed || status.currentBinary === null) {
     return;
   }
+  const version = bareVersion(pinnedDaemonVersion());
   if (isWindows) {
-    // The .cmd points straight at an exe; heal only if that exe is gone.
+    // The .cmd points straight at an exe; install.ps1's lives in runtime\<version>\.
     try {
       const contents = await fsp.readFile(status.path, 'utf8');
       const target = /"([^"]+vicoa\.exe)"/i.exec(contents)?.[1];
-      if (target !== undefined && fs.existsSync(target)) {
+      if (
+        target !== undefined &&
+        !launcherTargetIsStale(target, path.basename(path.dirname(target)), status.currentBinary, version)
+      ) {
         return;
       }
       await fsp.writeFile(status.path, windowsShim(status.currentBinary));
@@ -345,13 +402,19 @@ export async function refreshCliLinkIfInstalled(): Promise<void> {
     }
     return;
   }
-  // Unix: heal only when `current` cannot resolve to a runnable vicoa.
-  const currentExe = path.join(runtimeRoot(), 'current', 'vicoa');
+  // Unix: the launcher runs `current/vicoa`; `current` links to the version dir name.
+  const current = path.join(runtimeRoot(), 'current');
   try {
-    if (fs.existsSync(currentExe)) {
+    let versionLabel: string | null = null;
+    try {
+      versionLabel = path.basename(await fsp.readlink(current));
+    } catch {
+      // missing, or a real dir rather than a link: no version to compare
+    }
+    if (!launcherTargetIsStale(path.join(current, 'vicoa'), versionLabel, status.currentBinary, version)) {
       return;
     }
-    await registerUnixRuntime(path.dirname(status.currentBinary), bareVersion(pinnedDaemonVersion()));
+    await registerUnixRuntime(path.dirname(status.currentBinary), version);
   } catch {
     // needs attention it can't get silently — leave it for the next manual run
   }

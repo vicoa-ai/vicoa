@@ -6,6 +6,7 @@ import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { isOlderVersion, launcherTargetIsStale } from './cli-link';
 import { getWriteKey, normalizeBaseUrl, withoutWriteKey, withWriteKey } from './credentials';
 import {
   backoffDelayMs,
@@ -296,6 +297,52 @@ assert.equal(
   assert.deepEqual(withoutWriteKey({ write_key: 'flat' }, hosted), { keys: {} }, 'remove clears a legacy file');
   assert.deepEqual(withoutWriteKey(mixed, hosted), { keys: {} }, 'remove clears the entry and the flat key');
   assert.equal(withoutWriteKey(perDeployment, selfHost), null, 'nothing to remove -> null (no write)');
+}
+
+// --- isOlderVersion / launcherTargetIsStale (cli-link launch-time self-heal) ----
+assert.equal(isOlderVersion('1.7.9', '1.9.13'), true, 'older minor');
+assert.equal(isOlderVersion('1.9.9', '1.9.13'), true, 'numeric, not lexical');
+assert.equal(isOlderVersion('v1.9.12', '1.9.13'), true, 'leading v ignored');
+assert.equal(isOlderVersion('1.9.13', '1.9.13'), false, 'same version is not older');
+assert.equal(isOlderVersion('2.0.0', '1.9.13'), false, 'newer is not older');
+assert.equal(isOlderVersion('daemon', '1.9.13'), false, 'non-version label is never older');
+assert.equal(isOlderVersion('1.9.0-rc.1', '1.9.13'), false, 'pre-release label is left alone');
+{
+  // Mirrors the Unix runtime: <root>/<version> is a real dir (curl install) or a
+  // link to the app's daemon dir; the launcher runs <root>/current/vicoa.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vicoa-check-runtime-'));
+  try {
+    const appDaemon = path.join(root, 'App.app', 'daemon');
+    fs.mkdirSync(appDaemon, { recursive: true });
+    const appBinary = path.join(appDaemon, 'vicoa');
+    fs.writeFileSync(appBinary, '');
+    const curlInstall = (version: string): string => {
+      fs.mkdirSync(path.join(root, version));
+      fs.writeFileSync(path.join(root, version, 'vicoa'), '');
+      return path.join(root, version, 'vicoa');
+    };
+    const old = curlInstall('1.7.9');
+    const same = curlInstall('1.9.13');
+    const newer = curlInstall('2.0.0');
+    fs.symlinkSync(appDaemon, path.join(root, '1.9.12'));
+    fs.symlinkSync(path.join(root, 'gone'), path.join(root, '1.7.8'));
+
+    const stale = (exe: string, label: string | null): boolean =>
+      launcherTargetIsStale(exe, label, appBinary, '1.9.13');
+    assert.equal(stale(old, '1.7.9'), true, 'older curl install is re-pointed');
+    assert.equal(stale(same, '1.9.13'), false, 'same-version curl install is left alone');
+    assert.equal(stale(newer, '2.0.0'), false, 'newer standalone install is left alone');
+    assert.equal(stale(old, null), false, 'no version label -> left alone');
+    assert.equal(
+      stale(path.join(root, '1.9.12', 'vicoa'), '1.9.12'),
+      false,
+      'an older label that already runs this app (bundled update) is a no-op',
+    );
+    assert.equal(stale(path.join(root, '1.7.8', 'vicoa'), '1.7.8'), true, 'dangling link is healed');
+    assert.equal(stale(path.join(root, 'missing', 'vicoa.exe'), 'missing'), true, 'missing exe is healed');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 }
 
 // --- readLoginShellEnv / resolveDaemonEnv (async; never block or reject) --------
