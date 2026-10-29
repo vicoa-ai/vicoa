@@ -450,7 +450,7 @@ String sessionConfigSummary(AgentCatalog catalog, SessionConfig config) {
 /// the flag today; this comment is the rule.
 const String _agentCatalogFallbackJson = r'''
 {
-  "version": "2026-09-26-1",
+  "version": "2026-10-29-1",
   "min_cli_version": "1.20.0",
   "min_client_version": "0.42.0",
   "agents": [
@@ -461,15 +461,13 @@ const String _agentCatalogFallbackJson = r'''
       "models": [
         {"id": "claude-fable-5", "label": "Fable 5", "default_thinking_effort": "xhigh"},
         {"id": "claude-opus-5-5", "label": "Opus 5.5"},
+        {"id": "claude-sonnet-5-5", "label": "Sonnet 5.5"},
         {"id": "claude-opus-5", "label": "Opus 5", "default_thinking_effort": "xhigh"},
         {"id": "claude-opus-4-8", "label": "Opus 4.8", "default_thinking_effort": "xhigh"},
-        {"id": "claude-opus-4-8[1m]", "label": "Opus 4.8 1M", "default_thinking_effort": "xhigh"},
         {"id": "claude-opus-4-7", "label": "Opus 4.7", "default_thinking_effort": "xhigh"},
-        {"id": "claude-opus-4-7[1m]", "label": "Opus 4.7 1M", "default_thinking_effort": "xhigh"},
         {"id": "claude-opus-4-6", "label": "Opus 4.6"},
         {"id": "claude-opus-4-6[1m]", "label": "Opus 4.6 1M"},
         {"id": "claude-sonnet-5", "label": "Sonnet 5", "is_default": true},
-        {"id": "claude-sonnet-5[1m]", "label": "Sonnet 5 1M"},
         {"id": "claude-sonnet-4-6", "label": "Sonnet 4.6"},
         {"id": "claude-sonnet-4-6[1m]", "label": "Sonnet 4.6 1M"},
         {"id": "claude-haiku-4-5", "label": "Haiku 4.5"}

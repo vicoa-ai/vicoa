@@ -210,22 +210,21 @@ def claude_context_window_from_model_usage(
 # one. Keeping a seed means the ring renders on the first message of a session
 # instead of staying blank until the first turn completes.
 #
-# These mirror Claude Code's window selection, NOT the API's model limits: the
-# API serves 1M for every current Opus/Sonnet, but the CLI runs the bare id at
-# 200k and only the explicit ``[1m]`` variant at 1M. Fable 5, Opus 5 and Opus
-# 5.5 are the exception (``native_1m`` in the CLI's baked catalog) — 1M is their
-# default and only window, with no suffixed variant.
+# These mirror Claude Code's window selection, NOT the API's model limits. Models
+# marked ``native_1m`` in the CLI's baked catalog run their bare id at 1M (Fable
+# 5, Opus 4.7 through 5.5, Sonnet 5 and 5.5); a ``[1m]`` suffix on them changes
+# nothing, and substring matching gives old sessions' ``claude-opus-4-8[1m]``
+# the same 1M. Opus 4.6 and Sonnet 4.6 run the bare id at 200k and need the
+# explicit ``[1m]`` variant for 1M; Haiku 4.5 is 200k only.
 _CLAUDE_CONTEXT_WINDOWS: Dict[str, int] = {
     "claude-fable-5": 1_000_000,
     "claude-mythos-5": 1_000_000,
     "claude-opus-5-5": 1_000_000,
     "claude-opus-5": 1_000_000,
-    "claude-opus-4-8[1m]": 1_000_000,
-    "claude-opus-4-8": 200_000,
-    "claude-sonnet-5[1m]": 1_000_000,
-    "claude-sonnet-5": 200_000,
-    "claude-opus-4-7[1m]": 1_000_000,
-    "claude-opus-4-7": 200_000,
+    "claude-opus-4-8": 1_000_000,
+    "claude-opus-4-7": 1_000_000,
+    "claude-sonnet-5-5": 1_000_000,
+    "claude-sonnet-5": 1_000_000,
     "claude-opus-4-6[1m]": 1_000_000,
     "claude-opus-4-6": 200_000,
     "claude-sonnet-4-6[1m]": 1_000_000,

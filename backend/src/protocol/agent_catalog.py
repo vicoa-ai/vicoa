@@ -26,7 +26,7 @@ from protocol.acp_catalog import ACP_CATALOG
 
 
 AGENT_CATALOG: dict[str, Any] = {
-    "version": "2026-09-26-1",
+    "version": "2026-10-29-1",
     "min_cli_version": "1.20.0",
     "min_client_version": "0.42.0",
     "agents": [
@@ -51,9 +51,11 @@ AGENT_CATALOG: dict[str, Any] = {
                 # with the depth-of-reasoning to justify the agent-level `high`
                 # baseline being bumped. `default_thinking_effort` overrides
                 # `is_default` when this model is selected.
-                # Fable 5, Opus 5 and Opus 5.5 are natively 1M-context (max ==
-                # default), so they have no `[1m]` variant — see
-                # ``integrations/headless/usage.py`` (_CLAUDE_CONTEXT_WINDOWS).
+                # Only Opus 4.6 and Sonnet 4.6 carry a `[1m]` variant: Claude Code
+                # runs their bare id at 200k. Every other model here except Haiku
+                # 4.5 is `native_1m` in the CLI's baked catalog (the bare id
+                # already runs at 1M), so a `[1m]` row would just duplicate it —
+                # see ``integrations/headless/usage.py`` (_CLAUDE_CONTEXT_WINDOWS).
                 # Fable 5 is premium-priced and thinking-always-on, so it is not
                 # the picker default. `xhigh` is the recommended coding/agentic
                 # effort tier for Fable 5 and Opus 5.
@@ -69,6 +71,11 @@ AGENT_CATALOG: dict[str, Any] = {
                 # The model rejects disabled thinking, so the `off` tier is
                 # coerced back on by the CLI rather than erroring.
                 {"id": "claude-opus-5-5", "label": "Opus 5.5"},
+                # Sonnet 5.5 is the newest Sonnet (in Claude Code 2.1.312, not
+                # 2.1.291; the bare `sonnet` alias resolves to it). As Opus 5.5:
+                # Claude Code defaults it to `medium` and it rejects disabled
+                # thinking, so no `default_thinking_effort` override.
+                {"id": "claude-sonnet-5-5", "label": "Sonnet 5.5"},
                 {
                     "id": "claude-opus-5",
                     "label": "Opus 5",
@@ -80,18 +87,8 @@ AGENT_CATALOG: dict[str, Any] = {
                     "default_thinking_effort": "xhigh",
                 },
                 {
-                    "id": "claude-opus-4-8[1m]",
-                    "label": "Opus 4.8 1M",
-                    "default_thinking_effort": "xhigh",
-                },
-                {
                     "id": "claude-opus-4-7",
                     "label": "Opus 4.7",
-                    "default_thinking_effort": "xhigh",
-                },
-                {
-                    "id": "claude-opus-4-7[1m]",
-                    "label": "Opus 4.7 1M",
                     "default_thinking_effort": "xhigh",
                 },
                 {"id": "claude-opus-4-6", "label": "Opus 4.6"},
@@ -101,7 +98,6 @@ AGENT_CATALOG: dict[str, Any] = {
                     "label": "Sonnet 5",
                     "is_default": True,
                 },
-                {"id": "claude-sonnet-5[1m]", "label": "Sonnet 5 1M"},
                 {"id": "claude-sonnet-4-6", "label": "Sonnet 4.6"},
                 {"id": "claude-sonnet-4-6[1m]", "label": "Sonnet 4.6 1M"},
                 {"id": "claude-haiku-4-5", "label": "Haiku 4.5"},

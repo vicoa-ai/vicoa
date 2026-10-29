@@ -529,7 +529,7 @@ export function savePersistedSelection(payload: Partial<PersistedSelection>): vo
 // ---------------------------------------------------------------------------
 
 export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
-  version: "2026-09-26-1",
+  version: "2026-10-29-1",
   min_cli_version: "1.20.0",
   min_client_version: "0.42.0",
   agents: [
@@ -540,21 +540,20 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
       models: [
         // Opus 4.7+ default to xhigh via `default_thinking_effort` (per-model
         // override of the agent-level `high` is_default).
-        // Fable 5, Opus 5 and Opus 5.5 are natively 1M-context (no `[1m]` variant);
+        // Only Opus 4.6 and Sonnet 4.6 carry a `[1m]` variant (Claude Code runs their bare id at
+        // 200k); every other model here except Haiku 4.5 is natively 1M-context in Claude Code.
         // Fable 5 is premium-priced and thinking-always-on — offered but not the picker default.
-        // Opus 5.5 carries no `default_thinking_effort` on purpose: Claude Code's own
-        // default for it is `medium`, so it takes the agent-level `high`, not Opus 5's `xhigh`.
+        // Opus 5.5 and Sonnet 5.5 carry no `default_thinking_effort` on purpose: Claude Code's
+        // own default for them is `medium`, so they take the agent-level `high`, not `xhigh`.
         { id: "claude-fable-5", label: "Fable 5", default_thinking_effort: "xhigh" },
         { id: "claude-opus-5-5", label: "Opus 5.5" },
+        { id: "claude-sonnet-5-5", label: "Sonnet 5.5" },
         { id: "claude-opus-5", label: "Opus 5", default_thinking_effort: "xhigh" },
         { id: "claude-opus-4-8", label: "Opus 4.8", default_thinking_effort: "xhigh" },
-        { id: "claude-opus-4-8[1m]", label: "Opus 4.8 1M", default_thinking_effort: "xhigh" },
         { id: "claude-opus-4-7", label: "Opus 4.7", default_thinking_effort: "xhigh" },
-        { id: "claude-opus-4-7[1m]", label: "Opus 4.7 1M", default_thinking_effort: "xhigh" },
         { id: "claude-opus-4-6", label: "Opus 4.6" },
         { id: "claude-opus-4-6[1m]", label: "Opus 4.6 1M" },
         { id: "claude-sonnet-5", label: "Sonnet 5", is_default: true },
-        { id: "claude-sonnet-5[1m]", label: "Sonnet 5 1M" },
         { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
         { id: "claude-sonnet-4-6[1m]", label: "Sonnet 4.6 1M" },
         { id: "claude-haiku-4-5", label: "Haiku 4.5" },

@@ -28,11 +28,10 @@ from ..format_utils import format_content_block
 _CLAUDE_LABEL_TO_SLUG: Dict[str, str] = {
     "Opus 5": "claude-opus-5",
     "Opus 4.8": "claude-opus-4-8",
-    "Opus 4.8 1M": "claude-opus-4-8[1m]",
     "Opus 4.7": "claude-opus-4-7",
-    "Opus 4.7 1M": "claude-opus-4-7[1m]",
     "Opus 4.6": "claude-opus-4-6",
     "Opus 4.6 1M": "claude-opus-4-6[1m]",
+    "Sonnet 5.5": "claude-sonnet-5-5",
     "Sonnet 4.6": "claude-sonnet-4-6",
     "Sonnet 4.6 1M": "claude-sonnet-4-6[1m]",
     "Haiku 4.5": "claude-haiku-4-5",

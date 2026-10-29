@@ -57,6 +57,20 @@ class TestAgentCatalogShape:
         opus_55 = next(m for m in claude["models"] if m["id"] == "claude-opus-5-5")
         assert opus_55.get("default_thinking_effort") is None
 
+    def test_sonnet_55_follows_opus_55_and_takes_agent_level_high(self):
+        claude = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "claude")
+        ids = [m["id"] for m in claude["models"]]
+        assert ids[ids.index("claude-opus-5-5") + 1] == "claude-sonnet-5-5"
+        sonnet_55 = next(m for m in claude["models"] if m["id"] == "claude-sonnet-5-5")
+        assert sonnet_55.get("default_thinking_effort") is None
+
+    def test_only_200k_default_models_have_1m_variant(self):
+        """Claude Code runs a `native_1m` model's bare id at 1M, so a `[1m]` row
+        for it is a duplicate. Only Opus 4.6 / Sonnet 4.6 default to 200k."""
+        claude = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "claude")
+        variants = {m["id"] for m in claude["models"] if m["id"].endswith("[1m]")}
+        assert variants == {"claude-opus-4-6[1m]", "claude-sonnet-4-6[1m]"}
+
     def test_auto_is_common_and_default(self):
         """`auto` shows for every Claude model, including ones a client's
         baked-in catalog predates, and is the default permission mode."""

@@ -106,21 +106,32 @@ def test_claude_context_window_none_for_garbage():
 
 
 def test_claude_context_window_seed_prefers_long_context_variant():
-    assert claude_context_window_for_model("claude-opus-4-8[1m]") == 1_000_000
-    assert claude_context_window_for_model("claude-opus-4-8-20260115") == 200_000
+    assert claude_context_window_for_model("claude-opus-4-6[1m]") == 1_000_000
+    assert claude_context_window_for_model("claude-opus-4-6-20260115") == 200_000
     assert claude_context_window_for_model("claude-haiku-4-5") == 200_000
     assert claude_context_window_for_model(None) is None
 
 
 def test_claude_context_window_seed_matches_claude_code_defaults():
-    # Bare ids mirror Claude Code's default 200k window even though the API
-    # serves 1M for these models; only the [1m] variant (and the 1M-only
-    # Fable/Opus 5 ids) seed the large window.
-    assert claude_context_window_for_model("claude-sonnet-5") == 200_000
+    # Opus 4.6 / Sonnet 4.6 run the bare id at 200k in Claude Code even though
+    # the API serves 1M; only their [1m] variant seeds the large window.
+    assert claude_context_window_for_model("claude-sonnet-4-6") == 200_000
+    assert claude_context_window_for_model("claude-sonnet-4-6[1m]") == 1_000_000
+    assert claude_context_window_for_model("claude-opus-4-6") == 200_000
+    # `native_1m` models run the bare id at 1M.
+    for model in (
+        "claude-fable-5",
+        "claude-opus-5-5",
+        "claude-opus-5",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-sonnet-5-5",
+        "claude-sonnet-5",
+    ):
+        assert claude_context_window_for_model(model) == 1_000_000, model
+    # Old sessions saved under a since-removed `[1m]` row keep the 1M seed.
+    assert claude_context_window_for_model("claude-opus-4-8[1m]") == 1_000_000
     assert claude_context_window_for_model("claude-sonnet-5[1m]") == 1_000_000
-    assert claude_context_window_for_model("claude-fable-5") == 1_000_000
-    assert claude_context_window_for_model("claude-opus-5") == 1_000_000
-    assert claude_context_window_for_model("claude-opus-5-5") == 1_000_000
 
 
 def test_claude_compaction_post_tokens_accepts_key_variants():
