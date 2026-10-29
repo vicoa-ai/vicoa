@@ -753,10 +753,25 @@ export async function rpcOpenPath(
 }
 
 /**
+ * Daemon `github-pr-list` errors that mean "this repo has no PR decoration to
+ * show" — not a repo, no `gh`, not signed in, no GitHub remote. They resolve to
+ * an empty map and are cached like any answer: asking again soon would only
+ * spawn `gh` to hear the same thing. Every other code (`gh_unavailable`: a
+ * timeout, a rate limit, an outage) is transient and rejects instead, so the
+ * caller keeps the icons it already shows rather than blanking them.
+ */
+const SETTLED_PR_ERRORS: ReadonlySet<string> = new Set([
+  'not_a_repo',
+  'gh_missing',
+  'gh_unauthenticated',
+  'no_remote',
+]);
+
+/**
  * Pull-request state for every branch of the repo containing `cwd`, keyed by
- * branch name. Resolves to an empty map on any failure — no `gh`, not signed
- * in, no GitHub remote, an outage — because each of those means "this repo has
- * no PR decoration to show", never "raise an error at the user".
+ * branch name. Resolves to an empty map when the repo simply has no PRs to
+ * show (see {@link SETTLED_PR_ERRORS}); rejects with an `RpcError` on a
+ * transient failure. Neither is ever worth raising at the user.
  *
  * One call covers a whole repository. Callers join it locally against branches
  * they already know rather than asking per branch; see the daemon's
@@ -769,42 +784,67 @@ export async function rpcGithubPrList(
   const result = await getRpcClient(machineId).callRpc(machineId, 'github-pr-list', {
     cwd,
   });
-  if (typeof result.error === 'string') return {};
+  if (typeof result.error === 'string') {
+    if (SETTLED_PR_ERRORS.has(result.error)) return {};
+    throw new RpcError(result.error);
+  }
   return (result.prs as Record<string, PrInfo>) ?? {};
 }
 
-/** How long a repo's PR map is reused before a later focus refetches it. */
-const PR_CACHE_TTL_MS = 60_000;
+/** A repo's PR map, stamped with when the request behind it went out. */
+export interface PrSnapshot {
+  prs: Record<string, PrInfo>;
+  /** Request time (ms since epoch). Of two snapshots, the later one wins. */
+  fetchedAt: number;
+}
 
-const prCache = new Map<string, { at: number; value: Promise<Record<string, PrInfo>> }>();
+/** How long a repo's PR map is reused before a later trigger refetches it. */
+export const PR_CACHE_TTL_MS = 60_000;
+
+const prCache = new Map<string, { at: number; value: Promise<PrSnapshot> }>();
+
+const prCacheKey = (machineId: string, cwd: string): string =>
+  // machineId is a UUID, so a colon cannot straddle the two halves of the key.
+  `${machineId}:${cwd}`;
 
 /**
- * {@link rpcGithubPrList} behind a short shared TTL, keyed by machine + repo.
+ * {@link rpcGithubPrList} behind a shared cache, keyed by machine + repo. A
+ * request sent within the last `maxAgeMs` is reused (in flight or settled);
+ * otherwise a new one goes out.
  *
- * Two surfaces call this: the sidebar (once per project, on window focus) and
- * the session detail header (on open). Without a cache between them, opening a
- * session would re-fetch a repo the sidebar just fetched, and a user
- * alt-tabbing repeatedly would fire one network call per focus event. Unlike
- * the local-git RPCs beside it, this one spends a GitHub API request from a
- * per-account quota shared with the `gh` calls the agent itself makes, so it
- * must not be driven directly by an event the user can repeat at will.
+ * The sidebar calls this for every project on mount and on each window focus,
+ * then per repo as its sessions finish turns and on a slow poll. Without the
+ * cache a user alt-tabbing repeatedly would fire one network call per repo per
+ * focus event. Unlike the local-git RPCs beside it, this one spends a GitHub
+ * API request from a per-account quota shared with the `gh` calls the agent
+ * itself makes, so it must not be driven directly by an event the user can
+ * repeat at will.
  */
 export function rpcGithubPrListCached(
   machineId: string,
   cwd: string,
-): Promise<Record<string, PrInfo>> {
-  // machineId is a UUID, so a colon cannot straddle the two halves of the key.
-  const key = `${machineId}:${cwd}`;
+  maxAgeMs: number = PR_CACHE_TTL_MS,
+): Promise<PrSnapshot> {
+  const key = prCacheKey(machineId, cwd);
   const hit = prCache.get(key);
   const now = Date.now();
-  if (hit && now - hit.at < PR_CACHE_TTL_MS) return hit.value;
+  if (hit && now - hit.at < maxAgeMs) return hit.value;
 
-  const value = rpcGithubPrList(machineId, cwd).catch(() => {
-    // Never cache a rejection: a transient disconnect would otherwise suppress
-    // every retry for the rest of the TTL.
-    prCache.delete(key);
-    return {} as Record<string, PrInfo>;
-  });
+  const value: Promise<PrSnapshot> = rpcGithubPrList(machineId, cwd).then(
+    (prs) => ({ prs, fetchedAt: now }),
+    (err: unknown) => {
+      // Never cache a failure: a transient disconnect or `gh` timeout would
+      // otherwise read as "no PRs" until the entry expired. Only drop our own
+      // entry; a newer request may already have replaced it.
+      if (prCache.get(key)?.value === value) prCache.delete(key);
+      throw err;
+    },
+  );
   prCache.set(key, { at: now, value });
   return value;
+}
+
+/** When the cached PR request for this repo went out, or null if none is cached. */
+export function githubPrListRequestedAt(machineId: string, cwd: string): number | null {
+  return prCache.get(prCacheKey(machineId, cwd))?.at ?? null;
 }

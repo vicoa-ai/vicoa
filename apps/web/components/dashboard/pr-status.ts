@@ -72,6 +72,15 @@ export function prPresentation(pr: PrInfo | null | undefined): {
 }
 
 /**
+ * Whether a branch's PR icon can still change without anyone touching the
+ * branch: no PR yet (one may be opened), or an open/draft one (it may merge, and
+ * its checks are still moving). Merged and closed are settled.
+ */
+export function prMayStillChange(pr: PrInfo | null | undefined): boolean {
+  return !pr || pr.state === 'open' || pr.state === 'draft';
+}
+
+/**
  * Check-rollup dot color, or null when there is nothing to say.
  *
  * Suppressed once a PR is merged or closed: a red dot on a merged PR reports on

@@ -227,7 +227,7 @@ export function worktreeSessionPaths(instances: AgentInstanceResponse[]): string
 
 /** Claude Code's own scratch worktrees (`EnterWorktree`) — agent-internal, so
  *  one with no Vicoa session in it is noise in a sidebar, not a workspace. */
-function isAgentScratchWorktree(path: string): boolean {
+export function isAgentScratchWorktree(path: string): boolean {
   return path.includes('/.claude/worktrees/');
 }
 
