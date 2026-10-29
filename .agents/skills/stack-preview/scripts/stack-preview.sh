@@ -3,10 +3,10 @@
 # so a branch can be reviewed from another machine or from the Vicoa app.
 #
 #   stack-preview.sh up [--env-file FILE] [--allow-signup] [--provider cloudflare|ngrok]
-#                       [--auth builtin|supabase]
+#                       [--auth builtin|supabase] [--viewer]
 #   stack-preview.sh status
 #   stack-preview.sh env                  # shell exports for seed scripts and curl
-#   stack-preview.sh token owner|viewer   # bearer token for a seeded account
+#   stack-preview.sh token owner|viewer   # bearer token for a seeded account (viewer: --viewer only)
 #   stack-preview.sh seed FILE            # run a seed script (.py or shell) against the preview
 #   stack-preview.sh run NAME -- CMD...   # start a side process (webhook forwarder, ...) that `down` stops
 #   stack-preview.sh restart [backend|server|web]...  # pick up code changes; the public URL stays
@@ -24,6 +24,9 @@
 #                supabase: only for reviewing the mobile app, which can only sign in
 #                with Supabase. Signs in with a hosted Supabase project (SUPABASE_URL
 #                and SUPABASE_ANON_KEY from the environment); data stays in the preview DB.
+#   --viewer     also seed a second person, Bea (bea@example.com), for reviewing
+#                sharing and permissions. Builtin auth only. Without it the preview
+#                has just the owner, Ada. Once seeded, Bea stays in that database.
 #
 #   Postgres (Docker) -> backend + server (uvicorn) -> web (next dev)
 #     -> proxy.mjs (one origin) -> cloudflared or ngrok (one public URL)
@@ -68,7 +71,7 @@ usage() {
 
 CMD=${1:-}
 [ $# -gt 0 ] && shift
-REPO="" ENV_FILE="" ALLOW_SIGNUP=0 PROVIDER="" PURGE=0 KEEP_DB=0 DELETE_DB=0 AUTH=""
+REPO="" ENV_FILE="" ALLOW_SIGNUP=0 PROVIDER="" PURGE=0 KEEP_DB=0 DELETE_DB=0 AUTH="" VIEWER=0
 ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
@@ -77,6 +80,7 @@ while [ $# -gt 0 ]; do
     --allow-signup) ALLOW_SIGNUP=1; shift ;;
     --provider) PROVIDER=${2:?--provider needs cloudflare or ngrok}; shift 2 ;;
     --auth) AUTH=${2:?--auth needs builtin or supabase}; shift 2 ;;
+    --viewer) VIEWER=1; shift ;;
     --purge) PURGE=1; shift ;;
     --keep-db) KEEP_DB=1; shift ;;
     --delete-db) DELETE_DB=1; shift ;;
@@ -211,11 +215,17 @@ print(json.dumps(d))' "${@:2}")
     -H 'content-type: application/json' -d "$body"
 }
 
+# Bea exists in this preview's database only when an `up --viewer` seeded her.
+has_viewer() { [ -f "$STATE/viewer" ]; }
+
 token_for() { # owner|viewer
   local email password out
   case $1 in
     owner) email=$OWNER_EMAIL password=${OWNER_PASSWORD:-} ;;
-    viewer) email=$VIEWER_EMAIL password=${VIEWER_PASSWORD:-} ;;
+    viewer)
+      has_viewer || die "this preview has no second account; run \`down --keep-db\`, then \`up --viewer\`"
+      email=$VIEWER_EMAIL password=${VIEWER_PASSWORD:-}
+      ;;
     *) die "token: expected owner or viewer" ;;
   esac
   [ -n "$password" ] || die "no seeded accounts recorded in $STATE/accounts"
@@ -239,9 +249,10 @@ preview_vars() {
     "PYTHONPATH=$REPO/backend/src" \
     "DATABASE_URL=$DATABASE_URL" \
     "OWNER_EMAIL=$OWNER_EMAIL" \
-    "OWNER_PASSWORD=${OWNER_PASSWORD:-}" \
-    "VIEWER_EMAIL=$VIEWER_EMAIL" \
-    "VIEWER_PASSWORD=${VIEWER_PASSWORD:-}"
+    "OWNER_PASSWORD=${OWNER_PASSWORD:-}"
+  if has_viewer; then
+    printf '%s\n' "VIEWER_EMAIL=$VIEWER_EMAIL" "VIEWER_PASSWORD=${VIEWER_PASSWORD:-}"
+  fi
 }
 
 # --- up ----------------------------------------------------------------------
@@ -319,7 +330,7 @@ start_postgres() {
       -p "127.0.0.1:$PG_PORT:5432" \
       -e POSTGRES_USER=vicoa -e POSTGRES_PASSWORD=vicoa -e POSTGRES_DB=vicoa \
       "$PG_IMAGE" >/dev/null
-    rm -f "$STATE/seeded"
+    rm -f "$STATE/seeded" "$STATE/viewer"
     log "postgres: created container $PG_CONTAINER on 127.0.0.1:$PG_PORT"
   fi
   for _ in $(seq 1 60); do
@@ -472,6 +483,8 @@ start_web() {
 }
 
 seed_accounts() {
+  # Both passwords are made up front, so a later `up --viewer` gives Bea the
+  # password this file already holds.
   if [ ! -f "$STATE/accounts" ]; then
     (
       umask 077
@@ -481,8 +494,9 @@ seed_accounts() {
   fi
   # shellcheck disable=SC1091
   . "$STATE/accounts"
-  local pair email password name out code
-  for pair in "owner:$OWNER_EMAIL:$OWNER_PASSWORD:Ada" "viewer:$VIEWER_EMAIL:$VIEWER_PASSWORD:Bea"; do
+  local pairs=("owner:$OWNER_EMAIL:$OWNER_PASSWORD:Ada") pair email password name out code
+  [ "$VIEWER" = 1 ] && pairs+=("viewer:$VIEWER_EMAIL:$VIEWER_PASSWORD:Bea")
+  for pair in "${pairs[@]}"; do
     IFS=: read -r _ email password name <<<"$pair"
     out=$(backend_auth sign-up "$email" "$password" "$name")
     code=${out##*$'\n'}
@@ -493,6 +507,8 @@ seed_accounts() {
     fi
   done
   touch "$STATE/seeded"
+  [ "$VIEWER" = 1 ] && touch "$STATE/viewer"
+  return 0
 }
 
 # public_probe PATH — status code through the tunnel; tolerates the few seconds
@@ -521,12 +537,17 @@ ws_probe() { # TOKEN — handshake through the tunnel exactly as the browser doe
 cmd_up() {
   if [ -f "$STATE/ports" ] && any_alive; then
     log "a preview of $REPO is already running; showing its status (\`down\` first to restart it)"
+    if [ "$VIEWER" = 1 ] && ! has_viewer; then
+      log "it has no second account; to add Bea and keep the data: \`down --keep-db\`, then \`up --viewer\` (new URL)"
+    fi
     cmd_status
     return 0
   fi
   # Builtin unless asked for: a mobile review must not leave the next `up` on
   # hosted sign-in. `restart` keeps the running preview's mode (load_state).
   AUTH=${AUTH:-builtin}
+  [ "$VIEWER" = 1 ] && [ "$AUTH" = supabase ] &&
+    die "--viewer seeds a builtin account; with --auth supabase people sign in with their own"
   if [ "$AUTH" = supabase ] && { [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; }; then
     # shellcheck disable=SC1091
     [ -f "$STATE/supabase.env" ] && . "$STATE/supabase.env"
@@ -572,9 +593,12 @@ cmd_up() {
   fi
   log "tunnel: $PUBLIC_URL ($TUNNEL_PROVIDER)"
 
-  local first_seed=0 signup=true
-  [ -f "$STATE/seeded" ] || first_seed=1
-  [ "$ALLOW_SIGNUP" = 1 ] || [ "$first_seed" = 1 ] || signup=false
+  # Sign-up opens only while an account still has to be created: the first
+  # `up` on a database, or an `up --viewer` on one that has no Bea yet.
+  local needs_signup=0 signup=true
+  [ -f "$STATE/seeded" ] || needs_signup=1
+  [ "$VIEWER" = 1 ] && ! has_viewer && needs_signup=1
+  [ "$ALLOW_SIGNUP" = 1 ] || [ "$needs_signup" = 1 ] || signup=false
   write_backend_env "$signup"
 
   log "starting server, backend and web"
@@ -649,8 +673,11 @@ print_result() { # STATUS MESSAGE
     "* public_url: ${PUBLIC_URL:-null}" \
     "* sign_in: $([ -n "${PUBLIC_URL:-}" ] && echo "$PUBLIC_URL/sign-in" || echo null)" \
     "* auth: ${AUTH:-builtin}" \
-    "* owner: $([ "${AUTH:-builtin}" = builtin ] && echo "$OWNER_EMAIL / ${OWNER_PASSWORD:-?}" || echo "none (sign in with a hosted Supabase account)")" \
-    "* viewer: $([ "${AUTH:-builtin}" = builtin ] && echo "$VIEWER_EMAIL / ${VIEWER_PASSWORD:-?}" || echo none)" \
+    "* owner: $([ "${AUTH:-builtin}" = builtin ] && echo "$OWNER_EMAIL / ${OWNER_PASSWORD:-?}" || echo "none (sign in with a hosted Supabase account)")"
+  if [ "${AUTH:-builtin}" = builtin ] && has_viewer; then
+    echo "* viewer: $VIEWER_EMAIL / ${VIEWER_PASSWORD:-?}"
+  fi
+  printf '%s\n' \
     "* signup: $signup" \
     "* state: $STATE" \
     "* stop: $SCRIPT_DIR/stack-preview.sh down --repo $REPO"
@@ -700,7 +727,10 @@ cmd_seed() {
   alive backend || die "the preview backend is not running"
   while IFS= read -r pair; do vars+=("$pair"); done < <(preview_vars)
   # Hosted sign-in has no seeded passwords: seeds write rows directly.
-  [ "$AUTH" = builtin ] && vars+=("OWNER_TOKEN=$(token_for owner)" "VIEWER_TOKEN=$(token_for viewer)")
+  if [ "$AUTH" = builtin ]; then
+    vars+=("OWNER_TOKEN=$(token_for owner)")
+    has_viewer && vars+=("VIEWER_TOKEN=$(token_for viewer)")
+  fi
   # Same clean environment as the services: from the empty run dir, so
   # importing the backend's settings loads no checkout .env.
   case $file in

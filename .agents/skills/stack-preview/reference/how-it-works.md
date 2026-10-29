@@ -41,14 +41,15 @@ see the public hostname, exactly as with a direct tunnel. Responses carry
 | File | What |
 |---|---|
 | `ports`, `public` | ports; public URL and provider |
-| `accounts` | Ada's and Bea's passwords (mode 600, created once; plain `down` keeps it, so a new database gets the same passwords) |
+| `accounts` | Ada's and Bea's passwords (mode 600, created once; plain `down` keeps it, so a new database gets the same passwords). Bea's is used only with `--viewer` |
 | `backend.env` | the variables backend and server run with (mode 600) |
 | `env_file` | path of the `--env-file` in use, reused by `restart` |
 | `keys/` | RS256 keypair from `backend/scripts/generate-jwt-keys.sh` |
 | `<name>.pid` / `.start` / `.log` | per process; `.start` is `ps -o lstart`, so `down` never kills a recycled PID |
 | `extra/` | the same files for `run NAME -- CMD` side processes |
 | `run/` | empty working directory for the Python processes |
-| `seeded` | marker: the accounts exist in this database |
+| `seeded` | marker: the owner account exists in this database |
+| `viewer` | marker: an `up --viewer` seeded Bea in this database; `token viewer`, `seed`, `env` and the status lines offer her only then |
 
 ## What backend and server run with
 

@@ -33,7 +33,7 @@ the git checkout of the **current directory** (a worktree is fine), or `--repo D
 ```
 
 It creates and migrates the database, opens the tunnel, starts server, backend
-and web, seeds two accounts, closes sign-up, then checks the page, the API and
+and web, seeds an owner account, closes sign-up, then checks the page, the API and
 the WebSocket handshake **through the public URL**. About 30 s, longer on a
 first web compile. The result is `* key: value` lines, the same contract as
 `/live-preview`, so the Vicoa app opens the link in Live Preview.
@@ -54,6 +54,9 @@ Flags:
 - `--allow-signup`: leave sign-up open (for reviewing the sign-up flow). By
   default it closes after seeding, because anyone with the link can reach the server.
 - `--provider ngrok`: by default cloudflared is tried first, then ngrok.
+- `--viewer`: also seed Bea, a second person. Pass it only when the user asks
+  for a second account or the change needs one (sharing, permissions, team
+  features); one account is the default.
 - `--auth supabase`: only when the user asks to review the **mobile app**, which
   can only sign in with Supabase. Everything else uses the default (builtin),
   and every `up` without the flag is builtin again. It signs in with a hosted
@@ -67,9 +70,11 @@ Flags:
 
 ## 2. Seed what the change needs
 
-A fresh database holds only Ada (`ada@example.com`, owner) and Bea
-(`bea@example.com`, a second person for sharing and permissions). The passwords
-are in the output. An empty dashboard reviews nothing, so read the diff
+A fresh database holds only Ada (`ada@example.com`, the owner); her password is
+in the output. With `--viewer` it also holds Bea (`bea@example.com`), a second
+person for sharing and permissions. If a running preview turns out to need Bea,
+`down --keep-db` then `up --viewer` adds her and keeps the data (the URL
+changes). An empty dashboard reviews nothing, so read the diff
 (`git diff origin/main...`), list the screens and states it touches, and seed
 those:
 
@@ -87,8 +92,8 @@ those:
   hide it. For a session that looks finished, use `AWAITING_INPUT`.
 - Run `stack-preview.sh seed FILE`. A `.py` runs in the backend venv with
   `PYTHONPATH` set; anything else runs under bash. Seeds get `PREVIEW_URL`,
-  `PREVIEW_BACKEND`, `DATABASE_URL`, `OWNER_EMAIL/PASSWORD/TOKEN` and the
-  `VIEWER_*` equivalents. `stack-preview.sh env` prints the same exports for ad-hoc curl.
+  `PREVIEW_BACKEND`, `DATABASE_URL`, `OWNER_EMAIL/PASSWORD/TOKEN` and, with
+  `--viewer`, the `VIEWER_*` equivalents. `stack-preview.sh env` prints the same exports for ad-hoc curl.
 - Use invented data only. The link is public.
 
 ## 3. Check it the way the reviewer will
@@ -103,8 +108,9 @@ before login.
 
 Give the user the sign-in link (the `sign_in:` line, i.e. the public URL plus
 `/sign-in`, such as `https://<name>.trycloudflare.com/sign-in`), so it opens
-straight on the login form. Add both logins, what you seeded and where to click,
-and the stop command. Leave the preview running until they say they're done.
+straight on the login form. Add the login (both, with `--viewer`), what you
+seeded and where to click, and the stop command. Leave the preview running
+until they say they're done.
 
 While it runs: web edits hot-reload by themselves. After backend changes, run
 `stack-preview.sh restart` (default: server and backend; or
