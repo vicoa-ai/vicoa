@@ -332,6 +332,46 @@ def test_list_worktrees_flags_a_checkout_whose_directory_is_gone(
     assert entry["prunable"] is True
 
 
+def test_list_worktrees_reports_the_remote_branch_each_one_pushes_to(
+    home: Path, committed_repo: Path, tmp_path: Path
+):
+    """`upstream` is the remote branch name, even when it differs from the
+    local one: that is the name a pull request records as its head."""
+    from vicoa.rpc.worktree_ops import create_worktree, list_worktrees
+
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    _git(committed_repo, "remote", "add", "origin", str(origin))
+    renamed = create_worktree(str(committed_repo), name="happy-thistle")
+    same = create_worktree(str(committed_repo), name="calm-river")
+    unpushed = create_worktree(str(committed_repo), name="quiet-field")
+    _git(Path(renamed["path"]), "push", "-q", "-u", "origin", "HEAD:cli-version")
+    _git(Path(same["path"]), "push", "-q", "-u", "origin", "calm-river")
+
+    by_branch = {
+        w["branch"]: w["upstream"]
+        for w in list_worktrees(str(committed_repo))["worktrees"]
+    }
+    assert by_branch == {
+        "happy-thistle": "cli-version",
+        "calm-river": "calm-river",
+        unpushed["branch"]: "",
+    }
+
+
+def test_list_worktrees_ignores_an_upstream_that_is_a_local_branch(
+    home: Path, committed_repo: Path
+):
+    """Tracking a local branch (remote `.`) says nothing about a pull request."""
+    from vicoa.rpc.worktree_ops import create_worktree, list_worktrees
+
+    created = create_worktree(str(committed_repo), name="side")
+    _git(Path(created["path"]), "branch", "--set-upstream-to", "main")
+
+    [entry] = list_worktrees(str(committed_repo))["worktrees"]
+    assert entry["upstream"] == ""
+
+
 def test_list_worktrees_on_non_repo_returns_error(home: Path, tmp_path: Path):
     from vicoa.rpc.worktree_ops import list_worktrees
 

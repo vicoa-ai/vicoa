@@ -226,11 +226,51 @@ def _parse_worktree_porcelain(blob: bytes) -> list[dict[str, Any]]:
     return records
 
 
+def _remote_branches(abs_dir: Path) -> dict[str, str]:
+    """Map each local branch to the branch it pushes to on its remote.
+
+    Read from `branch.<name>.merge`, so `git push -u origin HEAD:other` makes
+    `other` the answer even though the local branch keeps its own name. That
+    remote name is the one a pull request records as its head, so it is what
+    the app needs to find the PR of a checkout whose branch was pushed under a
+    different name. Branches with no upstream, or tracking another local
+    branch (remote `.`), are left out. One `for-each-ref` covers every branch
+    of the repo, worktrees included: they share the repo's refs and config.
+    """
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(abs_dir),
+            "for-each-ref",
+            "--format=%(refname)%00%(upstream:remotename)%00%(upstream:remoteref)",
+            "refs/heads",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return {}
+    remote_branches: dict[str, str] = {}
+    for line in proc.stdout.decode("utf-8", errors="replace").splitlines():
+        parts = line.split("\0")
+        if len(parts) != 3:
+            continue
+        ref, remote, remote_ref = parts
+        if not remote or remote == "." or not remote_ref.startswith("refs/heads/"):
+            continue
+        remote_branches[ref.removeprefix("refs/heads/")] = remote_ref.removeprefix(
+            "refs/heads/"
+        )
+    return remote_branches
+
+
 def list_worktrees(cwd: str) -> dict[str, Any]:
     """List a repo's linked worktrees, plus where its main checkout is.
 
     Returns `{"main_path", "main_display_path", "main_branch", "worktrees":
-    [{path, display_path, branch, head, managed, prunable}]}` or `{"error":
+    [{path, display_path, branch, upstream, head, managed, prunable}]}` or
+    `{"error":
     "not_a_repo"}`. `cwd` may be any directory of the repo — a subfolder or a
     linked worktree — which is what makes `main_path` useful: it lets a client
     resolve whatever path it holds to the repo's root (the project's folder)
@@ -247,6 +287,8 @@ def list_worktrees(cwd: str) -> dict[str, Any]:
     worktree to the sessions running in it by plain string equality.
     `prunable` is git's own verdict that the checkout directory is gone while
     the registration lingers — the app shows such a worktree as deleted.
+    `upstream` is the remote branch the worktree's branch pushes to (`""` when
+    it has none); see `_remote_branches` for why it can differ from `branch`.
     """
     abs_dir = Path(os.path.expanduser(cwd)).resolve()
     if not _is_git_repo(abs_dir):
@@ -267,12 +309,14 @@ def list_worktrees(cwd: str) -> dict[str, Any]:
     # in the list (it is never removable and never a "worktree" to the app).
     main_path = records[0]["path"]
     linked = records[1:]
+    remote_branches = _remote_branches(abs_dir)
 
     worktrees = [
         {
             "path": rec["path"],
             "display_path": get_project_path(rec["path"]),
             "branch": rec.get("branch", ""),
+            "upstream": remote_branches.get(rec.get("branch", ""), ""),
             "head": rec.get("head", ""),
             "managed": _is_managed(rec["path"]),
             "prunable": bool(rec.get("prunable", False)),

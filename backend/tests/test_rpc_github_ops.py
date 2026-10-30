@@ -116,6 +116,7 @@ def test_keys_by_head_branch(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Non
                 "state": "open",
                 "url": "https://github.com/o/r/pull/7",
                 "checks": "none",
+                "head": "",
             }
         }
     }
@@ -214,6 +215,35 @@ def test_first_pr_per_branch_wins(repo: Path, monkeypatch: pytest.MonkeyPatch) -
     result = github_ops.github_pr_list(str(repo))
     assert result["prs"]["feat/thing"]["number"] == 9
     assert result["prs"]["feat/thing"]["state"] == "open"
+
+
+def test_reports_the_head_commit(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The second join key, for a checkout pushed under another branch name."""
+    _stub_gh(monkeypatch, stdout=json.dumps([_pr(headRefOid="801f4c4aa")]))
+    result = github_ops.github_pr_list(str(repo))
+    assert result["prs"]["feat/thing"]["head"] == "801f4c4aa"
+
+
+def test_skips_pull_requests_from_forks(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A contributor's PR from their fork's `main` is not this repo's `main`.
+
+    It is the newest, so without the filter it would win the branch.
+    """
+    _stub_gh(
+        monkeypatch,
+        stdout=json.dumps(
+            [
+                _pr(number=12, headRefName="main", isCrossRepository=True),
+                _pr(number=3, headRefName="main", state="MERGED"),
+                _pr(number=11, headRefName="patch-1", isCrossRepository=True),
+            ]
+        ),
+    )
+    result = github_ops.github_pr_list(str(repo))
+    assert list(result["prs"]) == ["main"]
+    assert result["prs"]["main"]["number"] == 3
 
 
 def test_skips_malformed_records(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:

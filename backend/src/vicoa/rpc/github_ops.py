@@ -30,13 +30,18 @@ from typing import Any
 # called on window focus, so a hung call would wedge the sidebar's git view.
 _GH_TIMEOUT_SECONDS = 20
 
-# The most recently updated PRs across all states. A branch whose PR merged
-# long enough ago to fall off this list no longer has a worktree to label.
+# The most recently created PRs across all states (`gh pr list` orders by
+# creation, newest first). A branch whose PR merged long enough ago to fall off
+# this list no longer has a worktree to label.
 _GH_PR_LIMIT = 100
 
-# Fetched in one shot. `headRefName` is the join key; `statusCheckRollup` is
-# collapsed to a single word below rather than shipped as its raw check list.
-_GH_PR_FIELDS = "number,title,state,headRefName,url,isDraft,mergedAt,statusCheckRollup"
+# Fetched in one shot. `headRefName` is the join key, `headRefOid` a second one
+# for a checkout whose branch was pushed under another name; `statusCheckRollup`
+# is collapsed to a single word below rather than shipped as its raw check list.
+_GH_PR_FIELDS = (
+    "number,title,state,headRefName,headRefOid,isCrossRepository,url,isDraft,"
+    "mergedAt,statusCheckRollup"
+)
 
 # Any of these means the check suite has a definite red. ACTION_REQUIRED counts:
 # it blocks the merge exactly like a failure does.
@@ -160,9 +165,9 @@ def _derive_state(raw_state: str, is_draft: bool) -> str:
 def github_pr_list(cwd: str) -> dict[str, Any]:
     """PR state for every branch of the repo containing `cwd`, keyed by branch.
 
-    Returns `{"prs": {branch: {number, title, state, url, checks}}}` where
-    `state` is `open|draft|merged|closed` and `checks` is
-    `pass|fail|pending|none`.
+    Returns `{"prs": {branch: {number, title, state, url, checks, head}}}`
+    where `state` is `open|draft|merged|closed`, `checks` is
+    `pass|fail|pending|none` and `head` is the PR's head commit sha.
 
     On failure returns `{"error": code}` with one of `not_a_repo`, `gh_missing`,
     `gh_unauthenticated`, `no_remote`, `gh_unavailable`. Every one of them means
@@ -170,8 +175,12 @@ def github_pr_list(cwd: str) -> dict[str, Any]:
     the user over, since not using GitHub is a perfectly ordinary state.
 
     When a branch has several PRs (a reopened branch, or a merged PR followed by
-    a new one) the most recently updated wins: `gh pr list` returns newest-first
+    a new one) the newest wins: `gh pr list` returns them newest-created first
     and the first write per branch is kept.
+
+    PRs opened from a fork are left out. Their `headRefName` names a branch in
+    someone else's repository, so a contributor's PR from their fork's `main`
+    would otherwise decorate this repo's own `main`.
     """
     abs_dir = Path(os.path.expanduser(cwd)).resolve()
     if not _is_git_repo(abs_dir):
@@ -214,6 +223,8 @@ def github_pr_list(cwd: str) -> dict[str, Any]:
         number = record.get("number")
         if not isinstance(branch, str) or not branch or not isinstance(number, int):
             continue
+        if record.get("isCrossRepository") is True:
+            continue
         # Newest-first ordering makes the first entry per branch the live one.
         if branch in prs:
             continue
@@ -225,6 +236,7 @@ def github_pr_list(cwd: str) -> dict[str, Any]:
             ),
             "url": str(record.get("url") or ""),
             "checks": _rollup_checks(record.get("statusCheckRollup")),
+            "head": str(record.get("headRefOid") or ""),
         }
 
     return {"prs": prs}
