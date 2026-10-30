@@ -31,6 +31,12 @@ import {
   type ScheduleDraft,
 } from '../lib/frequency';
 import type { AutomationTemplate } from '../lib/templates';
+import {
+  automationState,
+  isCompleted,
+  summarizeCompleted,
+  type AutomationState,
+} from '../lib/state';
 import { DetailsSection, type WorktreeDraft } from './details-section';
 import type { SessionTarget } from './session-target-picker';
 import { FrequencySection } from './frequency-section';
@@ -62,6 +68,12 @@ function targetOf(a: AutomationResponse): TargetDraft | null {
     agent: typeof a.session_config.agent === 'string' ? a.session_config.agent : null,
   };
 }
+
+const STATE_LABELS: Record<AutomationState, string> = {
+  active: 'Active',
+  paused: 'Paused',
+  completed: 'Completed',
+};
 
 export function DetailPanel({
   api,
@@ -205,6 +217,8 @@ export function DetailPanel({
   const promptAgentType: AgentType =
     promptAgent === 'codex' ? 'codex' : promptAgent === 'opencode' ? 'opencode' : 'claude';
 
+  const completed = automation ? isCompleted(automation) : false;
+
   const canSave =
     !!title.trim() &&
     !!prompt.trim() &&
@@ -240,8 +254,13 @@ export function DetailPanel({
           ...draftToScheduleApi(schedule),
         };
     try {
+      // A completed one-time automation has no fire time to resume from, so
+      // the new time saved here is what brings it back: turn it on with it.
       const saved = automation
-        ? await api.updateAutomation(automation.id, base)
+        ? await api.updateAutomation(
+            automation.id,
+            completed ? { ...base, enabled: true } : base,
+          )
         : await api.createAutomation({ ...base, enabled: true });
       setDirty(false);
       onSaved(saved);
@@ -259,7 +278,7 @@ export function DetailPanel({
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
         {/* The label gives way (truncates) before Save and close do. */}
         <span className="min-w-0 truncate text-xs text-muted-foreground">
-          {automation ? (automation.enabled ? 'Active' : 'Paused') : 'New automation'}
+          {automation ? STATE_LABELS[automationState(automation)] : 'New automation'}
         </span>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {(!automation || dirty) && (
@@ -357,11 +376,13 @@ export function DetailPanel({
         )}
 
         <p className="px-1 text-[11px] text-muted-foreground/70">
-          {summarizeSchedule({
-            schedule_kind: schedule.repeat === 'once' ? 'once' : 'recurring',
-            frequency: draftToScheduleApi(schedule).frequency ?? null,
-            next_run_at: automation?.next_run_at ?? null,
-          } as AutomationResponse)}
+          {completed && automation
+            ? `${summarizeCompleted(automation)}. Pick a new time and save to run it again.`
+            : summarizeSchedule({
+                schedule_kind: schedule.repeat === 'once' ? 'once' : 'recurring',
+                frequency: draftToScheduleApi(schedule).frequency ?? null,
+                next_run_at: automation?.next_run_at ?? null,
+              } as AutomationResponse)}
         </p>
       </div>
     </div>

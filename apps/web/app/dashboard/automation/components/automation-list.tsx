@@ -20,7 +20,10 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
+  CalendarClock,
   Circle,
+  CircleAlert,
+  CircleCheck,
   CirclePause,
   CirclePlay,
   Loader2,
@@ -50,8 +53,14 @@ import { principalDisplayName, principalFromResponse } from '@/lib/principals';
 import { summarizeSchedule } from '../lib/frequency';
 import { groupByProject, NO_PROJECT } from '../lib/group-by-project';
 import { matchesScheduleFilter, type ScheduleFilter } from '../lib/schedule-filter';
+import {
+  sortAutomations,
+  type AutomationSortDirection,
+  type AutomationSortField,
+} from '../lib/sort';
+import { automationState, isCompleted, summarizeCompleted } from '../lib/state';
 
-export type AutomationFilter = 'all' | 'active' | 'paused';
+export type AutomationFilter = 'all' | 'active' | 'paused' | 'completed';
 
 // Rows only move up and down, and stay inside their group's list (dnd-kit's
 // container rect is the dragged row's parent): a row's group is its project,
@@ -78,12 +87,15 @@ function matches(
   schedule: ScheduleFilter,
   q: string,
 ): boolean {
-  if (filter === 'active' && !a.enabled) return false;
-  if (filter === 'paused' && a.enabled) return false;
+  if (filter !== 'all' && automationState(a) !== filter) return false;
   if (!matchesScheduleFilter(a, schedule)) return false;
   if (q && !a.title.toLowerCase().includes(q)) return false;
   return true;
 }
+
+/** The row's second line: when it fires, or how its one run went. */
+const summary = (a: AutomationResponse): string =>
+  isCompleted(a) ? summarizeCompleted(a) : summarizeSchedule(a);
 
 export function AutomationList({
   automations,
@@ -91,6 +103,8 @@ export function AutomationList({
   emptyLabel = 'No automations yet.',
   filter,
   scheduleFilter,
+  sortBy,
+  sortDirection,
   selectedId,
   onSelect,
   onRunNow,
@@ -108,6 +122,11 @@ export function AutomationList({
   emptyLabel?: string;
   filter: AutomationFilter;
   scheduleFilter: ScheduleFilter;
+  /** Anything but `position` (Manual) replaces the viewer's drag order, so rows
+   *  can't be dragged. Completed one-time automations sink to the bottom of a
+   *  group either way, and are never draggable. */
+  sortBy: AutomationSortField;
+  sortDirection: AutomationSortDirection;
   selectedId: string | null;
   onSelect: (a: AutomationResponse) => void;
   onRunNow: (a: AutomationResponse) => void;
@@ -122,21 +141,34 @@ export function AutomationList({
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return automations.filter((a) => matches(a, filter, scheduleFilter, q));
-  }, [automations, filter, scheduleFilter, query]);
+    return sortAutomations(
+      automations.filter((a) => matches(a, filter, scheduleFilter, q)),
+      sortBy,
+      sortDirection,
+    );
+  }, [automations, filter, scheduleFilter, query, sortBy, sortDirection]);
 
   const groups = useMemo(
     () => (groupProjects ? groupByProject(visible, groupProjects) : null),
     [visible, groupProjects],
   );
 
-  const renderRow = (a: AutomationResponse) =>
+  const dragEnabled = sortBy === 'position';
+
+  const renderRow = (a: AutomationResponse, sortable: boolean) =>
     a.owner ? (
-      <SharedRow key={a.id} automation={a} selected={selectedId === a.id} onSelect={onSelect} />
+      <SharedRow
+        key={a.id}
+        automation={a}
+        sortable={sortable}
+        selected={selectedId === a.id}
+        onSelect={onSelect}
+      />
     ) : (
       <OwnRow
         key={a.id}
         automation={a}
+        sortable={sortable}
         selected={selectedId === a.id}
         busy={busyId === a.id}
         onSelect={onSelect}
@@ -145,6 +177,24 @@ export function AutomationList({
         onDelete={onDelete}
       />
     );
+
+  // One group's rows: the live ones, draggable among themselves in manual
+  // order, then the completed ones, which are done and stay put. `rows` is
+  // already sorted, so live rows all come before completed ones.
+  const renderRows = (rows: AutomationResponse[]) => {
+    const live = rows.filter((a) => !isCompleted(a));
+    const completed = rows.filter(isCompleted);
+    return (
+      <>
+        {live.length > 0 && (
+          <SortableRows rows={live} enabled={dragEnabled} onReorder={onReorder}>
+            {live.map((a) => renderRow(a, dragEnabled))}
+          </SortableRows>
+        )}
+        {completed.length > 0 && <ul>{completed.map((a) => renderRow(a, false))}</ul>}
+      </>
+    );
+  };
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -185,16 +235,12 @@ export function AutomationList({
                         (group.key === NO_PROJECT ? 'No project' : 'Other project')}
                     </span>
                   </div>
-                  <SortableRows rows={group.rows} onReorder={onReorder}>
-                    {group.rows.map(renderRow)}
-                  </SortableRows>
+                  {renderRows(group.rows)}
                 </li>
               ))}
             </ul>
           ) : (
-            <SortableRows rows={visible} onReorder={onReorder}>
-              {visible.map(renderRow)}
-            </SortableRows>
+            renderRows(visible)
           )}
         </div>
       </div>
@@ -208,10 +254,14 @@ export function AutomationList({
  */
 function SortableRows({
   rows,
+  enabled,
   onReorder,
   children,
 }: {
   rows: AutomationResponse[];
+  /** Off when the list is sorted by something other than the drag order: the
+   *  rows are then plain (their `sortable` is off too). */
+  enabled: boolean;
   onReorder: (rendered: string[]) => void;
   children: ReactNode;
 }) {
@@ -231,6 +281,8 @@ function SortableRows({
     onReorder(arrayMove(ids, from, to));
   };
 
+  if (!enabled) return <ul>{children}</ul>;
+
   return (
     <DndContext
       sensors={sensors}
@@ -245,24 +297,87 @@ function SortableRows({
   );
 }
 
-/** Wires a row into its group's `SortableRows`. */
-function useSortableRow(id: string) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id });
-  return {
-    sortableProps: {
-      ref: setNodeRef,
-      style: { transform: CSS.Transform.toString(transform), transition },
-      ...attributes,
-      ...listeners,
-    },
-    draggingClass: isDragging ? 'relative z-10 bg-background shadow-md' : undefined,
-  };
+/**
+ * A row's `<li>`. Sortable ones join their group's `SortableRows`; the rest
+ * (completed rows, or any row while the list isn't in drag order) are plain, so
+ * they take no part in a drag and never show as a drop target.
+ */
+function RowItem({
+  id,
+  sortable,
+  className,
+  onClick,
+  children,
+}: {
+  id: string;
+  sortable: boolean;
+  className: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return sortable ? (
+    <SortableItem id={id} className={className} onClick={onClick}>
+      {children}
+    </SortableItem>
+  ) : (
+    <li onClick={onClick} className={className}>
+      {children}
+    </li>
+  );
 }
 
-/** One of your own automations: pause toggle on the left, actions on hover. */
+function SortableItem({
+  id,
+  className,
+  onClick,
+  children,
+}: {
+  id: string;
+  className: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id });
+  return (
+    <li
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      {...attributes}
+      {...listeners}
+      onClick={onClick}
+      className={cn(className, isDragging && 'relative z-10 bg-background shadow-md')}
+    >
+      {children}
+    </li>
+  );
+}
+
+/**
+ * A completed one-time automation's mark: a check, or an alert when its one
+ * run didn't go through (the scheduler gives such a row no second try).
+ */
+function CompletedIcon({ automation: a }: { automation: AutomationResponse }) {
+  const failed = a.last_run_status === 'failed' || a.last_run_status === 'missed_offline';
+  const Icon = failed ? CircleAlert : CircleCheck;
+  return (
+    <span
+      className="flex-shrink-0 text-muted-foreground"
+      title={failed ? 'Did not run' : 'Completed'}
+    >
+      <Icon className="h-4 w-4" />
+    </span>
+  );
+}
+
+/**
+ * One of your own automations: pause toggle on the left, actions on hover.
+ * A completed one-time automation has nothing to pause or resume (it has no
+ * next run): a check stands in for the toggle and the menu offers Reschedule.
+ */
 function OwnRow({
   automation: a,
+  sortable,
   selected,
   busy,
   onSelect,
@@ -271,6 +386,7 @@ function OwnRow({
   onDelete,
 }: {
   automation: AutomationResponse;
+  sortable: boolean;
   selected: boolean;
   busy: boolean;
   onSelect: (a: AutomationResponse) => void;
@@ -278,57 +394,55 @@ function OwnRow({
   onTogglePause: (a: AutomationResponse) => void;
   onDelete: (a: AutomationResponse) => void;
 }) {
-  const { sortableProps, draggingClass } = useSortableRow(a.id);
+  const completed = isCompleted(a);
+  const dim = completed || !a.enabled;
   return (
-    <li
-      {...sortableProps}
+    <RowItem
+      id={a.id}
+      sortable={sortable}
       onClick={() => onSelect(a)}
       className={cn(
         'group flex cursor-pointer items-center gap-2.5 border-b border-border/50 px-3 py-2.5',
         selected
           ? 'bg-foreground/[0.07]'
           : 'hover:bg-foreground/[0.04]',
-        draggingClass,
       )}
     >
-      {/* Active/paused toggle: empty circle when active (hover →
-          circle-pause), circle-play when paused. */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            onPointerDown={stopDragStart}
-            onClick={(e) => {
-              e.stopPropagation();
-              onTogglePause(a);
-            }}
-            className="group/status flex-shrink-0 text-muted-foreground hover:text-foreground"
-          >
-            {a.enabled ? (
-              <>
-                <Circle className="h-4 w-4 group-hover/status:hidden" />
-                <CirclePause className="hidden h-4 w-4 group-hover/status:block" />
-              </>
-            ) : (
-              <CirclePlay className="h-4 w-4" />
-            )}
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>{a.enabled ? 'Pause' : 'Resume'}</TooltipContent>
-      </Tooltip>
+      {completed ? (
+        <CompletedIcon automation={a} />
+      ) : (
+        /* Active/paused toggle: empty circle when active (hover →
+           circle-pause), circle-play when paused. */
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onPointerDown={stopDragStart}
+              onClick={(e) => {
+                e.stopPropagation();
+                onTogglePause(a);
+              }}
+              className="group/status flex-shrink-0 text-muted-foreground hover:text-foreground"
+            >
+              {a.enabled ? (
+                <>
+                  <Circle className="h-4 w-4 group-hover/status:hidden" />
+                  <CirclePause className="hidden h-4 w-4 group-hover/status:block" />
+                </>
+              ) : (
+                <CirclePlay className="h-4 w-4" />
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{a.enabled ? 'Pause' : 'Resume'}</TooltipContent>
+        </Tooltip>
+      )}
 
       <div className="min-w-0 flex-1">
-        <div
-          className={cn(
-            'truncate text-sm',
-            !a.enabled && 'text-muted-foreground',
-          )}
-        >
+        <div className={cn('truncate text-sm', dim && 'text-muted-foreground')}>
           {a.title}
         </div>
-        <div className="truncate text-xs text-muted-foreground">
-          {summarizeSchedule(a)}
-        </div>
+        <div className="truncate text-xs text-muted-foreground">{summary(a)}</div>
       </div>
 
       {busy ? (
@@ -355,19 +469,28 @@ function OwnRow({
               <Play className="mr-2 h-4 w-4" />
               Run now
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onTogglePause(a)}>
-              {a.enabled ? (
-                <>
-                  <CirclePause className="mr-2 h-4 w-4" />
-                  Pause
-                </>
-              ) : (
-                <>
-                  <CirclePlay className="mr-2 h-4 w-4" />
-                  Resume
-                </>
-              )}
-            </DropdownMenuItem>
+            {completed ? (
+              // Opens the panel, whose time field is empty: saving a new time
+              // is what brings it back.
+              <DropdownMenuItem onClick={() => onSelect(a)}>
+                <CalendarClock className="mr-2 h-4 w-4" />
+                Reschedule
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem onClick={() => onTogglePause(a)}>
+                {a.enabled ? (
+                  <>
+                    <CirclePause className="mr-2 h-4 w-4" />
+                    Pause
+                  </>
+                ) : (
+                  <>
+                    <CirclePlay className="mr-2 h-4 w-4" />
+                    Resume
+                  </>
+                )}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => onDelete(a)}>
               <Trash2 className="mr-2 h-4 w-4" />
@@ -376,7 +499,7 @@ function OwnRow({
           </DropdownMenuContent>
         </DropdownMenu>
       )}
-    </li>
+    </RowItem>
   );
 }
 
@@ -388,38 +511,46 @@ function OwnRow({
  */
 function SharedRow({
   automation: a,
+  sortable,
   selected,
   onSelect,
 }: {
   automation: AutomationResponse;
+  sortable: boolean;
   selected: boolean;
   onSelect: (a: AutomationResponse) => void;
 }) {
-  const { sortableProps, draggingClass } = useSortableRow(a.id);
+  const completed = isCompleted(a);
   return (
-    <li
-      {...sortableProps}
+    <RowItem
+      id={a.id}
+      sortable={sortable}
       onClick={() => onSelect(a)}
       className={cn(
         'flex cursor-pointer items-center gap-2.5 border-b border-border/50 px-3 py-2.5',
         selected ? 'bg-foreground/[0.07]' : 'hover:bg-foreground/[0.04]',
-        draggingClass,
       )}
     >
-      <span
-        className="flex-shrink-0 text-muted-foreground"
-        title={a.enabled ? 'Active' : 'Paused'}
-      >
-        {a.enabled ? <Circle className="h-4 w-4" /> : <CirclePause className="h-4 w-4" />}
-      </span>
+      {completed ? (
+        <CompletedIcon automation={a} />
+      ) : (
+        <span
+          className="flex-shrink-0 text-muted-foreground"
+          title={a.enabled ? 'Active' : 'Paused'}
+        >
+          {a.enabled ? <Circle className="h-4 w-4" /> : <CirclePause className="h-4 w-4" />}
+        </span>
+      )}
       <div className="min-w-0 flex-1">
-        <div className={cn('truncate text-sm', !a.enabled && 'text-muted-foreground')}>
+        <div
+          className={cn('truncate text-sm', (completed || !a.enabled) && 'text-muted-foreground')}
+        >
           {a.title}
         </div>
-        <div className="truncate text-xs text-muted-foreground">{summarizeSchedule(a)}</div>
+        <div className="truncate text-xs text-muted-foreground">{summary(a)}</div>
       </div>
       <AuthorAvatar automation={a} />
-    </li>
+    </RowItem>
   );
 }
 

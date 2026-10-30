@@ -46,6 +46,7 @@ import { AutomationListSkeleton } from './components/automation-skeleton';
 import { AutomationEmptyState } from './components/empty-state';
 import { getAutomationCache, setAutomationCache } from './lib/automation-cache';
 import { DetailPanel } from './components/detail-panel';
+import { SortMenu } from './components/sort-menu';
 import { SharedDetailPanel } from './components/shared-detail-panel';
 import type { AutomationTemplate } from './lib/templates';
 import { NO_PROJECT } from './lib/group-by-project';
@@ -56,6 +57,13 @@ import {
   type RecurringOption,
   type ScheduleFilter,
 } from './lib/schedule-filter';
+import {
+  DEFAULT_SORT,
+  DEFAULT_SORT_DIRECTION,
+  parseSort,
+  SORT_STORAGE_KEY,
+  type AutomationSort,
+} from './lib/sort';
 
 type Selection = AutomationResponse | 'new' | null;
 
@@ -87,6 +95,7 @@ const FILTER_LABELS: Record<AutomationFilter, string> = {
   all: 'All',
   active: 'Active',
   paused: 'Paused',
+  completed: 'Completed',
 };
 
 // useSearchParams needs a Suspense boundary for prerender (same pattern as
@@ -138,6 +147,33 @@ function AutomationPageInner() {
   const [historyKey, setHistoryKey] = useState(0);
   const [filter, setFilter] = useState<AutomationFilter>('all');
   const [scheduleFilter, setScheduleFilter] = useState<ScheduleFilter>('all');
+  // Null until the viewer picks an ordering, which is kept across visits, per
+  // browser. Until then the list is in their drag order, the same as Manual.
+  const [sort, setSort] = useState<AutomationSort | null>(null);
+  const { sortBy, sortDirection } = sort ?? {
+    sortBy: DEFAULT_SORT,
+    sortDirection: DEFAULT_SORT_DIRECTION,
+  };
+  useEffect(() => {
+    const saved = parseSort(window.localStorage.getItem(SORT_STORAGE_KEY));
+    if (saved) setSort(saved);
+  }, []);
+  const updateSort = useCallback((patch: Partial<AutomationSort>) => {
+    setSort((prev) => {
+      const next = {
+        sortBy: DEFAULT_SORT,
+        sortDirection: DEFAULT_SORT_DIRECTION,
+        ...prev,
+        ...patch,
+      };
+      try {
+        window.localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
   const [deleteTarget, setDeleteTarget] = useState<AutomationResponse | null>(null);
   // Template to seed create mode; null = start from scratch.
   const [newTemplate, setNewTemplate] = useState<AutomationTemplate | null>(null);
@@ -675,7 +711,7 @@ function AutomationPageInner() {
                 <DropdownMenuLabel className="text-[0.8rem] font-normal text-muted-foreground">
                   Status
                 </DropdownMenuLabel>
-                {(['all', 'active', 'paused'] as AutomationFilter[]).map((f) => (
+                {(Object.keys(FILTER_LABELS) as AutomationFilter[]).map((f) => (
                   <DropdownMenuItem key={f} onSelect={() => setFilter(f)}>
                     {FILTER_LABELS[f]}
                     {filter === f && <Check className="ml-auto h-3 w-3" />}
@@ -700,6 +736,7 @@ function AutomationPageInner() {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+            <SortMenu sort={sort} onChange={updateSort} />
             <Button
               size="sm"
               className="h-7 shrink-0 cursor-pointer gap-1 text-xs"
@@ -740,6 +777,8 @@ function AutomationPageInner() {
             }
             filter={filter}
             scheduleFilter={scheduleFilter}
+            sortBy={sortBy}
+            sortDirection={sortDirection}
             selectedId={selectedId}
             onSelect={(a) => setSelection(a)}
             onRunNow={runNow}
