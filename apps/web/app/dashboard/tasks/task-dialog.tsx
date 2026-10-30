@@ -63,6 +63,7 @@ import {
   useAutoFocus,
 } from '@/components/dashboard/task-ui';
 import { isImeComposing } from '@/lib/ime';
+import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 
 /** Persisted (desktop settings.json / localStorage) dialog size preference. */
@@ -88,13 +89,6 @@ export interface TaskFormValues {
 function toDateInputValue(iso: string | null): string {
   if (!iso) return '';
   return iso.slice(0, 10);
-}
-
-/** A failed save as one line for the dialog footer: what failed, then the
- *  server's reason when it is one the user can act on (`refusalReason`). */
-function saveErrorText(failed: string, err: unknown): string {
-  const reason = refusalReason(err);
-  return reason ? `${failed} ${reason}` : failed;
 }
 
 /** Last path segment of a session's project dir, for a compact right-side tag. */
@@ -165,8 +159,6 @@ export function TaskDialog({
   // A field also shows once it has a value; this just tracks manual reveals.
   const [revealed, setRevealed] = useState<Set<OptionalField>>(new Set());
   const [saving, setSaving] = useState(false);
-  // A failed save, shown by the submit button until the next attempt or reopen.
-  const [saveError, setSaveError] = useState<string | null>(null);
   // Create mode: keep the dialog open after creating so several tasks can be
   // added in a row (reusing project + parent). No effect in edit mode.
   const [createAnother, setCreateAnother] = useState(false);
@@ -215,7 +207,6 @@ export function TaskDialog({
     setSubtaskTitle('');
     setPendingSubtasks([]);
     setRevealed(new Set());
-    setSaveError(null);
     // Show existing sub-tasks by default; a task with none starts collapsed so
     // the whole body goes to the description.
     setSubtasksOpen(childTasks.length > 0);
@@ -265,7 +256,6 @@ export function TaskDialog({
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSaving(true);
-    setSaveError(null);
     try {
       const saved = await onSubmit(values);
       // Create mode: attach the buffered sub-tasks to the new parent, in order.
@@ -296,8 +286,10 @@ export function TaskDialog({
         onClose();
       }
     } catch (err) {
-      // Keep the dialog open, with what went wrong, for a retry.
-      setSaveError(saveErrorText(task ? "Couldn't save the task." : "Couldn't create the task.", err));
+      // The dialog stays open with what was typed, for a retry.
+      toast.error(task ? "Couldn't save the task" : "Couldn't create the task", {
+        description: refusalReason(err),
+      });
     } finally {
       setSaving(false);
     }
@@ -309,12 +301,11 @@ export function TaskDialog({
   const persistThen = async (navigate: () => void) => {
     if (task && canSubmit) {
       setSaving(true);
-      setSaveError(null);
       try {
         await onSubmit(values);
       } catch (err) {
         setSaving(false);
-        setSaveError(saveErrorText("Couldn't save the task.", err));
+        toast.error("Couldn't save the task", { description: refusalReason(err) });
         return; // keep the dialog open on the current task if the save failed
       }
       setSaving(false);
@@ -666,7 +657,6 @@ export function TaskDialog({
 
         {/* Footer (close via the header ✕; no Cancel button). */}
         <div className="flex shrink-0 items-center justify-end gap-3 border-t px-4 py-3">
-          {saveError && <p className="mr-auto min-w-0 text-sm text-destructive">{saveError}</p>}
           {/* Create mode: keep the dialog open to add several tasks in a row. */}
           {!task && (
             <label className="flex cursor-pointer select-none items-center gap-2 text-xs text-muted-foreground">
@@ -706,14 +696,12 @@ export function CreateProjectDialog({
   const [icon, setIcon] = useState('');
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
   const nameRef = useAutoFocus<HTMLInputElement>(open);
 
   useEffect(() => {
     if (open) {
       setName('');
       setIcon('');
-      setSaveError(null);
     }
   }, [open]);
 
@@ -722,13 +710,12 @@ export function CreateProjectDialog({
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSaving(true);
-    setSaveError(null);
     try {
       await onSubmit({ name: name.trim(), icon: icon.trim() || null });
       onClose();
     } catch (err) {
-      // Keep the dialog open, with what went wrong, for a retry.
-      setSaveError(saveErrorText("Couldn't create the project.", err));
+      // The dialog stays open with what was typed, for a retry.
+      toast.error("Couldn't create the project", { description: refusalReason(err) });
     } finally {
       setSaving(false);
     }
@@ -801,7 +788,6 @@ export function CreateProjectDialog({
         </div>
 
         <div className="flex shrink-0 items-center justify-end gap-2 border-t px-4 py-3">
-          {saveError && <p className="mr-auto min-w-0 text-sm text-destructive">{saveError}</p>}
           <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>
             Cancel
           </Button>

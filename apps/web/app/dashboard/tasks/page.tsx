@@ -368,7 +368,7 @@ function TasksPageInner() {
         return created;
       } catch (err) {
         console.error('Failed to save task:', err);
-        throw err; // the dialog shows it by its submit button
+        throw err; // the dialog reports it and stays open for a retry
       }
     },
     [api, dialog.task, tasks],
@@ -384,7 +384,7 @@ function TasksPageInner() {
         updateActiveView({ projectFilter: project.id });
       } catch (err) {
         console.error('Failed to create project:', err);
-        throw err; // the dialog shows it by its submit button
+        throw err; // the dialog reports it and stays open for a retry
       }
     },
     [api, updateActiveView],

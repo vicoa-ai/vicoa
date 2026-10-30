@@ -1416,8 +1416,8 @@ async function backendApiError(response: Response): Promise<BackendApiError> {
  * Why the server refused a request, when the user can act on it: a 4xx that
  * came with a written `detail` ("A project with that name already exists").
  * Undefined for a network failure, a 5xx, or a 4xx without one, whose only
- * text is the generic "Backend API error: 500 …". For a toast's description or
- * an inline form error (see the toast rule in apps/web/AGENTS.md).
+ * text is the generic "Backend API error: 500 …". For a toast's description
+ * (see the toast rule in apps/web/AGENTS.md).
  */
 export function refusalReason(err: unknown): string | undefined {
   if (!(err instanceof Error)) return undefined;
