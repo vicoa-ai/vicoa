@@ -18,8 +18,8 @@ export interface CliLinkStatus {
   /** Where the launcher lives (or would). */
   path: string;
   /**
-   * The CLI's version: what the installed command runs, or before install what
-   * Install would add. Null for a foreign `vicoa`; absent from older desktop builds.
+   * The version the installed command runs. Null when it isn't installed (or
+   * reports none); absent from older desktop builds.
    */
   version?: string | null;
 }
@@ -76,23 +76,12 @@ export function cliRowDescription(status: CliLinkStatus | null): string {
     return `Another "vicoa" is already on your PATH (${status.path}) — remove it to let Vicoa manage this`;
   }
   if (status?.installed) {
-    return `Installed at ${status.path}`;
+    return `Installed at ${status.path}${status.version ? ` (v${status.version})` : ''}`;
   }
   if (status && !status.available) {
     return 'Finishing agent setup — open a session once, then install';
   }
   return 'Run vicoa daemon in the background and use task, automation, and session commands from your terminal';
-}
-
-/**
- * Pure: the description under the CLI "Version" row, or null to hide the row
- * (no version reported). Unit-tested in desktop-cli.test.ts.
- */
-export function cliVersionDescription(status: CliLinkStatus | null): string | null {
-  if (!status?.version) return null;
-  return status.installed
-    ? 'The version of vicoa your terminal runs'
-    : 'The version of vicoa that Install adds';
 }
 
 /** Pure: the action button label for the current state. */

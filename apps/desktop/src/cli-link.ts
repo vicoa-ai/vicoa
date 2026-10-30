@@ -229,18 +229,13 @@ async function readCliVersion(exe: string): Promise<string | null> {
 }
 
 /**
- * Version of the CLI the Settings row describes. Once installed, that is what
- * the launcher runs, which can differ from the app's own CLI (a newer curl
- * install is left in place); before that, the app's own CLI, which Install
- * would expose. Null for a foreign `vicoa` (not ours to run) or when the
- * binary reports no version.
+ * Version the installed `vicoa` command runs, for the Settings row. It can
+ * differ from the app's own CLI (a newer curl install is left in place). Null
+ * when the command isn't ours or isn't installed, or reports no version.
  */
 export async function getCliVersion(status: CliLinkStatus): Promise<string | null> {
-  if (status.foreign) {
-    return null;
-  }
   if (!status.installed) {
-    return status.currentBinary === null ? null : readCliVersion(status.currentBinary);
+    return null;
   }
   if (!isWindows) {
     return readCliVersion(status.path); // the launcher is a /bin/sh wrapper; run it as the terminal would
