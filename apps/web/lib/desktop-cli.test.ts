@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { cliButtonLabel, cliRowDescription, type CliLinkStatus } from '@/lib/desktop-cli';
+import {
+  cliButtonLabel,
+  cliRowDescription,
+  cliVersionDescription,
+  type CliLinkStatus,
+} from '@/lib/desktop-cli';
 
 const base: CliLinkStatus = {
   installed: false,
@@ -32,6 +37,22 @@ describe('cliRowDescription', () => {
 
   it('falls back to the install prompt on a null (web/SSR) status', () => {
     expect(cliRowDescription(null)).toMatch(/task, automation, and session/);
+  });
+});
+
+describe('cliVersionDescription', () => {
+  it('describes what the installed command runs', () => {
+    expect(cliVersionDescription({ ...base, installed: true, version: '1.9.13' })).toMatch(/your terminal runs/);
+  });
+
+  it('describes what Install would add before install', () => {
+    expect(cliVersionDescription({ ...base, version: '1.9.13' })).toMatch(/Install adds/);
+  });
+
+  it('hides the row when no version is reported (foreign, older desktop, web/SSR)', () => {
+    expect(cliVersionDescription({ ...base, foreign: true, version: null })).toBeNull();
+    expect(cliVersionDescription(base)).toBeNull();
+    expect(cliVersionDescription(null)).toBeNull();
   });
 });
 

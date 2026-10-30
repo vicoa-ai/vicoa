@@ -163,6 +163,11 @@ function windowsShim(exe: string): string {
   return `@echo off\r\n"${exe}" %*\r\n`;
 }
 
+/** The exe a `.cmd` shim runs (ours or install.ps1's), or null when it names none. */
+function windowsShimTarget(contents: string): string | null {
+  return /"([^"]+vicoa\.exe)"/i.exec(contents)?.[1] ?? null;
+}
+
 /**
  * Is an existing launcher one WE (or the curl/ps1 installer) manage, and thus
  * safe to overwrite — versus a `vicoa` the user installed some other way (pip,
@@ -206,6 +211,47 @@ export function getCliLinkStatus(): CliLinkStatus {
     // unreadable — treat as absent; install() will surface the real error
   }
   return { path: linkPath, installed, foreign, currentBinary: cliBinaryPath() };
+}
+
+/** `vicoa version 1.9.13` → `1.9.13`; null when the output carries no version. Exported for check.ts. */
+export function parseCliVersionOutput(output: string): string | null {
+  return /\b(\d+\.\d+\.\d+[\w.+-]*)/.exec(output)?.[1] ?? null;
+}
+
+/** What `exe --version` reports, or null when it won't run or says nothing parseable. */
+async function readCliVersion(exe: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(exe, ['--version'], { timeout: 15_000 });
+    return parseCliVersionOutput(stdout);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Version of the CLI the Settings row describes. Once installed, that is what
+ * the launcher runs, which can differ from the app's own CLI (a newer curl
+ * install is left in place); before that, the app's own CLI, which Install
+ * would expose. Null for a foreign `vicoa` (not ours to run) or when the
+ * binary reports no version.
+ */
+export async function getCliVersion(status: CliLinkStatus): Promise<string | null> {
+  if (status.foreign) {
+    return null;
+  }
+  if (!status.installed) {
+    return status.currentBinary === null ? null : readCliVersion(status.currentBinary);
+  }
+  if (!isWindows) {
+    return readCliVersion(status.path); // the launcher is a /bin/sh wrapper; run it as the terminal would
+  }
+  // A .cmd can't be run without a shell; run the exe it names instead.
+  try {
+    const target = windowsShimTarget(await fsp.readFile(status.path, 'utf8'));
+    return target === null ? null : await readCliVersion(target);
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -389,9 +435,9 @@ export async function refreshCliLinkIfInstalled(): Promise<void> {
     // The .cmd points straight at an exe; install.ps1's lives in runtime\<version>\.
     try {
       const contents = await fsp.readFile(status.path, 'utf8');
-      const target = /"([^"]+vicoa\.exe)"/i.exec(contents)?.[1];
+      const target = windowsShimTarget(contents);
       if (
-        target !== undefined &&
+        target !== null &&
         !launcherTargetIsStale(target, path.basename(path.dirname(target)), status.currentBinary, version)
       ) {
         return;

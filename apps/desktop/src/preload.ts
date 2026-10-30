@@ -86,6 +86,7 @@ interface CliLinkStatus {
   foreign: boolean;
   available: boolean;
   path: string;
+  version: string | null;
 }
 interface CliInstallResult {
   ok: boolean;

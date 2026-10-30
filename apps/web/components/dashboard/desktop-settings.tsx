@@ -43,6 +43,7 @@ import {
 import {
   cliButtonLabel,
   cliRowDescription,
+  cliVersionDescription,
   getCliStatus,
   getDesktopCliBridge,
   installCli,
@@ -745,6 +746,7 @@ function CliCommandCard() {
   };
 
   const disabled = busy || status?.foreign === true || (status !== null && !status.available);
+  const versionDescription = cliVersionDescription(status);
 
   return (
     <div className="mt-8">
@@ -761,6 +763,11 @@ function CliCommandCard() {
             {cliButtonLabel(status, busy)}
           </Button>
         </SettingsRow>
+        {versionDescription && (
+          <SettingsRow title="Version" description={versionDescription}>
+            <span className="text-xs text-muted-foreground">{status?.version}</span>
+          </SettingsRow>
+        )}
         {result && (
           <div className="px-4 py-3 text-xs">
             <div className={result.ok ? 'text-success' : 'text-warning'}>{result.message}</div>

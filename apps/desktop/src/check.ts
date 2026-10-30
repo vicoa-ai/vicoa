@@ -6,7 +6,7 @@ import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { isOlderVersion, launcherTargetIsStale } from './cli-link';
+import { isOlderVersion, launcherTargetIsStale, parseCliVersionOutput } from './cli-link';
 import { getWriteKey, normalizeBaseUrl, withoutWriteKey, withWriteKey } from './credentials';
 import {
   backoffDelayMs,
@@ -307,6 +307,9 @@ assert.equal(isOlderVersion('1.9.13', '1.9.13'), false, 'same version is not old
 assert.equal(isOlderVersion('2.0.0', '1.9.13'), false, 'newer is not older');
 assert.equal(isOlderVersion('daemon', '1.9.13'), false, 'non-version label is never older');
 assert.equal(isOlderVersion('1.9.0-rc.1', '1.9.13'), false, 'pre-release label is left alone');
+assert.equal(parseCliVersionOutput('vicoa version 1.9.13\n'), '1.9.13', 'reads `vicoa --version`');
+assert.equal(parseCliVersionOutput('vicoa version 2.0.0rc1'), '2.0.0rc1', 'keeps a pre-release suffix');
+assert.equal(parseCliVersionOutput('usage: vicoa [-h]'), null, 'no version in the output -> null');
 {
   // Mirrors the Unix runtime: <root>/<version> is a real dir (curl install) or a
   // link to the app's daemon dir; the launcher runs <root>/current/vicoa.

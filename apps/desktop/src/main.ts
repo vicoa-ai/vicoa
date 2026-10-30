@@ -64,6 +64,7 @@ import {
   autoInstallCliLinkOnce,
   displayPath,
   getCliLinkStatus,
+  getCliVersion,
   installCliLink,
   refreshCliLinkIfInstalled,
 } from './cli-link';
@@ -834,13 +835,14 @@ function registerIpcHandlers(): void {
   // Install-the-`vicoa`-command bridge (Settings UI). Status is a trimmed view
   // for the renderer; install returns the full result so the UI can show the
   // PATH hint inline. The app menu item uses the same core with a native dialog.
-  ipcMain.handle('vicoa:cli-status', () => {
+  ipcMain.handle('vicoa:cli-status', async () => {
     const s = getCliLinkStatus();
     return {
       installed: s.installed,
       foreign: s.foreign,
       available: s.currentBinary !== null,
       path: displayPath(s.path),
+      version: await getCliVersion(s),
     };
   });
   ipcMain.handle('vicoa:cli-install', () => installCliLink());
