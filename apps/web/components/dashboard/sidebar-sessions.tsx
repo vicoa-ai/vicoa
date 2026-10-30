@@ -126,7 +126,7 @@ import {
   githubPrListRequestedAt,
   PR_CACHE_TTL_MS,
   rpcGitStatus,
-  rpcGitWorktreeList,
+  rpcGitWorktreeListWithMain,
   rpcGitWorktreeRemove,
   rpcGithubPrListCached,
   type PrSnapshot,
@@ -262,15 +262,20 @@ async function fetchGitView(
   // Captured before the RPCs go out: a folder that appears while they are in
   // flight is not something this list can speak for either.
   const judgeable = new Set(target.worktreePaths);
-  const [worktrees, branch] = await Promise.all([
-    rpcGitWorktreeList(machineId, target.listPath).catch(() => null),
-    target.mainPath
-      ? rpcGitStatus(machineId, target.mainPath)
+  const listing = await rpcGitWorktreeListWithMain(machineId, target.listPath).catch(() => null);
+  const worktrees = listing?.worktrees ?? null;
+  // The main checkout's branch comes with the list. `git status` (a full
+  // working-tree scan, the slowest call of a refresh) only answers for a
+  // daemon that predates `main_branch`, or a detached main checkout, which it
+  // labels by commit. A failed list means the machine can't answer either.
+  const branch =
+    !target.mainPath || !listing
+      ? null
+      : listing.mainBranch ||
+        (await rpcGitStatus(machineId, target.mainPath)
           .then((s) => s.branch)
-          .catch(() => null)
-      : Promise.resolve<string | null>(null),
-  ]);
-  // Cached, unlike the two local-git calls above: this one spends a GitHub API
+          .catch(() => null));
+  // Cached, unlike the local-git calls above: this one spends a GitHub API
   // request, and `focus` fires as often as the user alt-tabs. Not asked at all
   // for a project with no branch rows to decorate.
   const prs: PrSnapshot | null = hasWorktreeRows(worktrees, target.worktreePaths)

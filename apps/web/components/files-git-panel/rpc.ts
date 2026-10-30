@@ -454,13 +454,15 @@ export async function rpcGitWorktreeList(
   return (await rpcGitWorktreeListWithMain(machineId, cwd)).worktrees;
 }
 
-/** A repo's linked worktrees plus where its main checkout is. `cwd` may be
- * any folder of the repo — a subfolder or a linked worktree — which is what
- * makes `mainPath` useful: it resolves whatever path the caller holds to the
- * repo root. `mainPath` is null on a daemon that predates the field. */
+/** A repo's linked worktrees plus where its main checkout is and what it has
+ * checked out. `cwd` may be any folder of the repo — a subfolder or a linked
+ * worktree — which is what makes `mainPath` useful: it resolves whatever path
+ * the caller holds to the repo root. `mainBranch` is `""` for a detached main
+ * checkout. Both are null on a daemon that predates the field. */
 export interface WorktreeListing {
   mainPath: string | null;
   mainDisplayPath: string | null;
+  mainBranch: string | null;
   worktrees: WorktreeInfo[];
 }
 
@@ -476,6 +478,7 @@ export async function rpcGitWorktreeListWithMain(
     mainPath: typeof result.main_path === 'string' ? result.main_path : null,
     mainDisplayPath:
       typeof result.main_display_path === 'string' ? result.main_display_path : null,
+    mainBranch: typeof result.main_branch === 'string' ? result.main_branch : null,
     worktrees: (result.worktrees as WorktreeInfo[]) ?? [],
   };
 }
