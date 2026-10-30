@@ -133,6 +133,7 @@ import {
   type ChatAnnotation,
 } from '@/lib/chat-annotations';
 import { postInstanceMessage } from '@/lib/agent-instance-api';
+import { toast, type ToastOptions } from '@/lib/toast';
 import { MAX_ATTACHMENTS_PER_MESSAGE, MAX_ATTACHMENT_BYTES, type ChatUploadedAttachment } from '@/components/chat-input';
 import { formatFileSize } from '@/components/chat-attachments';
 import { GitBranch, File as FileIcon, FolderPlus } from 'lucide-react';
@@ -1877,8 +1878,11 @@ function NewSessionContent() {
         // Order is preserved so the images arrive as the user arranged them.
         const attachmentIds = uploaded.filter((id): id is string => id !== null);
         const failedCount = images.length - attachmentIds.length;
-        let problem = failedCount > 0
-          ? `${failedCount} image${failedCount > 1 ? 's' : ''} couldn't be uploaded — the session started without ${failedCount > 1 ? 'them' : 'it'}.`
+        let problem: { title: string; options: ToastOptions } | null = failedCount > 0
+          ? {
+              title: `Couldn't upload ${failedCount} image${failedCount > 1 ? 's' : ''}`,
+              options: { description: `The session started without ${failedCount > 1 ? 'them' : 'it'}.` },
+            }
           : null;
 
         if (attachmentIds.length > 0 || finalPrompt) {
@@ -1889,14 +1893,17 @@ function NewSessionContent() {
           } catch (error) {
             console.error('Failed to send the first message:', error);
             markSessionHasPrompt(newInstanceId, false);
-            problem = 'The session started, but its first message could not be sent — please resend it in the chat.';
+            problem = {
+              title: "Couldn't send the first message",
+              options: { description: 'The session started. Please resend it in the chat.' },
+            };
           }
         } else {
           // Every upload failed and there was no text: nothing left to send, so
           // let the chat show its idle state rather than a loader that never ends.
           markSessionHasPrompt(newInstanceId, false);
         }
-        if (problem) alert(problem);
+        if (problem) toast.error(problem.title, problem.options);
       }
 
       refreshData();

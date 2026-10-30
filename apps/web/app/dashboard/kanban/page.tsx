@@ -16,6 +16,7 @@ import { StartEllipsisText } from '@/components/ui/start-ellipsis-text';
 import { extractMessageOptions } from '@/components/ui/message-markdown-utils';
 import { AgentInstanceDetail, AgentInstanceResponse, MessageResponse } from '@/lib/backend-api';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
+import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 
 type ColumnKey = 'running' | 'needInput' | 'toReview' | 'done' | 'closed';
@@ -473,7 +474,7 @@ export default function AgentManagerPage() {
       setDetailsById((prev) => ({ ...prev, [instanceId]: detail }));
     } catch (postError) {
       console.error(`Failed to send message to ${instanceId}:`, postError);
-      alert('Failed to send message');
+      toast.error("Couldn't send message");
       await refreshData();
     } finally {
       setBusyInstanceId((current) => (current === instanceId ? null : current));
@@ -493,7 +494,7 @@ export default function AgentManagerPage() {
         updateInstance(instanceId, { name: previousInstance.name });
       }
       console.error(`Failed to rename ${instanceId}:`, renameError);
-      alert('Failed to rename session');
+      toast.error("Couldn't rename session");
     } finally {
       setBusyInstanceId((current) => (current === instanceId ? null : current));
     }
@@ -519,7 +520,7 @@ export default function AgentManagerPage() {
       });
     } catch (markDoneError) {
       console.error(`Failed to mark ${instanceId} as completed:`, markDoneError);
-      alert('Failed to mark session as done');
+      toast.error("Couldn't archive session");
       await refreshData();
     } finally {
       setBusyInstanceId((current) => (current === instanceId ? null : current));
@@ -553,7 +554,7 @@ export default function AgentManagerPage() {
       setDeleteDialog({ open: false, sessionId: '', sessionName: '' });
     } catch (deleteError) {
       console.error(`Failed to delete ${instanceId}:`, deleteError);
-      alert('Failed to delete session');
+      toast.error("Couldn't delete session");
     } finally {
       setBusyInstanceId((current) => (current === instanceId ? null : current));
     }

@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Bell, BellOff, Smartphone, TestTube, Loader2 } from 'lucide-react';
 import { PushNotificationService } from '@/lib/push-notifications';
+import { toast } from '@/lib/toast';
 
 interface NotificationSettings {
   push_enabled: boolean;
@@ -90,7 +91,7 @@ export default function NotificationsPage() {
       }
     } catch (error) {
       console.error('Failed to save notification settings:', error);
-      alert('Failed to save settings');
+      toast.error("Couldn't save notification settings");
     }
   };
 
@@ -103,21 +104,22 @@ export default function NotificationsPage() {
       setPermission(permission);
 
       if (permission !== 'granted') {
-        alert('Push notifications permission denied');
+        // A denial shows the "blocked" note on the page; a dismissed prompt doesn't.
+        if (permission !== 'denied') toast.error("Couldn't enable push notifications");
         return;
       }
 
       // Subscribe to push notifications
       const subscription = await pushService.subscribe();
       if (!subscription) {
-        alert('Failed to subscribe to push notifications');
+        toast.error("Couldn't enable push notifications");
         return;
       }
 
       // Register with server
       const registered = await pushService.registerWithServer(subscription);
       if (!registered) {
-        alert('Failed to register push notifications with server');
+        toast.error("Couldn't enable push notifications");
         return;
       }
 
@@ -126,11 +128,9 @@ export default function NotificationsPage() {
       // Update settings
       const newSettings = { ...settings, push_enabled: true };
       await saveSettings(newSettings);
-
-      alert('Push notifications enabled successfully!');
     } catch (error) {
       console.error('Failed to enable push notifications:', error);
-      alert('Failed to enable push notifications');
+      toast.error("Couldn't enable push notifications");
     } finally {
       setIsLoading(false);
     }
@@ -143,7 +143,7 @@ export default function NotificationsPage() {
       // Unsubscribe
       const unsubscribed = await pushService.unsubscribe();
       if (!unsubscribed) {
-        alert('Failed to unsubscribe from push notifications');
+        toast.error("Couldn't disable push notifications");
         return;
       }
 
@@ -152,11 +152,9 @@ export default function NotificationsPage() {
       // Update settings
       const newSettings = { ...settings, push_enabled: false };
       await saveSettings(newSettings);
-
-      alert('Push notifications disabled successfully!');
     } catch (error) {
       console.error('Failed to disable push notifications:', error);
-      alert('Failed to disable push notifications');
+      toast.error("Couldn't disable push notifications");
     } finally {
       setIsLoading(false);
     }
@@ -165,10 +163,10 @@ export default function NotificationsPage() {
   const handleTestNotification = async () => {
     try {
       await pushService.testNotification();
-      alert('Test notification sent! Check your notifications.');
+      toast.success('Test notification sent');
     } catch (error) {
       console.error('Failed to send test notification:', error);
-      alert('Failed to send test notification');
+      toast.error("Couldn't send the test notification");
     }
   };
 

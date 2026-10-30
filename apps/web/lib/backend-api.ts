@@ -1370,6 +1370,9 @@ export interface BillingPortalSessionResponse {
  */
 export interface BackendApiError extends Error {
   status: number;
+  /** The server's own words, when its answer carried a `detail` string; also
+   *  the message. Unset when the message is the generic HTTP fallback. */
+  detail?: string;
   capability?: string;
   requiredRole?: string;
   /** A machine-readable reason some 4xx answers carry (e.g.
@@ -1381,6 +1384,7 @@ export interface BackendApiError extends Error {
 
 async function backendApiError(response: Response): Promise<BackendApiError> {
   let errorMessage = `Backend API error: ${response.status} ${response.statusText}`;
+  let detail: string | undefined;
   let capability: string | undefined;
   let requiredRole: string | undefined;
   let code: string | undefined;
@@ -1389,6 +1393,7 @@ async function backendApiError(response: Response): Promise<BackendApiError> {
     const errorBody = await response.json();
     if (typeof errorBody?.detail === 'string' && errorBody.detail.trim()) {
       errorMessage = errorBody.detail;
+      detail = errorMessage;
     }
     if (typeof errorBody?.capability === 'string') capability = errorBody.capability;
     if (typeof errorBody?.required_role === 'string') requiredRole = errorBody.required_role;
@@ -1399,11 +1404,26 @@ async function backendApiError(response: Response): Promise<BackendApiError> {
   }
   return Object.assign(new Error(errorMessage), {
     status: response.status,
+    detail,
     capability,
     requiredRole,
     code,
     suggestedKey,
   });
+}
+
+/**
+ * Why the server refused a request, when the user can act on it: a 4xx that
+ * came with a written `detail` ("A project with that name already exists").
+ * Undefined for a network failure, a 5xx, or a 4xx without one, whose only
+ * text is the generic "Backend API error: 500 …". For a toast's description or
+ * an inline form error (see the toast rule in apps/web/AGENTS.md).
+ */
+export function refusalReason(err: unknown): string | undefined {
+  if (!(err instanceof Error)) return undefined;
+  const { status, detail } = err as Partial<BackendApiError>;
+  if (typeof status !== 'number' || status < 400 || status >= 500) return undefined;
+  return detail;
 }
 
 /**

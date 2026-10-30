@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
+import { toast } from '@/lib/toast';
 
 export function useSessionOperations(instanceId?: string) {
   const { api, refreshData, recentInstances } = useAgentDashboard();
@@ -8,7 +9,7 @@ export function useSessionOperations(instanceId?: string) {
 
   const renameSession = useCallback(async (sessionId: string, newName: string) => {
     if (!api) {
-      alert('API not initialized');
+      toast.error("Couldn't rename session");
       return;
     }
 
@@ -17,13 +18,13 @@ export function useSessionOperations(instanceId?: string) {
       await refreshData();
     } catch (error) {
       console.error('Failed to rename session:', error);
-      alert('Failed to rename session');
+      toast.error("Couldn't rename session");
     }
   }, [api, refreshData]);
 
   const deleteSession = useCallback(async (sessionId: string, navigateToNextSession = false) => {
     if (!api) {
-      alert('API not initialized');
+      toast.error("Couldn't delete session");
       return;
     }
 
@@ -65,13 +66,14 @@ export function useSessionOperations(instanceId?: string) {
       }
     } catch (error) {
       console.error('Failed to delete session:', error);
-      alert('Failed to delete session');
+      toast.error("Couldn't delete session");
     }
   }, [api, refreshData, recentInstances, instanceId, router]);
 
+  // The session menus call this Archive, so the failure says so.
   const markAsComplete = useCallback(async (sessionId: string) => {
     if (!api) {
-      alert('API not initialized');
+      toast.error("Couldn't archive session");
       return;
     }
 
@@ -80,13 +82,13 @@ export function useSessionOperations(instanceId?: string) {
       await refreshData();
     } catch (error) {
       console.error('Failed to mark session as completed:', error);
-      alert('Failed to mark session as completed');
+      toast.error("Couldn't archive session");
     }
   }, [api, refreshData]);
 
   /** Archive several sessions at once — one round-trip for the lot, not one
    *  per session — and let the caller decide when to refresh. Rejects on the
-   *  first failure (no alert), for flows that surface errors in their own UI. */
+   *  first failure (no toast), for flows that surface errors in their own UI. */
   const archiveSessions = useCallback(async (sessionIds: string[]) => {
     if (!api) throw new Error('API not initialized');
     await Promise.all(
@@ -96,7 +98,7 @@ export function useSessionOperations(instanceId?: string) {
 
   const markAsUnread = useCallback(async (sessionId: string) => {
     if (!api) {
-      alert('API not initialized');
+      toast.error("Couldn't mark session as unread");
       return;
     }
 
@@ -105,7 +107,7 @@ export function useSessionOperations(instanceId?: string) {
       await refreshData();
     } catch (error) {
       console.error('Failed to mark session as unread:', error);
-      alert('Failed to mark session as unread');
+      toast.error("Couldn't mark session as unread");
     }
   }, [api, refreshData]);
 
@@ -118,6 +120,9 @@ export function useSessionOperations(instanceId?: string) {
       return true;
     } catch (error) {
       console.error('Failed to toggle pin:', error);
+      // Reported here so every Pin (session header, sidebar row) says so; the
+      // boolean is for callers that rolled back an optimistic update.
+      toast.error(pinned ? "Couldn't pin session" : "Couldn't unpin session");
       return false;
     }
   }, [api]);

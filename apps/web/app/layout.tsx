@@ -10,6 +10,7 @@ import { PostHogIdentify } from '@/components/posthog-identify';
 import { DesktopAuthGate } from '@/components/dashboard/desktop-auth-gate';
 import { DesktopAuthHandoff } from '@/components/dashboard/desktop-auth-handoff';
 import { DesktopWindowControls } from '@/components/desktop/window-chrome';
+import { Toaster } from '@/components/ui/toaster';
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://vicoa.ai'),
@@ -236,6 +237,10 @@ export default function RootLayout({
                 leaves them clickable over the surrounding drag strips; renders
                 nothing on macOS/web. */}
             {IS_DESKTOP ? <DesktopWindowControls /> : null}
+            {/* toast.* (lib/toast.ts). Last for the same drag hit-test reason:
+                in a narrow window the toast sits on the title bar and must
+                stay clickable. */}
+            <Toaster />
           </SWRConfig>
         </ThemeProvider>
       </body>

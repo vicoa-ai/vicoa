@@ -77,6 +77,7 @@ import { RenameSessionDialog, DeleteSessionDialog, CompleteSessionDialog } from 
 import { ShareLinkDialog } from '@/components/dashboard/share-link-dialog';
 import { useSessionOperations, useCopyToClipboard } from '@/lib/hooks/use-session-operations';
 import { useNow, useSessionLiveness } from '@/lib/hooks/use-session-liveness';
+import { toast } from '@/lib/toast';
 import { blocksSending, isClosedByDesign, liveStateHint } from '@/lib/session-liveness';
 import {
   canResumeSession,
@@ -674,7 +675,6 @@ function AgentInstanceContent() {
       const original = instance?.pinned_at ?? null;
       getMessageStore().patchInstance(instanceId, { pinned_at: original });
       dashboardContext.updateInstance(instanceId, { pinned_at: original });
-      alert(wasPinned ? "Couldn't unpin session" : "Couldn't pin session");
     }
   }, [instance?.pinned_at, instanceId, togglePin, dashboardContext]);
 
@@ -710,7 +710,7 @@ function AgentInstanceContent() {
       console.error('Failed to move session to another project:', err);
       getMessageStore().patchInstance(instanceId, { project_id: previous });
       dashboardContext.updateInstance(instanceId, { project_id: previous });
-      alert("Couldn't move the session to that project");
+      toast.error("Couldn't move the session to that project");
     }
   }, [instance?.project_id, instanceId, dashboardContext]);
 
@@ -734,7 +734,7 @@ function AgentInstanceContent() {
       projectId = project.id;
     } catch (err) {
       console.error('Failed to create a project for the session folder:', err);
-      alert("Couldn't create the project");
+      toast.error("Couldn't create the project");
       return;
     }
     await handleMoveToProject(projectId);
@@ -1101,7 +1101,7 @@ function AgentInstanceContent() {
     } catch (err) {
       console.error('Failed to send message:', err);
       removeOptimisticMessage(optimisticId);
-      alert('Failed to send message');
+      toast.error("Couldn't send message");
       setIsAgentThinking(false);
     } finally {
       setIsSending(false);
@@ -1131,7 +1131,7 @@ function AgentInstanceContent() {
       } catch (err) {
         if (optimisticId) removeOptimisticMessage(optimisticId);
         console.error('Failed to submit AskUserQuestion answers:', err);
-        alert('Failed to submit AskUserQuestion answers');
+        toast.error("Couldn't submit your answers");
       }
     })();
   }, [postMessageToInstance, addOptimisticUserMessage, removeOptimisticMessage]);
@@ -1146,7 +1146,7 @@ function AgentInstanceContent() {
       } catch (err) {
         removeOptimisticMessage(optimisticId);
         console.error('Failed to cancel AskUserQuestion:', err);
-        alert('Failed to cancel AskUserQuestion');
+        toast.error("Couldn't cancel the question");
       }
     })();
   }, [postMessageToInstance, addOptimisticUserMessage, removeOptimisticMessage]);
@@ -1572,7 +1572,9 @@ function AgentInstanceContent() {
           });
         } catch (err) {
           console.error('Failed to load the full history for the fork:', err);
-          alert("Couldn't load the full history, so the fork was not started. Please try again.");
+          toast.error("Couldn't start the fork", {
+            description: "The full history didn't load. Please try again.",
+          });
           return;
         } finally {
           isLoadingOlderRef.current = false;
