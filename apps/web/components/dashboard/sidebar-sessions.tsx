@@ -132,7 +132,7 @@ import {
   type PrSnapshot,
   type WorktreeInfo,
 } from '@/components/files-git-panel/rpc';
-import { prMayStillChange, type PrInfo } from '@/components/dashboard/pr-status';
+import { prForCheckout, type PrInfo } from '@/components/dashboard/pr-status';
 
 // Selected-row highlight for session rows (filter-menu.tsx carries its own copy).
 const ITEM_SELECTED = 'bg-foreground/[0.08] dark:bg-foreground/10 text-foreground';
@@ -200,14 +200,14 @@ interface RenderedSubGroup {
   pr: PrInfo | null;
 }
 
-/** How often the PR icons of a repo that can still change are re-checked
-    while the window is visible. The backstop for what nothing announces: a
-    merge on github.com, CI finishing, a PR an agent opened mid-turn and then
-    kept working past. */
+/** How often the git view of a repo with a live worktree is re-checked while
+    the window is visible. The backstop for what nothing announces: a merge on
+    github.com, CI finishing, a PR opened from a terminal or by an agent of
+    another project, a branch switched in a terminal. */
 const PR_POLL_INTERVAL_MS = 3 * 60_000;
 
-/** Floor between two PR fetches of one repo set off by its sessions ending
-    turns; a burst of agents finishing collapses into one trailing fetch. */
+/** Floor between two refreshes of one repo set off by its sessions ending
+    turns; a burst of agents finishing collapses into one trailing refresh. */
 const PR_TURN_REFRESH_MIN_INTERVAL_MS = 30_000;
 
 /** A session in one of these is mid-turn; leaving them ends the turn. */
@@ -224,19 +224,73 @@ function hasWorktreeRows(worktrees: WorktreeInfo[] | null, worktreePaths: string
   );
 }
 
-/** Whether the poll should re-check this repo: a live worktree branch has no PR
-    yet, or an open/draft one. A repo whose branches are all merged or closed is
-    settled (a turn ending in it still refreshes it). An unknown worktree list
-    is skipped too: that is an unreachable machine, where the call would only
+/** Whether the poll should re-check this repo: it has a live worktree, whose
+    row can gain a PR, change state or switch branch at any time. One whose PR
+    merged counts too: a reused worktree opens a new one. An unknown worktree
+    list is skipped: that is an unreachable machine, where the calls would only
     fail the same way; the next focus retries the whole view. */
-function wantsPrPoll(view: ProjectGitView): boolean {
-  return (view.worktrees ?? []).some(
-    (w) =>
-      !w.prunable &&
-      w.branch !== '' &&
-      !isAgentScratchWorktree(w.path) &&
-      prMayStillChange(view.prs[w.branch]),
-  );
+function wantsPoll(view: ProjectGitView): boolean {
+  return (view.worktrees ?? []).some((w) => !w.prunable && !isAgentScratchWorktree(w.path));
+}
+
+/** A project whose git view the sidebar keeps (see `useProjectWorktrees`). */
+interface GitViewTarget {
+  key: string;
+  machineId: string | null;
+  listPath: string;
+  mainPath: string | null;
+  worktreePaths: string[];
+}
+
+/** One project's git view as just fetched. `prs` is null on a transient
+    failure. */
+interface FetchedGitView {
+  branch: string | null;
+  worktrees: WorktreeInfo[] | null;
+  judgeable: ReadonlySet<string>;
+  prs: PrSnapshot | null;
+}
+
+/** Fetch one project's worktree list, main-checkout branch and PRs, reusing a
+    PR request sent within `prMaxAgeMs`. Never rejects: each failure is folded
+    into its field. */
+async function fetchGitView(
+  target: GitViewTarget,
+  machineId: string,
+  prMaxAgeMs: number,
+): Promise<FetchedGitView> {
+  // Captured before the RPCs go out: a folder that appears while they are in
+  // flight is not something this list can speak for either.
+  const judgeable = new Set(target.worktreePaths);
+  const [worktrees, branch] = await Promise.all([
+    rpcGitWorktreeList(machineId, target.listPath).catch(() => null),
+    target.mainPath
+      ? rpcGitStatus(machineId, target.mainPath)
+          .then((s) => s.branch)
+          .catch(() => null)
+      : Promise.resolve<string | null>(null),
+  ]);
+  // Cached, unlike the two local-git calls above: this one spends a GitHub API
+  // request, and `focus` fires as often as the user alt-tabs. Not asked at all
+  // for a project with no branch rows to decorate.
+  const prs: PrSnapshot | null = hasWorktreeRows(worktrees, target.worktreePaths)
+    ? await rpcGithubPrListCached(machineId, target.listPath, prMaxAgeMs).catch(() => null)
+    : { prs: {}, fetchedAt: Date.now() };
+  return { branch, worktrees, judgeable, prs };
+}
+
+/** Fold a fetch into the view on hand. The git half always replaces it; the
+    PRs only when this answer was requested later than the one shown, and never
+    with a failure, so neither a transient `gh` error nor a slow response that
+    lands after a newer one costs the icons. */
+function mergeGitView(old: ProjectGitView | undefined, fresh: FetchedGitView): ProjectGitView {
+  const { prs, ...git } = fresh;
+  const kept = old && (prs === null || old.prsFetchedAt > prs.fetchedAt) ? old : null;
+  return {
+    ...git,
+    prs: kept ? kept.prs : prs?.prs ?? {},
+    prsFetchedAt: kept ? kept.prsFetchedAt : prs?.fetchedAt ?? 0,
+  };
 }
 
 /**
@@ -258,28 +312,24 @@ function wantsPrPoll(view: ProjectGitView): boolean {
  * to its session-derived baseline and makes no claim about which worktrees
  * still exist.
  *
- * PRs also refresh on their own, without the worktree list: per repo through
- * `requestPrRefresh` when one of its sessions ends a turn (the agent may just
- * have opened or merged one while the user watched, so no focus event comes),
- * and on a slow poll while the window is visible.
+ * A single project also refreshes on its own: through `requestProjectRefresh`
+ * when one of its sessions ends a turn (the agent may just have switched a
+ * branch, or opened or merged a PR, while the user watched, so no focus event
+ * comes), and on a slow poll while the window is visible. Both re-read the
+ * branches with the PRs: a PR is matched to a row by its branch, so a fresh PR
+ * list against a stale branch name still shows the wrong one.
  */
 function useProjectWorktrees(
-  targets: ReadonlyArray<{
-    key: string;
-    machineId: string | null;
-    listPath: string;
-    mainPath: string | null;
-    worktreePaths: string[];
-  }>,
+  targets: ReadonlyArray<GitViewTarget>,
   refreshNonce: number,
 ): {
   views: Map<string, ProjectGitView>;
-  /** A session of this project ended a turn: re-fetch its repo's PRs. */
-  requestPrRefresh: (key: string) => void;
+  /** A session of this project ended a turn: re-fetch its git view. */
+  requestProjectRefresh: (key: string) => void;
 } {
   const [views, setViews] = useState<Map<string, ProjectGitView>>(new Map());
-  // The latest targets and views, for the timer-driven PR refreshes below,
-  // which must not re-arm on every render.
+  // The latest targets and views, for the timer-driven refreshes below, which
+  // must not re-arm on every render.
   const targetsRef = useRef(targets);
   const viewsRef = useRef(views);
   useEffect(() => {
@@ -301,45 +351,17 @@ function useProjectWorktrees(
     let cancelled = false;
     const fetchAll = async () => {
       const entries = await Promise.all(
-        targets.map(async (t) => {
-          if (!t.machineId || !t.listPath) return null;
-          const machineId = t.machineId;
-          // Captured before the RPCs go out: a folder that appears while they
-          // are in flight is not something this list can speak for either.
-          const judgeable = new Set(t.worktreePaths);
-          const [worktrees, branch] = await Promise.all([
-            rpcGitWorktreeList(machineId, t.listPath).catch(() => null),
-            t.mainPath
-              ? rpcGitStatus(machineId, t.mainPath)
-                  .then((s) => s.branch)
-                  .catch(() => null)
-              : Promise.resolve<string | null>(null),
-          ]);
-          // Cached, unlike the two local-git calls above: this one spends a
-          // GitHub API request, and `focus` fires as often as the user
-          // alt-tabs. Not asked at all for a project with no branch rows to
-          // decorate. null = a transient failure.
-          const prs: PrSnapshot | null = hasWorktreeRows(worktrees, t.worktreePaths)
-            ? await rpcGithubPrListCached(machineId, t.listPath).catch(() => null)
-            : { prs: {}, fetchedAt: Date.now() };
-          return { key: t.key, branch, worktrees, judgeable, prs };
-        }),
+        targets.map(async (t) =>
+          t.machineId && t.listPath
+            ? ([t.key, await fetchGitView(t, t.machineId, PR_CACHE_TTL_MS)] as const)
+            : null,
+        ),
       );
       if (cancelled) return;
       setViews((prev) => {
         const next = new Map<string, ProjectGitView>();
         for (const entry of entries) {
-          if (!entry) continue;
-          const { key, prs, ...git } = entry;
-          const old = prev.get(key);
-          // Keep the icons on hand when this fetch failed, or when a per-repo
-          // refresh landed a newer answer while this batch was in flight.
-          const kept = old && (prs === null || old.prsFetchedAt > prs.fetchedAt) ? old : null;
-          next.set(key, {
-            ...git,
-            prs: kept ? kept.prs : prs?.prs ?? {},
-            prsFetchedAt: kept ? kept.prsFetchedAt : prs?.fetchedAt ?? 0,
-          });
+          if (entry) next.set(entry[0], mergeGitView(prev.get(entry[0]), entry[1]));
         }
         return next;
       });
@@ -356,31 +378,27 @@ function useProjectWorktrees(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, refreshNonce]);
 
-  /** Re-fetch one repo's PRs, reusing a request sent within `maxAgeMs`. The
-      answer lands only if newer than the one on hand; a failure keeps it. */
-  const refreshPrs = useCallback((key: string, maxAgeMs: number) => {
+  /** Re-fetch one project's git view, reusing a PR request sent within
+      `maxAgeMs`. */
+  const refreshProject = useCallback((key: string, maxAgeMs: number) => {
     const target = targetsRef.current.find((t) => t.key === key);
     const view = viewsRef.current.get(key);
-    // No view yet: the full fetch still in flight brings the PRs with it.
+    // No view yet: the full fetch still in flight covers it. A project with no
+    // branch rows shows nothing a refresh could change.
     if (!target?.machineId || !target.listPath || !view) return;
     if (!hasWorktreeRows(view.worktrees, target.worktreePaths)) return;
-    rpcGithubPrListCached(target.machineId, target.listPath, maxAgeMs).then(
-      (snap) =>
-        setViews((prev) => {
-          const old = prev.get(key);
-          if (!old || old.prsFetchedAt >= snap.fetchedAt) return prev;
-          return new Map(prev).set(key, { ...old, prs: snap.prs, prsFetchedAt: snap.fetchedAt });
-        }),
-      () => {
-        // Transient: keep the icons on hand; the next trigger retries.
-      },
+    void fetchGitView(target, target.machineId, maxAgeMs).then((fresh) =>
+      setViews((prev) =>
+        // Gone from the sidebar meanwhile: don't bring it back.
+        prev.has(key) ? new Map(prev).set(key, mergeGitView(prev.get(key), fresh)) : prev,
+      ),
     );
   }, []);
 
   // Per project: the trailing turn-end refresh queued for it, and when the
   // latest turn it covers ended.
   const turnRefreshes = useRef(new Map<string, { timer: number; since: number }>());
-  const requestPrRefresh = useCallback(
+  const requestProjectRefresh = useCallback(
     (key: string) => {
       const now = Date.now();
       const queued = turnRefreshes.current.get(key);
@@ -396,13 +414,13 @@ function useProjectWorktrees(
       const entry = { timer: 0, since: now };
       entry.timer = window.setTimeout(() => {
         turnRefreshes.current.delete(key);
-        // Reuse a request only if it went out after the latest turn ended: an
-        // earlier one may predate the PR that turn opened or merged.
-        refreshPrs(key, Date.now() - entry.since);
+        // Reuse a PR request only if it went out after the latest turn ended:
+        // an earlier one may predate the PR that turn opened or merged.
+        refreshProject(key, Date.now() - entry.since);
       }, delay);
       turnRefreshes.current.set(key, entry);
     },
-    [refreshPrs],
+    [refreshProject],
   );
   useEffect(() => {
     const queued = turnRefreshes.current;
@@ -416,13 +434,13 @@ function useProjectWorktrees(
     const id = window.setInterval(() => {
       if (document.visibilityState !== 'visible') return;
       for (const [key, view] of viewsRef.current) {
-        if (wantsPrPoll(view)) refreshPrs(key, PR_CACHE_TTL_MS);
+        if (wantsPoll(view)) refreshProject(key, PR_CACHE_TTL_MS);
       }
     }, PR_POLL_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [refreshPrs]);
+  }, [refreshProject]);
 
-  return { views, requestPrRefresh };
+  return { views, requestProjectRefresh };
 }
 
 export interface SidebarSessionsProps {
@@ -857,15 +875,15 @@ export function SidebarSessions({
             }),
     [sidebarGroups, worktreesOn, groupBy],
   );
-  const { views: projectGitViews, requestPrRefresh } = useProjectWorktrees(
+  const { views: projectGitViews, requestProjectRefresh } = useProjectWorktrees(
     worktreeTargets,
     gitViewNonce,
   );
 
   // A session ending a turn is when an agent has typically just run `gh pr
-  // create` or `gh pr merge`, while the user watched, so no focus event comes
-  // to refresh the icon. Refresh that session's repo only: no other repo
-  // changed. The hook throttles per repo.
+  // create` or `gh pr merge`, or switched a branch, while the user watched, so
+  // no focus event comes to refresh the row. Refresh that session's repo only:
+  // no other repo changed. The hook throttles per repo.
   const lastStatusRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     const prev = lastStatusRef.current;
@@ -878,11 +896,11 @@ export function SidebarSessions({
         WORKING_STATUSES.has(before) &&
         !WORKING_STATUSES.has(inst.status)
       ) {
-        requestPrRefresh(projectGroupKey(inst));
+        requestProjectRefresh(projectGroupKey(inst));
       }
     }
     lastStatusRef.current = next;
-  }, [recentInstances, requestPrRefresh]);
+  }, [recentInstances, requestProjectRefresh]);
 
   // Right-click "Delete worktree" confirmation. Held null until a deletion needs
   // confirming (a live session or uncommitted changes); a clean, session-free
@@ -1257,8 +1275,7 @@ export function SidebarSessions({
             .find((r): r is string => typeof r === 'string' && r.length > 0) ??
           null;
         const subs: RenderedSubGroup[] = [];
-        const prFor = (b: string | null | undefined): PrInfo | null =>
-          (b && view?.prs[b]) || null;
+        const prs = view?.prs ?? {};
         if (mainInstances.length > 0) {
           subs.push({
             key: `${key}::__main__`,
@@ -1269,7 +1286,7 @@ export function SidebarSessions({
             remove: null,
             // The default branch rarely has a PR of its own; when it does
             // (a release branch checked out as main) it labels correctly.
-            pr: prFor(view?.branch),
+            pr: prForCheckout(prs, { branch: view?.branch ?? '' }),
           });
         }
         for (const w of worktrees) {
@@ -1301,7 +1318,7 @@ export function SidebarSessions({
                   branch: w.branch,
                 }
               : null,
-            pr: prFor(w.branch),
+            pr: prForCheckout(prs, w),
           });
         }
         if (subs.length === 0) return notSplit;

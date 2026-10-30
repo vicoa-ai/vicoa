@@ -434,11 +434,14 @@ export async function rpcGitCommit(
  * created it under `~/vicoa/workspaces/` — only those are removable.
  * `display_path` is the home-collapsed `~/…` form a session registers as its
  * `project`; `prunable` is git's verdict that the folder is gone while the
- * registration lingers. Both are absent from an older daemon. */
+ * registration lingers; `upstream` is the remote branch `branch` pushes to
+ * (`""` when none), which a pull request names as its head. All three are
+ * absent from an older daemon. */
 export interface WorktreeInfo {
   path: string;
   display_path?: string;
   branch: string;
+  upstream?: string;
   head: string;
   managed: boolean;
   prunable?: boolean;

@@ -313,6 +313,28 @@ describe('splitProjectByWorktree (git-driven)', () => {
     expect(worktrees[0].missing).toBe(false);
   });
 
+  it('carries upstream and head from git, only for a folder git still has', () => {
+    const live = make({ id: 'live', project: '~/wt/live', worktree_name: 'happy' });
+    const gone = make({ id: 'gone', project: '~/wt/gone', worktree_name: 'calm' });
+
+    const { worktrees } = splitProjectByWorktree(
+      [live, gone],
+      [
+        wt('/home/u/wt/live', 'happy', true, { display_path: '~/wt/live', upstream: 'cli-version', head: 'abc123' }),
+        wt('/home/u/wt/gone', 'calm', true, { display_path: '~/wt/gone', upstream: 'calm', head: 'def456', prunable: true }),
+        wt('/home/u/wt/empty', 'empty', true, { upstream: '', head: '789abc' }),
+      ],
+    );
+
+    const byBranch = Object.fromEntries(worktrees.map((w) => [w.branch, w]));
+    expect(byBranch.happy).toMatchObject({ upstream: 'cli-version', head: 'abc123' });
+    // A pruned checkout's last head says nothing about a PR now.
+    expect(byBranch.calm.missing).toBe(true);
+    expect(byBranch.calm.upstream).toBeUndefined();
+    expect(byBranch.calm.head).toBeUndefined();
+    expect(byBranch.empty).toMatchObject({ upstream: '', head: '789abc' });
+  });
+
   it('prefers the home-collapsed display_path for a session-less worktree', () => {
     const { worktrees } = splitProjectByWorktree(
       [],

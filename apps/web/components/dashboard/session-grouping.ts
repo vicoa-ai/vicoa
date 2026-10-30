@@ -190,6 +190,11 @@ export interface WorktreeSessionGroup {
   /** Git no longer has a checkout at this folder (removed outside the app, or
    *  only a prunable registration is left). Always false without a git list. */
   missing: boolean;
+  /** The remote branch `branch` pushes to, and the checkout's head commit:
+   *  how its PR is found when that went up under another name (see
+   *  `prForCheckout`). Only for a folder git reports as present. */
+  upstream?: string;
+  head?: string;
   instances: AgentInstanceResponse[];
 }
 
@@ -200,12 +205,14 @@ export interface ProjectWorktreeSplit {
 }
 
 /** One entry of the daemon's `git-worktree-list`, as the split consumes it.
- *  `display_path` (home-collapsed like a session's `project`) and `prunable`
- *  are absent from an older daemon; both degrade to "unknown". */
+ *  `display_path` (home-collapsed like a session's `project`), `prunable` and
+ *  `upstream` are absent from an older daemon; all degrade to "unknown". */
 export interface LiveWorktree {
   path: string;
   display_path?: string;
   branch: string;
+  upstream?: string;
+  head?: string;
   managed: boolean;
   prunable?: boolean;
 }
@@ -318,6 +325,7 @@ export function splitProjectByWorktree(
       // Live branch wins (it may have changed since the session started); the
       // stored name is the label when git is unavailable or the folder is gone.
       branch: present ? liveInfo.branch : group[0]?.worktree_name ?? '',
+      ...(present ? { upstream: liveInfo.upstream, head: liveInfo.head } : {}),
       managed: liveInfo ? liveInfo.managed : isManagedWorktreePath(path),
       missing:
         gitWorktrees !== null && !present && (judgeable === undefined || judgeable.has(path)),
@@ -330,6 +338,8 @@ export function splitProjectByWorktree(
       worktrees.push({
         path: normalizeWorktreePath(w.display_path ?? w.path),
         branch: w.branch,
+        upstream: w.upstream,
+        head: w.head,
         managed: w.managed,
         missing: false,
         instances: [],

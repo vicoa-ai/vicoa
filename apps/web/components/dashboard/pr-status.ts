@@ -14,6 +14,8 @@ export interface PrInfo {
   state: PrState;
   url: string;
   checks: PrChecks;
+  /** Head commit sha. Absent from an older daemon. */
+  head?: string;
 }
 
 export type PrState = 'open' | 'draft' | 'merged' | 'closed';
@@ -72,12 +74,34 @@ export function prPresentation(pr: PrInfo | null | undefined): {
 }
 
 /**
- * Whether a branch's PR icon can still change without anyone touching the
- * branch: no PR yet (one may be opened), or an open/draft one (it may merge, and
- * its checks are still moving). Merged and closed are settled.
+ * The pull request of a checkout, from a repo's PRs keyed by head branch.
+ *
+ * Three things can tie a PR to it, and the newest PR any of them finds wins:
+ * - the local `branch`, the usual case;
+ * - its `upstream`, the remote branch it pushes to. `git push -u origin
+ *   HEAD:other` opens the PR under `other` while the local branch keeps its
+ *   name, typically when a worktree whose PR merged is reused for new work;
+ * - its `head` commit equal to a PR's, for the same push made without `-u`.
+ *   Holds until the next local commit, after which the names still apply.
+ *
+ * Newest wins because a branch name can carry history: once a worktree's PR
+ * merges, its new work may go up under another name, and the PR the local
+ * name still finds is the finished one.
  */
-export function prMayStillChange(pr: PrInfo | null | undefined): boolean {
-  return !pr || pr.state === 'open' || pr.state === 'draft';
+export function prForCheckout(
+  prs: Record<string, PrInfo>,
+  checkout: { branch: string; upstream?: string; head?: string },
+): PrInfo | null {
+  const { branch, upstream, head } = checkout;
+  const candidates = [
+    branch ? prs[branch] : undefined,
+    upstream ? prs[upstream] : undefined,
+    ...(head ? Object.values(prs).filter((pr) => pr.head === head) : []),
+  ];
+  return candidates.reduce<PrInfo | null>(
+    (best, pr) => (pr && (!best || pr.number > best.number) ? pr : best),
+    null,
+  );
 }
 
 /**
