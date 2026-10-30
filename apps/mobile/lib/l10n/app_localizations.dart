@@ -722,6 +722,12 @@ abstract class AppLocalizations {
   /// **'Couldn\'t unpin session'**
   String get agentChatUnpinFailed;
 
+  /// No description provided for @agentChatUnreadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t mark session as unread'**
+  String get agentChatUnreadFailed;
+
   /// No description provided for @agentChatWaitingForMessages.
   ///
   /// In en, this message translates to:
@@ -1183,6 +1189,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Unpin'**
   String get chatOptionsUnpin;
+
+  /// No description provided for @chatOptionsUnread.
+  ///
+  /// In en, this message translates to:
+  /// **'Unread'**
+  String get chatOptionsUnread;
 
   /// No description provided for @commonBack.
   ///
@@ -2227,6 +2239,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Couldn\'t unpin session'**
   String get homeUnpinFailed;
+
+  /// No description provided for @homeUnreadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t mark session as unread'**
+  String get homeUnreadFailed;
 
   /// No description provided for @impactHeadline.
   ///

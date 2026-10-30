@@ -128,6 +128,9 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
   final scaffoldKey = GlobalKey<ScaffoldState>();
   final GlobalKey _chatOptionsButtonKey = GlobalKey();
   bool _isChatOptionsMenuOpen = false;
+  /// Set once the user picks Unread, so leaving the page doesn't review the
+  /// session right back (see [_maybeAutoReviewSession]).
+  bool _markedUnread = false;
 
   late final VoidCallback _itemPositionsListenerCallback;
   int _lastKnownMessageCount = 0;
@@ -329,7 +332,9 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
   /// alone left the dot stuck until you re-entered the session; marking it on
   /// leave means switching away is enough. Skipped when the last message is a
   /// real question (ask-user-question / options block) — those still need input.
+  /// Also skipped after the user explicitly marked the session unread.
   Future<void> _maybeAutoReviewSession() async {
+    if (_markedUnread) return;
     final currentStatus =
         (_model.instanceData?['status'] ?? widget.instanceData?['status'])
             ?.toString()
@@ -360,6 +365,27 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     }
   }
 
+
+  /// Keeps the session unread and leaves it, like Mail's "mark as unread": it
+  /// would be reviewed again on leaving otherwise, and staying on the page
+  /// would leave a blue dot on a session that is open in front of the user.
+  Future<void> _handleMarkUnread() async {
+    _markedUnread = true;
+    _setLocalSessionStatus('AWAITING_INPUT');
+
+    final ok = await SessionActions.markUnread(instanceId: widget.instanceId);
+    if (!mounted) return;
+    if (!ok) {
+      _markedUnread = false;
+      _setLocalSessionStatus('REVIEWED');
+      safeSetState(() {});
+      await _showSnackBarMessage(
+          AppLocalizations.of(context).agentChatUnreadFailed,
+          waitTime: SessionActions.errorSnackMs);
+      return;
+    }
+    _navigateBack();
+  }
 
   @override
   void initState() {
@@ -2537,9 +2563,8 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       left = screenPadding;
     }
 
-    final showCloseOption = !['CLOSED', 'COMPLETED'].contains(
-      (_model.instanceData?['status'] as String? ?? '').toUpperCase(),
-    );
+    final status = (_model.instanceData?['status'] as String? ?? '').toUpperCase();
+    final showCloseOption = !['CLOSED', 'COMPLETED'].contains(status);
 
     if (mounted) safeSetState(() => _isChatOptionsMenuOpen = true);
 
@@ -2571,6 +2596,12 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
                     Navigator.of(dialogContext).pop();
                     _handlePinToggle();
                   },
+                  onUnread: status == 'REVIEWED'
+                      ? () {
+                          Navigator.of(dialogContext).pop();
+                          _handleMarkUnread();
+                        }
+                      : null,
                   onInfo: () {
                     Navigator.of(dialogContext).pop();
                     _showSessionInfoSheet();

@@ -357,6 +357,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get agentChatUnpinFailed => 'Couldn\'t unpin session';
 
   @override
+  String get agentChatUnreadFailed => 'Couldn\'t mark session as unread';
+
+  @override
   String get agentChatWaitingForMessages => 'Waiting for messages';
 
   @override
@@ -610,6 +613,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatOptionsUnpin => 'Unpin';
+
+  @override
+  String get chatOptionsUnread => 'Unread';
 
   @override
   String get commonBack => 'Back';
@@ -1192,6 +1198,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get homeUnpinFailed => 'Couldn\'t unpin session';
+
+  @override
+  String get homeUnreadFailed => 'Couldn\'t mark session as unread';
 
   @override
   String impactHeadline(Object phrase) {

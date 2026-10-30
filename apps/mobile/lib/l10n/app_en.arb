@@ -137,6 +137,7 @@
   "agentChatTranscribing": "Transcribing...",
   "agentChatUnexpectedError": "An unexpected error occurred",
   "agentChatUnpinFailed": "Couldn't unpin session",
+  "agentChatUnreadFailed": "Couldn't mark session as unread",
   "agentChatWaitingForMessages": "Waiting for messages",
   "agentConfigAgent": "Agent",
   "agentConfigBetaLabel": "{label} (Beta)",
@@ -258,6 +259,7 @@
   "chatOptionsPin": "Pin",
   "chatOptionsRename": "Rename",
   "chatOptionsUnpin": "Unpin",
+  "chatOptionsUnread": "Unread",
   "commonBack": "Back",
   "commonCancel": "Cancel",
   "commonClose": "Close",
@@ -543,6 +545,7 @@
   "homeSessionDeleted": "Session deleted successfully",
   "homeSessionRenamed": "Session renamed successfully",
   "homeUnpinFailed": "Couldn't unpin session",
+  "homeUnreadFailed": "Couldn't mark session as unread",
   "impactHeadline": "{phrase} with AI coding agents anywhere you go",
   "@impactHeadline": {
     "placeholders": {

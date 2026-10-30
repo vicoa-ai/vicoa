@@ -346,6 +346,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get agentChatUnpinFailed => '无法取消置顶任务';
 
   @override
+  String get agentChatUnreadFailed => '无法标为未读';
+
+  @override
   String get agentChatWaitingForMessages => '等待消息中';
 
   @override
@@ -585,6 +588,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get chatOptionsUnpin => '取消置顶';
+
+  @override
+  String get chatOptionsUnread => '未读';
 
   @override
   String get commonBack => '返回';
@@ -1138,6 +1144,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get homeUnpinFailed => '无法取消置顶任务';
+
+  @override
+  String get homeUnreadFailed => '无法标为未读';
 
   @override
   String impactHeadline(Object phrase) {

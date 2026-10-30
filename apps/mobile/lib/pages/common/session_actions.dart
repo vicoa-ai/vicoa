@@ -202,6 +202,13 @@ class SessionActions {
     return result is Map;
   }
 
+  /// Puts a reviewed session back to awaiting-input, restoring its blue dot.
+  /// Returns true on success. Like [togglePin], no dialog: the caller flips
+  /// state optimistically and rolls back on false.
+  static Future<bool> markUnread({required String instanceId}) {
+    return actions.apiUpdateInstanceStatus(instanceId, 'AWAITING_INPUT');
+  }
+
   /// Prompts for a new session name, then PATCHes it. Mirrors [closeSession]
   /// shape: confirm → loading → API → success/failure callback.
   static Future<void> renameSession(

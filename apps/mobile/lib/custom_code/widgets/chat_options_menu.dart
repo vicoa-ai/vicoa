@@ -15,6 +15,7 @@ class ChatOptionsMenu extends StatelessWidget {
     required this.onDelete,
     this.onPin,
     this.isPinned = false,
+    this.onUnread,
     this.showCloseOption = true,
     this.showShareOption = true,
     this.onResume,
@@ -29,6 +30,9 @@ class ChatOptionsMenu extends StatelessWidget {
   final VoidCallback onDelete;
   final VoidCallback? onPin;
   final bool isPinned;
+  /// Brings the blue "needs a reply" dot back on a reviewed session. Null hides
+  /// the item — callers only pass it for a session that is currently reviewed.
+  final VoidCallback? onUnread;
   final bool showCloseOption;
   final bool showShareOption;
   final VoidCallback? onResume;
@@ -98,6 +102,13 @@ class ChatOptionsMenu extends StatelessWidget {
             title: l10n.chatOptionsRename,
             onTap: onRename,
           ),
+          if (onUnread != null)
+            _buildMenuItem(
+              context,
+              icon: Icons.mark_chat_unread_rounded,
+              title: l10n.chatOptionsUnread,
+              onTap: onUnread!,
+            ),
           if (showCloseOption)
             _buildMenuItem(
               context,

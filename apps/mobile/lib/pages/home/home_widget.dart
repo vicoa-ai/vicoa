@@ -841,7 +841,7 @@ class _HomeWidgetState extends State<HomeWidget>
     if (overlayBox == null) return;
 
     const double menuWidth = 140.0;
-    const double estimatedMenuHeight = 220.0;
+    const double estimatedMenuHeight = 260.0;
     const double screenPadding = 16.0;
     const double verticalGap = -16.0;
 
@@ -883,6 +883,12 @@ class _HomeWidgetState extends State<HomeWidget>
                     Navigator.of(dialogContext).pop();
                     _handlePinToggle(instance);
                   },
+                  onUnread: status == 'REVIEWED'
+                      ? () {
+                          Navigator.of(dialogContext).pop();
+                          _handleMarkUnread(instance);
+                        }
+                      : null,
                   onInfo: () {
                     Navigator.of(dialogContext).pop();
                     _showSessionInfoFor(instance);
@@ -1026,6 +1032,28 @@ class _HomeWidgetState extends State<HomeWidget>
           if (mounted) setState(() {});
         },
       );
+    }
+  }
+
+  /// Optimistic like pin: the shared instance map also backs the app-wide
+  /// cache, so flipping `status` here moves the row to "In review" and brings
+  /// the blue dot back at once; rolled back if the PUT fails.
+  Future<void> _handleMarkUnread(Map<String, dynamic> instance) async {
+    final instanceId = instance['id'] as String;
+    final previousStatus = instance['status'];
+
+    setState(() {
+      instance['status'] = 'AWAITING_INPUT';
+    });
+
+    final ok = await SessionActions.markUnread(instanceId: instanceId);
+
+    if (!mounted) return;
+    if (!ok) {
+      setState(() {
+        instance['status'] = previousStatus;
+      });
+      _showHomeErrorSnackBar(AppLocalizations.of(context).homeUnreadFailed);
     }
   }
 
