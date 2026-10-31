@@ -8,6 +8,10 @@
 #   stack-preview.sh env                  # shell exports for seed scripts and curl
 #   stack-preview.sh token owner|viewer   # bearer token for a seeded account (viewer: --viewer only)
 #   stack-preview.sh seed FILE            # run a seed script (.py or shell) against the preview
+#   stack-preview.sh check [--as owner|viewer] [--shot] [--viewport WxH] [--script FILE] [PATH...]
+#                                         # sign in at the public URL in headless Chromium, visit
+#                                         # the paths (or run --script) and print only what is
+#                                         # broken. No screenshots unless --shot
 #   stack-preview.sh run NAME -- CMD...   # start a side process (webhook forwarder, ...) that `down` stops
 #   stack-preview.sh restart [backend|server|web]...  # pick up code changes; the public URL stays
 #   stack-preview.sh down [--keep-db | --delete-db | --purge]
@@ -72,6 +76,7 @@ usage() {
 CMD=${1:-}
 [ $# -gt 0 ] && shift
 REPO="" ENV_FILE="" ALLOW_SIGNUP=0 PROVIDER="" PURGE=0 KEEP_DB=0 DELETE_DB=0 AUTH="" VIEWER=0
+AS="" SHOT=0 VIEWPORT="" CHECK_SCRIPT=""
 ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
@@ -81,6 +86,10 @@ while [ $# -gt 0 ]; do
     --provider) PROVIDER=${2:?--provider needs cloudflare or ngrok}; shift 2 ;;
     --auth) AUTH=${2:?--auth needs builtin or supabase}; shift 2 ;;
     --viewer) VIEWER=1; shift ;;
+    --as) AS=${2:?--as needs owner or viewer}; shift 2 ;;
+    --shot) SHOT=1; shift ;;
+    --viewport) VIEWPORT=${2:?--viewport needs WIDTHxHEIGHT}; shift 2 ;;
+    --script) CHECK_SCRIPT=${2:?--script needs a file}; shift 2 ;;
     --purge) PURGE=1; shift ;;
     --keep-db) KEEP_DB=1; shift ;;
     --delete-db) DELETE_DB=1; shift ;;
@@ -89,7 +98,7 @@ while [ $# -gt 0 ]; do
     *) ARGS+=("$1"); shift ;;
   esac
 done
-case $CMD in up | status | env | token | seed | run | restart | down | prune) ;; -h | --help | help) usage ;; *) usage 2 ;; esac
+case $CMD in up | status | env | token | seed | check | run | restart | down | prune) ;; -h | --help | help) usage ;; *) usage 2 ;; esac
 [ "$KEEP_DB" = 1 ] && [ "$((PURGE + DELETE_DB))" -gt 0 ] &&
   die "--keep-db keeps the database and --delete-db/--purge delete it; pick one"
 case $PROVIDER in "" | cloudflare | ngrok) ;; *) die "unknown --provider $PROVIDER (cloudflare or ngrok)" ;; esac
@@ -745,6 +754,42 @@ cmd_seed() {
   esac
 }
 
+# Headless-browser check at the public URL, the way the reviewer will see it.
+# Screenshots stay off unless asked for: reading an image costs an agent far
+# more than the line of text saying whether the page is right.
+cmd_check() {
+  load_state
+  [ "$AUTH" = builtin ] || die "check signs in with the seeded accounts; with --auth supabase, sign in by hand"
+  alive proxy || die "the preview is not running (run: stack-preview.sh up)"
+  alive web || die "the preview's web server is not running (run: stack-preview.sh restart web)"
+  [ -n "$PUBLIC_URL" ] || die "no public URL recorded in $STATE"
+  command -v node >/dev/null 2>&1 || die "node not found"
+  local email password script="" shots=""
+  case ${AS:-owner} in
+    owner) email=$OWNER_EMAIL password=${OWNER_PASSWORD:-} ;;
+    viewer)
+      has_viewer || die "this preview has no second account; run \`down --keep-db\`, then \`up --viewer\`"
+      email=$VIEWER_EMAIL password=${VIEWER_PASSWORD:-}
+      ;;
+    *) die "--as expects owner or viewer" ;;
+  esac
+  [ -n "$password" ] || die "no seeded accounts recorded in $STATE/accounts"
+  [ ${#ARGS[@]} -gt 0 ] || [ -n "$CHECK_SCRIPT" ] ||
+    die "usage: stack-preview.sh check [--as owner|viewer] [--shot] [--viewport WxH] [--script FILE] [PATH...]"
+  if [ -n "$CHECK_SCRIPT" ]; then
+    [ -f "$CHECK_SCRIPT" ] || die "$CHECK_SCRIPT does not exist"
+    script=$(cd "$(dirname "$CHECK_SCRIPT")" && pwd -P)/$(basename "$CHECK_SCRIPT")
+  fi
+  if [ "$SHOT" = 1 ]; then
+    shots="$STATE/shots"
+    mkdir -p "$shots"
+  fi
+  PREVIEW_URL="$PUBLIC_URL" PREVIEW_REPO="$REPO" \
+    PREVIEW_CHECK_EMAIL="$email" PREVIEW_CHECK_PASSWORD="$password" \
+    PREVIEW_CHECK_SHOTS="$shots" PREVIEW_CHECK_VIEWPORT="$VIEWPORT" PREVIEW_CHECK_SCRIPT="$script" \
+    node "$SCRIPT_DIR/check.mjs" ${ARGS[@]+"${ARGS[@]}"}
+}
+
 cmd_run() {
   load_state
   [ ${#ARGS[@]} -ge 2 ] || die "usage: stack-preview.sh run NAME -- CMD..."
@@ -871,6 +916,7 @@ case $CMD in
   env) cmd_env ;;
   token) cmd_token ;;
   seed) cmd_seed ;;
+  check) cmd_check ;;
   run) cmd_run ;;
   restart) cmd_restart ;;
   down) cmd_down ;;
