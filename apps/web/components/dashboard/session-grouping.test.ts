@@ -7,6 +7,7 @@ import {
   getLastPathPart,
   groupSessions,
   mergeRenderedOrder,
+  moveRenderedKey,
   projectGroupKey,
   rankProjects,
   splitProjectByWorktree,
@@ -164,6 +165,32 @@ describe('rankProjects', () => {
   });
 });
 
+describe('moveRenderedKey', () => {
+  it('puts the dragged key before the hovered one on its upper half, after it on its lower half', () => {
+    expect(moveRenderedKey(['A', 'B', 'C'], 'A', 'C', false)).toEqual(['B', 'A', 'C']);
+    expect(moveRenderedKey(['A', 'B', 'C'], 'A', 'C', true)).toEqual(['B', 'C', 'A']);
+    expect(moveRenderedKey(['A', 'B', 'C'], 'C', 'A', false)).toEqual(['C', 'A', 'B']);
+    expect(moveRenderedKey(['A', 'B', 'C'], 'C', 'A', true)).toEqual(['A', 'C', 'B']);
+  });
+
+  it('stays put once moved past a taller group the pointer is still over', () => {
+    // A dragged down onto B's lower half lands below B. B is taller, so the
+    // pointer is now on B's lower half again: that must not swap them back.
+    const moved = moveRenderedKey(['A', 'B'], 'A', 'B', true);
+    expect(moved).toEqual(['B', 'A']);
+    expect(moveRenderedKey(moved!, 'A', 'B', true)).toBeNull();
+    // Same going up.
+    const up = moveRenderedKey(['B', 'A'], 'A', 'B', false);
+    expect(up).toEqual(['A', 'B']);
+    expect(moveRenderedKey(up!, 'A', 'B', false)).toBeNull();
+  });
+
+  it('is null over the dragged group itself or a key not on screen', () => {
+    expect(moveRenderedKey(['A', 'B'], 'A', 'A', true)).toBeNull();
+    expect(moveRenderedKey(['A', 'B'], 'A', 'Z', true)).toBeNull();
+  });
+});
+
 describe('mergeRenderedOrder', () => {
   it('deals the on-screen keys into the slots they held, off-screen keys stay put', () => {
     // X and Y have no session on screen (filtered out); the user drags C to the top.
@@ -255,6 +282,25 @@ describe('withEmptyProjectGroups', () => {
       [],
     );
     expect(out.map((g) => g.key)).toEqual(['PINNED']);
+  });
+
+  it('counts no session the list fetch would not return (archived under Active, deleted)', () => {
+    // The last session in PA was just archived, in PB deleted: a live update
+    // marked them in the loaded list before the refetch drops them.
+    const archived = make({ id: 'a', project: '/x/alpha', project_id: 'PA', status: 'COMPLETED' });
+    const deleted = make({ id: 'd', project: '/x/beta', project_id: 'PB', status: 'DELETED' });
+    const loaded = [archived, deleted];
+    const projects = [proj({ id: 'PA', directories: dir }), proj({ id: 'PB', directories: dir })];
+    const groups = groupSessions(loaded, 'not_closed', 'project', 'all', ['PA', 'PB']);
+    expect(withEmptyProjectGroups(groups, projects, loaded, ['PA', 'PB'], true).map((g) => g.key)).toEqual([
+      'PA',
+      'PB',
+    ]);
+    // A fetch that includes closed sessions really has PA's archived one, so
+    // under a filter that hides it PA stays hidden as before; a deleted one is
+    // never fetched.
+    const done = groupSessions(loaded, 'done', 'project', 'all', ['PA', 'PB']);
+    expect(withEmptyProjectGroups(done, projects, loaded, ['PA', 'PB'], false).map((g) => g.key)).toEqual(['PB']);
   });
 
   it('only adds projects a session can be started in from here', () => {

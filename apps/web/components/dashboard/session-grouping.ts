@@ -95,6 +95,29 @@ export function mergeRenderedOrder(full: string[], rendered: string[]): string[]
 }
 
 /**
+ * The on-screen project keys with `dragging` moved to just before `overKey`,
+ * or just after it when the pointer is over its lower half (`after`). Null
+ * when nothing moves. Going by halves, not "take the hovered group's slot",
+ * is what keeps a drag still: after moving past a taller group the pointer is
+ * still over it, and the slot rule swapped the two back on the next dragover,
+ * and again, for as long as the pointer stayed there. On halves that same
+ * pointer asks for the order it already has.
+ */
+export function moveRenderedKey(
+  rendered: string[],
+  dragging: string,
+  overKey: string,
+  after: boolean,
+): string[] | null {
+  if (dragging === overKey) return null;
+  const next = rendered.filter((key) => key !== dragging);
+  const overIndex = next.indexOf(overKey);
+  if (overIndex === -1) return null;
+  next.splice(after ? overIndex + 1 : overIndex, 0, dragging);
+  return next.every((key, i) => key === rendered[i]) ? null : next;
+}
+
+/**
  * A project list in the order the server answers with after
  * `PUT /projects/order`: the ranked ids first, then everything else in its
  * current order. Lets a drop reorder the cached list without a refetch.
@@ -376,15 +399,25 @@ export function compareProjectKeys(projectOrder: string[]): (a: string, b: strin
  * project whose sessions are only filtered out or pinned is not empty and stays
  * hidden as before. New groups take their place by `projectOrder`; "Pinned"
  * stays first.
+ *
+ * `activeOnly` says the list was fetched without closed sessions. A session the
+ * fetch would not return (deleted, or closed under an active-only fetch) is
+ * still in `loaded` only because a live update changed it since, so it doesn't
+ * count: archiving or deleting a project's last session would otherwise hide
+ * the project until the next refetch drops the row and brings it back empty.
  */
 export function withEmptyProjectGroups(
   groups: SessionGroup[],
   projects: readonly ProjectResponse[],
   loaded: readonly AgentInstanceResponse[],
   projectOrder: string[],
+  activeOnly: boolean = false,
 ): SessionGroup[] {
   const present = new Set(groups.map((group) => group.key));
-  for (const instance of loaded) present.add(projectGroupKey(instance));
+  for (const instance of loaded) {
+    if (instance.status === 'DELETED' || (activeOnly && CLOSED_STATUSES.has(instance.status))) continue;
+    present.add(projectGroupKey(instance));
+  }
   const added: SessionGroup[] = projects
     .filter(
       (p) =>
