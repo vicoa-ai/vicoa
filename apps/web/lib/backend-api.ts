@@ -525,22 +525,6 @@ export type TaskStatus =
 
 export type TaskPriority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
 
-/**
- * What archiving a session does to the task it works on, for one archive:
- * leave it be, or set it to a status. The server accepts any task status; the
- * archive dialog offers these five.
- */
-export type ArchiveTaskChoice = 'no_change' | 'todo' | 'in_progress' | 'in_review' | 'done';
-
-/** `GET /agent-instances/{id}/archive-preview`: what a plain archive would do. */
-export interface ArchivePreview {
-  task: { id: string; key: string | null; title: string; status: TaskStatus } | null;
-  /** The archive would close the task (or would, but for another open session). */
-  ask: boolean;
-  default: 'done' | 'no_change';
-  other_open_sessions: number;
-}
-
 /** Where a project is checked out on one machine; at most one per machine. */
 export interface ProjectDirectory {
   machine_id: string;
@@ -1853,11 +1837,6 @@ class BackendAPI {
       method: 'PUT',
       body: JSON.stringify(statusUpdate),
     });
-  }
-
-  /** What archiving this session would do to its task, so the client can ask first. */
-  async getArchivePreview(instanceId: string): Promise<ArchivePreview> {
-    return this.request<ArchivePreview>(`/api/v1/agent-instances/${instanceId}/archive-preview`);
   }
 
   // Push Notifications

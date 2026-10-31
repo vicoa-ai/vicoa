@@ -55,7 +55,7 @@ import {
 } from '@/components/dashboard/session-project-choices';
 import { NewSessionButton, newSessionHref } from '@/components/dashboard/new-session-button';
 import { WorktreeSubGroupHeader } from '@/components/dashboard/worktree-sub-group-header';
-import type { AgentInstanceResponse, ArchiveTaskChoice, ProjectResponse } from '@/lib/backend-api';
+import type { AgentInstanceResponse, ProjectResponse } from '@/lib/backend-api';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
 import { projectSettingsHref as settingsHrefForProject } from '@/lib/project-settings-route';
 import { newProjectFolder } from '@/lib/project-paths';
@@ -521,14 +521,15 @@ export function SidebarSessions({
     }
   }, [resumingId, refreshData]);
 
-  const archiveAndClose = useCallback(async (instanceId: string, taskStatus?: ArchiveTaskChoice) => {
-    await markAsComplete(instanceId, taskStatus);
+  const archiveAndClose = useCallback(async (instanceId: string) => {
+    const archived = await markAsComplete(instanceId);
     // Archiving closes the session's workspace: let the caller tear down its
     // terminals + persisted layout (both web and desktop wire this).
     onAfterCloseSession?.(instanceId);
+    return archived;
   }, [markAsComplete, onAfterCloseSession]);
 
-  // A session on a task may ask what the task should become before it archives.
+  // A session on a task still under way may ask what the task should become.
   const { requestArchive, archiveDialog } = useArchiveSession(archiveAndClose);
   const handleArchive = useCallback(
     (instance: AgentInstanceResponse) =>
@@ -903,7 +904,8 @@ export function SidebarSessions({
     repoDir: string;
     path: string;
     branch: string;
-    sessionIds: string[];
+    /** The worktree's open sessions, with their tasks for Settings → Tasks. */
+    sessions: { id: string; task_id: string | null }[];
     hasSession: boolean;
     isDirty: boolean;
     /** Git already has no checkout at this folder (see WorktreeSessionGroup). */
@@ -994,10 +996,10 @@ export function SidebarSessions({
       instances: AgentInstanceResponse[];
     }) => {
       const { machineId, repoDir, path, branch, missing, instances } = target;
-      const sessionIds = instances
+      const sessions = instances
         .filter((i) => !CLOSED_STATUSES.has(i.status))
-        .map((i) => i.id);
-      const hasSession = sessionIds.length > 0;
+        .map((i) => ({ id: i.id, task_id: i.task_id ?? null }));
+      const hasSession = sessions.length > 0;
       let isDirty = false;
       // A folder git no longer has can't be probed — and has nothing to lose,
       // so it counts as clean and takes the same paths a clean worktree does.
@@ -1028,7 +1030,7 @@ export function SidebarSessions({
         repoDir,
         path,
         branch,
-        sessionIds,
+        sessions,
         hasSession,
         isDirty,
         missing,
@@ -1041,7 +1043,7 @@ export function SidebarSessions({
   const confirmWorktreeDelete = useCallback(async () => {
     if (!worktreeDelete) return;
     const target = worktreeDelete;
-    const { machineId, repoDir, path, sessionIds, missing } = target;
+    const { machineId, repoDir, path, sessions, missing } = target;
     // Nothing here is worth watching a spinner for: close the dialog and hide
     // the group now; the archive round-trip and the daemon's reply follow.
     setWorktreeDelete(null);
@@ -1051,8 +1053,8 @@ export function SidebarSessions({
       // go one at a time, each with a full list refresh — that was the wait that
       // grew with every open terminal). Archiving closes each session's
       // workspace, so tear its terminals + layout down as Archive does.
-      await archiveSessions(sessionIds);
-      for (const id of sessionIds) onAfterCloseSession?.(id);
+      await archiveSessions(sessions);
+      for (const { id } of sessions) onAfterCloseSession?.(id);
       void refreshData();
       await performWorktreeRemove(machineId, repoDir, path, true, missing);
     } catch (e) {

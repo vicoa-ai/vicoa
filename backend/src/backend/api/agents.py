@@ -2,7 +2,7 @@ from enum import Enum
 from uuid import UUID
 import json
 import logging
-from typing import AsyncGenerator, get_args
+from typing import AsyncGenerator
 import asyncio
 
 from fastapi import (
@@ -48,8 +48,6 @@ from ..db import (
 )
 from ..models import (
     AgentInstanceDetail,
-    ArchivePreviewResponse,
-    TaskStatusLiteral,
     PaginatedAgentInstanceResponse,
     AgentInstanceResponse,
     AgentTypeOverview,
@@ -79,9 +77,6 @@ from ..db.queries import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["agents"])
-
-# What an archive may say about the session's task: leave it, or set a status.
-_ARCHIVE_TASK_CHOICES = frozenset({"no_change", *get_args(TaskStatusLiteral)})
 
 
 @router.get("/agent-types", response_model=list[AgentTypeOverview])
@@ -749,25 +744,6 @@ def _bridge_instance_update(db: Session, instance_id: UUID, user_id: UUID) -> No
     post_broadcast(str(owner_id), payload, rooms)
 
 
-@router.get(
-    "/agent-instances/{instance_id}/archive-preview",
-    response_model=ArchivePreviewResponse,
-)
-def get_archive_preview(
-    instance_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """What archiving this session would do to its task, so the client can ask
-    first. Same standing as archiving: owner or project admin."""
-    from ..db import preview_archive
-
-    result = preview_archive(db, instance_id, current_user.id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Agent instance not found")
-    return result
-
-
 @router.put(
     "/agent-instances/{instance_id}/status",
     response_model=AgentInstanceResponse,
@@ -800,24 +776,8 @@ def update_agent_status(
             status_code=400, detail=f"Invalid status value: {new_status}"
         )
 
-    # What to do with the task this session works on. Absent = no choice made,
-    # so the default mapping applies (see `update_instance_status`).
-    task_choice = status_update.get("task_status")
-    if task_choice is not None:
-        if status_enum != AgentStatus.COMPLETED:
-            raise HTTPException(
-                status_code=400,
-                detail="task_status only applies when archiving (status COMPLETED)",
-            )
-        if task_choice not in _ARCHIVE_TASK_CHOICES:
-            raise HTTPException(
-                status_code=400, detail=f"Invalid task_status value: {task_choice}"
-            )
-
     # Use the unified database function
-    result = update_instance_status(
-        db, instance_id, current_user.id, status_enum, task_choice
-    )
+    result = update_instance_status(db, instance_id, current_user.id, status_enum)
 
     if not result:
         raise HTTPException(status_code=404, detail="Agent instance not found")

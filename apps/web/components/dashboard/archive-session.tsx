@@ -3,16 +3,17 @@
 /**
  * Archiving a session that works on a task.
  *
- * Archive is the COMPLETED status, which the server maps to the task's `done`.
- * That is right when the session finished the work and wrong when the user is
- * only putting the session away, so before archiving a session linked to a
- * task we ask what should happen to the task: no change, or a status.
+ * Archiving never moves the task on the server: it puts the session away,
+ * which says nothing about whether the work is finished. When the task is
+ * still under way (in progress or in review), the archive is a natural moment
+ * to move it on, so we offer that: no change, or a status, preselected to
+ * Done when this was the task's last open session. The choice is applied after
+ * the archive succeeds, as an ordinary task update.
  *
- * The server decides whether there is anything to ask (`archive-preview`: the
- * archive would close the task, or would but for another open session) and
- * which choice to preselect; the user's standing answer (Settings → Tasks) can
- * turn the question off. Every surface that archives one session goes through
- * `useArchiveSession`, so they ask the same question the same way.
+ * The standing answer (Settings → Tasks) can turn the question off: `mark_done`
+ * closes the task without asking, `leave` never touches it. Every surface that
+ * archives one session goes through `useArchiveSession`, so they ask the same
+ * question the same way.
  */
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
@@ -30,15 +31,17 @@ import {
 } from '@/components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { STATUS_CONFIG, StatusIcon } from '@/components/dashboard/task-ui';
-import { ARCHIVE_TASK_CHOICES, archiveChoiceStatus, defaultArchiveChoice } from '@/lib/archive-task';
-import { archiveTaskAction } from '@/lib/archive-task-pref';
 import {
-  getBackendAPI,
-  refusalReason,
-  type ArchivePreview,
+  ARCHIVE_TASK_CHOICES,
+  archiveChoiceStatus,
+  defaultArchiveChoice,
+  loadArchiveTaskContext,
+  standingTaskStatus,
   type ArchiveTaskChoice,
-  type BackendApiError,
-} from '@/lib/backend-api';
+  type ArchiveTaskContext,
+} from '@/lib/archive-task';
+import { archiveTaskAction } from '@/lib/archive-task-pref';
+import { getBackendAPI, refusalReason, type TaskResponse, type TaskStatus } from '@/lib/backend-api';
 import { isImeComposing } from '@/lib/ime';
 import { isDesktopLocal } from '@/lib/runtime-config';
 import { toast } from '@/lib/toast';
@@ -50,63 +53,80 @@ export interface ArchiveTarget {
 
 interface PendingArchive {
   target: ArchiveTarget;
-  /** Set when there is a task to ask about; null for a plain confirmation. */
-  preview: ArchivePreview | null;
+  /** Set when the dialog asks about the task; null for a plain confirmation. */
+  ask: ArchiveTaskContext | null;
+  /** The standing answer's change, applied after a plain confirmation. */
+  standing: { task: TaskResponse; status: TaskStatus } | null;
 }
 
 /**
- * `archive(id, taskStatus)` does the archive and owns its own failure toast.
- * `confirm` is for surfaces that always confirm an archive (the session page);
- * the others archive on one click and only open the dialog to ask about a task.
+ * `archive(id)` does the archive, owns its own failure toast, and resolves to
+ * whether it succeeded: the task is only changed for a session that really
+ * was archived. `confirm` is for surfaces that always confirm an archive (the
+ * session page); the others archive on one click and only open the dialog to
+ * ask about a task.
  */
 export function useArchiveSession(
-  archive: (id: string, taskStatus?: ArchiveTaskChoice) => Promise<void>,
+  archive: (id: string) => Promise<boolean>,
   { confirm = false }: { confirm?: boolean } = {},
 ) {
   const [pending, setPending] = useState<PendingArchive | null>(null);
   const checking = useRef(false);
 
+  const archiveThenMoveTask = useCallback(
+    async (id: string, change: { task: TaskResponse; status: TaskStatus } | null) => {
+      if (!(await archive(id)) || !change || change.status === change.task.status) return;
+      try {
+        await getBackendAPI(true).updateTask(change.task.id, { status: change.status });
+      } catch (error) {
+        console.error('Failed to update the task after archiving:', error);
+        toast.error("Couldn't update the task", { description: refusalReason(error) });
+      }
+    },
+    [archive],
+  );
+
   const requestArchive = useCallback(
     async (target: ArchiveTarget) => {
       if (checking.current) return;
-      let preview: ArchivePreview | null = null;
       // Read at click time: the answer may have changed since this rendered.
-      if (target.task_id && archiveTaskAction() === 'ask' && !isDesktopLocal()) {
+      const action = archiveTaskAction();
+      let context: ArchiveTaskContext | null = null;
+      if (target.task_id && action !== 'leave' && !isDesktopLocal()) {
         checking.current = true;
         try {
-          const result = await getBackendAPI(true).getArchivePreview(target.id);
-          if (result.ask && result.task) preview = result;
+          context = await loadArchiveTaskContext(getBackendAPI(true), target.task_id, [target.id]);
         } catch (error) {
-          // A backend that predates the preview has no route for it (404): there
-          // is nothing to ask with, so archive as before. A session that really
-          // is gone 404s again on the archive itself, which reports it.
-          if ((error as Partial<BackendApiError>).status !== 404) {
-            console.error('Failed to check the linked task before archiving:', error);
-            toast.error("Couldn't archive session", { description: refusalReason(error) });
-            return;
-          }
+          // The archive does not touch the task, so not knowing about it costs
+          // only the offer: archive without it.
+          console.error('Failed to read the linked task before archiving:', error);
         } finally {
           checking.current = false;
         }
       }
-      if (preview || confirm) {
-        setPending({ target, preview });
+      const ask = action === 'ask' ? context : null;
+      const standingStatus = standingTaskStatus(action, context);
+      const standing = context && standingStatus ? { task: context.task, status: standingStatus } : null;
+      if (ask || confirm) {
+        setPending({ target, ask, standing });
         return;
       }
-      await archive(target.id);
+      await archiveThenMoveTask(target.id, standing);
     },
-    [confirm, archive],
+    [confirm, archiveThenMoveTask],
   );
 
   const archiveDialog = pending ? (
     <ArchiveSessionDialog
       key={pending.target.id}
-      preview={pending.preview}
+      context={pending.ask}
       confirm={confirm}
       onCancel={() => setPending(null)}
       onArchive={(choice) => {
+        const { target, ask, standing } = pending;
         setPending(null);
-        void archive(pending.target.id, choice);
+        const status = ask && choice ? archiveChoiceStatus(choice) : null;
+        void archiveThenMoveTask(target.id, ask ? (status ? { task: ask.task, status } : null) : standing);
       }}
     />
   ) : null;
@@ -115,18 +135,18 @@ export function useArchiveSession(
 }
 
 function ArchiveSessionDialog({
-  preview,
+  context,
   confirm,
   onCancel,
   onArchive,
 }: {
-  preview: ArchivePreview | null;
+  context: ArchiveTaskContext | null;
   confirm: boolean;
   onCancel: () => void;
   onArchive: (choice?: ArchiveTaskChoice) => void;
 }) {
   const [choice, setChoice] = useState<ArchiveTaskChoice>(
-    preview ? defaultArchiveChoice(preview) : 'no_change',
+    context ? defaultArchiveChoice(context) : 'no_change',
   );
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -141,7 +161,7 @@ function ArchiveSessionDialog({
     target?.focus();
   }, []);
 
-  const submit = () => onArchive(preview ? choice : undefined);
+  const submit = () => onArchive(context ? choice : undefined);
 
   // Enter archives from anywhere in the dialog. Buttons and links keep their
   // own Enter; a radio does not (Radix swallows it), which is why this exists.
@@ -154,8 +174,8 @@ function ArchiveSessionDialog({
     submit();
   };
 
-  const task = preview?.task ?? null;
-  const others = preview?.other_open_sessions ?? 0;
+  const task = context?.task ?? null;
+  const others = context?.otherOpenSessions ?? 0;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
@@ -174,7 +194,7 @@ function ArchiveSessionDialog({
               <StatusIcon status={task.status} className="mt-0.5 h-4 w-4 shrink-0" />
               <div className="min-w-0">
                 <div className="truncate font-medium">
-                  {task.key ? `${task.key} ` : ''}
+                  {task.identifier ? `${task.identifier} ` : ''}
                   {task.title}
                 </div>
                 <div className="text-xs text-muted-foreground">

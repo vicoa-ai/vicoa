@@ -45,10 +45,11 @@ confirm intent before running them:
 - `task create/update/delete/comment` — edits the user's backlog. A comment is
   visible to the user immediately in the web/mobile task detail. `task update`
   takes several task refs and applies the same change to each, so a wrong filter
-  edits a lot at once. `session update --task` **flips the linked task's status**
-  to follow the session (a running session ⇒ `in_progress`, a finished one ⇒
-  `done`), but never over a status someone set: mark your task `blocked` with
-  `task update` and it stays `blocked` after the session ends.
+  edits a lot at once. `session update --task` links the session to a task, and
+  a running session **moves a `backlog`/`todo` task to `in_progress`**. Nothing
+  else the session does moves it: ending or archiving the session leaves the
+  task as it is, so moving it on (`in_review`, `done`, `blocked`) is a
+  `task update`.
 - `session share` — mints a **link that serves the session's transcript to
   anyone who has the URL**. Publishing a transcript is not reversible in the
   "nobody saw it" sense; confirm first, and pass `--audience authenticated` when
@@ -110,7 +111,7 @@ vicoa session get <SESSION_ID> --all --role user # only what the human asked for
 vicoa session get <SESSION_ID> --full # + timestamps, emails, control msgs, tool payloads
 vicoa session get <SESSION_ID> --json # {"instance": {...}, "messages": [...]}
 
-# Rename a session / link it to a task (task status then follows the session)
+# Rename a session / link it to a task (running it starts an unstarted task)
 vicoa session update <SESSION_ID> --title "Refactor auth"
 vicoa session update <SESSION_ID> --task <TASK_UUID>
 vicoa session update <SESSION_ID> --unlink-task

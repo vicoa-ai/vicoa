@@ -14,8 +14,7 @@ import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMe
 import { Input } from '@/components/ui/input';
 import { StartEllipsisText } from '@/components/ui/start-ellipsis-text';
 import { extractMessageOptions } from '@/components/ui/message-markdown-utils';
-import { AgentInstanceDetail, AgentInstanceResponse, ArchiveTaskChoice, MessageResponse, refusalReason } from '@/lib/backend-api';
-import { archiveStatusBody } from '@/lib/archive-task';
+import { AgentInstanceDetail, AgentInstanceResponse, MessageResponse, refusalReason } from '@/lib/backend-api';
 import { useArchiveSession } from '@/components/dashboard/archive-session';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { toast } from '@/lib/toast';
@@ -502,12 +501,12 @@ export default function AgentManagerPage() {
     }
   }, [api, recentInstances, updateInstance]);
 
-  const markDone = useCallback(async (instanceId: string, taskStatus?: ArchiveTaskChoice) => {
-    if (!api) return;
+  const markDone = useCallback(async (instanceId: string): Promise<boolean> => {
+    if (!api) return false;
 
     setBusyInstanceId(instanceId);
     try {
-      await api.updateAgentStatus(instanceId, archiveStatusBody(taskStatus));
+      await api.updateAgentStatus(instanceId, { status: 'COMPLETED' });
       updateInstanceStatus(instanceId, 'COMPLETED');
       setDetailsById((prev) => {
         const existing = prev[instanceId];
@@ -520,16 +519,18 @@ export default function AgentManagerPage() {
           },
         };
       });
+      return true;
     } catch (markDoneError) {
       console.error(`Failed to mark ${instanceId} as completed:`, markDoneError);
       toast.error("Couldn't archive session", { description: refusalReason(markDoneError) });
       await refreshData();
+      return false;
     } finally {
       setBusyInstanceId((current) => (current === instanceId ? null : current));
     }
   }, [api, refreshData, updateInstanceStatus]);
 
-  // A session on a task may ask what the task should become before it archives.
+  // A session on a task still under way may ask what the task should become.
   const { requestArchive, archiveDialog } = useArchiveSession(markDone);
   const requestMarkDone = useCallback(async (instanceId: string) => {
     const instance = recentInstances.find((item) => item.id === instanceId);

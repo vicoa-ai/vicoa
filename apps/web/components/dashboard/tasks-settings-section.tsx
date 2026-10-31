@@ -74,8 +74,7 @@ export function TasksSettingsSection() {
 /**
  * The standing answer to "archive a session that works on a task: what happens
  * to the task?". Kept on this device (see `lib/archive-task-pref.ts`); the
- * web's archive requests carry it, and the archive dialog reads it to know
- * whether to ask.
+ * archive dialog reads it to know whether to ask, or what to do without asking.
  */
 function ArchivePreference() {
   const action = useArchiveTaskAction();
@@ -84,8 +83,8 @@ function ArchivePreference() {
     <div className="mt-6">
       <h2 className="text-sm text-foreground/90">When I archive a session that works on a task</h2>
       <p className="mt-1 text-xs text-muted-foreground">
-        Archiving normally marks the task done. Choose whether to be asked, so you can pick another
-        status or leave the task as it is.
+        Archiving a session does not change its task by itself. Choose whether to be asked about a
+        task that is still in progress or in review.
       </p>
       <RadioGroup
         value={action}

@@ -26,15 +26,6 @@ from shared.database import (
 )
 from shared.database.liveness import LiveState, compute_live_state, is_fresh
 from shared.database.automation_models import AutomationRun
-from shared.database.task_identity import format_task_identifier
-from shared.database.task_models import Project, Task
-from shared.database.tasks import (
-    SYNC_FORCE,
-    SYNC_SKIP,
-    count_open_sibling_sessions,
-    set_task_sync_directive,
-    sync_target_status,
-)
 from shared.hooks import CAPABILITY_GRANT_WRITE, run_user_delete_hooks
 from sqlalchemy import and_, case, cast, desc, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import JSONB
@@ -46,8 +37,6 @@ from backend.db.access_events import notify_access_changed, team_member_ids
 from backend.models import (
     AgentInstanceResponse,
     AgentInstanceDetail,
-    ArchivePreviewResponse,
-    ArchivePreviewTask,
     AutomationRefResponse,
     PrincipalResponse,
     AgentTypeOverview,
@@ -1194,97 +1183,10 @@ def _get_managed_instance(
     return instance
 
 
-# The one archive choice that is not a task status: archive and leave the task be.
-ARCHIVE_TASK_NO_CHANGE = "no_change"
-
-
-def _apply_archive_task_choice(
-    db: Session, instance: AgentInstance, user_id: UUID, choice: str | None
-) -> None:
-    """Carry out what was said about the linked task for this archive.
-
-    `choice` is the user's pick for this one archive (`no_change`, `done`, or
-    any other task status). `None` means nothing was said: the default mapping
-    applies (the task follows the session). `done` rides the sync so the
-    timeline attributes it to the session and a resumed session reopens it;
-    every other status is the user's own pick, which a resume leaves be.
-    """
-    if instance.task_id is None or choice is None:
-        return
-    if choice == ARCHIVE_TASK_NO_CHANGE:
-        set_task_sync_directive(db, instance.id, SYNC_SKIP)
-        return
-
-    task = db.get(Task, instance.task_id)
-    if task is None:
-        return
-    # Naming a status writes to the task's board, like linking a session does.
-    access.require(access.task_role(db, user_id, task), "editor")
-    if choice == "done":
-        set_task_sync_directive(db, instance.id, SYNC_FORCE)
-        return
-    set_task_sync_directive(db, instance.id, SYNC_SKIP)
-    task.status = choice
-
-
-def preview_archive(
-    db: Session, instance_id: UUID, user_id: UUID
-) -> ArchivePreviewResponse | None:
-    """What archiving this session would do to its task. None when the session
-    is invisible (→ 404); `AccessDenied` (→ 403) below admin, like archiving."""
-    instance = _get_managed_instance(db, instance_id, user_id)
-    if instance is None:
-        return None
-    if instance.task_id is None:
-        return ArchivePreviewResponse()
-    task = db.get(Task, instance.task_id)
-    if task is None or not access.role_at_least(
-        access.task_role(db, user_id, task), "editor"
-    ):
-        return ArchivePreviewResponse()
-
-    # Same-owner only: the sync never moves a task across users.
-    closes = (
-        task.user_id == instance.user_id
-        and sync_target_status(
-            db,
-            AgentStatus.COMPLETED,
-            instance.id,
-            task,
-            ignore_open_sessions=True,
-        )
-        is not None
-    )
-    others = count_open_sibling_sessions(db, task.id, instance.id)
-    key = (
-        db.query(Project.key).filter(Project.id == task.project_id).scalar()
-        if task.project_id is not None
-        else None
-    )
-    return ArchivePreviewResponse(
-        task=ArchivePreviewTask(
-            id=str(task.id),
-            key=format_task_identifier(key, task.number),
-            title=task.title,
-            status=task.status,  # type: ignore[arg-type]
-        ),
-        ask=closes,
-        default="no_change" if others else "done",
-        other_open_sessions=others,
-    )
-
-
 def update_instance_status(
-    db: Session,
-    instance_id: UUID,
-    user_id: UUID,
-    new_status: AgentStatus,
-    task_choice: str | None = None,
+    db: Session, instance_id: UUID, user_id: UUID, new_status: AgentStatus
 ) -> AgentInstanceResponse | None:
-    """Update an agent instance status (archive/complete). Owner or project admin.
-
-    `task_choice` only means something on COMPLETED (the archive): see
-    `_apply_archive_task_choice`."""
+    """Update an agent instance status (archive/complete). Owner or project admin."""
 
     instance = _get_managed_instance(db, instance_id, user_id)
     if not instance:
@@ -1293,9 +1195,6 @@ def update_instance_status(
     # Do not allow updating DELETED instances - they should stay deleted
     if instance.status == AgentStatus.DELETED:
         return None
-
-    if new_status == AgentStatus.COMPLETED:
-        _apply_archive_task_choice(db, instance, user_id, task_choice)
 
     # Update status
     instance.status = new_status

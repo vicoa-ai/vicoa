@@ -104,45 +104,40 @@ Delete the `#token` from your message. The details attached to it go too.
 - Point an agent at a task without retyping the description you already wrote
 - Keep the board honest, since work started from a task ends up filed under it
 
-## Tasks Follow Their Sessions
+## Tasks and Their Sessions
 
-A session that works on a task moves the task along for you, so the board stays honest without you dragging cards. A session gets onto a task when you start it from the task, or [reference the task](#referencing-a-task-files-the-session-under-it) in its first message.
+A session gets onto a task when you start it from the task, or [reference the task](#referencing-a-task-files-the-session-under-it) in its first message. Starting work moves the task along for you; when the task is finished is for you or the agent to say.
 
 ### What Moves the Task
 
 | The session | The task |
 | --- | --- |
 | Starts running | Backlog or Todo moves to In Progress |
-| Finishes, or you archive it | In Progress moves to Done |
-| Is resumed after it closed the task | Done goes back to In Progress |
+| Finishes, or you archive it | Stays as it is |
 
-A status you chose always wins. If you (or the agent, with `vicoa task update`) set the task to Blocked, In Review or Cancelled, a session starting or ending leaves it there.
+A session never moves a task that is past starting. If the task is Blocked, In Review, Done or Cancelled, a session starting again (resumed, or woken by your reply) leaves it there. To move a task on, change it on the board, answer the archive question below, or have the agent run `vicoa task update`.
 
 ### Archiving a Session That Works on a Task
 
-Archiving ends the session, and for a task that is In Progress that usually means Done. When it does, Vicoa asks what the task should become before it archives:
+Archiving puts the session away and does not change its task. When the task is still In Progress or In Review, though, archiving is a good moment to move it on, so Vicoa asks what the task should become:
 
 - **No change**: archive the session and leave the task as it is
 - **Todo**, **In Progress**, **In Review**: put the task in that column
 - **Done**: close the task
 
-The answer is preselected for you: Done normally, or No change when another session on the same task is still open. Press Enter to take it. In the session view the question is part of the Archive confirmation, so there is no extra step; from the sidebar or the Sessions board it appears only when there is something to decide.
+The answer is preselected for you: Done when this is the last open session on the task, or No change when another session on it is still running or waiting for you (the question tells you how many). Press Enter to take it. In the session view the question is part of the Archive confirmation, so there is no extra step; from the sidebar or the Sessions board it appears only when there is something to decide.
 
-It is not asked when the session has no task, when the task is not In Progress (you already set it to Blocked, say), when it is already Done or Cancelled, or when you can only view the task.
-
-### Several Sessions on One Task
-
-A task is closed by a session ending only when no other session on it is still running or waiting for you. Archive one of two sessions on a task and the task stays In Progress until the other one is finished too. The archive question tells you when this is the case, and you can still choose Done.
+It is not asked when the session has no task, or when the task is Backlog, Todo, Blocked, Done or Cancelled.
 
 ### Stop Being Asked
 
 Open **Settings → Tasks** and pick what archiving does to a task:
 
 - **Ask me each time** (default)
-- **Mark the task done**: the task follows the session, unless another session on it is still open
+- **Mark the task done**: archiving marks the task done, unless another session on it is still open
 - **Leave the task alone**: archiving a session never changes its task
 
-The setting is kept on the device you change it on, the browser or the desktop app, so set it on each one you use. The phone does not have it yet: archiving there works as before, which closes a task that is In Progress. Archiving several sessions at once, such as a whole worktree or project, never asks; it follows the setting.
+The setting is kept on the device you change it on, the browser or the desktop app, so set it on each one you use. The phone does not have it yet: archiving there leaves the task as it is. Deleting a worktree archives all of its sessions at once and never asks: with **Mark the task done** their tasks are closed, and otherwise they are left as they are.
 
 ## Slash Commands
 

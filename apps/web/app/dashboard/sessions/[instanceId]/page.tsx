@@ -22,7 +22,7 @@ import { trackFirstMessageSent } from '@/lib/desktop-telemetry';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { useDashboardNavigation } from '@/lib/contexts/dashboard-navigation-context';
-import { AgentInstanceDetail, ArchiveTaskChoice, MessageResponse, SessionInstanceMetadata } from '@/lib/backend-api';
+import { AgentInstanceDetail, MessageResponse, SessionInstanceMetadata } from '@/lib/backend-api';
 import { getInstanceDetail, postInstanceMessage } from '@/lib/agent-instance-api';
 import { getMessageStore } from '@/lib/message-store';
 import { useMessageStream } from '@/lib/hooks/use-ws-stream';
@@ -1272,10 +1272,11 @@ function AgentInstanceContent() {
     await deleteSession(sessionId, true);
   }, [deleteSession]);
 
-  const performComplete = useCallback(async (sessionId: string, taskStatus?: ArchiveTaskChoice) => {
-    await markComplete(sessionId, taskStatus);
+  const performComplete = useCallback(async (sessionId: string) => {
+    const archived = await markComplete(sessionId);
     updateInstanceStatus(sessionId, 'COMPLETED');
     await fetchInstanceDetail();
+    return archived;
   }, [markComplete, updateInstanceStatus, fetchInstanceDetail]);
 
   // Archive always confirms here; a session on a task folds "what should the

@@ -977,7 +977,9 @@ class TestTaskSessions:
 
 
 class TestStatusLinkage:
-    """Instance-status → task-status auto-linkage (plan §4, literal mapping)."""
+    """Instance-status → task-status auto-linkage (plan §4, narrowed): starting
+    work picks up a task nobody has started, and nothing else a session does
+    moves its task."""
 
     @pytest.fixture
     def linked_task(self, test_db, test_user, test_agent_instance):
@@ -988,37 +990,37 @@ class TestStatusLinkage:
         test_db.commit()
         return task
 
-    def test_mapped_statuses_drive_task_status(
-        self, test_db, test_agent_instance, linked_task
+    @pytest.mark.parametrize("unstarted", ["backlog", "todo"])
+    def test_session_start_picks_up_an_unstarted_task(
+        self, test_db, test_agent_instance, linked_task, unstarted
     ):
-        for agent_status, expected in [
-            (AgentStatus.ACTIVE, "in_progress"),
-            (AgentStatus.COMPLETED, "done"),
-            # Literal mapping accepted by Nick: REVIEWED after COMPLETED moves
-            # the task backward done -> in_review (plan §4 caveat).
-            (AgentStatus.REVIEWED, "in_review"),
-        ]:
-            test_agent_instance.status = agent_status
-            test_db.commit()
-            test_db.refresh(linked_task)
-            assert linked_task.status == expected, agent_status
-
-    def test_unmapped_statuses_leave_task_alone(
-        self, test_db, test_agent_instance, linked_task
-    ):
-        linked_task.status = "todo"
+        linked_task.status = unstarted
+        test_agent_instance.status = AgentStatus.AWAITING_INPUT
         test_db.commit()
 
+        test_agent_instance.status = AgentStatus.ACTIVE
+        test_db.commit()
+        test_db.refresh(linked_task)
+        assert linked_task.status == "in_progress"
+
+    def test_other_statuses_leave_task_alone(
+        self, test_db, test_agent_instance, linked_task
+    ):
+        # Archive (COMPLETED) and read (REVIEWED) included: neither says the
+        # work is finished.
+        assert linked_task.status == "in_progress"
         for agent_status in [
             AgentStatus.AWAITING_INPUT,
             AgentStatus.PAUSED,
+            AgentStatus.COMPLETED,
+            AgentStatus.REVIEWED,
             AgentStatus.FAILED,
             AgentStatus.KILLED,
         ]:
             test_agent_instance.status = agent_status
             test_db.commit()
             test_db.refresh(linked_task)
-            assert linked_task.status == "todo", agent_status
+            assert linked_task.status == "in_progress", agent_status
 
     def test_late_task_id_stamp_reevaluates_current_status(
         self, test_db, test_user, test_agent_type
@@ -1049,99 +1051,45 @@ class TestStatusLinkage:
         test_db.flush()
 
         test_agent_instance.task_id = foreign_task.id
-        test_agent_instance.status = AgentStatus.COMPLETED
+        test_agent_instance.status = AgentStatus.ACTIVE
         test_db.commit()
         test_db.refresh(foreign_task)
         assert foreign_task.status == "backlog"
 
-    def test_web_review_flow_marks_task(
+    def test_web_archive_leaves_the_task(
         self, test_db, test_user, test_agent_instance, linked_task
     ):
-        """The real backend path web uses (update_instance_status) syncs too."""
+        """The real backend path the web archive uses (update_instance_status)
+        does not close the task: the web asks, then changes the task itself."""
         from backend.db.queries import update_instance_status
 
         update_instance_status(
             test_db, test_agent_instance.id, test_user.id, AgentStatus.COMPLETED
         )
         test_db.refresh(linked_task)
-        assert linked_task.status == "done"
+        assert linked_task.status == "in_progress"
 
-    @pytest.mark.parametrize("chosen", ["blocked", "in_review", "todo", "cancelled"])
-    def test_session_end_keeps_a_chosen_status(
+    @pytest.mark.parametrize("chosen", ["blocked", "in_review", "done", "cancelled"])
+    def test_session_restart_keeps_a_status_past_starting(
         self, test_db, test_agent_instance, linked_task, chosen
     ):
-        """The bug this rule exists for: an agent marks its task blocked and
-        exits, and the task must not flip to done behind its back."""
-        assert linked_task.status == "in_progress"
+        """The agent asked for help and set blocked, or the task was closed;
+        the user's reply or a resume wakes the session (ACTIVE again) but only
+        the agent or the user moves the task on."""
         linked_task.status = chosen
+        test_agent_instance.status = AgentStatus.COMPLETED
         test_db.commit()
 
-        test_agent_instance.status = AgentStatus.COMPLETED
+        test_agent_instance.status = AgentStatus.ACTIVE
         test_db.commit()
         test_db.refresh(linked_task)
         assert linked_task.status == chosen
 
-    def test_session_end_closes_in_progress_whoever_set_it(
+    def test_a_status_the_session_set_itself_survives_its_end(
         self, test_db, test_agent_instance, linked_task
     ):
-        linked_task.status = "todo"
-        test_db.commit()
-        linked_task.status = "in_progress"
-        test_db.commit()
-
-        test_agent_instance.status = AgentStatus.COMPLETED
-        test_db.commit()
-        test_db.refresh(linked_task)
-        assert linked_task.status == "done"
-
-    def test_review_does_not_reopen_a_chosen_done(
-        self, test_db, test_agent_instance, linked_task
-    ):
-        """REVIEWED fires when the user merely switches away from a finished
-        session; it follows the sync's own `done`, never one a person set."""
-        linked_task.status = "done"
-        test_db.commit()
-
-        test_agent_instance.status = AgentStatus.COMPLETED
-        test_db.commit()
-        test_agent_instance.status = AgentStatus.REVIEWED
-        test_db.commit()
-        test_db.refresh(linked_task)
-        assert linked_task.status == "done"
-
-    def test_resumed_session_reopens_the_done_it_set(
-        self, test_db, test_agent_instance, linked_task
-    ):
-        test_agent_instance.status = AgentStatus.COMPLETED
-        test_db.commit()
-        test_db.refresh(linked_task)
-        assert linked_task.status == "done"
-
-        test_agent_instance.status = AgentStatus.ACTIVE
-        test_db.commit()
-        test_db.refresh(linked_task)
-        assert linked_task.status == "in_progress"
-
-    def test_session_restart_does_not_reopen_a_chosen_blocked(
-        self, test_db, test_agent_instance, linked_task
-    ):
-        """The agent asked for help and set blocked; the user's reply wakes the
-        session (ACTIVE again) but only the agent or the user unblocks it."""
-        linked_task.status = "blocked"
-        test_db.commit()
-        test_agent_instance.status = AgentStatus.AWAITING_INPUT
-        test_db.commit()
-
-        test_agent_instance.status = AgentStatus.ACTIVE
-        test_db.commit()
-        test_db.refresh(linked_task)
-        assert linked_task.status == "blocked"
-
-    def test_a_status_the_session_set_directly_counts_as_chosen(
-        self, test_db, test_agent_instance, linked_task
-    ):
-        """`vicoa task update` from inside the linked session carries the same
-        session id as the sync's own rows; `direct` is what tells them apart."""
+        """An agent marks its own task blocked with `vicoa task update` (a
+        `direct` change from inside the linked session) and exits."""
         set_session_actor(
             test_db,
             Actor(

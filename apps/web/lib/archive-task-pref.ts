@@ -3,14 +3,14 @@
 /**
  * What archiving a session does to the task it works on, as a standing answer
  * (Settings → Tasks): `ask` (the archive dialog asks each time), `mark_done`
- * (the task follows the session, as it always has) or `leave` (the task keeps
- * its status).
+ * (the task is marked done once its last open session is archived) or `leave`
+ * (the task keeps its status).
  *
  * Kept on this device, like the sidebar and theme preferences: the desktop app
  * writes it to its settings file, the web to localStorage. The server never
- * reads it. The web puts it into each archive request (`archiveStatusBody`), so
- * every archive from here follows it, and a client that does not know about it
- * (the phone) archives as before.
+ * reads it: archiving does not move a task there, and the web changes the task
+ * itself after archiving (`useArchiveSession`, `applyStandingAnswerToTasks`).
+ * A client that does not know about it (the phone) leaves the task alone.
  */
 
 import { useEffect, useState } from 'react';

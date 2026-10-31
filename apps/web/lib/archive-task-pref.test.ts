@@ -1,6 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { archiveTaskAction, setArchiveTaskAction } from './archive-task-pref';
-import { archiveStatusBody } from './archive-task';
 
 const KEY = 'archive-task-action';
 
@@ -57,32 +56,5 @@ describe('archive task preference', () => {
     expect(archiveTaskAction()).toBe('ask');
     storage.setItem(KEY, JSON.stringify(7));
     expect(archiveTaskAction()).toBe('ask');
-  });
-});
-
-describe('archive request body follows this device', () => {
-  test('ask and mark_done name no choice, so the server maps as usual', () => {
-    expect(archiveStatusBody()).toEqual({ status: 'COMPLETED' });
-    setArchiveTaskAction('mark_done');
-    expect(archiveStatusBody()).toEqual({ status: 'COMPLETED' });
-  });
-
-  test('leave sends no_change for an archive that names nothing', () => {
-    setArchiveTaskAction('leave');
-    expect(archiveStatusBody()).toEqual({ status: 'COMPLETED', task_status: 'no_change' });
-  });
-
-  test('a choice made in the dialog beats the standing answer', () => {
-    setArchiveTaskAction('leave');
-    expect(archiveStatusBody('done')).toEqual({ status: 'COMPLETED', task_status: 'done' });
-    expect(archiveStatusBody('in_review')).toEqual({ status: 'COMPLETED', task_status: 'in_review' });
-  });
-
-  test('the answer can be passed in, for a caller that already holds it', () => {
-    expect(archiveStatusBody(undefined, 'leave')).toEqual({
-      status: 'COMPLETED',
-      task_status: 'no_change',
-    });
-    expect(archiveStatusBody(undefined, 'ask')).toEqual({ status: 'COMPLETED' });
   });
 });

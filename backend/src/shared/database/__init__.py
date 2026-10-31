@@ -73,8 +73,8 @@ from .activation_models import (
 )
 from .actor import Actor, session_actor, set_session_actor
 
-# Side-effect imports: `tasks` registers the before_flush listener that drives
-# a linked task's status from its session's status; `task_activity` registers
+# Side-effect imports: `tasks` registers the before_flush listener that moves a
+# linked task to in_progress when its session starts; `task_activity` registers
 # the after_flush listener that generates `task_activity`. Importing the
 # package is what turns both on.
 from . import tasks as _tasks  # noqa: F401

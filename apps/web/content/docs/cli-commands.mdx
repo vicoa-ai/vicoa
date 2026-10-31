@@ -65,7 +65,7 @@ The `--agent` flag accepts `claude`, `amp`, `codex`, `opencode`, `cursor`, `gemi
 | Flag | Meaning |
 |---|---|
 | `--name <text>` | Display name for the registered session |
-| `--task <TASK_UUID>` | Link the session to a task; the task's status then follows the session (a running session flips its task to `in_progress`) |
+| `--task <TASK_UUID>` | Link the session to a task; a running session moves a task nobody has started to `in_progress` |
 | `--resume <SESSION_ID>` | Resume a previous session and mark it active |
 | `--agent <name>` | Which agent to run |
 | `--set-default [agent]` | Persist the default agent used by a bare `vicoa` run |
