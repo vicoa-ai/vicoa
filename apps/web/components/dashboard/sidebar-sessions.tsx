@@ -74,6 +74,7 @@ import {
   groupSessions,
   isAgentScratchWorktree,
   mergeRenderedOrder,
+  moveRenderedKey,
   projectGroupKey,
   rankProjects,
   normalizeWorktreePath,
@@ -500,6 +501,7 @@ export function SidebarSessions({
     isLoading,
     isLoadingMoreInstances,
     hasMoreInstances,
+    activeOnly,
     setActiveOnly,
     refreshData,
     loadMoreInstances,
@@ -841,6 +843,7 @@ export function SidebarSessions({
         groupBy === 'project' ? loadedProjects ?? [] : [],
         recentInstances,
         projectOrder,
+        activeOnly,
       ),
     [
       recentInstances,
@@ -851,6 +854,7 @@ export function SidebarSessions({
       projectsById,
       teamByProject,
       loadedProjects,
+      activeOnly,
     ],
   );
 
@@ -1099,25 +1103,19 @@ export function SidebarSessions({
     setDraggingProject(key);
   }, []);
 
-  // Move the dragged project group so it lands at the hovered group's slot
-  // (live, on every dragover). Only the groups on screen move; the merge
-  // keeps every off-screen project's rank, so a drag with a status filter on
-  // never resets the hidden ones to recency.
-  const handleProjectDragOver = useCallback((overKey: string) => {
+  // Move the dragged project group to just before or after the hovered one,
+  // by which half of it the pointer is over (live, on every dragover). Only
+  // the groups on screen move; the merge keeps every off-screen project's
+  // rank, so a drag with a status filter on never resets the hidden ones to
+  // recency.
+  const handleProjectDragOver = useCallback((overKey: string, after: boolean) => {
     const dragging = draggingProjectRef.current;
-    if (dragging === null || dragging === overKey) return;
+    if (dragging === null) return;
     const rendered = sidebarGroups
       .filter((g) => g.key !== 'PINNED' && g.label !== null)
       .map((g) => g.key);
-    const withoutDragged = rendered.filter((k) => k !== dragging);
-    const overIndex = withoutDragged.indexOf(overKey);
-    if (overIndex === -1) return;
-    const fromIndex = rendered.indexOf(dragging);
-    const toIndex = rendered.indexOf(overKey);
-    const insertAt = fromIndex < toIndex ? overIndex + 1 : overIndex;
-    const nextRendered = [...withoutDragged];
-    nextRendered.splice(insertAt, 0, dragging);
-    applyProjectOrder(mergeRenderedOrder(projectOrderRef.current, nextRendered));
+    const nextRendered = moveRenderedKey(rendered, dragging, overKey, after);
+    if (nextRendered) applyProjectOrder(mergeRenderedOrder(projectOrderRef.current, nextRendered));
   }, [sidebarGroups, applyProjectOrder]);
 
   // Persist on drop: locally always, and to the backend when signed in. Only
@@ -1257,7 +1255,11 @@ export function SidebarSessions({
           subs: [] as RenderedSubGroup[],
         };
 
-        if (!worktreesOn || groupBy !== 'project' || label === null || key === 'PINNED')
+        // An empty project lists no worktree rows. Checked before the git view
+        // because that view outlives the project's last session until the next
+        // fetch: read here, an archive would show the session-less worktree
+        // rows for a moment before the row settled into "+".
+        if (!worktreesOn || groupBy !== 'project' || label === null || key === 'PINNED' || empty)
           return notSplit;
 
         const view = projectGitViews.get(key);
@@ -2008,7 +2010,8 @@ export function SidebarSessions({
                       isDraggableProject && draggingProject !== null
                         ? (event) => {
                             event.preventDefault();
-                            handleProjectDragOver(key);
+                            const rect = event.currentTarget.getBoundingClientRect();
+                            handleProjectDragOver(key, event.clientY > rect.top + rect.height / 2);
                           }
                         : undefined
                     }
