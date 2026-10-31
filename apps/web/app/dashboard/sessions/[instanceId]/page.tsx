@@ -73,7 +73,8 @@ import { useProjects } from '@/lib/use-projects';
 import { SessionCreatedTasks } from '@/components/dashboard/session-created-tasks';
 import { FileSearchPalette } from '@/components/dashboard/file-search-palette';
 import { toAbsolutePath } from '@/lib/utils';
-import { RenameSessionDialog, DeleteSessionDialog, CompleteSessionDialog } from '@/components/dashboard/session-dialogs';
+import { RenameSessionDialog, DeleteSessionDialog } from '@/components/dashboard/session-dialogs';
+import { useArchiveSession } from '@/components/dashboard/archive-session';
 import { ShareLinkDialog } from '@/components/dashboard/share-link-dialog';
 import { useSessionOperations, useCopyToClipboard } from '@/lib/hooks/use-session-operations';
 import { useNow, useSessionLiveness } from '@/lib/hooks/use-session-liveness';
@@ -299,11 +300,6 @@ function AgentInstanceContent() {
     sessionName: string;
   }>({ open: false, sessionId: '', sessionName: '' });
 
-  const [completeDialog, setCompleteDialog] = useState<{
-    open: boolean;
-    sessionId: string;
-    sessionName: string;
-  }>({ open: false, sessionId: '', sessionName: '' });
   // Share dialog (collaboration P4). Only the owner / a project admin can mint
   // a link, and only against the cloud backend (not the logged-out desktop).
   const [shareOpen, setShareOpen] = useState(false);
@@ -1267,10 +1263,6 @@ function AgentInstanceContent() {
     setDeleteDialog({ open: true, sessionId, sessionName });
   }, []);
 
-  const handleMarkSessionComplete = useCallback((sessionId: string, sessionName: string) => {
-    setCompleteDialog({ open: true, sessionId, sessionName });
-  }, []);
-
   const performRename = useCallback(async (sessionId: string, newName: string) => {
     await renameSession(sessionId, newName);
     await fetchInstanceDetail();
@@ -1281,10 +1273,19 @@ function AgentInstanceContent() {
   }, [deleteSession]);
 
   const performComplete = useCallback(async (sessionId: string) => {
-    await markComplete(sessionId);
+    const archived = await markComplete(sessionId);
     updateInstanceStatus(sessionId, 'COMPLETED');
     await fetchInstanceDetail();
+    return archived;
   }, [markComplete, updateInstanceStatus, fetchInstanceDetail]);
+
+  // Archive always confirms here; a session on a task folds "what should the
+  // task become?" into that same dialog instead of adding a second one.
+  const { requestArchive, archiveDialog } = useArchiveSession(performComplete, { confirm: true });
+  const taskId = instance?.task_id ?? null;
+  const handleMarkSessionComplete = useCallback((sessionId: string) => {
+    void requestArchive({ id: sessionId, task_id: taskId });
+  }, [requestArchive, taskId]);
 
   const handleMarkSessionUnread = useCallback(async (sessionId: string) => {
     updateInstanceStatus(sessionId, 'AWAITING_INPUT');
@@ -1896,7 +1897,7 @@ function AgentInstanceContent() {
       if (e.repeat || !matchesShortcut(e, 'session-archive')) return;
       if (!instance || instance.status === 'COMPLETED' || instance.is_owner === false) return;
       e.preventDefault();
-      handleMarkSessionComplete(instanceId, instance.name || '');
+      handleMarkSessionComplete(instanceId);
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
@@ -2679,12 +2680,7 @@ function AgentInstanceContent() {
               }}
               copied={copiedSessionId === (instance?.id || instanceId)}
               onMarkDone={
-                instance.status !== 'COMPLETED'
-                  ? () => {
-                      const sessionName = instance.name || '';
-                      handleMarkSessionComplete(instanceId, sessionName);
-                    }
-                  : undefined
+                instance.status !== 'COMPLETED' ? () => handleMarkSessionComplete(instanceId) : undefined
               }
               showMarkDone={instance.status !== 'COMPLETED'}
               onUnread={
@@ -3136,13 +3132,7 @@ function AgentInstanceContent() {
         onRename={performRename}
       />
 
-      <CompleteSessionDialog
-        open={completeDialog.open}
-        onOpenChange={(open) => setCompleteDialog(prev => ({ ...prev, open }))}
-        sessionId={completeDialog.sessionId}
-        sessionName={completeDialog.sessionName}
-        onComplete={performComplete}
-      />
+      {archiveDialog}
 
       <DeleteSessionDialog
         open={deleteDialog.open}

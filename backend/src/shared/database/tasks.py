@@ -1,11 +1,11 @@
 """Task-tracker DB helpers shared by both server processes.
 
-Holds the instance-status → task-status linkage (tasks-and-projects plan §4).
+Holds the one way a session moves its task on its own (tasks-and-projects plan
+§4, narrowed): starting work picks up a task nobody has started.
 "No project" is simply ``tasks.project_id IS NULL`` — there is no Inbox row.
 """
 
 import logging
-from uuid import UUID
 
 from sqlalchemy import event
 from sqlalchemy.orm import Session, attributes
@@ -13,103 +13,65 @@ from sqlalchemy.orm import Session, attributes
 from .actor import Actor, register_activity_override
 from .enums import AgentStatus
 from .models import AgentInstance
-from .task_models import Task, TaskActivity
+from .task_models import Task
 
 logger = logging.getLogger(__name__)
 
-# Literal mapping chosen by Nick (plan §4). Because vicoa's lifecycle runs
-# ACTIVE → COMPLETED → REVIEWED, a review after completion moves the task
-# backward done → in_review — accepted, documented in the plan.
-AGENT_TO_TASK_STATUS: dict[AgentStatus, str] = {
-    AgentStatus.ACTIVE: "in_progress",
-    AgentStatus.COMPLETED: "done",
-    AgentStatus.REVIEWED: "in_review",
-}
-
-# The status a task must be in for the sync to move it on its own say-so.
-# Anything else was chosen — in the UI, or by an agent with `vicoa task update`
-# — and a session starting, finishing or being reviewed must not overwrite it:
-# an agent that marks its task blocked and then exits leaves it blocked. The
-# one way past this is a status the sync wrote itself (`_status_set_by_sync`),
-# which is what lets a session's own in_progress → done → in_review chain run,
-# and a resumed session reopen the `done` it set.
-SYNC_MAY_MOVE_FROM: dict[AgentStatus, frozenset[str]] = {
-    # Starting work picks up a task nobody has started.
-    AgentStatus.ACTIVE: frozenset({"backlog", "todo"}),
-    # Finishing closes a task that is in progress, whoever put it there.
-    AgentStatus.COMPLETED: frozenset({"in_progress"}),
-    # REVIEWED fires when the user merely switches away from a finished session,
-    # so it only ever follows the sync's own `done`, never one a person chose.
-    AgentStatus.REVIEWED: frozenset(),
-}
-
-
-def _status_set_by_sync(session: Session, task_id: UUID) -> bool:
-    """Whether the task's current status was written by this sync.
-
-    Read off the latest `status_changed` row: the sync's carry the session's
-    `agent_instance_id` and no `direct` flag. A change made in the UI carries
-    no session, and one an agent made with `vicoa task update` is `direct`.
-    A task whose status never changed (still the one it was created with)
-    has no row, which counts as chosen.
-    """
-    row = (
-        session.query(TaskActivity.details)
-        .filter(
-            TaskActivity.task_id == task_id,
-            TaskActivity.action == "status_changed",
-        )
-        .order_by(TaskActivity.created_at.desc())
-        .first()
-    )
-    details = (row[0] if row is not None else None) or {}
-    return "agent_instance_id" in details and not details.get("direct")
+# A session moves its task in one case only: it starts running (ACTIVE) on a
+# task nobody has started, which becomes in_progress. Its other statuses say
+# whether the user has read it (REVIEWED) or put it away (COMPLETED, which is
+# also what an agent's own end_session writes), not whether the work is
+# finished, so they never touch the task. Finishing a task is always someone's
+# explicit change: the user's in the UI (the web asks when a session is
+# archived) or an agent's with `vicoa task update`.
+SESSION_START_TASK_STATUS = "in_progress"
+# Any other status was chosen, or is past starting, and a session waking up
+# leaves it: an agent that marked its task blocked stays blocked when the
+# user's reply wakes it, and a session resumed on a done task does not reopen it.
+SESSION_START_MAY_MOVE_FROM: frozenset[str] = frozenset({"backlog", "todo"})
 
 
 def _sync_task_status_before_flush(session: Session, flush_context, instances) -> None:
-    """Drive a linked task's status from its run's status (plan §4).
+    """Move a linked task to in_progress when its session starts work (plan §4).
 
     Instance status is written from ~10 call sites across both server
     processes (REST, WS, daemon, web review flow); the flush is the single
     point they all pass through, so the linkage lives here rather than in
-    each caller. Fires when a linked instance's status changes into a mapped
-    state, and when task_id is stamped late (§8b: the web PATCH that links a
-    spawned instance can land after the instance already went ACTIVE). A status
-    someone chose wins over the mapping; see `SYNC_MAY_MOVE_FROM`.
+    each caller. Fires when a linked instance goes ACTIVE, and when task_id is
+    stamped late (§8b: the web PATCH that links a spawned instance can land
+    after the instance already went ACTIVE).
     """
     for obj in list(session.new) + list(session.dirty):
         if not isinstance(obj, AgentInstance) or obj.task_id is None:
+            continue
+        if obj.status != AgentStatus.ACTIVE:
             continue
         is_new = obj in session.new
         status_changed = is_new or attributes.get_history(obj, "status").has_changes()
         newly_linked = is_new or attributes.get_history(obj, "task_id").has_changes()
         if not (status_changed or newly_linked):
             continue
-        mapped = AGENT_TO_TASK_STATUS.get(obj.status)
-        if mapped is None:
-            continue
         with session.no_autoflush:
             task = session.get(Task, obj.task_id)
-            if task is None or task.user_id != obj.user_id or task.status == mapped:
+            if (
+                task is None
+                or task.user_id != obj.user_id
+                or task.status == SESSION_START_TASK_STATUS
+            ):
                 continue
-            if task.status not in SYNC_MAY_MOVE_FROM[
-                obj.status
-            ] and not _status_set_by_sync(session, task.id):
+            if task.status not in SESSION_START_MAY_MOVE_FROM:
                 logger.info(
-                    "task status sync: instance %s went %s, task %s keeps its "
-                    "chosen status %s",
+                    "task status sync: instance %s started, task %s keeps %s",
                     obj.id,
-                    obj.status.value,
                     task.id,
                     task.status,
                 )
                 continue
         logger.info(
-            "task status sync: instance %s went %s -> task %s becomes %s",
+            "task status sync: instance %s started -> task %s becomes %s",
             obj.id,
-            obj.status.value,
             task.id,
-            mapped,
+            SESSION_START_TASK_STATUS,
         )
         # Attribute the move to the agent, not to whoever's request happened to
         # carry the status update — the daemon posts it authenticated as the
@@ -125,7 +87,7 @@ def _sync_task_status_before_flush(session: Session, flush_context, instances) -
                 agent_instance_id=obj.id,
             ),
         )
-        task.status = mapped
+        task.status = SESSION_START_TASK_STATUS
 
 
 event.listen(Session, "before_flush", _sync_task_status_before_flush)

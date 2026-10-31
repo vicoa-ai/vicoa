@@ -2,6 +2,8 @@ import { useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { toast } from '@/lib/toast';
+import { applyStandingAnswerToTasks } from '@/lib/archive-task';
+import { refusalReason } from '@/lib/backend-api';
 
 export function useSessionOperations(instanceId?: string) {
   const { api, refreshData, recentInstances } = useAgentDashboard();
@@ -70,30 +72,39 @@ export function useSessionOperations(instanceId?: string) {
     }
   }, [api, refreshData, recentInstances, instanceId, router]);
 
-  // The session menus call this Archive, so the failure says so.
-  const markAsComplete = useCallback(async (sessionId: string) => {
+  // The session menus call this Archive, so the failure says so. Resolves to
+  // whether it worked, so a caller moves the session's task only after it.
+  const markAsComplete = useCallback(async (sessionId: string): Promise<boolean> => {
     if (!api) {
       toast.error("Couldn't archive session");
-      return;
+      return false;
     }
 
     try {
       await api.updateAgentStatus(sessionId, { status: 'COMPLETED' });
       await refreshData();
+      return true;
     } catch (error) {
       console.error('Failed to mark session as completed:', error);
-      toast.error("Couldn't archive session");
+      toast.error("Couldn't archive session", { description: refusalReason(error) });
+      return false;
     }
   }, [api, refreshData]);
 
   /** Archive several sessions at once — one round-trip for the lot, not one
    *  per session — and let the caller decide when to refresh. Rejects on the
-   *  first failure (no toast), for flows that surface errors in their own UI. */
-  const archiveSessions = useCallback(async (sessionIds: string[]) => {
+   *  first failure (no toast), for flows that surface errors in their own UI.
+   *  Then applies the standing answer (Settings → Tasks) to their tasks; a
+   *  task it could not update is a toast, since the sessions did archive. */
+  const archiveSessions = useCallback(async (sessions: { id: string; task_id?: string | null }[]) => {
     if (!api) throw new Error('API not initialized');
     await Promise.all(
-      sessionIds.map((id) => api.updateAgentStatus(id, { status: 'COMPLETED' })),
+      sessions.map((s) => api.updateAgentStatus(s.id, { status: 'COMPLETED' })),
     );
+    const failed = await applyStandingAnswerToTasks(api, sessions);
+    if (failed.length > 0) {
+      toast.error(failed.length === 1 ? "Couldn't update the task" : "Couldn't update the tasks");
+    }
   }, [api]);
 
   const markAsUnread = useCallback(async (sessionId: string) => {

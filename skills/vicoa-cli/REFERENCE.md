@@ -102,10 +102,10 @@ many messages/payloads were hidden. `--limit` counts **all** senders before
 ### `vicoa session update <session_id>`
 
 Mirrors the web: rename, (un)link a task, re-file the session under another
-checkout, or under another project. Linking drives the task's status from the
-session's status server-side (a running linked session moves a `backlog`/`todo`
-task to `in_progress`; finishing moves an `in_progress` one to `done`). A status
-set by hand or with `task update` is never overwritten by the session.
+checkout, or under another project. A running linked session moves a
+`backlog`/`todo` task to `in_progress` server-side. That is the only move the
+session makes: ending or archiving it leaves the task's status as it is, so
+finishing the task is a `task update`.
 
 | Flag | Meaning |
 |---|---|
@@ -241,7 +241,7 @@ These run the agent in the current terminal (not part of the `session` group).
 | Flag | Meaning |
 |---|---|
 | `--name <text>` | Display name for the registered session |
-| `--task <TASK_UUID>` | Link this session to a task (status follows the session) |
+| `--task <TASK_UUID>` | Link this session to a task (running it starts an unstarted task) |
 | `--resume <SESSION_ID>` | Resume a previous session (sets it ACTIVE) |
 | `--agent <name>` | Which agent to run |
 | `--agent-instance-id <id>` | Register under a specific session id |

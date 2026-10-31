@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * Settings → Tasks: label vocabularies. Labels are owner-scoped — one set
+ * Settings → Tasks: what archiving a session does to its task, and label
+ * vocabularies. Labels are owner-scoped — one set
  * across every personal project, and one per team across the team's projects
  * — never per-project, which is why they live at the top level of Settings
  * and not in a project's pane. A team's set is also edited on the team's page
@@ -14,8 +15,15 @@ import useSWR, { useSWRConfig } from 'swr';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ConfirmDeleteDialog } from '@/components/dashboard/session-dialogs';
 import { INLINE_LABEL_COLORS, LabelChip, inlineLabelColor } from '@/components/dashboard/task-ui';
+import { ARCHIVE_TASK_ACTIONS } from '@/lib/archive-task';
+import {
+  setArchiveTaskAction,
+  useArchiveTaskAction,
+  type ArchiveTaskAction,
+} from '@/lib/archive-task-pref';
 import { getBackendAPI, type TaskLabelResponse, type TeamSummary } from '@/lib/backend-api';
 import { isDesktopLocal } from '@/lib/runtime-config';
 import { TEAMS_KEY } from '@/lib/use-team-invitations';
@@ -37,7 +45,11 @@ export function TasksSettingsSection() {
   return (
     <section>
       <h1 className="text-2xl font-light tracking-tight text-foreground">Tasks</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
+
+      {/* The logged-out desktop has no tasks to archive a session from. */}
+      {!isDesktopLocal() && <ArchivePreference />}
+
+      <p className="mt-8 text-sm text-muted-foreground">
         Labels tag tasks on the board.{' '}
         {hasTeams
           ? 'Your labels are shared across your own projects; each team has its own set for its projects.'
@@ -56,6 +68,49 @@ export function TasksSettingsSection() {
         </div>
       ))}
     </section>
+  );
+}
+
+/**
+ * The standing answer to "archive a session that works on a task: what happens
+ * to the task?". Kept on this device (see `lib/archive-task-pref.ts`); the
+ * archive dialog reads it to know whether to ask, or what to do without asking.
+ */
+function ArchivePreference() {
+  const action = useArchiveTaskAction();
+
+  return (
+    <div className="mt-6">
+      <h2 className="text-sm text-foreground/90">When I archive a session that works on a task</h2>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Archiving a session does not change its task by itself. Choose whether to be asked about a
+        task that is still in progress or in review.
+      </p>
+      <RadioGroup
+        value={action}
+        onValueChange={(value) => setArchiveTaskAction(value as ArchiveTaskAction)}
+        aria-label="When I archive a session that works on a task"
+        className="mt-3 gap-1"
+      >
+        {ARCHIVE_TASK_ACTIONS.map((option) => (
+          <label
+            key={option.value}
+            htmlFor={`archive-action-${option.value}`}
+            className="flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2 hover:bg-accent/40"
+          >
+            <RadioGroupItem
+              id={`archive-action-${option.value}`}
+              value={option.value}
+              className="mt-0.5 cursor-pointer border-muted-foreground/50"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm text-foreground">{option.label}</span>
+              <span className="block text-xs text-muted-foreground">{option.description}</span>
+            </span>
+          </label>
+        ))}
+      </RadioGroup>
+    </div>
   );
 }
 

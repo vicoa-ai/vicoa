@@ -14,7 +14,8 @@ import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMe
 import { Input } from '@/components/ui/input';
 import { StartEllipsisText } from '@/components/ui/start-ellipsis-text';
 import { extractMessageOptions } from '@/components/ui/message-markdown-utils';
-import { AgentInstanceDetail, AgentInstanceResponse, MessageResponse } from '@/lib/backend-api';
+import { AgentInstanceDetail, AgentInstanceResponse, MessageResponse, refusalReason } from '@/lib/backend-api';
+import { useArchiveSession } from '@/components/dashboard/archive-session';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -500,8 +501,8 @@ export default function AgentManagerPage() {
     }
   }, [api, recentInstances, updateInstance]);
 
-  const markDone = useCallback(async (instanceId: string) => {
-    if (!api) return;
+  const markDone = useCallback(async (instanceId: string): Promise<boolean> => {
+    if (!api) return false;
 
     setBusyInstanceId(instanceId);
     try {
@@ -518,14 +519,23 @@ export default function AgentManagerPage() {
           },
         };
       });
+      return true;
     } catch (markDoneError) {
       console.error(`Failed to mark ${instanceId} as completed:`, markDoneError);
-      toast.error("Couldn't archive session");
+      toast.error("Couldn't archive session", { description: refusalReason(markDoneError) });
       await refreshData();
+      return false;
     } finally {
       setBusyInstanceId((current) => (current === instanceId ? null : current));
     }
   }, [api, refreshData, updateInstanceStatus]);
+
+  // A session on a task still under way may ask what the task should become.
+  const { requestArchive, archiveDialog } = useArchiveSession(markDone);
+  const requestMarkDone = useCallback(async (instanceId: string) => {
+    const instance = recentInstances.find((item) => item.id === instanceId);
+    await requestArchive({ id: instanceId, task_id: instance?.task_id });
+  }, [recentInstances, requestArchive]);
 
   const openDeleteDialog = useCallback((instance: AgentInstanceResponse) => {
     setDeleteDialog({
@@ -741,7 +751,7 @@ export default function AgentManagerPage() {
                         openDeleteDialog(instance);
                       }}
                       onReply={postMessage}
-                      onMarkDone={markDone}
+                      onMarkDone={requestMarkDone}
                       onShare={
                         isDesktopLocal()
                           ? undefined
@@ -764,6 +774,8 @@ export default function AgentManagerPage() {
           );
         })}
       </div>
+
+      {archiveDialog}
 
       <DeleteSessionDialog
         open={deleteDialog.open}
