@@ -1,7 +1,7 @@
 ---
 name: stack-preview
 description: Run the whole Vicoa stack (Postgres, backend, realtime server, web dashboard) from the current checkout and publish it at one public tunnel URL, so a branch can be reviewed from another machine or in the Vicoa app. Use when asked for a full-stack or end-to-end preview link of a Vicoa branch or PR, or when /live-preview is not enough because the dashboard needs a backend.
-argument-hint: "[up | status | restart | down [--keep-db | --delete-db | --purge] | prune] [--env-file FILE] [--allow-signup]"
+argument-hint: "[up | status | check | restart | down [--keep-db | --delete-db | --purge] | prune] [--env-file FILE] [--allow-signup]"
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash
 ---
@@ -84,10 +84,9 @@ those:
   This runs the same code the reviewer will use.
 - Write rows directly only for things no endpoint creates (agent sessions and
   their messages, automation runs). A `.py` seed can import the models from
-  `shared.database`. On a branch older than the fix that registers
-  `AgentProfile` there, flushing an `Automation` or `AgentInstance` fails with
-  `NoReferencedTableError: agent_profiles`; add
-  `import shared.database.agent_profile_models`.
+  `shared.database`. [reference/seed-example.py](reference/seed-example.py) is a
+  working seed (project and tasks through the API, a session with messages
+  through the database); copy it instead of reading the models.
 - Session status `COMPLETED` means archived: default lists and share links
   hide it. For a session that looks finished, use `AWAITING_INPUT`.
 - Run `stack-preview.sh seed FILE`. A `.py` runs in the backend venv with
@@ -98,11 +97,32 @@ those:
 
 ## 3. Check it the way the reviewer will
 
-Before handing over the link, open it in a headless browser (Playwright) at the
-public URL: sign in on `/sign-in` as Ada, open each changed screen, take
-screenshots, and check the console. Expected noise: `404 /api/v1/billing/*` (the
-open build has no billing) and `401 /api/supabase-user` from the sign-in page
-before login.
+Before handing over the link, run the changed screens through a signed-in
+headless browser at the public URL:
+
+```bash
+<skill-dir>/scripts/stack-preview.sh check /dashboard /dashboard/tasks   # a line per page + problems
+<skill-dir>/scripts/stack-preview.sh check --script <state-dir>/flow.mjs # click through a flow
+```
+
+It signs in as Ada (`--as viewer`: Bea) and prints each page's status plus any
+console errors, failed requests and 4xx/5xx responses; `404 /api/v1/billing/*`
+is filtered out. For a flow, write only the interactions, in the state dir like
+seeds (never in the repo). The file gets a signed-in page:
+
+```js
+export default async ({ page, go, shot }) => {
+  await go('/dashboard/tasks');                  // goto + wait for the page to settle
+  await page.getByText('Fix login').click();
+  return await page.locator('main').last().innerText(); // printed as JSON; the dashboard nests two <main>
+};
+```
+
+Assert on text and locators and return the values.
+
+**No screenshots unless the user asks.** `shot()` does nothing and path runs
+save nothing until you pass `--shot` (`--viewport 390x844` for a phone); crop with
+`shot(name, { selector })`. An image costs far more to read than a line of text.
 
 ## 4. Hand over
 

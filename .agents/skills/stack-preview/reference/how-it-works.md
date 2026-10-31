@@ -48,6 +48,7 @@ see the public hostname, exactly as with a direct tunnel. Responses carry
 | `<name>.pid` / `.start` / `.log` | per process; `.start` is `ps -o lstart`, so `down` never kills a recycled PID |
 | `extra/` | the same files for `run NAME -- CMD` side processes |
 | `run/` | empty working directory for the Python processes |
+| `shots/` | screenshots from `check --shot`; absent until one is asked for |
 | `seeded` | marker: the owner account exists in this database |
 | `viewer` | marker: an `up --viewer` seeded Bea in this database; `token viewer`, `seed`, `env` and the status lines offer her only then |
 
@@ -106,6 +107,25 @@ top of that it gets `NEXT_PUBLIC_AUTH_PROVIDER=builtin`,
   `allowedDevOrigins` lists the tunnel host (Next 15 only warns). After that
   upgrade, add `*.trycloudflare.com` (and the ngrok domain) to
   `allowedDevOrigins` in `next.config.ts`.
+
+## Browser check (check.mjs)
+
+`stack-preview.sh check` runs `scripts/check.mjs` with the signed-in account and
+the public URL in `PREVIEW_CHECK_*` variables. It needs Playwright and finds it
+without adding anything to the repo: `PREVIEW_PLAYWRIGHT`, then `apps/web`, then
+the newest `~/.npm/_npx/*` cache, then the global npm root. If none has it,
+`npx -y playwright install chromium` fills the npx cache.
+
+- It signs in through the real form, after the page has gone idle: submitting
+  before React hydrates does a native GET and puts the password in the URL. If that
+  happens anyway it retries once, waiting longer.
+- Problems are collected only after sign-in and the landing page have settled, so
+  they are attributed to the path being checked. Known noise (`404
+  /api/v1/billing/*`, `401 /api/supabase-user`) is counted, not listed.
+- Pages are loaded to `load`, then given up to 15 s to go idle (polling pages
+  never do). Actions time out after 15 s, so a wrong selector fails quickly.
+- Exit status is 1 for a failed sign-in, a status of 400 or more, a redirect back
+  to `/sign-in`, any listed problem, or a script error.
 
 ## Extending
 
