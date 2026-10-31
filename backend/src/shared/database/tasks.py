@@ -7,7 +7,7 @@ Holds the instance-status → task-status linkage (tasks-and-projects plan §4).
 import logging
 from uuid import UUID
 
-from sqlalchemy import event
+from sqlalchemy import event, func
 from sqlalchemy.orm import Session, attributes
 
 from .actor import Actor, register_activity_override
@@ -44,6 +44,61 @@ SYNC_MAY_MOVE_FROM: dict[AgentStatus, frozenset[str]] = {
 }
 
 
+# Statuses of a session that is still part of the work. A task is not finished
+# while one of these is attached to it: another session on the same task is
+# still running, or waiting on the user. REVIEWED (the user already looked and
+# moved on) and the terminal statuses do not count.
+OPEN_SESSION_STATUSES: frozenset[AgentStatus] = frozenset(
+    {
+        AgentStatus.STARTING,
+        AgentStatus.ACTIVE,
+        AgentStatus.AWAITING_INPUT,
+        AgentStatus.PAUSED,
+    }
+)
+
+# What the caller asking for a status change wants done to the linked task, for
+# that one flush. The listener sees *that* an instance changed, never why, so
+# the caller hands it the intent the same way it hands an activity actor.
+#   skip   the task keeps whatever status it has.
+#   force  move the task to the mapped status even where the sync would hold
+#          back (another session still open, a status someone chose): the user
+#          saw that and picked it.
+SYNC_SKIP = "skip"
+SYNC_FORCE = "force"
+_DIRECTIVE_KEY = "vicoa_task_sync_directives"
+
+
+def set_task_sync_directive(
+    session: Session, instance_id: UUID, directive: str
+) -> None:
+    """Tell the next flush how to treat `instance_id`'s linked task."""
+    session.info.setdefault(_DIRECTIVE_KEY, {})[instance_id] = directive
+
+
+def _take_task_sync_directive(session: Session, instance_id: UUID) -> str | None:
+    directives = session.info.get(_DIRECTIVE_KEY)
+    if not directives:
+        return None
+    return directives.pop(instance_id, None)
+
+
+def count_open_sibling_sessions(
+    session: Session, task_id: UUID, instance_id: UUID
+) -> int:
+    """Other sessions on `task_id` that are still part of the work."""
+    return (
+        session.query(func.count(AgentInstance.id))
+        .filter(
+            AgentInstance.task_id == task_id,
+            AgentInstance.id != instance_id,
+            AgentInstance.status.in_(OPEN_SESSION_STATUSES),
+        )
+        .scalar()
+        or 0
+    )
+
+
 def _status_set_by_sync(session: Session, task_id: UUID) -> bool:
     """Whether the task's current status was written by this sync.
 
@@ -66,6 +121,39 @@ def _status_set_by_sync(session: Session, task_id: UUID) -> bool:
     return "agent_instance_id" in details and not details.get("direct")
 
 
+def sync_target_status(
+    session: Session,
+    status: AgentStatus,
+    instance_id: UUID,
+    task: Task,
+    *,
+    ignore_open_sessions: bool = False,
+) -> str | None:
+    """The status the sync would move `task` to when `instance_id` goes to
+    `status`, or None when it would leave the task alone.
+
+    The one place the rules live, so the flush listener and the archive preview
+    (which asks "what would happen if I archived this?" before anyone does)
+    cannot disagree. A task is finished only when no other session on it is
+    still part of the work; `ignore_open_sessions` answers the same question
+    as if there were none.
+    """
+    mapped = AGENT_TO_TASK_STATUS.get(status)
+    if mapped is None or task.status == mapped:
+        return None
+    if task.status not in SYNC_MAY_MOVE_FROM[status] and not _status_set_by_sync(
+        session, task.id
+    ):
+        return None
+    if (
+        status is AgentStatus.COMPLETED
+        and not ignore_open_sessions
+        and count_open_sibling_sessions(session, task.id, instance_id) > 0
+    ):
+        return None
+    return mapped
+
+
 def _sync_task_status_before_flush(session: Session, flush_context, instances) -> None:
     """Drive a linked task's status from its run's status (plan §4).
 
@@ -75,29 +163,30 @@ def _sync_task_status_before_flush(session: Session, flush_context, instances) -
     each caller. Fires when a linked instance's status changes into a mapped
     state, and when task_id is stamped late (§8b: the web PATCH that links a
     spawned instance can land after the instance already went ACTIVE). A status
-    someone chose wins over the mapping; see `SYNC_MAY_MOVE_FROM`.
+    someone chose wins over the mapping; see `SYNC_MAY_MOVE_FROM`. A caller that
+    knows better says so with `set_task_sync_directive`.
     """
     for obj in list(session.new) + list(session.dirty):
         if not isinstance(obj, AgentInstance) or obj.task_id is None:
             continue
+        directive = _take_task_sync_directive(session, obj.id)
         is_new = obj in session.new
         status_changed = is_new or attributes.get_history(obj, "status").has_changes()
         newly_linked = is_new or attributes.get_history(obj, "task_id").has_changes()
         if not (status_changed or newly_linked):
             continue
         mapped = AGENT_TO_TASK_STATUS.get(obj.status)
-        if mapped is None:
+        if mapped is None or directive == SYNC_SKIP:
             continue
         with session.no_autoflush:
             task = session.get(Task, obj.task_id)
             if task is None or task.user_id != obj.user_id or task.status == mapped:
                 continue
-            if task.status not in SYNC_MAY_MOVE_FROM[
-                obj.status
-            ] and not _status_set_by_sync(session, task.id):
+            if directive != SYNC_FORCE and (
+                sync_target_status(session, obj.status, obj.id, task) is None
+            ):
                 logger.info(
-                    "task status sync: instance %s went %s, task %s keeps its "
-                    "chosen status %s",
+                    "task status sync: instance %s went %s, task %s stays %s",
                     obj.id,
                     obj.status.value,
                     task.id,

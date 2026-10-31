@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * Settings → Tasks: label vocabularies. Labels are owner-scoped — one set
+ * Settings → Tasks: what archiving a session does to its task, and label
+ * vocabularies. Labels are owner-scoped — one set
  * across every personal project, and one per team across the team's projects
  * — never per-project, which is why they live at the top level of Settings
  * and not in a project's pane. A team's set is also edited on the team's page
@@ -14,10 +15,19 @@ import useSWR, { useSWRConfig } from 'swr';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ConfirmDeleteDialog } from '@/components/dashboard/session-dialogs';
 import { INLINE_LABEL_COLORS, LabelChip, inlineLabelColor } from '@/components/dashboard/task-ui';
-import { getBackendAPI, type TaskLabelResponse, type TeamSummary } from '@/lib/backend-api';
+import { ARCHIVE_TASK_ACTIONS, USER_PREFERENCES_KEY } from '@/lib/archive-task';
+import {
+  getBackendAPI,
+  type ArchiveTaskAction,
+  type TaskLabelResponse,
+  type TeamSummary,
+  type UserPreferences,
+} from '@/lib/backend-api';
 import { isDesktopLocal } from '@/lib/runtime-config';
+import { toast } from '@/lib/toast';
 import { TEAMS_KEY } from '@/lib/use-team-invitations';
 import { cn } from '@/lib/utils';
 
@@ -37,7 +47,11 @@ export function TasksSettingsSection() {
   return (
     <section>
       <h1 className="text-2xl font-light tracking-tight text-foreground">Tasks</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
+
+      {/* The logged-out desktop has no tasks and no account to hold the answer. */}
+      {!isDesktopLocal() && <ArchivePreference />}
+
+      <p className="mt-8 text-sm text-muted-foreground">
         Labels tag tasks on the board.{' '}
         {hasTeams
           ? 'Your labels are shared across your own projects; each team has its own set for its projects.'
@@ -56,6 +70,85 @@ export function TasksSettingsSection() {
         </div>
       ))}
     </section>
+  );
+}
+
+/**
+ * The standing answer to "archive a session that works on a task: what happens
+ * to the task?". The server applies it to any archive that does not name its
+ * own choice, so the phone and the CLI honour it too; the web's archive dialog
+ * reads the same SWR key to know whether to ask.
+ */
+function ArchivePreference() {
+  const { mutate } = useSWRConfig();
+  const { data, error } = useSWR<UserPreferences>(
+    USER_PREFERENCES_KEY,
+    () => getBackendAPI(true).getUserPreferences(),
+    { shouldRetryOnError: false },
+  );
+
+  // Optimistic: the choice lands the moment it is clicked, and rolls back with
+  // a toast if the save fails. Disabling the group while the request is out
+  // greys all three options and makes the whole list look like it reloaded.
+  const choose = useCallback(
+    async (next: ArchiveTaskAction) => {
+      const previous = data;
+      if (next === previous?.archive_task_action) return;
+      void mutate<UserPreferences>(USER_PREFERENCES_KEY, { archive_task_action: next }, { revalidate: false });
+      try {
+        const saved = await getBackendAPI(true).updateUserPreferences({ archive_task_action: next });
+        await mutate<UserPreferences>(USER_PREFERENCES_KEY, saved, { revalidate: false });
+      } catch (err) {
+        console.error('Failed to save the archive preference:', err);
+        await mutate<UserPreferences>(USER_PREFERENCES_KEY, previous, { revalidate: false });
+        toast.error("Couldn't save setting");
+      }
+    },
+    [data, mutate],
+  );
+
+  return (
+    <div className="mt-6">
+      <h2 className="text-sm text-foreground/90">When I archive a session that works on a task</h2>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Archiving normally marks the task done. Choose whether to be asked, so you can pick another
+        status or leave the task as it is.
+      </p>
+      {data === undefined && !error ? (
+        <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading…
+        </div>
+      ) : (
+        <RadioGroup
+          value={data?.archive_task_action ?? 'ask'}
+          onValueChange={(value) => void choose(value as ArchiveTaskAction)}
+          aria-label="When I archive a session that works on a task"
+          className="mt-3 gap-1"
+        >
+          {ARCHIVE_TASK_ACTIONS.map((option) => (
+            <label
+              key={option.value}
+              htmlFor={`archive-action-${option.value}`}
+              className="flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2 hover:bg-accent/40"
+            >
+              <RadioGroupItem
+                id={`archive-action-${option.value}`}
+                value={option.value}
+                className="mt-0.5 cursor-pointer border-muted-foreground/50"
+              />
+              <span className="min-w-0">
+                <span className="block text-sm text-foreground">{option.label}</span>
+                <span className="block text-xs text-muted-foreground">{option.description}</span>
+              </span>
+            </label>
+          ))}
+        </RadioGroup>
+      )}
+      {error && (
+        <p className="mt-2 text-xs text-destructive">Couldn&apos;t load this setting. Check your connection.</p>
+      )}
+    </div>
   );
 }
 

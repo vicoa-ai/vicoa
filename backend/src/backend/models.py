@@ -83,6 +83,20 @@ class UserNotificationSettingsResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# What archiving a session does to the task it works on, as a standing choice.
+ArchiveTaskActionLiteral = Literal["ask", "mark_done", "leave"]
+
+
+class UserPreferencesRequest(BaseModel):
+    archive_task_action: Optional[ArchiveTaskActionLiteral] = None
+
+
+class UserPreferencesResponse(BaseModel):
+    archive_task_action: ArchiveTaskActionLiteral = "ask"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class PrincipalResponse(BaseModel):
     """A user, a team or an agent, in the one shape every surface renders (§2
     layer 1).
@@ -770,6 +784,30 @@ TaskStatusLiteral = Literal[
     "backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"
 ]
 TaskPriorityLiteral = Literal["urgent", "high", "medium", "low", "none"]
+
+
+class ArchivePreviewTask(BaseModel):
+    id: str
+    # "VIC-42"; null for a task with no project to scope a number.
+    key: Optional[str] = None
+    title: str
+    status: TaskStatusLiteral
+
+
+class ArchivePreviewResponse(BaseModel):
+    """What archiving a session would do to the task it works on, answered
+    before anyone archives, so the client can ask instead of guessing.
+
+    `ask` is the server's call: the session is linked to a task the caller may
+    edit, and a plain archive would close it (or would, but for another session
+    still working on it). `default` is the choice to preselect: done when the
+    task would close, no_change when another open session holds it back."""
+
+    task: Optional[ArchivePreviewTask] = None
+    ask: bool = False
+    default: Literal["done", "no_change"] = "no_change"
+    # Other sessions on the same task that are still part of the work.
+    other_open_sessions: int = 0
 
 
 class ProjectDirectoryResponse(BaseModel):

@@ -13,6 +13,8 @@ from ..auth.dependencies import get_current_user
 from ..models import (
     UserNotificationSettingsRequest,
     UserNotificationSettingsResponse,
+    UserPreferencesRequest,
+    UserPreferencesResponse,
 )
 
 router = APIRouter(tags=["user-settings"])
@@ -96,6 +98,29 @@ def update_notification_settings(
         phone_number=current_user.phone_number,
         notification_email=current_user.notification_email or current_user.email,
     )
+
+
+@router.get("/user/preferences", response_model=UserPreferencesResponse)
+def get_preferences(current_user: User = Depends(get_current_user)):
+    """Get current user's preferences (standing answers to questions the app
+    would otherwise ask each time)."""
+    return UserPreferencesResponse(archive_task_action=current_user.archive_task_action)  # type: ignore[arg-type]
+
+
+@router.put("/user/preferences", response_model=UserPreferencesResponse)
+def update_preferences(
+    request: UserPreferencesRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update current user's preferences; fields left out are unchanged."""
+    if request.archive_task_action is not None:
+        current_user.archive_task_action = request.archive_task_action
+
+    db.commit()
+    db.refresh(current_user)
+
+    return UserPreferencesResponse(archive_task_action=current_user.archive_task_action)  # type: ignore[arg-type]
 
 
 @router.post("/user/test-notification")

@@ -696,6 +696,13 @@ ENDPOINTS: list[Endpoint] = [
             json={"status": "COMPLETED"},
         ),
     ),
+    # The archive dialog's question: same floor as archiving itself.
+    Endpoint(
+        "GET /agent-instances/{id}/archive-preview",
+        "sessions",
+        "admin",
+        lambda c, w: c.get(f"/api/v1/agent-instances/{w.instance.id}/archive-preview"),
+    ),
     Endpoint(
         "DELETE /agent-instances/{id}",
         "sessions",
@@ -1036,6 +1043,7 @@ def test_every_dashboard_route_is_in_the_matrix_or_owner_only():
         "/agent-instances/{instance_id}/messages/{message_id}/cancel": "/agent-instances/{id}/messages/{mid}/cancel",
         "/agent-instances/{instance_id}/messages/{message_id}/steer": "/agent-instances/{id}/messages/{mid}/steer",
         "/agent-instances/{instance_id}/status": "/agent-instances/{id}/status",
+        "/agent-instances/{instance_id}/archive-preview": "/agent-instances/{id}/archive-preview",
         "/agent-instances/{instance_id}/access": "/agent-instances/{id}/access",
         "/agent-instances/{instance_id}/access/{access_id}": "/agent-instances/{id}/access/{aid}",
         "/projects/{project_id}/grants": "/projects/{id}/grants",

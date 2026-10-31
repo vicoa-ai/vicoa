@@ -2,6 +2,8 @@ import { useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { toast } from '@/lib/toast';
+import { archiveStatusBody } from '@/lib/archive-task';
+import { refusalReason, type ArchiveTaskChoice } from '@/lib/backend-api';
 
 export function useSessionOperations(instanceId?: string) {
   const { api, refreshData, recentInstances } = useAgentDashboard();
@@ -71,18 +73,20 @@ export function useSessionOperations(instanceId?: string) {
   }, [api, refreshData, recentInstances, instanceId, router]);
 
   // The session menus call this Archive, so the failure says so.
-  const markAsComplete = useCallback(async (sessionId: string) => {
+  // `taskStatus` is what to do with the task the session works on; left out,
+  // the server follows the user's standing preference.
+  const markAsComplete = useCallback(async (sessionId: string, taskStatus?: ArchiveTaskChoice) => {
     if (!api) {
       toast.error("Couldn't archive session");
       return;
     }
 
     try {
-      await api.updateAgentStatus(sessionId, { status: 'COMPLETED' });
+      await api.updateAgentStatus(sessionId, archiveStatusBody(taskStatus));
       await refreshData();
     } catch (error) {
       console.error('Failed to mark session as completed:', error);
-      toast.error("Couldn't archive session");
+      toast.error("Couldn't archive session", { description: refusalReason(error) });
     }
   }, [api, refreshData]);
 

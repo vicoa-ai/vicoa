@@ -62,6 +62,14 @@ class User(Base):
         String(255), default=None
     )  # Defaults to email if not set
 
+    # What archiving a session does to the task it works on: 'ask' (the web asks
+    # each time), 'mark_done' (the task follows the session, the default
+    # mapping) or 'leave' (the task keeps its status). Applied server-side to an
+    # archive that names no choice of its own, so every client honours it.
+    archive_task_action: Mapped[str] = mapped_column(
+        String(16), default="ask", server_default="ask"
+    )
+
     # Relationships
     agent_instances: Mapped[list["AgentInstance"]] = relationship(
         "AgentInstance", back_populates="user"

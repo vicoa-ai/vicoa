@@ -525,6 +525,29 @@ export type TaskStatus =
 
 export type TaskPriority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
 
+/**
+ * What archiving a session does to the task it works on, for one archive:
+ * leave it be, or set it to a status. The server accepts any task status; the
+ * archive dialog offers these five.
+ */
+export type ArchiveTaskChoice = 'no_change' | 'todo' | 'in_progress' | 'in_review' | 'done';
+
+/** The standing answer to that question (Settings → Tasks). */
+export type ArchiveTaskAction = 'ask' | 'mark_done' | 'leave';
+
+export interface UserPreferences {
+  archive_task_action: ArchiveTaskAction;
+}
+
+/** `GET /agent-instances/{id}/archive-preview`: what a plain archive would do. */
+export interface ArchivePreview {
+  task: { id: string; key: string | null; title: string; status: TaskStatus } | null;
+  /** The archive would close the task (or would, but for another open session). */
+  ask: boolean;
+  default: 'done' | 'no_change';
+  other_open_sessions: number;
+}
+
 /** Where a project is checked out on one machine; at most one per machine. */
 export interface ProjectDirectory {
   machine_id: string;
@@ -1839,6 +1862,11 @@ class BackendAPI {
     });
   }
 
+  /** What archiving this session would do to its task, so the client can ask first. */
+  async getArchivePreview(instanceId: string): Promise<ArchivePreview> {
+    return this.request<ArchivePreview>(`/api/v1/agent-instances/${instanceId}/archive-preview`);
+  }
+
   // Push Notifications
   async registerPushToken(data: { token: string; platform: string }) {
     return this.request('/api/v1/push/register', {
@@ -1862,6 +1890,17 @@ class BackendAPI {
 
   async updateNotificationSettings(data: any) {
     return this.request('/api/v1/user/notification-settings', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getUserPreferences(): Promise<UserPreferences> {
+    return this.request<UserPreferences>('/api/v1/user/preferences');
+  }
+
+  async updateUserPreferences(data: Partial<UserPreferences>): Promise<UserPreferences> {
+    return this.request<UserPreferences>('/api/v1/user/preferences', {
       method: 'PUT',
       body: JSON.stringify(data),
     });

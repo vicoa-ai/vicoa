@@ -131,51 +131,6 @@ export function DeleteSessionDialog({
   );
 }
 
-export function CompleteSessionDialog({
-  open,
-  onOpenChange,
-  sessionId,
-  sessionName,
-  onComplete
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  sessionId: string;
-  sessionName: string;
-  onComplete: (id: string) => void;
-}) {
-  const handleComplete = () => {
-    onComplete(sessionId);
-    onOpenChange(false);
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="font-mono">
-        <DialogHeader>
-          <DialogTitle>Archive Session</DialogTitle>
-          <DialogDescription>
-            Are you sure you want to archive this session? No further messages can be sent after it is archived.
-          </DialogDescription>
-        </DialogHeader>
-        {sessionName && (
-          <div className="p-3 border rounded-md bg-muted/50">
-            <div className="font-medium text-sm">{sessionName}</div>
-          </div>
-        )}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={handleComplete}>
-            Archive Session
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 /**
  * Confirm removing a git worktree from the sidebar (feature #4). Shown when the
  * removal isn't clean — a live session and/or uncommitted changes. A running

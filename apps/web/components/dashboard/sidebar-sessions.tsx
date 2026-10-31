@@ -55,7 +55,7 @@ import {
 } from '@/components/dashboard/session-project-choices';
 import { NewSessionButton, newSessionHref } from '@/components/dashboard/new-session-button';
 import { WorktreeSubGroupHeader } from '@/components/dashboard/worktree-sub-group-header';
-import type { AgentInstanceResponse, ProjectResponse } from '@/lib/backend-api';
+import type { AgentInstanceResponse, ArchiveTaskChoice, ProjectResponse } from '@/lib/backend-api';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
 import { projectSettingsHref as settingsHrefForProject } from '@/lib/project-settings-route';
 import { newProjectFolder } from '@/lib/project-paths';
@@ -105,6 +105,7 @@ import {
   WorktreeDeleteDialog,
 } from '@/components/dashboard/session-dialogs';
 import { ShareLinkDialog, type ShareTarget } from '@/components/dashboard/share-link-dialog';
+import { useArchiveSession } from '@/components/dashboard/archive-session';
 import {
   LeaveProjectDialog,
   ProjectIconWithOwner,
@@ -520,12 +521,20 @@ export function SidebarSessions({
     }
   }, [resumingId, refreshData]);
 
-  const handleArchive = useCallback(async (instance: AgentInstanceResponse) => {
-    await markAsComplete(instance.id);
+  const archiveAndClose = useCallback(async (instanceId: string, taskStatus?: ArchiveTaskChoice) => {
+    await markAsComplete(instanceId, taskStatus);
     // Archiving closes the session's workspace: let the caller tear down its
     // terminals + persisted layout (both web and desktop wire this).
-    onAfterCloseSession?.(instance.id);
+    onAfterCloseSession?.(instanceId);
   }, [markAsComplete, onAfterCloseSession]);
+
+  // A session on a task may ask what the task should become before it archives.
+  const { requestArchive, archiveDialog } = useArchiveSession(archiveAndClose);
+  const handleArchive = useCallback(
+    (instance: AgentInstanceResponse) =>
+      requestArchive({ id: instance.id, task_id: instance.task_id }),
+    [requestArchive],
+  );
 
   const handleDelete = useCallback(async (instanceId: string) => {
     await deleteSession(instanceId, true);
@@ -2097,6 +2106,8 @@ export function SidebarSessions({
         currentName={renameDialog.currentName}
         onRename={(id, name) => void renameSession(id, name)}
       />
+      {archiveDialog}
+
       <DeleteSessionDialog
         open={deleteDialog.open}
         onOpenChange={(open) => setDeleteDialog((prev) => ({ ...prev, open }))}
