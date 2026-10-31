@@ -1204,18 +1204,12 @@ def _apply_archive_task_choice(
     """Carry out what was said about the linked task for this archive.
 
     `choice` is the user's pick for this one archive (`no_change`, `done`, or
-    any other task status). `None` means nothing was said, so the standing
-    preference decides: 'leave' keeps the task as it is, anything else is the
-    default mapping (the task follows the session). `done` rides the sync so
-    the timeline attributes it to the session and a resumed session reopens
-    it; every other status is the user's own pick, which a resume leaves be.
+    any other task status). `None` means nothing was said: the default mapping
+    applies (the task follows the session). `done` rides the sync so the
+    timeline attributes it to the session and a resumed session reopens it;
+    every other status is the user's own pick, which a resume leaves be.
     """
-    if instance.task_id is None:
-        return
-    if choice is None:
-        action = db.query(User.archive_task_action).filter(User.id == user_id).scalar()
-        if action == "leave":
-            set_task_sync_directive(db, instance.id, SYNC_SKIP)
+    if instance.task_id is None or choice is None:
         return
     if choice == ARCHIVE_TASK_NO_CHANGE:
         set_task_sync_directive(db, instance.id, SYNC_SKIP)

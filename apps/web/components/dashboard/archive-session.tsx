@@ -18,7 +18,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import Link from 'next/link';
 import { CircleMinus } from 'lucide-react';
-import useSWR from 'swr';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -31,19 +30,14 @@ import {
 } from '@/components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { STATUS_CONFIG, StatusIcon } from '@/components/dashboard/task-ui';
-import {
-  ARCHIVE_TASK_CHOICES,
-  USER_PREFERENCES_KEY,
-  archiveChoiceStatus,
-  defaultArchiveChoice,
-} from '@/lib/archive-task';
+import { ARCHIVE_TASK_CHOICES, archiveChoiceStatus, defaultArchiveChoice } from '@/lib/archive-task';
+import { archiveTaskAction } from '@/lib/archive-task-pref';
 import {
   getBackendAPI,
   refusalReason,
   type ArchivePreview,
   type ArchiveTaskChoice,
   type BackendApiError,
-  type UserPreferences,
 } from '@/lib/backend-api';
 import { isImeComposing } from '@/lib/ime';
 import { isDesktopLocal } from '@/lib/runtime-config';
@@ -69,12 +63,6 @@ export function useArchiveSession(
   archive: (id: string, taskStatus?: ArchiveTaskChoice) => Promise<void>,
   { confirm = false }: { confirm?: boolean } = {},
 ) {
-  const { data: preferences } = useSWR<UserPreferences>(
-    isDesktopLocal() ? null : USER_PREFERENCES_KEY,
-    () => getBackendAPI(true).getUserPreferences(),
-    { shouldRetryOnError: false },
-  );
-  const action = preferences?.archive_task_action ?? 'ask';
   const [pending, setPending] = useState<PendingArchive | null>(null);
   const checking = useRef(false);
 
@@ -82,7 +70,8 @@ export function useArchiveSession(
     async (target: ArchiveTarget) => {
       if (checking.current) return;
       let preview: ArchivePreview | null = null;
-      if (target.task_id && action === 'ask' && !isDesktopLocal()) {
+      // Read at click time: the answer may have changed since this rendered.
+      if (target.task_id && archiveTaskAction() === 'ask' && !isDesktopLocal()) {
         checking.current = true;
         try {
           const result = await getBackendAPI(true).getArchivePreview(target.id);
@@ -106,7 +95,7 @@ export function useArchiveSession(
       }
       await archive(target.id);
     },
-    [action, confirm, archive],
+    [confirm, archive],
   );
 
   const archiveDialog = pending ? (

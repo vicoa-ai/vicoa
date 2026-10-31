@@ -3,9 +3,8 @@
 Archive is the COMPLETED status, which the status sync maps to the task's
 `done`. That is right when the session finished the work and wrong when the
 user is only putting the session away, so the archive can say what should
-happen to the task (`task_status`), the user can set a standing answer
-(`archive_task_action`), and the sync itself holds back while another session
-on the task is still part of the work.
+happen to the task (`task_status`), and the sync itself holds back while
+another session on the task is still part of the work.
 """
 
 from uuid import uuid4
@@ -213,72 +212,6 @@ class TestArchiveTaskStatusChoice:
             json={"status": "AWAITING_INPUT", "task_status": "done"},
         )
         assert resp.status_code == 400
-
-
-class TestArchiveTaskPreference:
-    def _set(self, test_db, test_user, value):
-        user = test_db.get(User, test_user.id)
-        user.archive_task_action = value
-        test_db.commit()
-
-    def test_leave_keeps_the_task_when_no_choice_is_sent(
-        self, authenticated_client, test_db, test_user, test_agent_instance, task
-    ):
-        """What a client that cannot ask (an older mobile build) gets."""
-        self._set(test_db, test_user, "leave")
-
-        _archive(authenticated_client, test_agent_instance)
-        test_db.refresh(task)
-        assert task.status == "in_progress"
-
-    @pytest.mark.parametrize("value", ["ask", "mark_done"])
-    def test_ask_and_mark_done_follow_the_session(
-        self, authenticated_client, test_db, test_user, test_agent_instance, task, value
-    ):
-        self._set(test_db, test_user, value)
-
-        _archive(authenticated_client, test_agent_instance)
-        test_db.refresh(task)
-        assert task.status == "done"
-
-    def test_an_explicit_choice_beats_the_preference(
-        self, authenticated_client, test_db, test_user, test_agent_instance, task
-    ):
-        self._set(test_db, test_user, "leave")
-
-        _archive(authenticated_client, test_agent_instance, task_status="done")
-        test_db.refresh(task)
-        assert task.status == "done"
-
-    def test_preference_defaults_to_ask_and_round_trips(self, authenticated_client):
-        resp = authenticated_client.get("/api/v1/user/preferences")
-        assert resp.status_code == 200
-        assert resp.json() == {"archive_task_action": "ask"}
-
-        resp = authenticated_client.put(
-            "/api/v1/user/preferences", json={"archive_task_action": "leave"}
-        )
-        assert resp.status_code == 200
-        assert resp.json() == {"archive_task_action": "leave"}
-        assert (
-            authenticated_client.get("/api/v1/user/preferences").json()[
-                "archive_task_action"
-            ]
-            == "leave"
-        )
-
-    def test_an_empty_update_changes_nothing(self, authenticated_client):
-        authenticated_client.put(
-            "/api/v1/user/preferences", json={"archive_task_action": "mark_done"}
-        )
-        resp = authenticated_client.put("/api/v1/user/preferences", json={})
-        assert resp.json() == {"archive_task_action": "mark_done"}
-
-    def test_an_unknown_action_is_rejected(self, authenticated_client):
-        resp = authenticated_client.put(
-            "/api/v1/user/preferences", json={"archive_task_action": "shrug"}
-        )
-        assert resp.status_code == 422
 
 
 class TestArchivePreview:

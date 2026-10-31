@@ -1,7 +1,5 @@
-import type { ArchivePreview, ArchiveTaskAction, ArchiveTaskChoice, TaskStatus } from '@/lib/backend-api';
-
-/** SWR key for the caller's preferences (Settings → Tasks reads and writes it). */
-export const USER_PREFERENCES_KEY = 'user-preferences';
+import { archiveTaskAction, type ArchiveTaskAction } from '@/lib/archive-task-pref';
+import type { ArchivePreview, ArchiveTaskChoice, TaskStatus } from '@/lib/backend-api';
 
 /** The archive dialog's choices, in the order the board lists its columns. */
 export const ARCHIVE_TASK_CHOICES: readonly ArchiveTaskChoice[] = [
@@ -23,15 +21,20 @@ export function defaultArchiveChoice(preview: Pick<ArchivePreview, 'default'>): 
 }
 
 /**
- * Body of `PUT /agent-instances/{id}/status` for an archive. Without a choice
- * the server decides from the user's standing preference, which is also what an
- * older client that cannot ask gets.
+ * Body of `PUT /agent-instances/{id}/status` for an archive. An archive that
+ * names no choice follows this device's standing answer: `leave` sends
+ * `no_change`, anything else sends nothing and the server's default mapping
+ * applies. Every web archive builds its body here, so none of them can skip it.
  */
-export function archiveStatusBody(taskStatus?: ArchiveTaskChoice): {
+export function archiveStatusBody(
+  taskStatus?: ArchiveTaskChoice,
+  action: ArchiveTaskAction = archiveTaskAction(),
+): {
   status: 'COMPLETED';
   task_status?: ArchiveTaskChoice;
 } {
-  return taskStatus ? { status: 'COMPLETED', task_status: taskStatus } : { status: 'COMPLETED' };
+  const choice = taskStatus ?? (action === 'leave' ? 'no_change' : undefined);
+  return choice ? { status: 'COMPLETED', task_status: choice } : { status: 'COMPLETED' };
 }
 
 export const ARCHIVE_TASK_ACTIONS: readonly {

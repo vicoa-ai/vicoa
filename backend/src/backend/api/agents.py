@@ -801,7 +801,7 @@ def update_agent_status(
         )
 
     # What to do with the task this session works on. Absent = no choice made,
-    # so the user's standing preference decides (see `update_instance_status`).
+    # so the default mapping applies (see `update_instance_status`).
     task_choice = status_update.get("task_status")
     if task_choice is not None:
         if status_enum != AgentStatus.COMPLETED:

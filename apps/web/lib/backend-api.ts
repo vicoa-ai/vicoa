@@ -532,13 +532,6 @@ export type TaskPriority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
  */
 export type ArchiveTaskChoice = 'no_change' | 'todo' | 'in_progress' | 'in_review' | 'done';
 
-/** The standing answer to that question (Settings → Tasks). */
-export type ArchiveTaskAction = 'ask' | 'mark_done' | 'leave';
-
-export interface UserPreferences {
-  archive_task_action: ArchiveTaskAction;
-}
-
 /** `GET /agent-instances/{id}/archive-preview`: what a plain archive would do. */
 export interface ArchivePreview {
   task: { id: string; key: string | null; title: string; status: TaskStatus } | null;
@@ -1890,17 +1883,6 @@ class BackendAPI {
 
   async updateNotificationSettings(data: any) {
     return this.request('/api/v1/user/notification-settings', {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async getUserPreferences(): Promise<UserPreferences> {
-    return this.request<UserPreferences>('/api/v1/user/preferences');
-  }
-
-  async updateUserPreferences(data: Partial<UserPreferences>): Promise<UserPreferences> {
-    return this.request<UserPreferences>('/api/v1/user/preferences', {
       method: 'PUT',
       body: JSON.stringify(data),
     });

@@ -83,20 +83,6 @@ class UserNotificationSettingsResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# What archiving a session does to the task it works on, as a standing choice.
-ArchiveTaskActionLiteral = Literal["ask", "mark_done", "leave"]
-
-
-class UserPreferencesRequest(BaseModel):
-    archive_task_action: Optional[ArchiveTaskActionLiteral] = None
-
-
-class UserPreferencesResponse(BaseModel):
-    archive_task_action: ArchiveTaskActionLiteral = "ask"
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class PrincipalResponse(BaseModel):
     """A user, a team or an agent, in the one shape every surface renders (§2
     layer 1).

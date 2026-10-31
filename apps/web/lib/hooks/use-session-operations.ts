@@ -74,7 +74,7 @@ export function useSessionOperations(instanceId?: string) {
 
   // The session menus call this Archive, so the failure says so.
   // `taskStatus` is what to do with the task the session works on; left out,
-  // the server follows the user's standing preference.
+  // this device's standing answer decides (see `archiveStatusBody`).
   const markAsComplete = useCallback(async (sessionId: string, taskStatus?: ArchiveTaskChoice) => {
     if (!api) {
       toast.error("Couldn't archive session");
@@ -96,7 +96,7 @@ export function useSessionOperations(instanceId?: string) {
   const archiveSessions = useCallback(async (sessionIds: string[]) => {
     if (!api) throw new Error('API not initialized');
     await Promise.all(
-      sessionIds.map((id) => api.updateAgentStatus(id, { status: 'COMPLETED' })),
+      sessionIds.map((id) => api.updateAgentStatus(id, archiveStatusBody())),
     );
   }, [api]);
 
