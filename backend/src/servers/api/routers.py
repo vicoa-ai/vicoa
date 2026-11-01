@@ -79,6 +79,7 @@ from servers.shared.db import (
 )
 from servers.shared.notification_utils import send_message_notifications
 from servers.presence import presence
+from servers.worktree_naming import start_worktree_naming
 from .auth import get_current_user_id
 from .models import (
     CreateMessageRequest,
@@ -851,6 +852,8 @@ async def machine_rpc_endpoint(
     — a caller targeting a machine they do not own simply finds no handler and
     gets `no_handler`, so no separate ownership check is needed.
     """
+    if request.method == "spawn-session":
+        start_worktree_naming(user_id, machine_id, request.params)
     try:
         result = await rpc_router.call(
             user_id, machine_id, request.method, request.params

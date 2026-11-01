@@ -58,6 +58,34 @@ def _branch_exists(repo: Path, name: str) -> bool:
     return proc.returncode == 0
 
 
+def _branch_names(repo: Path) -> set[str]:
+    """Every local branch name, plus each remote branch's name without its
+    remote prefix — what a generated name must not collide with. One git call,
+    so the random picker can test thousands of candidates without forking."""
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    names: set[str] = set()
+    for ref in proc.stdout.decode("utf-8", errors="replace").splitlines():
+        if ref.startswith("refs/heads/"):
+            names.add(ref.removeprefix("refs/heads/"))
+        elif ref.startswith("refs/remotes/"):
+            _remote, _, branch = ref.removeprefix("refs/remotes/").partition("/")
+            if branch and branch != "HEAD":
+                names.add(branch)
+    return names
+
+
 def _is_valid_branch_name(name: str) -> bool:
     """git's own verdict on `name` as a branch — the single source of truth
     for what a user-typed worktree name may look like (the web mirrors the
@@ -146,9 +174,8 @@ def create_worktree(repo_dir: str, name: str | None = None) -> dict[str, Any]:
             return {"error": str(verdict.get("reason") or "invalid_name")}
         name = name.strip()
     else:
-        name = generate_unique_name(
-            parent, is_taken=lambda n: _branch_exists(abs_repo, n)
-        )
+        taken = _branch_names(abs_repo)
+        name = generate_unique_name(parent, is_taken=taken.__contains__)
     path = parent / name / repo_basename(abs_repo)
 
     # `git worktree add` creates the intermediate <branch> dir and the leaf.
@@ -166,6 +193,56 @@ def create_worktree(repo_dir: str, name: str | None = None) -> dict[str, Any]:
         }
 
     return {"path": str(path), "branch": name, "repo_root": str(abs_repo)}
+
+
+def rename_new_worktree(created: dict[str, Any], name: str) -> dict[str, Any]:
+    """Give a worktree `create_worktree` just made a new name: branch + folder.
+
+    Only for the window between creation and the agent's launch, when nothing
+    runs in the folder yet, so the move can't strand a process's cwd or a
+    session's stored path and the name still counts as chosen at creation.
+    `name` is suffixed (`-2`, …) when taken, like a random slug. Returns the
+    new `{"path", "branch", "repo_root"}`, or `{"error"}` with the worktree
+    left exactly as it was.
+    """
+    abs_repo = Path(str(created["repo_root"]))
+    old_path = Path(str(created["path"]))
+    old_branch = str(created["branch"])
+    parent = worktrees_parent_dir(abs_repo)
+
+    taken = _branch_names(abs_repo)
+    new_name = disambiguate(parent, name, is_taken=taken.__contains__)
+    if not _is_valid_branch_name(new_name):
+        return {"error": "invalid_name"}
+    new_path = parent / new_name / repo_basename(abs_repo)
+
+    renamed = subprocess.run(
+        ["git", "-C", str(abs_repo), "branch", "-m", old_branch, new_name],
+        capture_output=True,
+        check=False,
+    )
+    if renamed.returncode != 0:
+        return {"error": _git_stderr(renamed, "branch_rename_failed")}
+
+    # `git worktree move` will not create the destination's parent.
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+    moved = subprocess.run(
+        ["git", "-C", str(abs_repo), "worktree", "move", str(old_path), str(new_path)],
+        capture_output=True,
+        check=False,
+    )
+    if moved.returncode != 0:
+        _prune_empty_dirs(new_path.parent)
+        subprocess.run(
+            ["git", "-C", str(abs_repo), "branch", "-m", new_name, old_branch],
+            capture_output=True,
+            check=False,
+        )
+        return {"error": _git_stderr(moved, "worktree_move_failed")}
+
+    # The old `<branch>` middle dir is empty now.
+    _prune_empty_dirs(old_path.parent)
+    return {"path": str(new_path), "branch": new_name, "repo_root": str(abs_repo)}
 
 
 def _prune_empty_dirs(start: Path) -> None:

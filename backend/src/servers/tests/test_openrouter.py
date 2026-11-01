@@ -79,6 +79,30 @@ class TestCallOpenRouter:
             assert call_kwargs["response_format"] == {"type": "json_object"}
             assert call_kwargs["extra_body"] == {"usage": {"include": True}}
 
+    def test_merges_extra_body_and_bounds_the_request(self):
+        with (
+            patch("shared.llms.openrouter.settings") as mock_settings,
+            patch("openai.OpenAI") as mock_openai_cls,
+        ):
+            mock_settings.openrouter_api_key = "sk-or-xxx"
+            client = MagicMock()
+            client.chat.completions.create.return_value = _mock_completion("{}")
+            mock_openai_cls.return_value = client
+
+            call_openrouter(
+                "openai/gpt-oss-20b",
+                "hi",
+                include_usage_cost=True,
+                extra_body={"reasoning": {"effort": "low"}},
+                request_timeout=5.0,
+            )
+            call_kwargs = client.chat.completions.create.call_args.kwargs
+            assert call_kwargs["extra_body"] == {
+                "reasoning": {"effort": "low"},
+                "usage": {"include": True},
+            }
+            assert call_kwargs["timeout"] == 5.0
+
     def test_api_exception_caught_into_error_field(self):
         with (
             patch("shared.llms.openrouter.settings") as mock_settings,

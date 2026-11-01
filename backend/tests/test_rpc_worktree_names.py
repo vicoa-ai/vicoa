@@ -20,39 +20,60 @@ def test_generated_name_is_two_lowercase_words_hyphenated(tmp_path: Path):
     assert re.fullmatch(r"[a-z]+-[a-z]+", name), name
 
 
-def test_directory_collision_appends_numeric_suffix(tmp_path: Path):
+def test_taken_names_are_skipped_not_suffixed(tmp_path: Path):
+    """A collision picks another free combination; no `-2` while any is left."""
     from vicoa.rpc import worktree_names
 
-    base = worktree_names._random_slug(random.Random(0))
-    (tmp_path / base).mkdir()
-
-    name = worktree_names.generate_unique_name(tmp_path, rng=random.Random(0))
-
-    assert name == f"{base}-2"
-
-
-def test_branch_collision_via_is_taken_predicate(tmp_path: Path):
-    from vicoa.rpc import worktree_names
-
-    base = worktree_names._random_slug(random.Random(0))
+    first = worktree_names.generate_unique_name(tmp_path, rng=random.Random(0))
+    (tmp_path / first).mkdir()
+    branch_taken = worktree_names.generate_unique_name(tmp_path, rng=random.Random(1))
 
     name = worktree_names.generate_unique_name(
-        tmp_path, is_taken=lambda n: n == base, rng=random.Random(0)
+        tmp_path, is_taken=lambda n: n == branch_taken, rng=random.Random(1)
     )
 
-    assert name == f"{base}-2"
+    assert name not in (first, branch_taken)
+    assert re.fullmatch(r"[a-z]+-[a-z]+", name), name
 
 
-def test_two_collisions_append_three(tmp_path: Path):
+def test_the_last_free_combination_is_found(tmp_path: Path, monkeypatch):
     from vicoa.rpc import worktree_names
 
-    base = worktree_names._random_slug(random.Random(0))
-    (tmp_path / base).mkdir()
-    (tmp_path / f"{base}-2").mkdir()
+    monkeypatch.setattr(worktree_names, "ADJECTIVES", ["calm", "keen"])
+    monkeypatch.setattr(worktree_names, "NOUNS", ["river", "ridge"])
+    for taken in ("calm-river", "calm-ridge", "keen-river"):
+        (tmp_path / taken).mkdir()
 
-    name = worktree_names.generate_unique_name(tmp_path, rng=random.Random(0))
+    for seed in range(5):
+        assert (
+            worktree_names.generate_unique_name(tmp_path, rng=random.Random(seed))
+            == "keen-ridge"
+        )
 
-    assert name == f"{base}-3"
+
+def test_suffix_only_once_every_combination_is_taken(tmp_path: Path, monkeypatch):
+    from vicoa.rpc import worktree_names
+
+    monkeypatch.setattr(worktree_names, "ADJECTIVES", ["calm"])
+    monkeypatch.setattr(worktree_names, "NOUNS", ["river"])
+    (tmp_path / "calm-river").mkdir()
+
+    assert worktree_names.generate_unique_name(tmp_path) == "calm-river-2"
+    assert (
+        worktree_names.generate_unique_name(
+            tmp_path, is_taken=lambda n: n == "calm-river-2"
+        )
+        == "calm-river-3"
+    )
+
+
+def test_vocabulary_is_large_unique_and_plain():
+    from vicoa.rpc import worktree_names
+
+    for words in (worktree_names.ADJECTIVES, worktree_names.NOUNS):
+        assert len(words) >= 60
+        assert len(set(words)) == len(words)
+        assert all(re.fullmatch(r"[a-z]{3,8}", w) for w in words), words
 
 
 def test_disambiguate_keeps_a_free_base_and_suffixes_a_taken_one(tmp_path: Path):

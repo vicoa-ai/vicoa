@@ -23,6 +23,7 @@ import requests
 from requests import Response
 
 from integrations.utils.heartbeat import next_interval_from_response
+from vicoa.rpc.worktree_auto_name import AUTO_NAME_BUDGET_SECONDS, AutoNameInbox
 from vicoa.session_markers import clear_session_registered, registered_marker_path
 from vicoa.spawn_ws_client import SpawnRequestWsClient
 from vicoa.terminal.coalescer import TerminalOutputCoalescer
@@ -31,6 +32,7 @@ from vicoa.terminal.service import TerminalService
 from requests.exceptions import RequestException, Timeout
 
 from protocol.system_prompt import SYSTEM_PROMPT_CAPABILITY
+from protocol.worktree_naming import AUTO_NAME_PARAM
 from protocol.agent_catalog import (
     PERMISSION_MODES,
     REASONING_EFFORTS,
@@ -39,7 +41,12 @@ from protocol.agent_catalog import (
 from integrations.headless.generic_acp import effective_acp_agents
 from integrations.headless.pi_family.spec import PI_FAMILY_AGENTS
 from integrations.headless.antigravity import spec as antigravity_spec
-from vicoa.utils import derive_ws_url, get_git_identity, get_project_path
+from vicoa.utils import (
+    SESSION_TITLE_ENV,
+    derive_ws_url,
+    get_git_identity,
+    get_project_path,
+)
 from vicoa.machine_identity import (
     IdentityAction,
     api_key_fingerprint,
@@ -676,6 +683,9 @@ class MachineDaemon:
         # `npm ci`s against each other.
         self._worktree_setup_running: set[str] = set()
         self._worktree_setup_lock = Lock()
+        # Names the server generates for a spawn's new worktree, pushed while
+        # the checkout runs (`protocol.worktree_naming`).
+        self._auto_names = AutoNameInbox()
 
     # ------------------------------------------------------------------
     # Persistence helpers — each daemon owns its own per-base-url entry.
@@ -2590,9 +2600,13 @@ class MachineDaemon:
         failure; the daemon WS client wraps either in an `rpc-response`.
         """
         params = frame.get("params") or {}
+        # The naming budget for an auto-named worktree counts from here.
+        received_at = time.monotonic()
         # Set before the try so the except-path rollback can see it even if an
         # early validation step raises.
         worktree_info: dict[str, Any] | None = None
+        # The session title that came with an auto-named worktree, if any.
+        auto_title: str | None = None
         try:
             directory = params.get("directory")
             if not isinstance(directory, str) or not directory.strip():
@@ -2669,6 +2683,23 @@ class MachineDaemon:
                 if "error" in created:
                     return {"error": f"Failed to create worktree: {created['error']}"}
                 worktree_info = created
+                # The server is naming this worktree from the prompt; take the
+                # name if it lands in time (the user's own pick always wins).
+                auto_name_token = worktree_param.get(AUTO_NAME_PARAM)
+                user_named = isinstance(requested_name, str) and bool(
+                    requested_name.strip()
+                )
+                if (
+                    isinstance(auto_name_token, str)
+                    and auto_name_token
+                    and not user_named
+                ):
+                    created, auto_title = self._apply_auto_name(
+                        created,
+                        auto_name_token,
+                        deadline=received_at + AUTO_NAME_BUDGET_SECONDS,
+                    )
+                    worktree_info = created
                 requested_dir = os.path.realpath(os.path.expanduser(directory.strip()))
                 subdir = os.path.relpath(requested_dir, created["repo_root"])
                 expanded_directory = (
@@ -2694,6 +2725,11 @@ class MachineDaemon:
             env["VICOA_AGENT_INSTANCE_ID"] = session_id
             # Recorded as instance_metadata['source'] when the agent registers.
             env["VICOA_SPAWN_SOURCE"] = "app"
+            # Hand the agent the title that named its worktree; never pass on
+            # one this daemon itself inherited.
+            env.pop(SESSION_TITLE_ENV, None)
+            if auto_title:
+                env[SESSION_TITLE_ENV] = auto_title
 
             command = self._build_headless_command(
                 directory=expanded_directory,
@@ -2948,6 +2984,37 @@ class MachineDaemon:
                 print(f"[daemon] worktree teardown reported failures: {worktree_path}")
         except Exception as exc:  # noqa: BLE001 - teardown is best-effort
             print(f"[daemon] worktree teardown failed: {exc}")
+
+    def _apply_auto_name(
+        self, created: dict[str, Any], token: str, *, deadline: float
+    ) -> tuple[dict[str, Any], str | None]:
+        """Rename a just-created worktree to the server's suggestion, if it
+        arrives by `deadline` (`time.monotonic()`; `protocol.worktree_naming`).
+
+        Returns the worktree info, renamed or not, and the session title to
+        hand the agent. On a late answer or a failed rename the random name
+        stays; it is never renamed after the agent starts.
+        """
+        from vicoa.rpc.worktree_ops import rename_new_worktree
+
+        names = self._auto_names.wait(token, max(0.0, deadline - time.monotonic()))
+        if names is None:
+            logger.info(
+                "worktree name did not arrive in time; keeping %s", created["branch"]
+            )
+            return created, None
+        if names.branch:
+            renamed = rename_new_worktree(created, names.branch)
+            if "error" in renamed:
+                logger.warning(
+                    "could not rename worktree %s to %s: %s",
+                    created["branch"],
+                    names.branch,
+                    renamed["error"],
+                )
+            else:
+                created = renamed
+        return created, names.title
 
     def _rollback_worktree(self, worktree_info: dict[str, Any] | None) -> None:
         """Remove a worktree created for a spawn that then failed to launch.
@@ -3274,6 +3341,7 @@ class MachineDaemon:
             on_spawn_request=self._catchup_poll,
             on_connect=self._catchup_poll,
             on_rpc_request=self._handle_rpc_request,
+            on_worktree_name=self._auto_names.deliver,
             rpc_methods=self._supported_rpc_methods(),
             # Skill install/uninstall mutate the on-disk skills dir; route them
             # through the single ordered worker so two writes can't interleave.

@@ -95,6 +95,8 @@ def call_openrouter(
     json_mode: bool = False,
     include_usage_cost: bool = False,
     app_title: str = DEFAULT_APP_TITLE,
+    extra_body: dict[str, Any] | None = None,
+    request_timeout: float | None = None,
 ) -> OpenRouterResult:
     """Generic single-shot OpenRouter chat completion.
 
@@ -103,6 +105,9 @@ def call_openrouter(
     models that honor it (DeepSeek, GPT, Claude all support it).
     `include_usage_cost=True` asks OpenRouter to attach the request's USD
     cost to `usage.cost` — only useful when you want to track spend.
+    `extra_body` carries OpenRouter-specific request fields (`provider`
+    routing, `reasoning` effort); `request_timeout` bounds this one call,
+    which otherwise inherits the SDK's 10-minute default.
     """
     try:
         client = _build_client(api_key, app_title=app_title)
@@ -129,8 +134,13 @@ def call_openrouter(
     }
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
+    body: dict[str, Any] = dict(extra_body or {})
     if include_usage_cost:
-        kwargs["extra_body"] = {"usage": {"include": True}}
+        body["usage"] = {"include": True}
+    if body:
+        kwargs["extra_body"] = body
+    if request_timeout is not None:
+        kwargs["timeout"] = request_timeout
 
     start = time.perf_counter()
     try:

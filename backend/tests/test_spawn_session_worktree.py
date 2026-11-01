@@ -78,6 +78,7 @@ def _patch_popen(monkeypatch: pytest.MonkeyPatch, calls: dict, *, fail: bool = F
             return real_popen(command, *args, **kw)
         calls["called"] = True
         calls["cwd"] = kw.get("cwd")
+        calls["env"] = kw.get("env")
         if fail:
             raise OSError("simulated launch failure")
         return _FakeProc()
@@ -419,3 +420,124 @@ def test_spawn_without_worktree_reports_the_repo_root(
     assert "error" not in result, result
     assert Path(calls["cwd"]).resolve() == subdir.resolve()
     assert Path(result["repo_root"]).expanduser().resolve() == committed_repo.resolve()
+
+
+# --- naming the worktree from the prompt (protocol.worktree_naming) -----------
+
+
+def _auto_named_spawn(repo: Path, token: str = "tok-1", **worktree) -> dict:
+    return {
+        "params": {
+            "directory": str(repo),
+            "agent": "claude",
+            "worktree": {"new": True, "auto_name": token, **worktree},
+            "metadata": {"prompt": "Fix the Safari logout bug"},
+        }
+    }
+
+
+def test_spawn_takes_the_servers_name_for_branch_folder_and_title(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    from vicoa.utils import SESSION_TITLE_ENV
+
+    daemon = _prep_daemon(monkeypatch)
+    calls: dict = {}
+    _patch_popen(monkeypatch, calls)
+    # The frame may land before the spawn starts waiting; the inbox keeps it.
+    daemon._auto_names.deliver(
+        {
+            "type": "worktree-name",
+            "token": "tok-1",
+            "branch": "fix-safari-logout",
+            "title": "Fix Safari logout",
+        }
+    )
+
+    result = daemon.spawn_session_rpc(_auto_named_spawn(committed_repo))
+
+    assert "error" not in result, result
+    assert result["branch"] == "fix-safari-logout"
+    worktree = Path(result["worktree_path"])
+    assert worktree.parent.name == "fix-safari-logout"
+    # The agent starts in the renamed folder, and registers with the title.
+    assert calls["cwd"] == str(worktree)
+    assert calls["env"][SESSION_TITLE_ENV] == "Fix Safari logout"
+
+
+def test_spawn_keeps_the_random_name_when_naming_is_late(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    import vicoa.machine_daemon as machine_daemon
+    from vicoa.utils import SESSION_TITLE_ENV
+
+    monkeypatch.setattr(machine_daemon, "AUTO_NAME_BUDGET_SECONDS", 0.01)
+    daemon = _prep_daemon(monkeypatch)
+    calls: dict = {}
+    _patch_popen(monkeypatch, calls)
+
+    result = daemon.spawn_session_rpc(_auto_named_spawn(committed_repo))
+
+    assert "error" not in result, result
+    assert Path(result["worktree_path"]).parent.name == result["branch"]
+    assert result["branch"] != "fix-safari-logout"
+    assert SESSION_TITLE_ENV not in calls["env"]
+
+
+def test_a_checkout_that_outlasts_the_budget_adds_no_wait(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    """The budget counts from the request: a slow checkout has used it up, so
+    the spawn launches at once, but a name that is already in still counts."""
+    import time
+
+    from vicoa.rpc.worktree_ops import create_worktree
+
+    daemon = _prep_daemon(monkeypatch)
+    created = create_worktree(str(committed_repo))
+    spent = time.monotonic() - 5
+
+    started = time.monotonic()
+    kept, title = daemon._apply_auto_name(created, "never-sent", deadline=spent)
+    assert time.monotonic() - started < 0.2
+    assert kept == created and title is None
+
+    daemon._auto_names.deliver({"token": "early", "branch": "fix-login"})
+    renamed, _ = daemon._apply_auto_name(created, "early", deadline=spent)
+    assert renamed["branch"] == "fix-login"
+
+
+def test_spawn_with_a_user_typed_name_ignores_the_servers_name(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    daemon = _prep_daemon(monkeypatch)
+    calls: dict = {}
+    _patch_popen(monkeypatch, calls)
+    daemon._auto_names.deliver({"token": "tok-1", "branch": "something-else"})
+
+    result = daemon.spawn_session_rpc(_auto_named_spawn(committed_repo, name="my-pick"))
+
+    assert result["branch"] == "my-pick"
+
+
+def test_spawn_does_not_pass_on_a_title_the_daemon_inherited(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    from vicoa.utils import SESSION_TITLE_ENV
+
+    monkeypatch.setenv(SESSION_TITLE_ENV, "Some other session")
+    daemon = _prep_daemon(monkeypatch)
+    calls: dict = {}
+    _patch_popen(monkeypatch, calls)
+
+    daemon.spawn_session_rpc(
+        {
+            "params": {
+                "directory": str(committed_repo),
+                "agent": "claude",
+                "worktree": {"new": True},
+            }
+        }
+    )
+
+    assert SESSION_TITLE_ENV not in calls["env"]

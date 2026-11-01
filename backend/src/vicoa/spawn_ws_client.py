@@ -18,6 +18,7 @@ from typing import Any
 import certifi
 import websocket
 
+from protocol.worktree_naming import WORKTREE_NAME_FRAME
 from vicoa.sdk.exceptions import AuthenticationError
 
 logger = logging.getLogger(__name__)
@@ -130,11 +131,14 @@ def dispatch_frame(
     rpc_executor: Executor | None = None,
     ordered_executor: Executor | None = None,
     ordered_methods: frozenset[str] = frozenset(),
+    on_worktree_name: Callable[[dict], None] | None = None,
 ) -> None:
     """Route one received frame.
 
     spawn-request -> wake-up, ping -> pong, rpc-request -> run the handler and
-    reply with an `rpc-response` echoing the server's `corr_id` (§2.8).
+    reply with an `rpc-response` echoing the server's `corr_id` (§2.8),
+    worktree-name -> hand a spawn its generated names
+    (`protocol.worktree_naming`; cheap, so it runs inline).
 
     RPC handlers are handed to `rpc_executor` rather than run here, because
     this function executes on the daemon's *receive loop*: a slow handler
@@ -155,6 +159,9 @@ def dispatch_frame(
         body = frame.get("payload", {}).get("body", {})
         if body.get("t") == "spawn-request":
             on_spawn_request()
+    elif frame_type == WORKTREE_NAME_FRAME:
+        if on_worktree_name is not None:
+            on_worktree_name(frame)
     elif frame_type == "rpc-request":
         if on_rpc_request is not None and send_rpc_response is not None:
             work = partial(_run_rpc_request, frame, on_rpc_request, send_rpc_response)
@@ -195,6 +202,7 @@ class SpawnRequestWsClient:
         ordered_rpc_methods: list[str] | None = None,
         connect_fn: Callable[..., Any] = websocket.create_connection,
         rpc_executor: Executor | None = None,
+        on_worktree_name: Callable[[dict], None] | None = None,
     ) -> None:
         self._ws_url = ws_url
         self._api_key = api_key
@@ -209,6 +217,8 @@ class SpawnRequestWsClient:
         # Methods whose relative order must be preserved (pty input): routed to
         # a single ordered worker instead of the parallel pool (§ dispatch_frame).
         self._ordered_methods = frozenset(ordered_rpc_methods or ())
+        # Generated names for a spawn's new worktree (`protocol.worktree_naming`).
+        self._on_worktree_name = on_worktree_name
         self._connect_fn = connect_fn
         self._stop = threading.Event()
         self._socket: Any = None
@@ -386,6 +396,7 @@ class SpawnRequestWsClient:
                     rpc_executor=self._rpc_executor,
                     ordered_executor=self._ordered_executor,
                     ordered_methods=self._ordered_methods,
+                    on_worktree_name=self._on_worktree_name,
                 )
         finally:
             connection_closed.set()

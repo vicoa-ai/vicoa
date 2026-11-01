@@ -9,6 +9,7 @@ without touching the sweep loop. See the plan's "cloud execution fallback" §.
 from dataclasses import dataclass
 from uuid import UUID
 
+from servers.worktree_naming import start_worktree_naming
 from shared.websocket.rpc import RpcError, rpc_router
 
 
@@ -125,6 +126,7 @@ async def dispatch_automation(
     }
     if worktree_param is not None:
         params["worktree"] = worktree_param
+    start_worktree_naming(str(user_id), str(machine_id), params)
 
     try:
         result = await rpc_router.call(

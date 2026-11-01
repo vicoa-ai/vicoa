@@ -55,6 +55,11 @@ class RpcRouter:
         """Record that `daemon` serves `method` for `(user_id, machine_id)`."""
         self._handlers[(user_id, machine_id, method)] = daemon
 
+    def handler(self, user_id: str, machine_id: str, method: str) -> Connection | None:
+        """The daemon currently serving `method` for `(user_id, machine_id)`,
+        for pushing a frame to it outside a call (see `servers.worktree_naming`)."""
+        return self._handlers.get((user_id, machine_id, method))
+
     def unregister(self, daemon: Connection) -> None:
         """Drop a disconnected daemon's handlers and fail its in-flight calls."""
         for key in [k for k, v in self._handlers.items() if v is daemon]:
