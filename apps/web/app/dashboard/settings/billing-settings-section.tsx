@@ -193,7 +193,12 @@ export function BillingSettingsSection({
             </p>
           </div>
         )}
-        {!isBillingLoading && !billingFetchError && <PlanUsageCard />}
+        {/* Not gated on the subscription read: usage comes from `GET /limits`,
+            which is core and answers even when billing is unreachable. Hiding
+            it behind that fetch meant a user could be refused a machine while
+            the page that explains why showed nothing. It renders nothing of
+            its own accord when every resource is unlimited. */}
+        <PlanUsageCard />
         {!isBillingLoading && !billingFetchError && <SeatsCard className="mb-6" />}
       </CardContent>
     </Card>

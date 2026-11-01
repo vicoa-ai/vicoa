@@ -707,16 +707,30 @@ function showMachineLimitDialog(state: DaemonState): void {
       "You're signed in and everything on this computer keeps working, but it " +
       "won't appear in the Vicoa app, so you can't start or resume its " +
       'sessions from another device.\n\n' +
-      'Free up a machine under Settings → Machines, or upgrade, then restart ' +
-      'the daemon from the Vicoa menu bar icon.',
-    buttons: ['OK'],
+      'Free up a machine in Settings → Machines, or upgrade, then try again.',
+    // The retry is a button rather than an instruction: the same affordance
+    // the daemon-failed dialog offers, and it saves naming a place that is a
+    // menu bar on macOS and a system tray elsewhere. Not the default, because
+    // retrying before freeing a machine just fails again — the user has to go
+    // do something first, so Dismiss is the honest first step.
+    buttons: ['Dismiss', 'Try again'],
     defaultId: 0,
+    cancelId: 0,
   };
   const dialogPromise =
     mainWindow !== null && !mainWindow.isDestroyed()
       ? dialog.showMessageBox(mainWindow, options)
       : dialog.showMessageBox(options);
-  void dialogPromise.catch(() => undefined);
+  void dialogPromise
+    .then(({ response }) => {
+      if (response === 1) {
+        // Allow one more dialog: if this retry is refused too, saying so again
+        // is the answer to "did that work?", not nagging.
+        machineLimitDialogShown = false;
+        void daemonManager?.restart();
+      }
+    })
+    .catch(() => undefined);
 }
 
 function showDaemonFailedDialog(state: DaemonState): void {
