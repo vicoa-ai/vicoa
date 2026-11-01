@@ -167,6 +167,18 @@ class TestAutomationLimit:
 
 
 class TestDenialCopy:
+    def test_the_reason_states_the_fact_and_offers_no_cta(
+        self, test_db, test_user, plan
+    ):
+        """Every surface that shows this has its own way to act on it — a
+        button in the app, a printed URL in the CLI. A CTA here would be the
+        second or third "upgrade" in the same breath."""
+        plan(machines=1)
+        _machine(test_db, test_user.id)
+        with pytest.raises(hooks.CapabilityDenied) as exc:
+            limits.check_limit(test_db, test_user.id, limits.RESOURCE_MACHINES)
+        assert "upgrade" not in exc.value.reason.lower()
+
     def test_a_cap_of_one_says_what_is_using_it(self, test_db, test_user, plan):
         """The number alone leaves the user to work out that their *other*
         computer is holding the slot — and the noun has to agree with it, since
@@ -177,7 +189,7 @@ class TestDenialCopy:
         with pytest.raises(hooks.CapabilityDenied) as exc:
             limits.check_limit(test_db, test_user.id, limits.RESOURCE_MACHINES)
         assert "1 machine," in exc.value.reason
-        assert "already connected" in exc.value.reason
+        assert "already in use" in exc.value.reason
         assert "1 machines" not in exc.value.reason
 
     def test_a_larger_cap_reads_as_plural(self, test_db, test_user, plan):

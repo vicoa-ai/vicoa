@@ -34,6 +34,12 @@ export function MachineLimitDialog() {
   const { status, detail } = useDaemonCloudState();
   const [dismissed, setDismissed] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  // Never open during the hydration render. The server knows nothing about
+  // the daemon, so SSR draws no dialog; opening one on the first client pass
+  // changes the attributes Radix puts on <body> and React reports a
+  // hydration mismatch it "won't patch up". One tick later is invisible.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   // A retry that succeeds clears the status, so the next refusal is a fresh
   // one and deserves to be seen again: "did that work?" is answered by the
@@ -45,7 +51,7 @@ export function MachineLimitDialog() {
     }
   }, [status]);
 
-  const open = status === 'machine_limit' && !dismissed;
+  const open = mounted && status === 'machine_limit' && !dismissed;
 
   // The in-app plan picker, the same upgrade path as everywhere else in the
   // product. It is mounted by the dashboard shell, the shell this dialog lives
@@ -72,13 +78,15 @@ export function MachineLimitDialog() {
           {detail ? (
             <DialogDescription className="text-foreground/90">{detail}</DialogDescription>
           ) : null}
+          {/* The one thing nothing else here conveys: the computer is fine.
+              "Isn't connected" reads as broken, and a user who believes that
+              goes looking for a fault that does not exist. Everything else
+              the old copy spelled out — that it won't appear in the app, that
+              its sessions aren't reachable, that you can upgrade or retry —
+              is either the title restated or a button on this dialog. */}
           <DialogDescription>
-            You&apos;re signed in and everything on this computer keeps working, but it
-            won&apos;t appear in the Vicoa app, so you can&apos;t start or resume its sessions
-            from another device.
-          </DialogDescription>
-          <DialogDescription>
-            Free up a machine in Settings → Machines, or upgrade, then try again.
+            Everything here keeps working, it just won&apos;t show up in the app. Free up
+            a machine in Settings → Machines, or upgrade.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter className="gap-2 sm:gap-2">

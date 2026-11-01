@@ -164,18 +164,15 @@ def _denial_reason(resource: LimitedResource, limit: int) -> str:
     """The sentence a 402 carries. Deliberately states the plan's number and
     the resource, and nothing about *which* plan or what it costs — prices are
     the overlay's business and the open build has none."""
-    # Say what is already using the allowance, not just how big it is: a user
-    # who reads "your plan includes 1 machine" on their second computer still
-    # has to work out that the first one is holding the slot.
+    # Two rules. Say what is already using the allowance, not just how big it
+    # is — a user reading "your plan includes 1 machine" on their second
+    # computer still has to work out that the first one holds the slot. And
+    # state the fact only: every surface that shows this has its own way to
+    # act on it (a button in the app, a printed URL in the CLI), so a CTA here
+    # would be the second or third "upgrade" in the same breath.
     if limit == 1:
-        return (
-            f"Your plan includes 1 {resource.noun}, and one is already "
-            f"connected. Upgrade to add more."
-        )
-    return (
-        f"You're using all {limit} {resource.noun}s your plan includes. "
-        f"Upgrade to add more."
-    )
+        return f"Your plan includes 1 {resource.noun}, and one is already in use."
+    return f"You're using all {limit} {resource.noun}s your plan includes."
 
 
 def check_limit(db: Session, user_id: UUID, key: str, *, requested: int = 1) -> None:
