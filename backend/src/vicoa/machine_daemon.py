@@ -477,13 +477,15 @@ class DaemonStartResult(enum.Enum):
     """Outcome of ``ensure_background_daemon_running``.
 
     Replaces the old bool so the foreground caller can distinguish a
-    deliberately-not-spawned dead credential (``AUTH_INVALID``) from a normal
-    spawn/skip and print the disconnected message once.
+    deliberately-not-spawned dead credential (``AUTH_INVALID``) or a plan with
+    no room for this host (``MACHINE_LIMIT``) from a normal spawn/skip, and say
+    so once instead of spawning a daemon that will be refused again.
     """
 
     SPAWNED = "spawned"
     ALREADY_RUNNING = "already_running"
     AUTH_INVALID = "auth_invalid"
+    MACHINE_LIMIT = "machine_limit"
 
 
 def ensure_background_daemon_running(
@@ -518,6 +520,14 @@ def ensure_background_daemon_running(
         "api_key_fingerprint"
     ) == api_key_fingerprint(api_key):
         return DaemonStartResult.AUTH_INVALID
+
+    # Same idea for a full plan: a previous daemon was refused registration and
+    # nulled its PID. Re-spawning would just be refused again — silently, since
+    # a spawned daemon's stdout goes to DEVNULL — so stop here and let the
+    # caller say why. Unlike a dead credential this is not about the key, so it
+    # is not fingerprint-gated: the next successful register clears the stamp.
+    if entry.get("machine_limit_at"):
+        return DaemonStartResult.MACHINE_LIMIT
 
     running_pid = find_running_daemon_pid(base_url, state_path)
     if running_pid is not None:
@@ -663,6 +673,9 @@ class MachineDaemon:
         # must NOT be stamped auth-invalid and the fix is a purchase or
         # removing a machine, not signing in again.
         self._machine_limit = Event()
+        # The server's sentence from the 402, kept for `_handle_machine_limit`
+        # to persist and for the local server to report on /healthz.
+        self._machine_limit_detail = ""
         # Set by ``request_stop()`` — the desktop local-listener runner's
         # shutdown path. A plain ``vicoa daemon`` never requests a stop (its
         # lifetime is the process's), so both stay inert outside the desktop.
@@ -739,6 +752,14 @@ class MachineDaemon:
         """
         return self._machine_limit.is_set()
 
+    @property
+    def machine_limit_detail(self) -> str:
+        """The server's sentence for the refusal, or "" when there was none.
+
+        Shown verbatim rather than reworded locally so the number in it always
+        matches the plan the server actually applied."""
+        return self._machine_limit_detail
+
     def request_stop(self) -> None:
         """Ask a ``run()`` blocking on another thread to wind down.
 
@@ -791,6 +812,7 @@ class MachineDaemon:
             pass
         if capability and capability != "limit.machines":
             return
+        self._machine_limit_detail = detail
         self._machine_limit.set()
         raise MachineLimitReached(detail)
 
@@ -803,7 +825,17 @@ class MachineDaemon:
         the next launch — after an upgrade, or after the user removes a machine
         — registers normally with no re-auth.
         """
-        self._persist_entry({"daemon_pid": None})
+        self._persist_entry(
+            {
+                "daemon_pid": None,
+                "machine_limit_at": datetime.now(timezone.utc).isoformat(),
+                # The server's own sentence. Stamped because every surface that
+                # has to explain this reads the state file, not our stdout: a
+                # CLI-spawned daemon runs with stdout at DEVNULL, and the
+                # desktop's daemon is a child process nobody is watching.
+                "machine_limit_detail": self._machine_limit_detail,
+            }
+        )
         self._notify_cloud_status("machine_limit")
         logger.info("[daemon] machine limit reached; not registering, exiting")
 
@@ -1064,8 +1096,11 @@ class MachineDaemon:
                 # trip. See `vicoa.machine_identity.decide_identity_action`.
                 "api_key_fingerprint": api_key_fingerprint(self.api_key),
                 # A successful registration is the only heal path for a prior
-                # fatal-auth: clear the stamp so the daemon resumes normally.
+                # fatal-auth or a plan that was full: clear both stamps so the
+                # daemon resumes normally once a seat or a machine frees up.
                 "auth_invalid_at": None,
+                "machine_limit_at": None,
+                "machine_limit_detail": None,
             }
         )
 

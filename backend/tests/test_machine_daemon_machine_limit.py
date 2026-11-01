@@ -131,5 +131,107 @@ def test_handle_machine_limit_reports_status_without_auth_stamp(
     daemon._handle_machine_limit()
 
     assert statuses == ["machine_limit"]
-    assert persisted == [{"daemon_pid": None}]
-    assert all("auth_invalid_at" not in entry for entry in persisted)
+    assert len(persisted) == 1
+    assert persisted[0]["daemon_pid"] is None
+    assert persisted[0]["machine_limit_at"]
+    # The credential is fine — only the plan is full.
+    assert "auth_invalid_at" not in persisted[0]
+
+
+def test_the_servers_sentence_is_stamped_for_other_surfaces(
+    daemon: MachineDaemon, monkeypatch
+) -> None:
+    """The CLI and the desktop both explain this from the state file, not from
+    the daemon's stdout — a spawned daemon's output goes to DEVNULL and
+    nobody watches the desktop's child process."""
+    persisted: list[dict] = []
+    monkeypatch.setattr(daemon, "_persist_entry", persisted.append)
+
+    with pytest.raises(MachineLimitReached):
+        daemon._raise_for_machine_limit(
+            _FakeResp(
+                402,
+                {
+                    "detail": "Your plan includes 1 machine.",
+                    "capability": "limit.machines",
+                },
+            )
+        )
+    daemon._handle_machine_limit()
+
+    assert daemon.machine_limit_detail == "Your plan includes 1 machine."
+    assert persisted[0]["machine_limit_detail"] == "Your plan includes 1 machine."
+
+
+def test_a_successful_register_clears_the_stamp(
+    daemon: MachineDaemon, monkeypatch
+) -> None:
+    """Freeing a machine elsewhere, or upgrading, heals it on the next launch
+    without the user having to find and clear anything by hand."""
+    monkeypatch.setattr(
+        "vicoa.machine_daemon.migrate_legacy_flat_state", lambda base_url: None
+    )
+    monkeypatch.setattr(daemon, "_load_entry", lambda: {"machine_id": "m-1"})
+    persisted: list[dict] = []
+    monkeypatch.setattr(daemon, "_persist_entry", persisted.append)
+    monkeypatch.setattr(
+        daemon.session,
+        "post",
+        lambda *a, **k: _FakeResp(
+            200,
+            {
+                "machine_id": "m-1",
+                "display_name": None,
+                "hostname": "h",
+                "platform": "p",
+            },
+        ),
+    )
+
+    daemon.register_machine()
+
+    stamped = [e for e in persisted if "machine_limit_at" in e]
+    assert stamped and stamped[-1]["machine_limit_at"] is None
+    assert stamped[-1]["machine_limit_detail"] is None
+
+
+class TestSpawnGate:
+    """`ensure_background_daemon_running` must not re-spawn into the same
+    refusal. A CLI-spawned daemon runs with stdout at DEVNULL, so a retry loop
+    here would be both silent to the user and a stream of 402s at the server.
+    """
+
+    def _state(self, tmp_path, entry: dict):
+        """Written through the real writer so the test cannot drift from the
+        on-disk schema."""
+        from vicoa.machine_state import write_daemon_entry
+
+        path = tmp_path / "daemon_state.json"
+        write_daemon_entry("https://api.example.com", entry, path)
+        return path
+
+    def test_a_stamped_limit_stops_the_spawn(self, tmp_path, monkeypatch) -> None:
+        from vicoa import machine_daemon as md
+
+        state = self._state(tmp_path, {"machine_limit_at": "2026-11-01T00:00:00+00:00"})
+        monkeypatch.setattr(md, "migrate_legacy_flat_state", lambda *a, **k: None)
+        monkeypatch.setattr(md, "_reset_state_on_identity_change", lambda *a, **k: None)
+
+        result = md.ensure_background_daemon_running(
+            api_key="k", base_url="https://api.example.com", state_path=state
+        )
+        assert result is md.DaemonStartResult.MACHINE_LIMIT
+
+    def test_no_stamp_spawns_as_usual(self, tmp_path, monkeypatch) -> None:
+        from vicoa import machine_daemon as md
+
+        state = self._state(tmp_path, {})
+        monkeypatch.setattr(md, "migrate_legacy_flat_state", lambda *a, **k: None)
+        monkeypatch.setattr(md, "_reset_state_on_identity_change", lambda *a, **k: None)
+        monkeypatch.setattr(md, "find_running_daemon_pid", lambda *a, **k: None)
+        monkeypatch.setattr(md, "build_daemon_command", lambda **k: ["true"])
+
+        result = md.ensure_background_daemon_running(
+            api_key="k", base_url="https://api.example.com", state_path=state
+        )
+        assert result is not md.DaemonStartResult.MACHINE_LIMIT

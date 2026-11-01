@@ -140,6 +140,8 @@ let localNonce = '';
 let isQuitting = false;
 let quitCleanupDone = false;
 let failureDialogOpen = false;
+// The machine-limit dialog is once-per-launch; see showMachineLimitDialog.
+let machineLimitDialogShown = false;
 
 // ---------------------------------------------------------------------------
 // Single-instance lock: a second launch focuses the existing window instead.
@@ -663,6 +665,9 @@ function warmManagedDaemon(): void {
 
 function onDaemonState(state: DaemonState): void {
   updateTrayDaemonState(state);
+  if (state.cloudStatus === 'machine_limit') {
+    showMachineLimitDialog(state);
+  }
   if (state.status === 'running') {
     // The window normally opens before the daemon is healthy (bootstrap); this
     // covers the paths that don't — a tray "Restart daemon" or supervisor
@@ -672,6 +677,46 @@ function onDaemonState(state: DaemonState): void {
   if (state.status === 'failed') {
     showDaemonFailedDialog(state);
   }
+}
+
+/**
+ * The plan has no room for this computer.
+ *
+ * Worth a dialog rather than only the tray label: nothing else in the app
+ * says so. The window still signs in and still shows the account's other
+ * machines and sessions, so without this the only symptom is that this
+ * computer never appears — and the "No machines connected" empty state then
+ * tells the user to run the daemon, which is exactly what is being refused.
+ *
+ * Once per app launch. The condition cannot resolve itself while the app
+ * runs (it takes an upgrade or freeing a machine elsewhere, both of which end
+ * in a daemon restart), so repeating it would only be nagging.
+ */
+function showMachineLimitDialog(state: DaemonState): void {
+  if (machineLimitDialogShown || isQuitting) {
+    return;
+  }
+  machineLimitDialogShown = true;
+  const reason = state.cloudDetail?.trim();
+  const options = {
+    type: 'warning' as const,
+    title: 'Vicoa',
+    message: "This computer isn't connected to Vicoa",
+    detail:
+      (reason ? `${reason}\n\n` : '') +
+      "You're signed in and everything on this computer keeps working, but it " +
+      "won't appear in the Vicoa app, so you can't start or resume its " +
+      'sessions from another device.\n\n' +
+      'Free up a machine under Settings → Machines, or upgrade, then restart ' +
+      'the daemon from the Vicoa menu bar icon.',
+    buttons: ['OK'],
+    defaultId: 0,
+  };
+  const dialogPromise =
+    mainWindow !== null && !mainWindow.isDestroyed()
+      ? dialog.showMessageBox(mainWindow, options)
+      : dialog.showMessageBox(options);
+  void dialogPromise.catch(() => undefined);
 }
 
 function showDaemonFailedDialog(state: DaemonState): void {

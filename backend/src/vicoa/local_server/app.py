@@ -507,6 +507,16 @@ def create_local_app(
             "mode": "local-only" if local_only else "cloud",
             "machine_id": machine_id,
             "cloud": cloud,
+            # The server's own sentence when the cloud link is refused for a
+            # reason the user has to act on, "" otherwise. Carried here because
+            # the shell has no other way to learn *why*: the daemon's stdout is
+            # not watched, and a status word alone cannot name which plan limit
+            # was hit or how many machines it allows.
+            "cloud_detail": (
+                daemon.machine_limit_detail
+                if not local_only and cloud == CloudAuthStatus.MACHINE_LIMIT
+                else ""
+            ),
         }
 
     # ------------------------------------------------------------------

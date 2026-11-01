@@ -98,9 +98,10 @@ def test_healthz_needs_no_auth(client: TestClient) -> None:
         "mode": "local-only",
         "machine_id": "local",
         # No cloud link exists in local-only mode; the tray reads null as
-        # "nothing to report" (vs connecting/connected/auth_failed in cloud
-        # mode).
+        # "nothing to report" (vs connecting/connected/auth_failed/
+        # machine_limit in cloud mode).
         "cloud": None,
+        "cloud_detail": "",
     }
 
 

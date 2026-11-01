@@ -44,6 +44,10 @@ export interface DaemonState {
   localOnly: boolean;
   /** Latest /healthz `cloud` value; undefined when the daemon doesn't report it. */
   cloudStatus?: CloudStatus;
+  /** The server's own sentence for a refused cloud link, '' when there is none.
+   *  Quoted rather than reworded here: only the server knows which limit was
+   *  hit and what the plan allows. */
+  cloudDetail?: string;
   /** Present when status === 'failed'. */
   lastError?: string;
 }
@@ -176,6 +180,17 @@ export function buildDaemonArgs(options: {
  * older daemons that don't send it (or malformed bodies) so callers can keep
  * pre-cloud-status behavior.
  */
+export function parseCloudDetail(body: string): string {
+  try {
+    const data: unknown = JSON.parse(body);
+    if (typeof data !== 'object' || data === null) return '';
+    const detail = (data as Record<string, unknown>).cloud_detail;
+    return typeof detail === 'string' ? detail : '';
+  } catch {
+    return '';
+  }
+}
+
 export function parseCloudStatus(body: string): CloudStatus | undefined {
   try {
     const data: unknown = JSON.parse(body);
@@ -279,6 +294,7 @@ export class DaemonManager {
   private daemonEnv: ResolvedDaemonEnv | null = null;
   private envResolution: Promise<ResolvedDaemonEnv> | null;
   private cloudStatus: CloudStatus | undefined;
+  private cloudDetail = '';
   private cloudPollTimer: NodeJS.Timeout | null = null;
   private lastError: string | undefined;
 
@@ -309,6 +325,7 @@ export class DaemonManager {
       status: this.status,
       localOnly: this.localOnly,
       cloudStatus: this.cloudStatus,
+      cloudDetail: this.cloudDetail,
       lastError: this.lastError,
     };
   }
@@ -396,6 +413,7 @@ export class DaemonManager {
     this.generation += 1;
     this.clearCloudPoll();
     this.cloudStatus = undefined;
+    this.cloudDetail = '';
     if (this.restartTimer !== null) {
       clearTimeout(this.restartTimer);
       this.restartTimer = null;
@@ -413,6 +431,7 @@ export class DaemonManager {
     const generation = this.generation;
     this.clearCloudPoll();
     this.cloudStatus = undefined;
+    this.cloudDetail = '';
     // 'starting' before the (possibly still running) env probe so the tray
     // reflects the boot as soon as it is requested, not once the shell answers.
     this.setState('starting');
@@ -511,6 +530,7 @@ export class DaemonManager {
       const { ok, body } = await pollHealthzOnce(this.port);
       if (ok) {
         this.cloudStatus = parseCloudStatus(body);
+        this.cloudDetail = parseCloudDetail(body);
         return true;
       }
       await sleep(HEALTHZ_POLL_INTERVAL_MS);
@@ -536,6 +556,7 @@ export class DaemonManager {
           return;
         }
         if (ok) {
+          this.cloudDetail = parseCloudDetail(body);
           const next = parseCloudStatus(body);
           if (next !== this.cloudStatus) {
             this.cloudStatus = next;
@@ -557,6 +578,7 @@ export class DaemonManager {
   private handleUnexpectedDeath(generation: number): void {
     this.clearCloudPoll();
     this.cloudStatus = undefined;
+    this.cloudDetail = '';
     if (this.stopping) {
       return;
     }
