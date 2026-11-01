@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from shared.access import AccessDenied
+from shared.config import settings
 from shared.hooks import CapabilityDenied
 
 
@@ -30,8 +31,10 @@ def install_access_exception_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         del request
         # 402: the action exists and the caller is allowed to ask for it —
-        # it is metered. The overlay's reason carries the upgrade path.
-        return JSONResponse(
-            status_code=402,
-            content={"detail": exc.reason, "capability": exc.capability},
-        )
+        # it is metered. The reason says what was refused; `upgrade_url` is
+        # where to fix it, for clients that cannot open an in-app dialog (the
+        # CLI). Omitted when unset, so a self-host never shows a dead link.
+        body: dict[str, str] = {"detail": exc.reason, "capability": exc.capability}
+        if settings.upgrade_url:
+            body["upgrade_url"] = settings.upgrade_url
+        return JSONResponse(status_code=402, content=body)

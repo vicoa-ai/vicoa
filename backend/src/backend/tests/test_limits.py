@@ -167,15 +167,18 @@ class TestAutomationLimit:
 
 
 class TestDenialCopy:
-    def test_a_cap_of_one_reads_as_singular(self, test_db, test_user, plan):
-        """ "Your plan includes 1 machines" is the kind of sentence a user
-        screenshots. The noun agrees with the number."""
+    def test_a_cap_of_one_says_what_is_using_it(self, test_db, test_user, plan):
+        """The number alone leaves the user to work out that their *other*
+        computer is holding the slot — and the noun has to agree with it, since
+        "your plan includes 1 machines" is the kind of sentence people
+        screenshot."""
         plan(machines=1)
         _machine(test_db, test_user.id)
         with pytest.raises(hooks.CapabilityDenied) as exc:
             limits.check_limit(test_db, test_user.id, limits.RESOURCE_MACHINES)
-        assert "1 machine." in exc.value.reason
-        assert "machines" not in exc.value.reason
+        assert "1 machine," in exc.value.reason
+        assert "already connected" in exc.value.reason
+        assert "1 machines" not in exc.value.reason
 
     def test_a_larger_cap_reads_as_plural(self, test_db, test_user, plan):
         machine = _machine(test_db, test_user.id)
@@ -184,7 +187,7 @@ class TestDenialCopy:
         plan(automations=2)
         with pytest.raises(hooks.CapabilityDenied) as exc:
             limits.check_limit(test_db, test_user.id, limits.RESOURCE_AUTOMATIONS)
-        assert "2 automations" in exc.value.reason
+        assert "all 2 automations" in exc.value.reason
 
 
 class TestSingleResourceRead:
@@ -293,6 +296,58 @@ class TestLimitsEndpoints:
         body = response.json()
         assert body["capability"] == "limit.automations"
         assert "1 automation" in body["detail"]
+
+    def test_the_402_names_where_to_upgrade_when_configured(
+        self, authenticated_client, test_db, test_user, plan, monkeypatch
+    ):
+        """A surface with nowhere to click — the CLI — needs a URL, and only
+        the deployment knows it."""
+        from shared.config import settings
+
+        monkeypatch.setattr(settings, "upgrade_url", "https://example.test/pricing")
+        machine = _machine(test_db, test_user.id)
+        _automation(test_db, test_user.id, machine.id)
+        plan(automations=1)
+        response = authenticated_client.post(
+            "/api/v1/automations",
+            json={
+                "title": "one too many",
+                "prompt": "go",
+                "machine_id": str(machine.id),
+                "directory": "/tmp",
+                "session_config": {"agent": "claude"},
+                "schedule_kind": "recurring",
+                "frequency": {"kind": "daily", "time": "09:00"},
+            },
+        )
+        assert response.status_code == 402
+        assert response.json()["upgrade_url"] == "https://example.test/pricing"
+
+    def test_no_upgrade_url_on_a_self_host(
+        self, authenticated_client, test_db, test_user, plan, monkeypatch
+    ):
+        """Unset means omit the key, not send an empty string: a self-host
+        meters nothing and sells nothing, and a dead link is worse than none."""
+        from shared.config import settings
+
+        monkeypatch.setattr(settings, "upgrade_url", "")
+        machine = _machine(test_db, test_user.id)
+        _automation(test_db, test_user.id, machine.id)
+        plan(automations=1)
+        response = authenticated_client.post(
+            "/api/v1/automations",
+            json={
+                "title": "one too many",
+                "prompt": "go",
+                "machine_id": str(machine.id),
+                "directory": "/tmp",
+                "session_config": {"agent": "claude"},
+                "schedule_kind": "recurring",
+                "frequency": {"kind": "daily", "time": "09:00"},
+            },
+        )
+        assert response.status_code == 402
+        assert "upgrade_url" not in response.json()
 
     def test_the_same_action_is_allowed_under_the_cap(
         self, authenticated_client, test_db, test_user, plan

@@ -27,6 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { openUpgradeDialog } from '@/components/billing/upgrade-dialog';
 import { useDaemonCloudState, restartDesktopDaemon } from '@/lib/desktop-daemon';
 
 export function MachineLimitDialog() {
@@ -45,6 +46,14 @@ export function MachineLimitDialog() {
   }, [status]);
 
   const open = status === 'machine_limit' && !dismissed;
+
+  // The in-app plan picker, the same upgrade path as everywhere else in the
+  // product. It is mounted by the dashboard shell, the shell this dialog lives
+  // in, so it is always there when this is.
+  const upgrade = () => {
+    setDismissed(true);
+    openUpgradeDialog();
+  };
 
   const retry = async () => {
     setRetrying(true);
@@ -72,13 +81,16 @@ export function MachineLimitDialog() {
             Free up a machine in Settings → Machines, or upgrade, then try again.
           </DialogDescription>
         </DialogHeader>
-        <DialogFooter>
+        <DialogFooter className="gap-2 sm:gap-2">
           <Button
-            variant="outline"
-            className="cursor-pointer"
+            variant="ghost"
+            className="cursor-pointer sm:mr-auto"
             onClick={() => setDismissed(true)}
           >
             Dismiss
+          </Button>
+          <Button variant="outline" className="cursor-pointer" onClick={upgrade}>
+            Upgrade
           </Button>
           <Button className="cursor-pointer" onClick={retry} disabled={retrying}>
             {retrying ? 'Trying…' : 'Try again'}

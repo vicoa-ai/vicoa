@@ -676,6 +676,9 @@ class MachineDaemon:
         # The server's sentence from the 402, kept for `_handle_machine_limit`
         # to persist and for the local server to report on /healthz.
         self._machine_limit_detail = ""
+        # Where to upgrade, when the server named one. Empty on a self-host,
+        # which meters nothing and sells nothing.
+        self._machine_limit_upgrade_url = ""
         # Set by ``request_stop()`` — the desktop local-listener runner's
         # shutdown path. A plain ``vicoa daemon`` never requests a stop (its
         # lifetime is the process's), so both stay inert outside the desktop.
@@ -760,6 +763,11 @@ class MachineDaemon:
         matches the plan the server actually applied."""
         return self._machine_limit_detail
 
+    @property
+    def machine_limit_upgrade_url(self) -> str:
+        """Where to upgrade, as the server named it; "" when it named none."""
+        return self._machine_limit_upgrade_url
+
     def request_stop(self) -> None:
         """Ask a ``run()`` blocking on another thread to wind down.
 
@@ -804,15 +812,18 @@ class MachineDaemon:
             return
         detail = "This account has no room for another machine."
         capability = ""
+        upgrade_url = ""
         try:
             body = response.json()
             capability = str(body.get("capability") or "")
             detail = str(body.get("detail") or detail)
+            upgrade_url = str(body.get("upgrade_url") or "")
         except ValueError:
             pass
         if capability and capability != "limit.machines":
             return
         self._machine_limit_detail = detail
+        self._machine_limit_upgrade_url = upgrade_url
         self._machine_limit.set()
         raise MachineLimitReached(detail)
 
@@ -834,6 +845,7 @@ class MachineDaemon:
                 # CLI-spawned daemon runs with stdout at DEVNULL, and the
                 # desktop's daemon is a child process nobody is watching.
                 "machine_limit_detail": self._machine_limit_detail,
+                "machine_limit_upgrade_url": self._machine_limit_upgrade_url,
             }
         )
         self._notify_cloud_status("machine_limit")
@@ -1101,6 +1113,7 @@ class MachineDaemon:
                 "auth_invalid_at": None,
                 "machine_limit_at": None,
                 "machine_limit_detail": None,
+                "machine_limit_upgrade_url": None,
             }
         )
 

@@ -1067,7 +1067,8 @@ def maybe_start_machine_daemon(args, api_key: str) -> None:
         # app — so warn and carry on rather than refusing to start something
         # the user can perfectly well use. What they lose is this machine
         # showing up in Vicoa, and they would otherwise have no way to know.
-        detail = read_daemon_entry(base_url).get("machine_limit_detail") or (
+        entry = read_daemon_entry(base_url)
+        detail = entry.get("machine_limit_detail") or (
             "This account has no room for another machine."
         )
         print(f"Vicoa: {detail}")
@@ -1076,6 +1077,12 @@ def maybe_start_machine_daemon(args, api_key: str) -> None:
             "or resume sessions on it from another device. Everything here "
             "keeps working."
         )
+        # Only when the server named one: a self-host sells nothing, and a
+        # guessed URL would be worse than no URL.
+        upgrade_url = entry.get("machine_limit_upgrade_url")
+        if upgrade_url:
+            print(f"Upgrade: {upgrade_url}")
+        print("Or free one up in the Vicoa app, under Settings > Machines.")
         return
 
     if result is DaemonStartResult.AUTH_INVALID:

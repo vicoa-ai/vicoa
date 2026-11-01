@@ -238,6 +238,13 @@ class Settings(BaseSettings):
     # proxy at all should set it EMPTY so a client cannot pick its own key.
     client_ip_header: str = "Fly-Client-IP"
 
+    # Where a user upgrades their plan. Sent to clients with a 402 so a surface
+    # with nowhere to click — the CLI above all — can name a URL. Empty in the
+    # open-source / self-host build, where nothing is metered and there is no
+    # plan to buy; Vicoa's deploy sets UPGRADE_URL. Clients must treat empty as
+    # "offer no link" rather than falling back to a guess.
+    upgrade_url: str = ""
+
     # Inbox that receives support "report an issue" emails. Empty in the
     # open-source / self-host build — the /support/report-issue endpoint returns
     # 503 until it is configured; Vicoa's deploy sets SUPPORT_EMAIL.
