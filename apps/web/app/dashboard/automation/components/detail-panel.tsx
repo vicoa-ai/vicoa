@@ -5,6 +5,9 @@ import { X } from 'lucide-react';
 import { cn, toAbsolutePath } from '@/lib/utils';
 import { isMachineOnline } from '@/lib/session-liveness';
 import { notifyOnboardingProgress } from '@/lib/onboarding-progress';
+import { planLimitFromError } from '@/lib/backend-api';
+import { openUpgradeDialog } from '@/components/billing/upgrade-dialog';
+import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { MentionPromptField } from '@/components/mention-prompt-field';
 import type { AgentType } from '@/lib/constants/slash-commands';
@@ -266,7 +269,17 @@ export function DetailPanel({
       onSaved(saved);
       if (!automation) notifyOnboardingProgress();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save automation');
+      // Out of automations on this plan. The panel keeps everything the user
+      // typed, so the dialog is a detour and not a loss: upgrade, close it,
+      // press Create again. Inline too, because the dialog covers the toast.
+      const limit = planLimitFromError(err);
+      if (limit) {
+        setError(limit.detail);
+        toast.error("Couldn't create the automation", { description: limit.detail });
+        openUpgradeDialog();
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to save automation');
+      }
     } finally {
       setSaving(false);
     }

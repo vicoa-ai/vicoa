@@ -1368,6 +1368,27 @@ export interface BillingPortalSessionResponse {
  * (`collab.team_seat` | `collab.grant_write` | `collab.team_own`); see
  * `seatLimitFromError`.
  */
+/** One metered resource, as `GET /limits` reports it. */
+export interface LimitStatus {
+  /** Stable key, e.g. `machines` — the same word a `limit.*` 402 carries. */
+  key: string;
+  label: string;
+  /** `count` today; widens with the resource. */
+  unit: string;
+  /** `total` — a standing count. Resetting periods will add their own word. */
+  period: string;
+  used: number;
+  /** null = unlimited. Never render this as 0. */
+  limit: number | null;
+  /** null = unlimited. */
+  remaining: number | null;
+  unlimited: boolean;
+}
+
+export interface LimitsResponse {
+  limits: LimitStatus[];
+}
+
 export interface BackendApiError extends Error {
   status: number;
   /** The server's own words, when its answer carried a `detail` string; also
@@ -1427,11 +1448,39 @@ export function refusalReason(err: unknown): string | undefined {
 }
 
 /**
- * The capability a 402 names, or null for any other error. The open /
- * self-hosted build never answers 402 (its capability registry is empty), so
- * a caller can branch on this unconditionally.
+ * The seat capability a 402 names, or null. The open / self-hosted build never
+ * answers 402 (its registries are empty), so a caller can branch on this
+ * unconditionally.
+ *
+ * Narrowed to `collab.*` on purpose: plan limits (`limit.*`) answer 402 too,
+ * and a machine or automation cap rendered through `SeatLimitNotice` would
+ * tell the user to go manage seats, which fixes nothing. Use
+ * `planLimitFromError` for those.
  */
 export function seatLimitFromError(err: unknown): { capability: string; detail: string } | null {
+  const denial = capabilityDenial(err);
+  if (denial === null || !denial.capability.startsWith('collab.')) return null;
+  return denial;
+}
+
+/**
+ * The plan limit a 402 names (`limit.machines`, `limit.automations`
+ * …), or null. The counterpart to
+ * `seatLimitFromError`; the two never both match.
+ *
+ * `resource` is the capability minus its `limit.` prefix, i.e. the key
+ * `GET /limits` reports, so a caller can line a denial up with the usage row
+ * it came from.
+ */
+export function planLimitFromError(
+  err: unknown,
+): { capability: string; resource: string; detail: string } | null {
+  const denial = capabilityDenial(err);
+  if (denial === null || !denial.capability.startsWith('limit.')) return null;
+  return { ...denial, resource: denial.capability.slice('limit.'.length) };
+}
+
+function capabilityDenial(err: unknown): { capability: string; detail: string } | null {
   if (!(err instanceof Error)) return null;
   const { status, capability } = err as Partial<BackendApiError>;
   if (status !== 402) return null;
@@ -2313,6 +2362,18 @@ class BackendAPI {
 
   async getAutomation(id: string): Promise<AutomationResponse> {
     return this.request<AutomationResponse>(`/api/v1/automations/${id}`);
+  }
+
+  /**
+   * Usage and cap for every metered resource.
+   *
+   * The only source of a plan number on this client: the backend reports
+   * `used` / `limit`, so repricing a plan never needs a release here. A
+   * `limit` of null means unlimited — which is what every row reads in a
+   * self-hosted build, and what a caller must never render as zero.
+   */
+  async getLimits(): Promise<LimitsResponse> {
+    return this.request<LimitsResponse>('/api/v1/limits');
   }
 
   async createAutomation(

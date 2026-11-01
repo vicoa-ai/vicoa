@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import useSWR from 'swr';
 import { Check, ExternalLink, Loader2, Users } from 'lucide-react';
+import { PlanUsageCard } from '@/components/billing/plan-usage-card';
 import { SeatsCard } from '@/components/billing/seats-card';
 import { openUpgradeDialog } from '@/components/billing/upgrade-dialog';
 import { Button } from '@/components/ui/button';
@@ -192,6 +193,7 @@ export function BillingSettingsSection({
             </p>
           </div>
         )}
+        {!isBillingLoading && !billingFetchError && <PlanUsageCard />}
         {!isBillingLoading && !billingFetchError && <SeatsCard className="mb-6" />}
       </CardContent>
     </Card>
