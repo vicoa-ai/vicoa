@@ -79,13 +79,21 @@ export function MachineLimitDialog() {
               do, which is also why the body no longer has to reassure anyone
               that the computer still works. */}
           <DialogTitle>Upgrade to connect this computer</DialogTitle>
+        </DialogHeader>
+        {/* Outside the header on purpose. `DialogHeader` is `space-y-1.5`,
+            meant for a title and one short line; two paragraphs under it read
+            as one block crowding the title. As a sibling the body picks up
+            `DialogContent`'s own `gap-4`, which is the spacing the rest of the
+            product's dialogs put between a header and what follows it (see
+            the preview box in ConfirmDialog). */}
+        <div className="space-y-2">
           {detail ? (
             <DialogDescription className="text-foreground/90">{detail}</DialogDescription>
           ) : null}
           <DialogDescription>
             Free up a machine in Settings → Machines, or upgrade to connect this one.
           </DialogDescription>
-        </DialogHeader>
+        </div>
         {/* Upgrade is the primary action and sits last, where the confirm
             button lives in every other dialog. Try again is secondary: it only
             helps once a machine has actually been freed somewhere else. */}
