@@ -25,10 +25,11 @@ import { validateWorktreeName, type WorktreeMode } from "@/lib/worktree-selectio
  * "Current branch". Selection closes the popover.
  *
  * With `nameSupported`, "New worktree" also unfolds a name field: the name is
- * the branch (and the worktree's folder), blank means the daemon's random
- * slug. Format is checked locally as the user types; whether the name is
- * free is the daemon's call (`git-worktree-check-name`, debounced), which
- * also offers the first free `-2`/`-3` suffix when it's taken.
+ * the branch (and the worktree's folder), blank means an automatic one, named
+ * from the prompt when the server can, else the daemon's random slug. Format
+ * is checked locally as the user types; whether the name is free is the
+ * daemon's call (`git-worktree-check-name`, debounced), which also offers the
+ * first free `-2`/`-3` suffix when it's taken.
  */
 export interface WorktreePickerPopoverProps {
   machineId: string;
@@ -37,7 +38,7 @@ export interface WorktreePickerPopoverProps {
   selectedPath: string | null;
   /**
    * `name` is only meaningful for `mode === "new"`: the user's branch name,
-   * or empty for a random one. Other modes always pass it empty.
+   * or empty for an automatic one. Other modes always pass it empty.
    */
   onSelect: (
     mode: WorktreeMode,
@@ -250,7 +251,7 @@ export function WorktreePickerPopover({
               <Input
                 ref={nameInputRef}
                 value={nameDraft}
-                placeholder="Branch name, empty for random"
+                placeholder="Branch name, empty for auto"
                 spellCheck={false}
                 autoCapitalize="off"
                 autoCorrect="off"

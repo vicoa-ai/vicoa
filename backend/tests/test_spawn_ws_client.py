@@ -194,6 +194,21 @@ def test_dispatch_frame_ignores_unrelated_frames() -> None:
     assert calls == []
 
 
+def test_dispatch_frame_hands_a_worktree_name_to_its_callback() -> None:
+    received: list[dict] = []
+    frame = {"type": "worktree-name", "token": "t1", "branch": "fix-login"}
+    dispatch_frame(
+        frame,
+        on_spawn_request=lambda: None,
+        send_pong=lambda: None,
+        on_worktree_name=received.append,
+    )
+    assert received == [frame]
+
+    # A client that doesn't name worktrees just ignores the frame.
+    dispatch_frame(frame, on_spawn_request=lambda: None, send_pong=lambda: None)
+
+
 def test_dispatch_frame_handles_an_rpc_request_and_sends_a_response() -> None:
     sent: list[tuple[str, dict]] = []
     dispatch_frame(

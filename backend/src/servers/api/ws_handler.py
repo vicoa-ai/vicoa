@@ -55,6 +55,7 @@ from shared.websocket.watchers import narrow_instance_body
 from servers.api.media import attach_stream_url
 from servers.presence import broadcast_session_connected, presence
 from servers.profile_provenance import stamp_agent_profile_in_background
+from servers.worktree_naming import start_worktree_naming
 from servers.watchers import (
     cached_role,
     forget_cached_access,
@@ -422,6 +423,7 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
             metadata["system_prompt"] = agent_profile["system_prompt"]
         if metadata:
             params["metadata"] = metadata
+        start_worktree_naming(conn.user_id, machine_id, params)
 
     try:
         result = await rpc_router.call(conn.user_id, machine_id, method, params)

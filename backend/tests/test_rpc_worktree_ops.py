@@ -189,6 +189,76 @@ def test_create_worktree_with_a_blank_name_falls_back_to_random(
     assert result["branch"].strip() and result["branch"] != "   "
 
 
+def test_random_name_avoids_branches_that_exist_only_on_a_remote(
+    home: Path, committed_repo: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from vicoa.rpc import worktree_names
+    from vicoa.rpc.worktree_ops import create_worktree
+
+    monkeypatch.setattr(worktree_names, "ADJECTIVES", ["calm"])
+    monkeypatch.setattr(worktree_names, "NOUNS", ["river", "ridge"])
+    _git(committed_repo, "update-ref", "refs/remotes/origin/calm-river", "HEAD")
+
+    result = create_worktree(str(committed_repo))
+
+    assert result["branch"] == "calm-ridge"
+
+
+# --- rename_new_worktree ------------------------------------------------------
+
+
+def test_rename_new_worktree_moves_the_folder_and_renames_the_branch(
+    home: Path, committed_repo: Path
+):
+    from vicoa.rpc.worktree_ops import create_worktree, rename_new_worktree
+
+    created = create_worktree(str(committed_repo))
+    old_path = Path(created["path"])
+
+    renamed = rename_new_worktree(created, "fix-safari-logout")
+
+    assert "error" not in renamed, renamed
+    new_path = Path(renamed["path"])
+    assert renamed["branch"] == "fix-safari-logout"
+    assert new_path.parent.name == "fix-safari-logout"
+    assert new_path.name == "my-app"
+    assert new_path.is_dir() and _worktree_branch(new_path) == "fix-safari-logout"
+    # The random name's folder and branch are both gone.
+    assert not old_path.parent.exists()
+    branches = _git(committed_repo, "branch", "--format=%(refname:short)").stdout
+    assert created["branch"] not in branches.decode().split()
+
+
+def test_rename_new_worktree_suffixes_a_taken_name(home: Path, committed_repo: Path):
+    from vicoa.rpc.worktree_ops import create_worktree, rename_new_worktree
+
+    _git(committed_repo, "branch", "fix-login")
+    created = create_worktree(str(committed_repo))
+
+    renamed = rename_new_worktree(created, "fix-login")
+
+    assert renamed["branch"] == "fix-login-2"
+    assert Path(renamed["path"]).parent.name == "fix-login-2"
+
+
+def test_rename_new_worktree_failure_leaves_the_worktree_as_it_was(
+    home: Path, committed_repo: Path
+):
+    from vicoa.rpc.worktree_ops import create_worktree, rename_new_worktree
+
+    created = create_worktree(str(committed_repo))
+    # A lock makes `git worktree move` refuse, after the branch was renamed.
+    _git(committed_repo, "worktree", "lock", created["path"])
+
+    result = rename_new_worktree(created, "fix-login")
+
+    assert "error" in result
+    assert Path(created["path"]).is_dir()
+    assert _worktree_branch(Path(created["path"])) == created["branch"]
+    worktrees_parent = Path(created["path"]).parent.parent
+    assert not (worktrees_parent / "fix-login").exists()
+
+
 # --- check_worktree_name ------------------------------------------------------
 
 

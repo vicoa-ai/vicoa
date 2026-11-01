@@ -13,7 +13,12 @@ from urllib3.util.retry import Retry
 
 from vicoa.constants import DEFAULT_API_URL
 from vicoa.machine_state import read_machine_id, wait_for_machine_id
-from vicoa.utils import get_git_identity, get_worktree_name
+from vicoa.utils import (
+    forget_session_title,
+    get_git_identity,
+    get_worktree_name,
+    pending_session_title,
+)
 
 from .exceptions import AuthenticationError, TimeoutError, APIError
 from .models import (
@@ -380,8 +385,12 @@ class VicoaClient:
             target_instance_id = validate_agent_instance_id(agent_instance_id)
             payload["agent_instance_id"] = target_instance_id
 
-        if name is not None:
-            payload["name"] = name
+        # An explicit name wins; otherwise the title the daemon generated along
+        # with this session's worktree name, when it handed one over.
+        handed_title = pending_session_title() if name is None else None
+        resolved_name = name if name is not None else handed_title
+        if resolved_name is not None:
+            payload["name"] = resolved_name
         if project is not None:
             payload["project"] = project
         if home_dir is not None:
@@ -451,6 +460,8 @@ class VicoaClient:
                     params={"message_limit": 0},
                     timeout=timeout,
                 )
+                if handed_title is not None:
+                    forget_session_title()
                 return RegisterAgentInstanceResponse(
                     agent_instance_id=detail["id"],
                     agent_type_id=detail.get("agent_type_id"),
@@ -465,6 +476,8 @@ class VicoaClient:
         instance_id = response.get("agent_instance_id") or response.get("id")
         if instance_id is None:
             raise KeyError("agent_instance_id")
+        if handed_title is not None:
+            forget_session_title()
 
         return RegisterAgentInstanceResponse(
             agent_instance_id=instance_id,

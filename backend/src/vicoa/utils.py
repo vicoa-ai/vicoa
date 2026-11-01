@@ -10,6 +10,23 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 
+# Set by the daemon on a spawn whose new worktree it named from the prompt:
+# the same answer titles the session, sent with its registration.
+SESSION_TITLE_ENV = "VICOA_SESSION_TITLE"
+
+
+def pending_session_title() -> str | None:
+    """The title the daemon handed this session at launch, if any."""
+    title = os.environ.get(SESSION_TITLE_ENV, "").strip()
+    return title or None
+
+
+def forget_session_title() -> None:
+    """Drop the handed-over title once registration has carried it, so a later
+    re-register can't overwrite a title the user has changed since."""
+    os.environ.pop(SESSION_TITLE_ENV, None)
+
+
 def derive_ws_url(base_url: str) -> str:
     """Default WS URL = REST base URL with scheme swap and a `/ws` path.
 
