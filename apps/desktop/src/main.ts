@@ -140,8 +140,12 @@ let localNonce = '';
 let isQuitting = false;
 let quitCleanupDone = false;
 let failureDialogOpen = false;
-// The machine-limit dialog is once-per-launch; see showMachineLimitDialog.
-let machineLimitDialogShown = false;
+/** What the renderer is told about the daemon's cloud link; see publishCloudState. */
+interface DaemonCloudState {
+  status: string | null;
+  detail: string;
+}
+let latestCloudState: DaemonCloudState = { status: null, detail: '' };
 
 // ---------------------------------------------------------------------------
 // Single-instance lock: a second launch focuses the existing window instead.
@@ -665,9 +669,7 @@ function warmManagedDaemon(): void {
 
 function onDaemonState(state: DaemonState): void {
   updateTrayDaemonState(state);
-  if (state.cloudStatus === 'machine_limit') {
-    showMachineLimitDialog(state);
-  }
+  publishCloudState(state);
   if (state.status === 'running') {
     // The window normally opens before the daemon is healthy (bootstrap); this
     // covers the paths that don't — a tray "Restart daemon" or supervisor
@@ -680,57 +682,30 @@ function onDaemonState(state: DaemonState): void {
 }
 
 /**
- * The plan has no room for this computer.
+ * The plan has no room for this computer: tell the renderer, which draws it
+ * as a Vicoa dialog.
  *
- * Worth a dialog rather than only the tray label: nothing else in the app
- * says so. The window still signs in and still shows the account's other
- * machines and sessions, so without this the only symptom is that this
- * computer never appears — and the "No machines connected" empty state then
- * tells the user to run the daemon, which is exactly what is being refused.
+ * Not `dialog.showMessageBox`: a native box is drawn by Electron in its own
+ * chrome, ignores the theme, and reads as a different product — the same
+ * reason `apps/web/AGENTS.md` bans `window.confirm`. The daemon-failed dialog
+ * stays native because it can fire before a window exists; this one cannot,
+ * since the cloud status only arrives once the daemon is up and polled.
  *
- * Once per app launch. The condition cannot resolve itself while the app
- * runs (it takes an upgrade or freeing a machine elsewhere, both of which end
- * in a daemon restart), so repeating it would only be nagging.
+ * Pushed on change and also readable synchronously, so a renderer that
+ * finishes loading after the daemon gave up still sees it on first paint.
  */
-function showMachineLimitDialog(state: DaemonState): void {
-  if (machineLimitDialogShown || isQuitting) {
+function publishCloudState(state: DaemonState): void {
+  const next: DaemonCloudState = {
+    status: state.cloudStatus ?? null,
+    detail: state.cloudDetail ?? '',
+  };
+  if (next.status === latestCloudState.status && next.detail === latestCloudState.detail) {
     return;
   }
-  machineLimitDialogShown = true;
-  const reason = state.cloudDetail?.trim();
-  const options = {
-    type: 'warning' as const,
-    title: 'Vicoa',
-    message: "This computer isn't connected to Vicoa",
-    detail:
-      (reason ? `${reason}\n\n` : '') +
-      "You're signed in and everything on this computer keeps working, but it " +
-      "won't appear in the Vicoa app, so you can't start or resume its " +
-      'sessions from another device.\n\n' +
-      'Free up a machine in Settings → Machines, or upgrade, then try again.',
-    // The retry is a button rather than an instruction: the same affordance
-    // the daemon-failed dialog offers, and it saves naming a place that is a
-    // menu bar on macOS and a system tray elsewhere. Not the default, because
-    // retrying before freeing a machine just fails again — the user has to go
-    // do something first, so Dismiss is the honest first step.
-    buttons: ['Dismiss', 'Try again'],
-    defaultId: 0,
-    cancelId: 0,
-  };
-  const dialogPromise =
-    mainWindow !== null && !mainWindow.isDestroyed()
-      ? dialog.showMessageBox(mainWindow, options)
-      : dialog.showMessageBox(options);
-  void dialogPromise
-    .then(({ response }) => {
-      if (response === 1) {
-        // Allow one more dialog: if this retry is refused too, saying so again
-        // is the answer to "did that work?", not nagging.
-        machineLimitDialogShown = false;
-        void daemonManager?.restart();
-      }
-    })
-    .catch(() => undefined);
+  latestCloudState = next;
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('vicoa:daemon-cloud-state', next);
+  }
 }
 
 function showDaemonFailedDialog(state: DaemonState): void {
@@ -905,6 +880,17 @@ function registerIpcHandlers(): void {
     };
   });
   ipcMain.handle('vicoa:cli-install', () => installCliLink());
+
+  // Daemon cloud link, for the renderer's own dialog. `sendSync` so a window
+  // that loads after the daemon gave up still has the state on first paint;
+  // pushes afterwards come over 'vicoa:daemon-cloud-state'.
+  ipcMain.on('vicoa:daemon-cloud-get', (event) => {
+    event.returnValue = latestCloudState;
+  });
+  ipcMain.handle('vicoa:daemon-restart', async () => {
+    await ensureDaemonProvisioned();
+    return (await daemonManager?.restart()) ?? false;
+  });
 
   // Windows custom title bar (titleBarStyle:'hidden'): the renderer draws its own
   // min/max/close controls and a ··· button, so drive the native window and pop

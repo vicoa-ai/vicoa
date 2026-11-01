@@ -204,6 +204,34 @@ type UpdateStatus =
   | { state: 'downloaded'; version: string }
   | { state: 'error'; message: string };
 
+/**
+ * The daemon's cloud link, so the renderer can draw a Vicoa dialog for a
+ * refused one instead of Electron drawing a native box in its own chrome.
+ */
+contextBridge.exposeInMainWorld('vicoaDesktopDaemon', {
+  /** Synchronous snapshot for first paint (main holds the latest state). */
+  getCloudState: (): { status: string | null; detail: string } =>
+    ipcRenderer.sendSync('vicoa:daemon-cloud-get') as {
+      status: string | null;
+      detail: string;
+    },
+  /** Subscribe to pushes from main. Returns an unsubscribe function. */
+  onCloudState: (
+    cb: (state: { status: string | null; detail: string }) => void,
+  ): (() => void) => {
+    const listener = (
+      _event: unknown,
+      state: { status: string | null; detail: string },
+    ): void => cb(state);
+    ipcRenderer.on('vicoa:daemon-cloud-state', listener);
+    return () => {
+      ipcRenderer.removeListener('vicoa:daemon-cloud-state', listener);
+    };
+  },
+  /** Restart the daemon — the retry behind the dialog's "Try again". */
+  restart: (): Promise<boolean> => ipcRenderer.invoke('vicoa:daemon-restart') as Promise<boolean>,
+});
+
 contextBridge.exposeInMainWorld('vicoaDesktopUpdates', {
   /** Synchronous snapshot for first paint (main holds the latest status). */
   getStatus: (): UpdateStatus => ipcRenderer.sendSync('vicoa:update-get-status') as UpdateStatus,
