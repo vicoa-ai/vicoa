@@ -203,12 +203,25 @@ Vicoa's hosted service adds closed features — billing and payment processing �
 repository. The open code must never depend on it, so a few seams exist:
 
 - `backend/src/shared/hooks.py` — additive hook registry (user-created,
-  user-delete, app setup, lifespan, capability). The core declares hooks;
-  something else may register into them. The capability registry is how seat
-  gating stays out of the open code: the core calls
+  user-delete, app setup, lifespan, capability, plan limits). The core declares
+  hooks; something else may register into them. The capability registry is how
+  seat gating stays out of the open code: the core calls
   `check_capability(db, payer_id, "collab.team_seat" | "collab.grant_write", ctx)`
   before a metered collaboration action; an empty registry allows, so
   self-hosting is unmetered, and a denial becomes `402`.
+- `backend/src/shared/limits.py` — the numeric half of the same seam, for
+  plan-capped resources (machines and automations today). **The core
+  counts, the overlay prices**: the core declares each `LimitedResource` and how
+  to count it, and `hooks.plan_limits` is the single hook the overlay answers
+  with this user's numbers. No hook registered ⇒ every resource unlimited, so
+  the open build is unmetered. Adding a resource is a `register_resource(...)`
+  plus one `limits.check_limit(db, user_id, key)` at the creation site — no
+  migration while the resource is a count of rows the user already owns, and no
+  client change, because clients read `GET /limits` instead of carrying a number
+  of their own. A resource that meters *consumption* (minutes of something, say)
+  would be the one that needs storage of its own, since there is no row to
+  count. The check is `used + requested > limit`, i.e. additive only: an
+  account already over a cap keeps everything it has.
 - `backend/src/shared/access.py` — the one access resolver (project-anchored
   grants, teams, session shares). Dashboard routers pass `sharing=True` into the
   query layer; the agent-facing `servers` routers and the CLI stay owner-only —

@@ -35,6 +35,7 @@ import {
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import { AccountPlanItem } from '@/components/billing/account-plan-item';
 import { UpgradeDialog } from '@/components/billing/upgrade-dialog';
+import { MachineLimitDialog } from '@/components/desktop/machine-limit-dialog';
 import { MENU_MAX_AGE_MS, refreshBillingSubscriptionIfOlderThan } from '@/lib/billing-subscription';
 import { AccountMenuInvitations, InvitationDot } from '@/components/dashboard/account-menu-invitations';
 import { AgentDashboardProvider, useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
@@ -993,6 +994,7 @@ function DashboardShell({
       <SearchPalette open={searchOpen} onOpenChange={setSearchOpen} />
 
       <UpgradeDialog />
+      <MachineLimitDialog />
     </>
   );
 }

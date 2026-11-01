@@ -27,7 +27,7 @@ from uuid import UUID
 from sqlalchemy import Select, exists, select
 from sqlalchemy.orm import Session
 
-from shared import access
+from shared import access, limits
 from shared.access import Role
 from shared.agent_profile_resolution import usable_profile_filter
 from shared.database import (
@@ -469,6 +469,14 @@ def create_automation(
         raise MachineNotFoundError("Machine not found")
     if agent_profile_id is not None:
         _require_usable_profile(db, user_id, agent_profile_id)
+
+    # Metered here, in the query layer, rather than in a router: the dashboard
+    # (`backend.api.automations`) and the CLI (`servers.api.automations`) both
+    # land on this function, so one check covers both and they cannot drift.
+    # Enabling/disabling an automation is deliberately NOT metered — the cap is
+    # on how many exist, so pausing one never becomes a way to dodge it, and
+    # resuming one is never refused.
+    limits.check_limit(db, user_id, limits.RESOURCE_AUTOMATIONS)
 
     # Anchor interval schedules ("every N …") to creation time.
     anchor_at = datetime.now(dt_timezone.utc)

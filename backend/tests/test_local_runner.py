@@ -132,6 +132,7 @@ def test_healthz_local_only_reports_cloud_null(store: LocalStore) -> None:
         "mode": "local-only",
         "machine_id": "local",
         "cloud": None,
+        "cloud_detail": "",
     }
 
 
@@ -149,6 +150,9 @@ def test_healthz_cloud_mode_transitions(store: LocalStore) -> None:
             "mode": "cloud",
             "machine_id": "mac-42",
             "cloud": "connecting",
+            # Empty until something is actually refused; the field carries the
+            # server's own sentence, and there is nothing to quote yet.
+            "cloud_detail": "",
         }
 
         status.set(CloudAuthStatus.CONNECTED)

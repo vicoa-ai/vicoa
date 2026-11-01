@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'index.dart';
+import '/custom_code/utils/plan_limit.dart';
 
 /// REST client for /api/v1/automations (scheduled agent runs). Mirrors the
 /// web dashboard's backend-api.ts automation methods; the server owns all
@@ -23,6 +24,11 @@ Future<List<dynamic>?> apiGetAutomations() async {
 
 /// POST /api/v1/automations. [body] is a CreateAutomationRequest map.
 /// Returns the created automation, or null on failure.
+///
+/// The one failure that is NOT null: a plan-limit 402 rethrows, because the
+/// server's sentence ("Your plan includes 10 automations.") is the whole
+/// point of that answer and a generic "save failed" would throw it away.
+/// Read it with `planLimitFromError`.
 Future<Map<String, dynamic>?> apiCreateAutomation(
     Map<String, dynamic> body) async {
   try {
@@ -30,6 +36,7 @@ Future<Map<String, dynamic>?> apiCreateAutomation(
     if (result is Map) return Map<String, dynamic>.from(result);
     return null;
   } catch (e) {
+    if (planLimitFromError(e) != null) rethrow;
     debugPrint('Error creating automation: $e');
     return null;
   }

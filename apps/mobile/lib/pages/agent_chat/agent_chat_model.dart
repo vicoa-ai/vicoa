@@ -18,8 +18,6 @@ import 'agent_chat_widget.dart' show AgentChatWidget;
 import 'components/pending_attachment.dart';
 import 'components/message_queue_status.dart';
 import '/flutter_flow/custom_functions.dart' as functions;
-import '/actions/actions.dart' as local_actions;
-import '/profile/no_credit_sheet/no_credit_sheet_widget.dart';
 import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -1368,14 +1366,6 @@ String? latestWebPreviewUrl;
       return;
     }
 
-    // Check credits/subscription before showing the message — avoids a flash
-    // if the user hits the paywall and the send is aborted.
-    final gate = await _chargeCreditForSend(context);
-    if (!gate.ok) {
-      isSendingMessage = false;
-      return;
-    }
-
     // `#` references whose token survived editing ride below the text, the
     // same block the web sends; an option click is not composer text.
     final refs = isOptionClick ? const <ComposerReference>[] : liveReferences(content);
@@ -1434,10 +1424,9 @@ String? latestWebPreviewUrl;
       attachmentIds: attachmentIds,
       isOptionClick: isOptionClick,
     );
-    // Same rule as before: the refund/snack only happen while the screen is
-    // still there (grantCredit takes a context by signature).
+    // Only while the screen is still there: the snack needs a live context.
     if (!delivered && context.mounted) {
-      await _afterFailedSend(context, isOptionClick: isOptionClick, refund: gate.charged);
+      await _afterFailedSend(context, isOptionClick: isOptionClick);
     }
   }
 
@@ -1467,10 +1456,13 @@ String? latestWebPreviewUrl;
   /// check the screen is still there. A plain message's failure is shown on
   /// its bubble; an option/permission answer has no bubble to carry it (and
   /// re-tapping the option is the natural retry), so it gets a snack instead.
+  ///
+  /// Nothing to refund any more: messages are not metered. Plan limits are
+  /// counted server-side, on machines and automations, so a failed send costs
+  /// nothing to put right.
   Future<void> _afterFailedSend(
     BuildContext context, {
     required bool isOptionClick,
-    required bool refund,
   }) async {
     if (isOptionClick && context.mounted) {
       unawaited(SessionActions.showSnack(
@@ -1479,52 +1471,6 @@ String? latestWebPreviewUrl;
         waitTime: 3000,
       ));
     }
-    if (refund && context.mounted) {
-      await local_actions.grantCredit(
-        context,
-        creditGranted: 1,
-        name: 'Refund: Failed Agent Chat Message',
-      );
-    }
-  }
-
-  /// The credit/paywall gate every send passes: subscribers are free, others
-  /// pay one credit or see the paywall. `ok` is false when the send must not
-  /// proceed; `charged` says whether a failure should refund. Shared by
-  /// [sendMessage] and [resendMessage] so a retry is charged exactly like a
-  /// fresh send (the failed attempt was refunded).
-  Future<({bool ok, bool charged})> _chargeCreditForSend(
-      BuildContext context) async {
-    final hasActiveSubscription = await actions.hasActiveSubscription();
-    if (hasActiveSubscription) return (ok: true, charged: false);
-
-    const creditsNeeded = 1;
-    if (FFAppState().credit.balance < creditsNeeded) {
-      FocusManager.instance.primaryFocus?.unfocus();
-      if (context.mounted) {
-        await showModalBottomSheet(
-          context: context,
-          backgroundColor: Colors.transparent,
-          enableDrag: false,
-          builder: (context) {
-            return NoCreditSheetWidget(
-              paywall: 'agent_chat',
-              creditsNeeded: creditsNeeded,
-            );
-          },
-        );
-      }
-      return (ok: false, charged: false);
-    }
-
-    if (context.mounted) {
-      await local_actions.useCredit(
-        context,
-        usedCredit: creditsNeeded,
-        name: 'Agent Chat Message',
-      );
-    }
-    return (ok: true, charged: true);
   }
 
   /// Queues the network half of a send behind any still in flight (see
@@ -1690,9 +1636,6 @@ String? latestWebPreviewUrl;
         if (a is Map && a['id'] != null) a['id'].toString(),
     ];
 
-    final gate = await _chargeCreditForSend(context);
-    if (!gate.ok) return;
-
     _setSendStatus(optimisticId, kSendStatusSending);
     isWaitingForAgentResponse = true;
     onStateChanged?.call();
@@ -1704,7 +1647,7 @@ String? latestWebPreviewUrl;
       isOptionClick: false,
     );
     if (!delivered && context.mounted) {
-      await _afterFailedSend(context, isOptionClick: false, refund: gate.charged);
+      await _afterFailedSend(context, isOptionClick: false);
     }
   }
 

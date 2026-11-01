@@ -140,6 +140,12 @@ let localNonce = '';
 let isQuitting = false;
 let quitCleanupDone = false;
 let failureDialogOpen = false;
+/** What the renderer is told about the daemon's cloud link; see publishCloudState. */
+interface DaemonCloudState {
+  status: string | null;
+  detail: string;
+}
+let latestCloudState: DaemonCloudState = { status: null, detail: '' };
 
 // ---------------------------------------------------------------------------
 // Single-instance lock: a second launch focuses the existing window instead.
@@ -663,6 +669,7 @@ function warmManagedDaemon(): void {
 
 function onDaemonState(state: DaemonState): void {
   updateTrayDaemonState(state);
+  publishCloudState(state);
   if (state.status === 'running') {
     // The window normally opens before the daemon is healthy (bootstrap); this
     // covers the paths that don't — a tray "Restart daemon" or supervisor
@@ -671,6 +678,33 @@ function onDaemonState(state: DaemonState): void {
   }
   if (state.status === 'failed') {
     showDaemonFailedDialog(state);
+  }
+}
+
+/**
+ * The plan has no room for this computer: tell the renderer, which draws it
+ * as a Vicoa dialog.
+ *
+ * Not `dialog.showMessageBox`: a native box is drawn by Electron in its own
+ * chrome, ignores the theme, and reads as a different product — the same
+ * reason `apps/web/AGENTS.md` bans `window.confirm`. The daemon-failed dialog
+ * stays native because it can fire before a window exists; this one cannot,
+ * since the cloud status only arrives once the daemon is up and polled.
+ *
+ * Pushed on change and also readable synchronously, so a renderer that
+ * finishes loading after the daemon gave up still sees it on first paint.
+ */
+function publishCloudState(state: DaemonState): void {
+  const next: DaemonCloudState = {
+    status: state.cloudStatus ?? null,
+    detail: state.cloudDetail ?? '',
+  };
+  if (next.status === latestCloudState.status && next.detail === latestCloudState.detail) {
+    return;
+  }
+  latestCloudState = next;
+  if (mainWindow !== null && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('vicoa:daemon-cloud-state', next);
   }
 }
 
@@ -846,6 +880,17 @@ function registerIpcHandlers(): void {
     };
   });
   ipcMain.handle('vicoa:cli-install', () => installCliLink());
+
+  // Daemon cloud link, for the renderer's own dialog. `sendSync` so a window
+  // that loads after the daemon gave up still has the state on first paint;
+  // pushes afterwards come over 'vicoa:daemon-cloud-state'.
+  ipcMain.on('vicoa:daemon-cloud-get', (event) => {
+    event.returnValue = latestCloudState;
+  });
+  ipcMain.handle('vicoa:daemon-restart', async () => {
+    await ensureDaemonProvisioned();
+    return (await daemonManager?.restart()) ?? false;
+  });
 
   // Windows custom title bar (titleBarStyle:'hidden'): the renderer draws its own
   // min/max/close controls and a ··· button, so drive the native window and pop

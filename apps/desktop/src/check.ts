@@ -12,6 +12,7 @@ import {
   backoffDelayMs,
   buildDaemonArgs,
   buildSpawnEnv,
+  parseCloudDetail,
   parseCloudStatus,
   resolveDaemonCommand,
 } from './daemon-manager';
@@ -107,11 +108,31 @@ assert.equal(
 assert.equal(parseCloudStatus('{"cloud":"connecting"}'), 'connecting');
 assert.equal(parseCloudStatus('{"cloud":"auth_failed"}'), 'auth_failed');
 assert.equal(
+  parseCloudStatus('{"cloud":"machine_limit"}'),
+  'machine_limit',
+  'plan-capacity give-up is its own status, not an unknown value — parsing it as '
+    + 'undefined would make the tray report the daemon as connected',
+);
+assert.equal(
   parseCloudStatus('{"status":"ok","mode":"cloud","machine_id":"m1"}'),
   undefined,
   'older daemon without the field -> undefined (fallback behavior)',
 );
 assert.equal(parseCloudStatus('{"cloud":"bogus-value"}'), undefined, 'unknown value -> undefined');
+
+// --- parseCloudDetail ---------------------------------------------------------
+assert.equal(
+  parseCloudDetail('{"cloud":"machine_limit","cloud_detail":"Your plan includes 1 machine."}'),
+  'Your plan includes 1 machine.',
+  "the server's sentence is what the dialog quotes",
+);
+assert.equal(parseCloudDetail('{"cloud":"connected","cloud_detail":""}'), '');
+assert.equal(
+  parseCloudDetail('{"cloud":"connected"}'),
+  '',
+  'older daemon without the field -> empty, never undefined',
+);
+assert.equal(parseCloudDetail('not json'), '', 'malformed body -> empty');
 assert.equal(parseCloudStatus('not json'), undefined, 'malformed body -> undefined');
 
 // --- full command assembly (what DaemonManager actually spawns) -------------

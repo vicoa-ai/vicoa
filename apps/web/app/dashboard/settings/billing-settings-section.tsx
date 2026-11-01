@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import useSWR from 'swr';
 import { Check, ExternalLink, Loader2, Users } from 'lucide-react';
+import { PlanUsageCard } from '@/components/billing/plan-usage-card';
 import { SeatsCard } from '@/components/billing/seats-card';
 import { openUpgradeDialog } from '@/components/billing/upgrade-dialog';
 import { Button } from '@/components/ui/button';
@@ -192,6 +193,12 @@ export function BillingSettingsSection({
             </p>
           </div>
         )}
+        {/* Not gated on the subscription read: usage comes from `GET /limits`,
+            which is core and answers even when billing is unreachable. Hiding
+            it behind that fetch meant a user could be refused a machine while
+            the page that explains why showed nothing. It renders nothing of
+            its own accord when every resource is unlimited. */}
+        <PlanUsageCard />
         {!isBillingLoading && !billingFetchError && <SeatsCard className="mb-6" />}
       </CardContent>
     </Card>

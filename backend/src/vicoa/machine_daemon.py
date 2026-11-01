@@ -53,7 +53,7 @@ from vicoa.machine_identity import (
     decide_identity_action,
 )
 from vicoa.machine_fingerprint import compute_stable_machine_id, hardware_id_hash
-from vicoa.sdk.exceptions import AuthenticationError
+from vicoa.sdk.exceptions import AuthenticationError, MachineLimitReached
 from vicoa.machine_state import (
     STATE_PATH,
     clear_daemon_pid,
@@ -473,17 +473,41 @@ def _reset_state_on_identity_change(
         )
 
 
+def machine_limit_message(detail: str, upgrade_url: str = "") -> str:
+    """What every surface tells the user when the plan has no room for this
+    host. One function because two paths print it — a foreground
+    ``vicoa daemon`` and the daemon `vicoa <agent>` spawns for you — and a
+    user who hits it twice should not get two different explanations.
+
+    `detail` is the server's sentence, shown verbatim. The upgrade line is
+    omitted when the server named no URL: a self-host meters nothing and sells
+    nothing, and a guessed link is worse than none.
+    """
+    lines = [
+        f"Vicoa: {detail}",
+        # The dialog puts this in its title; the CLI has no title, so it says
+        # the consequence outright or the user is left with only a number.
+        "This computer won't show up in the Vicoa app.",
+    ]
+    if upgrade_url:
+        lines.append(f"Upgrade: {upgrade_url}")
+    lines.append("Or free one up in the Vicoa app, under Settings > Machines.")
+    return "\n".join(lines)
+
+
 class DaemonStartResult(enum.Enum):
     """Outcome of ``ensure_background_daemon_running``.
 
     Replaces the old bool so the foreground caller can distinguish a
-    deliberately-not-spawned dead credential (``AUTH_INVALID``) from a normal
-    spawn/skip and print the disconnected message once.
+    deliberately-not-spawned dead credential (``AUTH_INVALID``) or a plan with
+    no room for this host (``MACHINE_LIMIT``) from a normal spawn/skip, and say
+    so once instead of spawning a daemon that will be refused again.
     """
 
     SPAWNED = "spawned"
     ALREADY_RUNNING = "already_running"
     AUTH_INVALID = "auth_invalid"
+    MACHINE_LIMIT = "machine_limit"
 
 
 def ensure_background_daemon_running(
@@ -518,6 +542,14 @@ def ensure_background_daemon_running(
         "api_key_fingerprint"
     ) == api_key_fingerprint(api_key):
         return DaemonStartResult.AUTH_INVALID
+
+    # Same idea for a full plan: a previous daemon was refused registration and
+    # nulled its PID. Re-spawning would just be refused again — silently, since
+    # a spawned daemon's stdout goes to DEVNULL — so stop here and let the
+    # caller say why. Unlike a dead credential this is not about the key, so it
+    # is not fingerprint-gated: the next successful register clears the stamp.
+    if entry.get("machine_limit_at"):
+        return DaemonStartResult.MACHINE_LIMIT
 
     running_pid = find_running_daemon_pid(base_url, state_path)
     if running_pid is not None:
@@ -657,6 +689,18 @@ class MachineDaemon:
         # signal that the credential is dead: a background heartbeat thread
         # sets it, the main loop watches it to stop the stream and exit.
         self._fatal_auth = Event()
+        # Set when registration is refused for want of plan capacity (402 with
+        # the `limit.machines` capability). Separate from _fatal_auth because
+        # the credential is fine — only the plan is full — so the state file
+        # must NOT be stamped auth-invalid and the fix is a purchase or
+        # removing a machine, not signing in again.
+        self._machine_limit = Event()
+        # The server's sentence from the 402, kept for `_handle_machine_limit`
+        # to persist and for the local server to report on /healthz.
+        self._machine_limit_detail = ""
+        # Where to upgrade, when the server named one. Empty on a self-host,
+        # which meters nothing and sells nothing.
+        self._machine_limit_upgrade_url = ""
         # Set by ``request_stop()`` — the desktop local-listener runner's
         # shutdown path. A plain ``vicoa daemon`` never requests a stop (its
         # lifetime is the process's), so both stay inert outside the desktop.
@@ -723,6 +767,29 @@ class MachineDaemon:
         """
         return self._fatal_auth.is_set()
 
+    @property
+    def machine_limit_reached(self) -> bool:
+        """Read-only: did registration fail because the plan is full?
+
+        Read by the desktop local-listener runner after ``run()`` returns, the
+        same way it reads ``fatal_auth`` — the two are the only non-crash
+        reasons a daemon gives up at startup, and they need different UI.
+        """
+        return self._machine_limit.is_set()
+
+    @property
+    def machine_limit_detail(self) -> str:
+        """The server's sentence for the refusal, or "" when there was none.
+
+        Shown verbatim rather than reworded locally so the number in it always
+        matches the plan the server actually applied."""
+        return self._machine_limit_detail
+
+    @property
+    def machine_limit_upgrade_url(self) -> str:
+        """Where to upgrade, as the server named it; "" when it named none."""
+        return self._machine_limit_upgrade_url
+
     def request_stop(self) -> None:
         """Ask a ``run()`` blocking on another thread to wind down.
 
@@ -754,6 +821,57 @@ class MachineDaemon:
         if response.status_code == 401:
             self._fatal_auth.set()
             raise AuthenticationError("agent server rejected credentials (401)")
+
+    def _raise_for_machine_limit(self, response: Response) -> None:
+        """Turn a plan-capacity refusal of `/machines/register` into a typed error.
+
+        Only the machines capability is treated this way. A 402 carrying some
+        other capability is not about this host's right to exist, so it falls
+        through to ``raise_for_status`` like any other error rather than
+        quietly taking the daemon down.
+        """
+        if response.status_code != 402:
+            return
+        detail = "This account has no room for another machine."
+        capability = ""
+        upgrade_url = ""
+        try:
+            body = response.json()
+            capability = str(body.get("capability") or "")
+            detail = str(body.get("detail") or detail)
+            upgrade_url = str(body.get("upgrade_url") or "")
+        except ValueError:
+            pass
+        if capability and capability != "limit.machines":
+            return
+        self._machine_limit_detail = detail
+        self._machine_limit_upgrade_url = upgrade_url
+        self._machine_limit.set()
+        raise MachineLimitReached(detail, upgrade_url)
+
+    def _handle_machine_limit(self) -> None:
+        """Persist the give-up and tell the desktop, without faulting the key.
+
+        Mirrors ``_handle_fatal_auth`` minus ``auth_invalid_at``: clearing
+        ``daemon_pid`` stops a foreground ``vicoa <agent>`` from treating this
+        dead process as the live owner, while leaving the credential intact so
+        the next launch — after an upgrade, or after the user removes a machine
+        — registers normally with no re-auth.
+        """
+        self._persist_entry(
+            {
+                "daemon_pid": None,
+                "machine_limit_at": datetime.now(timezone.utc).isoformat(),
+                # The server's own sentence. Stamped because every surface that
+                # has to explain this reads the state file, not our stdout: a
+                # CLI-spawned daemon runs with stdout at DEVNULL, and the
+                # desktop's daemon is a child process nobody is watching.
+                "machine_limit_detail": self._machine_limit_detail,
+                "machine_limit_upgrade_url": self._machine_limit_upgrade_url,
+            }
+        )
+        self._notify_cloud_status("machine_limit")
+        logger.info("[daemon] machine limit reached; not registering, exiting")
 
     def _handle_fatal_auth(self) -> None:
         """Persist the dead-credential verdict so the daemon can exit cleanly.
@@ -993,6 +1111,11 @@ class MachineDaemon:
         }
 
         response = self._post("/api/v1/machines/register", payload)
+        # Before raise_for_status: a 402 here is a plan answer, not a transport
+        # failure, and letting it raise HTTPError would take the daemon down
+        # with a traceback (and, on desktop, wedge setup) instead of a message
+        # the user can act on.
+        self._raise_for_machine_limit(response)
         response.raise_for_status()
         data = response.json()
 
@@ -1007,8 +1130,12 @@ class MachineDaemon:
                 # trip. See `vicoa.machine_identity.decide_identity_action`.
                 "api_key_fingerprint": api_key_fingerprint(self.api_key),
                 # A successful registration is the only heal path for a prior
-                # fatal-auth: clear the stamp so the daemon resumes normally.
+                # fatal-auth or a plan that was full: clear both stamps so the
+                # daemon resumes normally once a seat or a machine frees up.
                 "auth_invalid_at": None,
+                "machine_limit_at": None,
+                "machine_limit_detail": None,
+                "machine_limit_upgrade_url": None,
             }
         )
 
@@ -3307,6 +3434,12 @@ class MachineDaemon:
             # the SSE GET). Background heartbeat-thread 401s instead set
             # _fatal_auth and stop the stream, surfacing via the check below.
             self._fatal_auth.set()
+        except MachineLimitReached as exc:
+            # The plan is full. Nothing to retry and nothing to re-auth: wind
+            # down cleanly with the same message the spawned-daemon path gives,
+            # rather than a stack trace or a lone sentence with nowhere to go.
+            print(machine_limit_message(exc.detail, exc.upgrade_url))
+            self._machine_limit.set()
         except KeyboardInterrupt:
             print("[daemon] shutting down")
             return
@@ -3315,6 +3448,8 @@ class MachineDaemon:
 
         if self._fatal_auth.is_set():
             self._handle_fatal_auth()
+        elif self._machine_limit.is_set():
+            self._handle_machine_limit()
 
     def _listen_for_spawn_requests(self) -> None:
         """Dispatch to the WebSocket listener when configured, else SSE."""

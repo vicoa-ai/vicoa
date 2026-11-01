@@ -8,6 +8,7 @@ This server provides:
 """
 
 import asyncio
+import importlib.util
 import logging
 from contextlib import asynccontextmanager
 import traceback
@@ -52,6 +53,25 @@ from shared.pg_listener import start_hub, stop_hub
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# The closed overlay, when it is installed. This process meters two things —
+# registering a machine, and the CLI's half of creating an automation — and
+# `shared.limits` reads the numbers from a hook the overlay registers at import
+# time. Without this import the registry is empty *here* while being full in
+# `backend.main`, so the dashboard would cap automations at ten and the CLI
+# would not, and the machine limit would never fire at all.
+#
+# Importing registers hooks only: unlike `backend.main` this app never calls
+# `run_app_setup` or `start_lifespan_hooks`, so the overlay's billing routers
+# stay off the agent-facing server and its background drips never start.
+# `find_spec` rather than try/except so a real ImportError inside the overlay
+# still fails loudly instead of silently disabling metering.
+if importlib.util.find_spec("cloud") is not None:
+    import cloud  # type: ignore[import-not-found]  # noqa: F401  # pyright: ignore[reportMissingImports]  (registers the plan-limit + capability hooks)
+
+    logger.info("Loaded cloud overlay")
+else:
+    logger.info("Cloud overlay absent; running open-source core")
 
 
 class SseWriteTimeoutMiddleware:

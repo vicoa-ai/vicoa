@@ -145,14 +145,23 @@ class CloudAuthStatus:
     The runner creates one per credentialed desktop launch and hands ``set``
     to the daemon as its ``on_cloud_status`` callback; the local server
     thread reads ``value`` when serving ``/healthz`` so the tray can
-    distinguish starting / connected / auth_failed. Values: ``"connecting"``
+    distinguish starting / connected / gave-up. Values: ``"connecting"``
     (initial), ``"connected"`` (registration succeeded), ``"auth_failed"``
-    (fatal auth — see ``MachineDaemon._handle_fatal_auth``).
+    (fatal auth — see ``MachineDaemon._handle_fatal_auth``) and
+    ``"machine_limit"`` (the plan has no room for this host — see
+    ``MachineDaemon._handle_machine_limit``).
+
+    The last two are both "the daemon gave up at startup" but need different
+    UI: one is fixed by signing in again, the other only by upgrading or
+    removing a machine. A value the desktop does not recognise falls back to
+    "running (connected)" in the tray, so anything added here has to be added
+    to ``parseCloudStatus`` in apps/desktop too.
     """
 
     CONNECTING = "connecting"
     CONNECTED = "connected"
     AUTH_FAILED = "auth_failed"
+    MACHINE_LIMIT = "machine_limit"
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -498,6 +507,16 @@ def create_local_app(
             "mode": "local-only" if local_only else "cloud",
             "machine_id": machine_id,
             "cloud": cloud,
+            # The server's own sentence when the cloud link is refused for a
+            # reason the user has to act on, "" otherwise. Carried here because
+            # the shell has no other way to learn *why*: the daemon's stdout is
+            # not watched, and a status word alone cannot name which plan limit
+            # was hit or how many machines it allows.
+            "cloud_detail": (
+                daemon.machine_limit_detail
+                if not local_only and cloud == CloudAuthStatus.MACHINE_LIMIT
+                else ""
+            ),
         }
 
     # ------------------------------------------------------------------

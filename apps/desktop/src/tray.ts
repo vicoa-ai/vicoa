@@ -47,6 +47,8 @@ function runningLabel(state: DaemonState): string {
       return 'Daemon: connecting to cloud…';
     case 'auth_failed':
       return 'Daemon: auth failed — sign in again';
+    case 'machine_limit':
+      return 'Daemon: machine limit reached — upgrade to connect this machine';
     case null:
       // Credentialed run reporting no cloud link (shouldn't normally happen).
       return 'Daemon: running (cloud link off)';

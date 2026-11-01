@@ -23,13 +23,14 @@ import threading
 from typing import Optional
 from .machine_daemon import (
     DaemonStartResult,
+    machine_limit_message,
     ensure_background_daemon_running,
     find_running_daemon_pid,
     migrate_legacy_flat_state,
     run_daemon,
     stop_background_daemon,
 )
-from .machine_state import wait_for_machine_id
+from .machine_state import read_daemon_entry, wait_for_machine_id
 from . import credentials_state
 from .constants import DEFAULT_API_URL, DEFAULT_AUTH_URL
 from .file_sync import sync_project_files
@@ -1060,6 +1061,22 @@ def maybe_start_machine_daemon(args, api_key: str) -> None:
     except Exception:
         # Daemon autostart should never block interactive CLI usage.
         pass
+
+    if result is DaemonStartResult.MACHINE_LIMIT:
+        # The plan has no room for this host. Unlike a dead credential this is
+        # not fatal to the agent — the session still runs and still reaches the
+        # app — so warn and carry on rather than refusing to start something
+        # the user can perfectly well use. What they lose is this machine
+        # showing up in Vicoa, and they would otherwise have no way to know.
+        entry = read_daemon_entry(base_url)
+        print(
+            machine_limit_message(
+                entry.get("machine_limit_detail")
+                or "This account has no room for another machine.",
+                entry.get("machine_limit_upgrade_url") or "",
+            )
+        )
+        return
 
     if result is DaemonStartResult.AUTH_INVALID:
         # The credential is dead (revoked key / deleted account) and re-auth

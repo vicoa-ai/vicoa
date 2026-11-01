@@ -11,6 +11,8 @@ import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/l10n/app_localizations.dart';
 import '/pages/agent_chat/agent_chat_widget.dart';
+import '/custom_code/actions/index.dart' as actions;
+import '/custom_code/utils/plan_limit.dart';
 import '/pages/common/session_actions.dart';
 import '/pages/confirm_dialog/confirm_dialog_widget.dart';
 import '/pages/main_tabs/main_tabs_controller.dart';
@@ -104,10 +106,21 @@ class _AutomationsWidgetState extends State<AutomationsWidget> {
       catalog: catalog,
     );
     if (!mounted || body == null) return;
-    final created = await _model.createAutomation({...body, 'enabled': true});
-    if (created == null && mounted) {
-      await SessionActions.showSnack(
-          context, AppLocalizations.of(context).automationsSaveFailed);
+    try {
+      final created = await _model.createAutomation({...body, 'enabled': true});
+      if (created == null && mounted) {
+        await SessionActions.showSnack(
+            context, AppLocalizations.of(context).automationsSaveFailed);
+      }
+    } catch (e) {
+      // Out of automations on this plan. Say what the server said, then offer
+      // the upgrade — a bare "save failed" would read as a bug.
+      final denial = planLimitFromError(e);
+      if (denial == null) rethrow;
+      if (!mounted) return;
+      await SessionActions.showSnack(context, denial.detail, waitTime: 4000);
+      if (!mounted) return;
+      await actions.registerSuperWallEvent(context, 'automations', '', true);
     }
   }
 
