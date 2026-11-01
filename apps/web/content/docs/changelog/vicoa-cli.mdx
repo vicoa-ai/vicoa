@@ -5,6 +5,14 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.9.14
+2 November, 2026
+- A new worktree started without a typed name is now named from your first prompt, and its session opens already titled, instead of getting a random pair of words. If the name takes longer than a second, or the server has no model to ask, you get a random name as before
+- Random worktree names draw from a larger word list and skip names already taken, so a `-2` suffix only appears once every combination is in use
+- Fix a worktree showing an old merged pull request after its new work was pushed under a different branch name, and stop pull requests opened from forks showing on your repo's branches
+- When your plan's limit on connected computers is reached, `vicoa` says so and prints where to upgrade; the agent still runs and reaches the app, and the daemon is no longer restarted on every command only to be refused again
+- Creating an automation from the CLI now counts against your plan's automation limit, the same as in the app, and a refusal says what is using the allowance
+
 ### v1.9.13
 29 October, 2026
 - Add Claude Sonnet 5.5 to the model picker and drop duplicate 1M-context model entries
