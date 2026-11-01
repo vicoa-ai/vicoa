@@ -57,6 +57,37 @@ class DeepgramTokenResponse(BaseModel):
 
 
 # ============================================================================
+# Plan Limit Models
+# ============================================================================
+
+
+class LimitStatusResponse(BaseModel):
+    """One metered resource: what this user has used, and what they may use.
+
+    `limit`/`remaining` are null when the resource is unlimited — which is what
+    a deployment with no billing overlay reports for everything. Clients must
+    read null as "no limit", never as zero.
+    """
+
+    key: str = Field(..., description="Stable resource key, e.g. 'machines'")
+    label: str = Field(..., description="Human label for the resource")
+    unit: str = Field(..., description="'count' or 'minutes'")
+    period: str = Field(
+        ..., description="'total' (standing count) or 'month' (resets monthly)"
+    )
+    used: int = Field(..., description="Current usage, in `unit`")
+    limit: int | None = Field(None, description="Cap in `unit`; null = unlimited")
+    remaining: int | None = Field(
+        None, description="`limit - used`, floored at 0; null = unlimited"
+    )
+    unlimited: bool = Field(..., description="Convenience mirror of `limit is None`")
+
+
+class LimitsResponse(BaseModel):
+    limits: list[LimitStatusResponse] = Field(default_factory=list)
+
+
+# ============================================================================
 # User Settings Models
 # ============================================================================
 

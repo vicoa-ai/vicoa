@@ -26,11 +26,17 @@ export type DaemonStatus =
 
 /**
  * Cloud connection status from the daemon's /healthz `cloud` field
- * (null | "connecting" | "connected" | "auth_failed"). `undefined` = the
- * daemon didn't report one (older daemon without the field) — callers fall
- * back to pre-cloud-status behavior.
+ * (null | "connecting" | "connected" | "auth_failed" | "machine_limit").
+ * `undefined` = the daemon didn't report one (older daemon without the
+ * field) — callers fall back to pre-cloud-status behavior.
+ *
+ * `auth_failed` and `machine_limit` are both "the daemon gave up at startup",
+ * but only the first is fixed by signing in again; the second needs an
+ * upgrade or a machine removed. Keep this in step with `CloudAuthStatus` in
+ * backend/src/vicoa/local_server/app.py — a value missing here parses as
+ * `undefined` and the tray then claims the daemon is connected.
  */
-export type CloudStatus = 'connecting' | 'connected' | 'auth_failed' | null;
+export type CloudStatus = 'connecting' | 'connected' | 'auth_failed' | 'machine_limit' | null;
 
 export interface DaemonState {
   status: DaemonStatus;
@@ -180,7 +186,12 @@ export function parseCloudStatus(body: string): CloudStatus | undefined {
     if (cloud === null) {
       return null;
     }
-    if (cloud === 'connecting' || cloud === 'connected' || cloud === 'auth_failed') {
+    if (
+      cloud === 'connecting' ||
+      cloud === 'connected' ||
+      cloud === 'auth_failed' ||
+      cloud === 'machine_limit'
+    ) {
       return cloud;
     }
     return undefined;

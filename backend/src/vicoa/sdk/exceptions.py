@@ -13,6 +13,21 @@ class AuthenticationError(VicoaError):
     pass
 
 
+class MachineLimitReached(VicoaError):
+    """Raised when the account's plan has no room for another machine.
+
+    Distinct from `AuthenticationError`: the credential is perfectly good, so
+    the daemon must not stamp it dead — it simply has nowhere to register. Like
+    `AuthenticationError`, it is NOT a `requests.RequestException`, so it escapes
+    the broad retry handlers instead of being swallowed and retried forever
+    against a wall that will not move without a purchase.
+    """
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
 class TimeoutError(VicoaError):
     """Raised when an operation times out."""
 

@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError as SAIntegrityError
 from sqlalchemy.exc import OperationalError as SAOperationalError
 from sqlalchemy.orm import Session, attributes, joinedload
 
-from shared import storage
+from shared import limits, storage
 from shared.database.errors import is_db_disconnect
 import json
 import base64
@@ -357,6 +357,13 @@ def register_machine_endpoint(
             requested_machine_uuid = None
 
     if machine is None:
+        # Only a genuinely NEW host is metered. Every re-register — re-auth, key
+        # rotation, a daemon restart — resolves to an existing row above and is
+        # never checked, so a user at their limit can still restart the machines
+        # they already have. A denial here becomes 402 via the app-level
+        # CapabilityDenied handler; the daemon reads that specific status and
+        # exits with an upgrade message instead of a traceback.
+        limits.check_limit(db, user_uuid, limits.RESOURCE_MACHINES)
         machine = Machine(
             id=requested_machine_uuid or uuid4(),
             user_id=user_uuid,

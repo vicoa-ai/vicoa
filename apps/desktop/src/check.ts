@@ -107,6 +107,12 @@ assert.equal(
 assert.equal(parseCloudStatus('{"cloud":"connecting"}'), 'connecting');
 assert.equal(parseCloudStatus('{"cloud":"auth_failed"}'), 'auth_failed');
 assert.equal(
+  parseCloudStatus('{"cloud":"machine_limit"}'),
+  'machine_limit',
+  'plan-capacity give-up is its own status, not an unknown value — parsing it as '
+    + 'undefined would make the tray report the daemon as connected',
+);
+assert.equal(
   parseCloudStatus('{"status":"ok","mode":"cloud","machine_id":"m1"}'),
   undefined,
   'older daemon without the field -> undefined (fallback behavior)',

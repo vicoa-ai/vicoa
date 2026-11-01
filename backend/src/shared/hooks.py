@@ -11,6 +11,7 @@ See ``plans/todos/oss-cut-manifest.md`` (PART A / A4).
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any, Awaitable, Callable, Protocol
 from uuid import UUID
 
@@ -149,6 +150,61 @@ def check_capability(
             raise CapabilityDenied(capability, "Capability check failed")
         if reason:
             raise CapabilityDenied(capability, reason)
+
+
+# --- plan limits (metered resources) ------------------------------------------
+# The numeric half of the same seam. `shared.limits` declares WHICH resources
+# exist and knows how to COUNT them (they are core tables); the overlay supplies
+# only the NUMBERS, because a plan's shape is a pricing decision and pricing is
+# not in the open build. An empty registry ⇒ no limits at all, so self-hosting
+# is unmetered exactly like `check_capability` above.
+#
+# Deliberately ONE hook for both enforcement and display: `check_limit` and the
+# `GET /limits` endpoint read the same answer through the same call, so the
+# paywall a client renders can never disagree with the 402 it will get.
+#
+# A mapping value of `None` means "unlimited"; a key the hook omits is also
+# unlimited. Resource keys are the ones in `shared.limits` (e.g. "machines").
+PlanLimitsHook = Callable[[Any, UUID], Mapping[str, int | None]]
+_plan_limits_hooks: list[PlanLimitsHook] = []
+
+
+def register_plan_limits_hook(fn: PlanLimitsHook) -> PlanLimitsHook:
+    _plan_limits_hooks.append(fn)
+    return fn
+
+
+def plan_limits(db: Any, user_id: UUID) -> dict[str, int | None]:
+    """The user's per-resource caps, merged across hooks. `{}` when none are
+    registered (the open / self-hosted build) — which every caller must read as
+    *unlimited*, never as *zero*.
+
+    Merge rule when more than one hook answers for the same resource: **the most
+    permissive answer wins** (unlimited beats any number; a larger number beats a
+    smaller one). A second hook exists to *grant* — a promo, a grandfathered
+    account, a comped team — never to restrict; restricting is the base plan's
+    job, and one hook is the only shape the overlay actually ships.
+
+    Exceptions propagate. `check_limit` converts them into a denial so an
+    enforcement path fails closed; the display endpoint lets them surface as a
+    5xx, because rendering "unlimited" off a failed billing read is worse than
+    rendering an error.
+    """
+    merged: dict[str, int | None] = {}
+    for fn in _plan_limits_hooks:
+        answer = fn(db, user_id)
+        if not answer:
+            continue
+        for key, limit in answer.items():
+            if key not in merged:
+                merged[key] = limit
+                continue
+            current = merged[key]
+            if current is None or limit is None:
+                merged[key] = None  # unlimited wins
+            else:
+                merged[key] = max(current, limit)
+    return merged
 
 
 # --- FastAPI app setup (extra routers) ----------------------------------------

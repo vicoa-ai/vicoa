@@ -26,6 +26,7 @@ from .api import (
     agents,
     attachments,
     deepgram,
+    limits,
     user_agents,
     push_notifications,
     user_settings,
@@ -173,6 +174,7 @@ app.include_router(agents.router, prefix=settings.api_v1_prefix)
 app.include_router(agent_profiles.router, prefix=settings.api_v1_prefix)
 app.include_router(attachments.router, prefix=settings.api_v1_prefix)
 app.include_router(deepgram.router, prefix=settings.api_v1_prefix)
+app.include_router(limits.router, prefix=settings.api_v1_prefix)
 app.include_router(user_agents.router, prefix=settings.api_v1_prefix)
 app.include_router(push_notifications.router, prefix=settings.api_v1_prefix)
 app.include_router(user_settings.router, prefix=settings.api_v1_prefix)

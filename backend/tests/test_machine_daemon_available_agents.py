@@ -50,6 +50,10 @@ def test_register_payload_includes_available_agents(
     can render installable agents per machine (D2)."""
 
     class _FakeResp:
+        # `register_machine` inspects the status before raising: a 402 there is
+        # a plan answer, not a transport failure (see _raise_for_machine_limit).
+        status_code = 200
+
         def raise_for_status(self) -> None:
             pass
 
@@ -104,6 +108,10 @@ def test_register_payload_advertises_worktree_capability(
     worktree option rather than silently spawning in the base dir."""
 
     class _FakeResp:
+        # `register_machine` inspects the status before raising: a 402 there is
+        # a plan answer, not a transport failure (see _raise_for_machine_limit).
+        status_code = 200
+
         def raise_for_status(self) -> None:
             pass
 
@@ -135,6 +143,10 @@ def test_register_payload_includes_hardware_id(
     from vicoa import machine_daemon
 
     class _FakeResp:
+        # `register_machine` inspects the status before raising: a 402 there is
+        # a plan answer, not a transport failure (see _raise_for_machine_limit).
+        status_code = 200
+
         def raise_for_status(self) -> None:
             pass
 
