@@ -74,21 +74,21 @@ export function MachineLimitDialog() {
     <Dialog open={open} onOpenChange={(next) => !next && setDismissed(true)}>
       <DialogContent className="font-mono sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>This computer isn&apos;t connected to Vicoa</DialogTitle>
+          {/* Names the way out, not the fault. "This computer isn't
+              connected" read as something broken; this reads as something to
+              do, which is also why the body no longer has to reassure anyone
+              that the computer still works. */}
+          <DialogTitle>Upgrade to connect this computer</DialogTitle>
           {detail ? (
             <DialogDescription className="text-foreground/90">{detail}</DialogDescription>
           ) : null}
-          {/* The one thing nothing else here conveys: the computer is fine.
-              "Isn't connected" reads as broken, and a user who believes that
-              goes looking for a fault that does not exist. Everything else
-              the old copy spelled out — that it won't appear in the app, that
-              its sessions aren't reachable, that you can upgrade or retry —
-              is either the title restated or a button on this dialog. */}
           <DialogDescription>
-            Everything here keeps working, it just won&apos;t show up in the app. Free up
-            a machine in Settings → Machines, or upgrade.
+            Free up a machine in Settings → Machines, or upgrade to connect this one.
           </DialogDescription>
         </DialogHeader>
+        {/* Upgrade is the primary action and sits last, where the confirm
+            button lives in every other dialog. Try again is secondary: it only
+            helps once a machine has actually been freed somewhere else. */}
         <DialogFooter className="gap-2 sm:gap-2">
           <Button
             variant="ghost"
@@ -97,11 +97,16 @@ export function MachineLimitDialog() {
           >
             Dismiss
           </Button>
-          <Button variant="outline" className="cursor-pointer" onClick={upgrade}>
-            Upgrade
-          </Button>
-          <Button className="cursor-pointer" onClick={retry} disabled={retrying}>
+          <Button
+            variant="outline"
+            className="cursor-pointer"
+            onClick={retry}
+            disabled={retrying}
+          >
             {retrying ? 'Trying…' : 'Try again'}
+          </Button>
+          <Button className="cursor-pointer" onClick={upgrade}>
+            Upgrade
           </Button>
         </DialogFooter>
       </DialogContent>

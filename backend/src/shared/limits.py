@@ -171,8 +171,8 @@ def _denial_reason(resource: LimitedResource, limit: int) -> str:
     # act on it (a button in the app, a printed URL in the CLI), so a CTA here
     # would be the second or third "upgrade" in the same breath.
     if limit == 1:
-        return f"Your plan includes 1 {resource.noun}, and one is already in use."
-    return f"You're using all {limit} {resource.noun}s your plan includes."
+        return f"Your plan includes 1 {resource.noun}, and it's already in use."
+    return f"You've used all {limit} {resource.noun}s your plan includes."
 
 
 def check_limit(db: Session, user_id: UUID, key: str, *, requested: int = 1) -> None:

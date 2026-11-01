@@ -485,7 +485,9 @@ def machine_limit_message(detail: str, upgrade_url: str = "") -> str:
     """
     lines = [
         f"Vicoa: {detail}",
-        "This computer keeps working, it just won't show up in the Vicoa app.",
+        # The dialog puts this in its title; the CLI has no title, so it says
+        # the consequence outright or the user is left with only a number.
+        "This computer won't show up in the Vicoa app.",
     ]
     if upgrade_url:
         lines.append(f"Upgrade: {upgrade_url}")
