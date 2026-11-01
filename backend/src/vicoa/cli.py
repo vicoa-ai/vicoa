@@ -23,6 +23,7 @@ import threading
 from typing import Optional
 from .machine_daemon import (
     DaemonStartResult,
+    machine_limit_message,
     ensure_background_daemon_running,
     find_running_daemon_pid,
     migrate_legacy_flat_state,
@@ -1068,21 +1069,13 @@ def maybe_start_machine_daemon(args, api_key: str) -> None:
         # the user can perfectly well use. What they lose is this machine
         # showing up in Vicoa, and they would otherwise have no way to know.
         entry = read_daemon_entry(base_url)
-        detail = entry.get("machine_limit_detail") or (
-            "This account has no room for another machine."
-        )
-        print(f"Vicoa: {detail}")
         print(
-            "This machine won't appear in the Vicoa app, and you can't start "
-            "or resume sessions on it from another device. Everything here "
-            "keeps working."
+            machine_limit_message(
+                entry.get("machine_limit_detail")
+                or "This account has no room for another machine.",
+                entry.get("machine_limit_upgrade_url") or "",
+            )
         )
-        # Only when the server named one: a self-host sells nothing, and a
-        # guessed URL would be worse than no URL.
-        upgrade_url = entry.get("machine_limit_upgrade_url")
-        if upgrade_url:
-            print(f"Upgrade: {upgrade_url}")
-        print("Or free one up in the Vicoa app, under Settings > Machines.")
         return
 
     if result is DaemonStartResult.AUTH_INVALID:

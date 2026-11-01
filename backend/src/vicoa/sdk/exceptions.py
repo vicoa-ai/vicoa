@@ -23,8 +23,10 @@ class MachineLimitReached(VicoaError):
     against a wall that will not move without a purchase.
     """
 
-    def __init__(self, detail: str) -> None:
+    def __init__(self, detail: str, upgrade_url: str = "") -> None:
         self.detail = detail
+        #: Where the server says to upgrade; "" when it named none.
+        self.upgrade_url = upgrade_url
         super().__init__(detail)
 
 

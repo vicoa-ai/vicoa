@@ -473,6 +473,28 @@ def _reset_state_on_identity_change(
         )
 
 
+def machine_limit_message(detail: str, upgrade_url: str = "") -> str:
+    """What every surface tells the user when the plan has no room for this
+    host. One function because two paths print it — a foreground
+    ``vicoa daemon`` and the daemon `vicoa <agent>` spawns for you — and a
+    user who hits it twice should not get two different explanations.
+
+    `detail` is the server's sentence, shown verbatim. The upgrade line is
+    omitted when the server named no URL: a self-host meters nothing and sells
+    nothing, and a guessed link is worse than none.
+    """
+    lines = [
+        f"Vicoa: {detail}",
+        "This machine won't appear in the Vicoa app, and you can't start or "
+        "resume sessions on it from another device. Everything here keeps "
+        "working.",
+    ]
+    if upgrade_url:
+        lines.append(f"Upgrade: {upgrade_url}")
+    lines.append("Or free one up in the Vicoa app, under Settings > Machines.")
+    return "\n".join(lines)
+
+
 class DaemonStartResult(enum.Enum):
     """Outcome of ``ensure_background_daemon_running``.
 
@@ -825,7 +847,7 @@ class MachineDaemon:
         self._machine_limit_detail = detail
         self._machine_limit_upgrade_url = upgrade_url
         self._machine_limit.set()
-        raise MachineLimitReached(detail)
+        raise MachineLimitReached(detail, upgrade_url)
 
     def _handle_machine_limit(self) -> None:
         """Persist the give-up and tell the desktop, without faulting the key.
@@ -3414,8 +3436,9 @@ class MachineDaemon:
             self._fatal_auth.set()
         except MachineLimitReached as exc:
             # The plan is full. Nothing to retry and nothing to re-auth: wind
-            # down cleanly with a message rather than a stack trace.
-            print(f"[daemon] {exc.detail}")
+            # down cleanly with the same message the spawned-daemon path gives,
+            # rather than a stack trace or a lone sentence with nowhere to go.
+            print(machine_limit_message(exc.detail, exc.upgrade_url))
             self._machine_limit.set()
         except KeyboardInterrupt:
             print("[daemon] shutting down")

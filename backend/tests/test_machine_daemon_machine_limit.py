@@ -235,3 +235,46 @@ class TestSpawnGate:
             api_key="k", base_url="https://api.example.com", state_path=state
         )
         assert result is not md.DaemonStartResult.MACHINE_LIMIT
+
+
+class TestTheMessage:
+    """Both CLI paths print the same thing: a foreground `vicoa daemon` and the
+    daemon that `vicoa <agent>` spawns. A user who hits this twice should not
+    get two different explanations — which is what happened before, when the
+    foreground path printed the server's sentence alone with nowhere to go."""
+
+    def test_it_names_where_to_upgrade(self) -> None:
+        from vicoa.machine_daemon import machine_limit_message
+
+        message = machine_limit_message(
+            "Your plan includes 1 machine, and one is already connected.",
+            "https://example.test/pricing",
+        )
+        assert "Your plan includes 1 machine" in message
+        assert "Upgrade: https://example.test/pricing" in message
+        assert "Settings > Machines" in message
+
+    def test_no_url_means_no_upgrade_line(self) -> None:
+        """A self-host meters nothing and sells nothing; a guessed link would
+        be worse than none."""
+        from vicoa.machine_daemon import machine_limit_message
+
+        message = machine_limit_message("No room for another machine.")
+        assert "Upgrade:" not in message
+        assert "Settings > Machines" in message
+
+    def test_the_foreground_daemon_prints_it(self, daemon, monkeypatch, capsys) -> None:
+        from vicoa.machine_daemon import MachineLimitReached
+
+        monkeypatch.setattr(daemon, "_sweep_worktree_trash", lambda: None)
+        monkeypatch.setattr(daemon, "_handle_machine_limit", lambda: None)
+
+        def refuse() -> None:
+            raise MachineLimitReached("No room.", "https://example.test/pricing")
+
+        monkeypatch.setattr(daemon, "register_machine", refuse)
+        daemon.run()
+
+        out = capsys.readouterr().out
+        assert "Upgrade: https://example.test/pricing" in out
+        assert daemon.machine_limit_reached is True
