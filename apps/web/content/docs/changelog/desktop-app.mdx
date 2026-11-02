@@ -5,6 +5,16 @@ description: Release notes for the Vicoa desktop app (macOS, Windows) — new fe
 
 # Desktop App
 
+### v0.1.42
+2 November, 2026
+- Bundle Vicoa CLI daemon [v1.9.14](/docs/changelog/vicoa-cli#v1914)
+- A new worktree started without a typed name is named from your first prompt, and its session opens already titled; the picker placeholder now reads "Branch name, empty for auto"
+- Archiving a session on a task asks what happens to the task (No change, Todo, In Progress, In Review or Done) instead of always closing it, and a task stays open while another session on it is still running; Settings → Tasks sets a standing answer for this device
+- A worktree's pull request is found by the remote branch it was pushed to, so a reused worktree shows its new pull request, and pull requests from forks no longer decorate your branches
+- Keep a project in the sidebar when its last session is archived, and dragging a project past a taller one no longer swaps the two back and forth
+- Settings → Terminal command shows the version of the installed `vicoa` command next to its path
+- Plan limits: Settings → Billing lists your usage against any capped resource, and a computer that cannot connect because of the limit shows a dialog with Upgrade and Try again instead of silently not appearing
+
 ### v0.1.41
 30 October, 2026
 - Bundle Vicoa CLI daemon [v1.9.13](/docs/changelog/vicoa-cli#v1913)
