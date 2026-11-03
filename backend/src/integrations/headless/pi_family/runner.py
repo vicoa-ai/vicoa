@@ -312,12 +312,14 @@ class PiFamilyRunner:
         # (integrations/utils/registration.py). A registration that only
         # succeeds after every caller has stopped waiting would leave an orphan
         # agent burning the user's quota, so a miss past the budget is fatal.
+        #
+        # No ``name``: ``agent_name`` is the agent's display name, not a session
+        # title (see codex_native's registration).
         client = self.vicoa_client
         await register_with_retry(
             lambda: client.register_agent_instance(
                 agent_type=self.spec.catalog_id,
                 agent_instance_id=self.session_id,
-                name=self.agent_name,
                 project=self.project_path,
                 home_dir=str(Path.home()),
                 session_config=self._build_session_config(),

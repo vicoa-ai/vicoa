@@ -299,12 +299,16 @@ class CodexNativeRunner:
                 # leave an orphan codex session burning the user's usage, so
                 # the budget stays inside the daemon's and the app's windows
                 # and a miss is fatal — run()'s error path exits the process.
+                #
+                # No ``name``: ``agent_name`` is the agent's display name, not
+                # a session title. Sending it as one pinned every session to
+                # "Codex" — the server only titles a session whose name is
+                # unset — and overwrote a name the user picked at spawn.
                 client = self.vicoa_client
                 await register_with_retry(
                     lambda: client.register_agent_instance(
                         agent_type="codex",
                         agent_instance_id=self.session_id,
-                        name=self.agent_name,
                         project=self.project_path,
                         home_dir=str(Path.home()),
                         session_config=self._build_session_config(),

@@ -233,12 +233,13 @@ class AntigravityRunner:
             except Exception:
                 logger.warning("antigravity: failed to reopen instance", exc_info=True)
             return
+        # No ``name``: ``agent_name`` is the agent's display name, not a session
+        # title (see codex_native's registration).
         client = self.vicoa_client
         await register_with_retry(
             lambda: client.register_agent_instance(
                 agent_type=spec.CATALOG_ID,
                 agent_instance_id=self.session_id,
-                name=self.agent_name,
                 project=self.project_path,
                 home_dir=str(Path.home()),
                 session_config=self._build_session_config(),
