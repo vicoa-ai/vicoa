@@ -1,7 +1,9 @@
 """Workspace search API — powers the web dashboard's cmd+K palette.
 
 One endpoint fans out to per-entity queries (sessions, tasks, automations)
-in backend.db.search_queries and returns grouped, ranked results.
+in backend.db.search_queries and returns grouped, ranked results. Tasks use the
+sharing lens, so the palette finds what the Tasks page shows; sessions and
+automations stay the caller's own.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -60,7 +62,9 @@ def search_workspace(
     db.execute(text("SET LOCAL transaction_read_only = on"))
     try:
         sessions = search_queries.search_sessions(db, current_user.id, term, limit)
-        tasks = search_queries.search_tasks(db, current_user.id, term, limit)
+        tasks = search_queries.search_tasks(
+            db, current_user.id, term, limit, sharing=True
+        )
         automations = search_queries.search_automations(
             db, current_user.id, term, min(limit, AUTOMATION_LIMIT)
         )

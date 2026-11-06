@@ -12,8 +12,8 @@ sessions, their tasks and their automations. Two calls back it.
   so sending never waits on the network and a dead reference degrades to its
   token instead of blocking the message.
 
-Owner-scoped throughout, like the cmd+K search this sits beside: `#` reaches
-your own workspace, never a collaborator's board. There is no new table here —
+Owner-scoped throughout: `#` reaches your own workspace, never a collaborator's
+board, even though the cmd+K search beside it does. There is no new table here —
 a reference is a pointer to a row that already exists, and the session ↔ task
 half of it rides the `agent_instances.task_id` column the tasks plan already
 added (see `link_instance_to_task`).
