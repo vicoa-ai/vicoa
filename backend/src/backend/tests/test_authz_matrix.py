@@ -445,6 +445,10 @@ def _ids(key: str = "id") -> Callable[[httpx.Response], set[str]]:
     return extract
 
 
+def _search_task_ids(response: httpx.Response) -> set[str]:
+    return {str(task["id"]) for task in response.json()["tasks"]}
+
+
 ENDPOINTS: list[Endpoint] = [
     # --- project ------------------------------------------------------------
     Endpoint(
@@ -556,6 +560,22 @@ ENDPOINTS: list[Endpoint] = [
         "viewer",
         lambda c, w: c.get("/api/v1/tasks"),
         listed_ids=_ids(),
+    ),
+    # The cmd+K palette finds what the board shows. Text and identifier are
+    # separate rows because each resolves the visible boards on its own.
+    Endpoint(
+        "GET /search?q={title}",
+        "tasks",
+        "viewer",
+        lambda c, w: c.get("/api/v1/search", params={"q": w.task.title}),
+        listed_ids=_search_task_ids,
+    ),
+    Endpoint(
+        "GET /search?q={identifier}",
+        "tasks",
+        "viewer",
+        lambda c, w: c.get("/api/v1/search", params={"q": "shb-1"}),
+        listed_ids=_search_task_ids,
     ),
     Endpoint(
         "GET /tasks/{id}",
@@ -860,9 +880,8 @@ ENDPOINTS: list[Endpoint] = [
             f"/api/v1/projects/{w.project.id}/grants/{w.bystander_grant.id}"
         ),
     ),
-    # `#` composer references. Owner-only on purpose, like the cmd+K search
-    # they sit beside: "#" reaches your own workspace, not a board you were
-    # granted. A collaborator who may read the task through /tasks/{id} still
+    # `#` composer references. Owner-only on purpose: "#" reaches your own
+    # workspace, not a board you were granted. A collaborator who may read the task through /tasks/{id} still
     # gets nothing here — narrower than the grant, never wider.
     Endpoint(
         "GET /references",
@@ -896,6 +915,8 @@ _LISTED_OBJECT: dict[str, Callable[[World], str]] = {
     "GET /projects": lambda w: str(w.project.id),
     "PUT /projects/order": lambda w: str(w.project.id),
     "GET /tasks": lambda w: str(w.task.id),
+    "GET /search?q={title}": lambda w: str(w.task.id),
+    "GET /search?q={identifier}": lambda w: str(w.task.id),
     "GET /agent-instances?scope=all": lambda w: str(w.instance.id),
     "GET /automations": lambda w: str(w.automation.id),
     "GET /automations?project_id={id}": lambda w: str(w.automation.id),

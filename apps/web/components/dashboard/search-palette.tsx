@@ -17,9 +17,10 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   CalendarClock,
+  ChevronDown,
   Cog,
   Kanban,
   Keyboard,
@@ -31,6 +32,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { isImeComposing } from '@/lib/ime';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import {
   SHORTCUT_DEFS,
@@ -51,6 +53,13 @@ import {
 } from '@/components/dashboard/session-display';
 import { SessionAgentIcon } from '@/components/dashboard/agent-type-icon';
 import { PriorityIcon, StatusIcon, TaskIdentifier } from '@/components/dashboard/task-ui';
+import {
+  buildSearchGroups,
+  searchGroupForPath,
+  searchWords,
+  type SearchGroup,
+  type SearchGroupKey,
+} from '@/components/dashboard/search-palette-groups';
 
 const RECENT_SESSION_COUNT = 7;
 const LOCAL_FALLBACK_LIMIT = 20;
@@ -149,7 +158,47 @@ type PaletteItem =
   | { kind: 'session'; session: SearchSessionResult }
   | { kind: 'task'; task: SearchTaskResult }
   | { kind: 'automation'; automation: SearchAutomationResult }
+  | { kind: 'more'; group: SearchGroupKey; hidden: number }
   | { kind: 'shortcut'; shortcut: ShortcutDef };
+
+function paletteItemKey(item: PaletteItem): string {
+  switch (item.kind) {
+    case 'command':
+      return `command:${item.command.id}`;
+    case 'session':
+      return `session:${item.session.id}`;
+    case 'task':
+      return `task:${item.task.id}`;
+    case 'automation':
+      return `automation:${item.automation.id}`;
+    case 'more':
+      return `more:${item.group}`;
+    case 'shortcut':
+      return `shortcut:${item.shortcut.id}`;
+  }
+}
+
+/** A group's rows in keyboard order; its "Show N more" row is one of them. */
+function groupItems(group: SearchGroup): PaletteItem[] {
+  let rows: PaletteItem[];
+  if (group.key === 'tasks') {
+    rows = group.rows.map((task) => ({ kind: 'task', task }));
+  } else if (group.key === 'automations') {
+    rows = group.rows.map((automation) => ({ kind: 'automation', automation }));
+  } else {
+    rows = group.rows.map((session) => ({ kind: 'session', session }));
+  }
+  return group.hidden > 0
+    ? [...rows, { kind: 'more', group: group.key, hidden: group.hidden }]
+    : rows;
+}
+
+const GROUP_HEADINGS: Record<SearchGroupKey, string> = {
+  sessions: 'Sessions',
+  tasks: 'Tasks',
+  automations: 'Automations',
+  messages: 'In session messages',
+};
 
 interface SearchPaletteProps {
   open: boolean;
@@ -181,13 +230,18 @@ function escapeRegExp(value: string): string {
 }
 
 function Highlight({ text, query }: { text: string; query: string }) {
-  const trimmed = query.trim();
-  if (!trimmed) return <>{text}</>;
-  const parts = text.split(new RegExp(`(${escapeRegExp(trimmed)})`, 'ig'));
+  const words = searchWords(query);
+  if (words.length === 0) return <>{text}</>;
+  // Longest first, so a word that contains another is marked whole.
+  const alternatives = [...words]
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegExp)
+    .join('|');
+  const parts = text.split(new RegExp(`(${alternatives})`, 'ig'));
   return (
     <>
       {parts.map((part, i) =>
-        part.toLowerCase() === trimmed.toLowerCase() ? (
+        words.includes(part.toLowerCase()) ? (
           <mark
             key={i}
             className="rounded-[2px] bg-yellow-200/80 text-inherit dark:bg-yellow-500/30"
@@ -216,6 +270,7 @@ const ROW_CLASS =
 export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
   const { api, recentInstances } = useAgentDashboard();
   const router = useRouter();
+  const pathname = usePathname();
 
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<WorkspaceSearchResponse | null>(null);
@@ -225,6 +280,10 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
   // daemon or an older backend) — degrade to filtering loaded sessions.
   const [serverUnavailable, setServerUnavailable] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [expanded, setExpanded] = useState<ReadonlySet<SearchGroupKey>>(new Set());
+  // The row the user moved to, so it stays selected when results arrive under
+  // it. Null until they move: the selection then stays on the top row.
+  const activeKeyRef = useRef<string | null>(null);
 
   const listRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -290,6 +349,8 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
     setSearchError(null);
     setServerUnavailable(false);
     setActiveIndex(0);
+    setExpanded(new Set());
+    activeKeyRef.current = null;
   }, [open]);
 
   useEffect(() => {
@@ -334,9 +395,14 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
     return results?.sessions ?? [];
   }, [trimmedQuery, serverUnavailable, recentInstances, results]);
 
-  const tasks = trimmedQuery && !serverUnavailable ? (results?.tasks ?? []) : [];
-  const automations =
-    trimmedQuery && !serverUnavailable ? (results?.automations ?? []) : [];
+  const tasks = useMemo<SearchTaskResult[]>(
+    () => (trimmedQuery && !serverUnavailable ? (results?.tasks ?? []) : []),
+    [trimmedQuery, serverUnavailable, results],
+  );
+  const automations = useMemo<SearchAutomationResult[]>(
+    () => (trimmedQuery && !serverUnavailable ? (results?.automations ?? []) : []),
+    [trimmedQuery, serverUnavailable, results],
+  );
 
   const commands = useMemo<PaletteCommand[]>(() => {
     if (!trimmedQuery) return COMMANDS.filter((command) => command.primary);
@@ -367,25 +433,48 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
     );
   }, [trimmedQuery]);
 
+  const groups = useMemo(
+    () =>
+      buildSearchGroups({
+        sessions,
+        tasks,
+        automations,
+        query: trimmedQuery,
+        currentGroup: searchGroupForPath(pathname),
+        expanded,
+      }),
+    [sessions, tasks, automations, trimmedQuery, pathname, expanded],
+  );
+
   const items = useMemo<PaletteItem[]>(
     () => [
       ...commands.map((command): PaletteItem => ({ kind: 'command', command })),
-      ...sessions.map((session): PaletteItem => ({ kind: 'session', session })),
-      ...tasks.map((task): PaletteItem => ({ kind: 'task', task })),
-      ...automations.map(
-        (automation): PaletteItem => ({ kind: 'automation', automation }),
-      ),
+      ...groups.flatMap(groupItems),
       ...shortcuts.map((shortcut): PaletteItem => ({ kind: 'shortcut', shortcut })),
     ],
-    [commands, sessions, tasks, automations, shortcuts],
+    [commands, groups, shortcuts],
   );
 
-  // Keep the active row in range as result sets change.
+  // A row the user moved to stays selected through a result change. When it is
+  // gone, the same position is kept, which after expanding a group is the first
+  // row revealed.
   useEffect(() => {
-    setActiveIndex((current) =>
-      items.length === 0 ? 0 : Math.min(current, items.length - 1),
-    );
+    setActiveIndex((current) => {
+      const moved = activeKeyRef.current;
+      if (moved === null || items.length === 0) return 0;
+      const kept = items.findIndex((item) => paletteItemKey(item) === moved);
+      return kept >= 0 ? kept : Math.min(current, items.length - 1);
+    });
   }, [items]);
+
+  const moveActive = useCallback(
+    (index: number) => {
+      const item = items[index];
+      activeKeyRef.current = item ? paletteItemKey(item) : null;
+      setActiveIndex(index);
+    },
+    [items],
+  );
 
   useEffect(() => {
     const row = listRef.current?.querySelector(
@@ -396,6 +485,10 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
 
   const openItem = useCallback(
     (item: PaletteItem) => {
+      if (item.kind === 'more') {
+        setExpanded((current) => new Set(current).add(item.group));
+        return;
+      }
       onOpenChange(false);
       if (item.kind === 'command') {
         router.push(item.command.href);
@@ -415,15 +508,14 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
 
   const onInputKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (isImeComposing(e)) return;
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setActiveIndex((current) =>
-          items.length === 0 ? 0 : (current + 1) % items.length,
-        );
+        moveActive(items.length === 0 ? 0 : (activeIndex + 1) % items.length);
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setActiveIndex((current) =>
-          items.length === 0 ? 0 : (current - 1 + items.length) % items.length,
+        moveActive(
+          items.length === 0 ? 0 : (activeIndex - 1 + items.length) % items.length,
         );
       } else if (e.key === 'Enter') {
         e.preventDefault();
@@ -431,7 +523,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
         if (item) openItem(item);
       }
     },
-    [items, activeIndex, openItem],
+    [items, activeIndex, moveActive, openItem],
   );
 
   if (!open) return null;
@@ -441,12 +533,13 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
   const showRecentHeading = !trimmedQuery && sessions.length > 0;
 
   // Rows are indexed across all groups in render order so arrow keys walk
-  // commands → sessions → tasks → automations seamlessly.
-  const sessionIndexOffset = commands.length;
-  const taskIndexOffset = commands.length + sessions.length;
-  const automationIndexOffset = commands.length + sessions.length + tasks.length;
-  const shortcutIndexOffset =
-    commands.length + sessions.length + tasks.length + automations.length;
+  // commands, then each result group, then shortcuts seamlessly.
+  const groupOffsets = new Map<SearchGroupKey, number>();
+  let shortcutIndexOffset = commands.length;
+  for (const group of groups) {
+    groupOffsets.set(group.key, shortcutIndexOffset);
+    shortcutIndexOffset += group.rows.length + (group.hidden > 0 ? 1 : 0);
+  }
 
   return (
     <div className="fixed inset-0 z-50">
@@ -462,12 +555,19 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 border-b px-4 py-3">
-          <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+          {isLoading && groups.length > 0 ? (
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+          ) : (
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+          )}
           <input
             autoFocus
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
+              setExpanded(new Set());
+              activeKeyRef.current = null;
+              setActiveIndex(0);
               runSearch(e.target.value);
             }}
             onKeyDown={onInputKeyDown}
@@ -495,7 +595,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
                     key={command.id}
                     data-palette-index={i}
                     className={cn(ROW_CLASS, active && 'bg-accent')}
-                    onMouseMove={() => setActiveIndex(i)}
+                    onMouseMove={() => moveActive(i)}
                     onClick={() => openItem({ kind: 'command', command })}
                   >
                     <div className="flex w-full items-center gap-2.5">
@@ -510,7 +610,9 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
             </div>
           )}
 
-          {isLoading && (
+          {/* Existing rows stay up while a newer search loads, so results refine
+              as you type instead of blinking away on every keystroke. */}
+          {isLoading && groups.length === 0 && (
             <div className="flex items-center justify-center py-10">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
@@ -534,134 +636,147 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
             </div>
           )}
 
-          {!isLoading && !searchError && sessions.length > 0 && (
-            <div>
-              <GroupHeading>
-                {showRecentHeading ? 'Recent sessions' : 'Sessions'}
-              </GroupHeading>
-              {sessions.map((session, i) => {
-                const index = sessionIndexOffset + i;
-                const active = activeIndex === index;
-                const project = projectBasename(session.project);
-                return (
-                  <button
-                    key={session.id}
-                    data-palette-index={index}
-                    className={cn(ROW_CLASS, active && 'bg-accent')}
-                    onMouseMove={() => setActiveIndex(index)}
-                    onClick={() =>
-                      openItem({ kind: 'session', session })
-                    }
-                  >
-                    <div className="flex w-full items-center gap-2.5">
-                      <SessionAgentIcon
-                        agentTypeName={session.agent_type_name}
-                        status={session.status}
-                      />
-                      <span className="min-w-0 flex-1 truncate">
-                        <Highlight
-                          text={getSessionTitle(session)}
-                          query={trimmedQuery}
-                        />
-                      </span>
-                      {project && (
-                        <span className="max-w-[140px] shrink-0 truncate text-xs text-muted-foreground">
-                          <Highlight text={project} query={trimmedQuery} />
-                        </span>
-                      )}
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {formatSidebarTime(session)}
-                      </span>
-                    </div>
-                    {session.snippet && (
-                      <div className="flex w-full items-center gap-1.5 pl-[26px] text-xs text-muted-foreground">
-                        <MessageSquare className="h-3 w-3 shrink-0" />
-                        <span className="truncate">
-                          <Highlight
-                            text={session.snippet}
-                            query={trimmedQuery}
-                          />
-                        </span>
+          {!searchError &&
+            groups.map((group) => {
+              const offset = groupOffsets.get(group.key) ?? 0;
+              const moreIndex = offset + group.rows.length;
+              return (
+                <div key={group.key}>
+                  <GroupHeading>
+                    {group.key === 'sessions' && showRecentHeading
+                      ? 'Recent sessions'
+                      : GROUP_HEADINGS[group.key]}
+                  </GroupHeading>
+                  {group.key === 'tasks'
+                    ? group.rows.map((task, i) => {
+                        const index = offset + i;
+                        const active = activeIndex === index;
+                        return (
+                          <button
+                            key={task.id}
+                            data-palette-index={index}
+                            className={cn(ROW_CLASS, active && 'bg-accent')}
+                            onMouseMove={() => moveActive(index)}
+                            onClick={() => openItem({ kind: 'task', task })}
+                          >
+                            <div className="flex w-full items-center gap-2.5">
+                              <StatusIcon status={task.status} className="h-4 w-4" />
+                              <span className="min-w-0 flex-1 truncate">
+                                <Highlight text={task.title} query={trimmedQuery} />
+                              </span>
+                              <TaskIdentifier task={task} />
+                              <PriorityIcon priority={task.priority} />
+                            </div>
+                            {task.snippet && (
+                              <div className="w-full truncate pl-[26px] text-xs text-muted-foreground">
+                                <Highlight text={task.snippet} query={trimmedQuery} />
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })
+                    : group.key === 'automations'
+                      ? group.rows.map((automation, i) => {
+                          const index = offset + i;
+                          const active = activeIndex === index;
+                          return (
+                            <button
+                              key={automation.id}
+                              data-palette-index={index}
+                              className={cn(ROW_CLASS, active && 'bg-accent')}
+                              onMouseMove={() => moveActive(index)}
+                              onClick={() => openItem({ kind: 'automation', automation })}
+                            >
+                              <div className="flex w-full items-center gap-2.5">
+                                <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <span className="min-w-0 flex-1 truncate">
+                                  <Highlight
+                                    text={automation.title}
+                                    query={trimmedQuery}
+                                  />
+                                </span>
+                                <span className="shrink-0 text-xs text-muted-foreground">
+                                  {automation.enabled ? 'Active' : 'Paused'}
+                                </span>
+                              </div>
+                              {automation.snippet && (
+                                <div className="w-full truncate pl-[26px] text-xs text-muted-foreground">
+                                  <Highlight
+                                    text={automation.snippet}
+                                    query={trimmedQuery}
+                                  />
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })
+                      : group.rows.map((session, i) => {
+                          const index = offset + i;
+                          const active = activeIndex === index;
+                          const project = projectBasename(session.project);
+                          return (
+                            <button
+                              key={session.id}
+                              data-palette-index={index}
+                              className={cn(ROW_CLASS, active && 'bg-accent')}
+                              onMouseMove={() => moveActive(index)}
+                              onClick={() => openItem({ kind: 'session', session })}
+                            >
+                              <div className="flex w-full items-center gap-2.5">
+                                <SessionAgentIcon
+                                  agentTypeName={session.agent_type_name}
+                                  status={session.status}
+                                />
+                                <span className="min-w-0 flex-1 truncate">
+                                  <Highlight
+                                    text={getSessionTitle(session)}
+                                    query={trimmedQuery}
+                                  />
+                                </span>
+                                {project && (
+                                  <span className="max-w-[140px] shrink-0 truncate text-xs text-muted-foreground">
+                                    <Highlight text={project} query={trimmedQuery} />
+                                  </span>
+                                )}
+                                <span className="shrink-0 text-xs text-muted-foreground">
+                                  {formatSidebarTime(session)}
+                                </span>
+                              </div>
+                              {session.snippet && (
+                                <div className="flex w-full items-center gap-1.5 pl-[26px] text-xs text-muted-foreground">
+                                  <MessageSquare className="h-3 w-3 shrink-0" />
+                                  <span className="truncate">
+                                    <Highlight
+                                      text={session.snippet}
+                                      query={trimmedQuery}
+                                    />
+                                  </span>
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })}
+                  {group.hidden > 0 && (
+                    <button
+                      data-palette-index={moreIndex}
+                      className={cn(ROW_CLASS, activeIndex === moreIndex && 'bg-accent')}
+                      onMouseMove={() => moveActive(moreIndex)}
+                      // Keep focus in the input, so the arrow keys carry on after a click.
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        moveActive(moreIndex);
+                        openItem({ kind: 'more', group: group.key, hidden: group.hidden });
+                      }}
+                    >
+                      <div className="flex w-full items-center gap-2.5 text-muted-foreground">
+                        <ChevronDown className="h-4 w-4 shrink-0" />
+                        <span>Show {group.hidden} more</span>
                       </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {!isLoading && !searchError && tasks.length > 0 && (
-            <div>
-              <GroupHeading>Tasks</GroupHeading>
-              {tasks.map((task, i) => {
-                const index = taskIndexOffset + i;
-                const active = activeIndex === index;
-                return (
-                  <button
-                    key={task.id}
-                    data-palette-index={index}
-                    className={cn(ROW_CLASS, active && 'bg-accent')}
-                    onMouseMove={() => setActiveIndex(index)}
-                    onClick={() => openItem({ kind: 'task', task })}
-                  >
-                    <div className="flex w-full items-center gap-2.5">
-                      <StatusIcon status={task.status} className="h-4 w-4" />
-                      <span className="min-w-0 flex-1 truncate">
-                        <Highlight text={task.title} query={trimmedQuery} />
-                      </span>
-                      <TaskIdentifier task={task} />
-                      <PriorityIcon priority={task.priority} />
-                    </div>
-                    {task.snippet && (
-                      <div className="w-full truncate pl-[26px] text-xs text-muted-foreground">
-                        <Highlight text={task.snippet} query={trimmedQuery} />
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {!isLoading && !searchError && automations.length > 0 && (
-            <div>
-              <GroupHeading>Automations</GroupHeading>
-              {automations.map((automation, i) => {
-                const index = automationIndexOffset + i;
-                const active = activeIndex === index;
-                return (
-                  <button
-                    key={automation.id}
-                    data-palette-index={index}
-                    className={cn(ROW_CLASS, active && 'bg-accent')}
-                    onMouseMove={() => setActiveIndex(index)}
-                    onClick={() => openItem({ kind: 'automation', automation })}
-                  >
-                    <div className="flex w-full items-center gap-2.5">
-                      <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1 truncate">
-                        <Highlight
-                          text={automation.title}
-                          query={trimmedQuery}
-                        />
-                      </span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {automation.enabled ? 'Active' : 'Paused'}
-                      </span>
-                    </div>
-                    {automation.snippet && (
-                      <div className="w-full truncate pl-[26px] text-xs text-muted-foreground">
-                        <Highlight
-                          text={automation.snippet}
-                          query={trimmedQuery}
-                        />
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
 
           {shortcuts.length > 0 && (
             <div>
@@ -674,7 +789,7 @@ export function SearchPalette({ open, onOpenChange }: SearchPaletteProps) {
                     key={def.id}
                     data-palette-index={index}
                     className={cn(ROW_CLASS, active && 'bg-accent', 'cursor-pointer')}
-                    onMouseMove={() => setActiveIndex(index)}
+                    onMouseMove={() => moveActive(index)}
                     onClick={() => openItem({ kind: 'shortcut', shortcut: def })}
                   >
                     <div className="flex w-full items-center gap-2.5">

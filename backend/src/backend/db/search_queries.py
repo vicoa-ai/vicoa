@@ -1,10 +1,13 @@
 """Workspace search queries — powers the dashboard's cmd+K palette.
 
 Cross-entity substring search over the user's sessions (agent_instances),
-tasks, and automations. Matching is LOWER(col) LIKE '%q%' with the pattern
-lowered and escaped in Python; ranking is a tiered CASE (exact > prefix >
-contains > secondary field > message body) then recency. All queries are
-user-scoped. A task also matches by its "VIC-42" identifier, which appears
+tasks, and automations. Matching is LOWER(col) LIKE '%word%' for every word of
+the query, in any order, with each pattern lowered and escaped in Python;
+ranking is a tiered CASE (exact > prefix > contains the phrase > has every word
+> secondary field > message body) then recency. All queries are
+user-scoped: sessions and automations reach the caller's own rows, while tasks,
+under `sharing=True`, reach every board the Tasks page shows (own, team-owned
+and granted). A task also matches by its "VIC-42" identifier, which appears
 nowhere in its text.
 
 The session search runs as two queries, not one OR: name/project matches come
@@ -18,6 +21,7 @@ structurally rather than growing with the whole platform's message volume.
 """
 
 import re
+from typing import Any, Sequence
 from uuid import UUID
 
 from sqlalchemy import (
@@ -35,11 +39,12 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Session, joinedload
 
+from shared import access
 from shared.database import AgentInstance, Automation, Message, Project, Task
 from shared.database.enums import AgentStatus
 
 from .queries import _get_instance_message_stats
-from .task_queries import owned_task_filter
+from .task_queries import _visible_task_filter
 from .task_serializers import serialize_tasks
 
 # Snippet window: characters of context kept before/after the first hit.
@@ -59,6 +64,28 @@ def _escape_like(term: str) -> str:
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _has_every_word(columns: Sequence[Any], words: list[str]) -> ColumnElement[bool]:
+    """Each word appears in at least one of ``columns``, in any order, so
+    "tasks search bar" finds "Add search bar to Tasks". Only the message tier
+    stays a phrase: in a long agent message, separate words say little."""
+    return and_(
+        *(
+            or_(
+                *(
+                    func.lower(column).like(f"%{_escape_like(word)}%", escape="\\")
+                    for column in columns
+                )
+            )
+            for word in words
+        )
+    )
+
+
+def _contains_every_word(text: str, words: list[str]) -> bool:
+    lowered = text.lower()
+    return all(word in lowered for word in words)
+
+
 # A (lowercased) query shaped like a task identifier, or a prefix of one:
 # "vic", "vic-", "vic-3", "vic-38". The key half is bounded like
 # `task_identity._IDENTIFIER`; the 1-char floor lets "#v" start narrowing.
@@ -66,7 +93,7 @@ _IDENTIFIER_QUERY = re.compile(r"^([a-z][a-z0-9]{0,7})(?:(-)([0-9]{0,9}))?$")
 
 
 def _identifier_conditions(
-    user_id: UUID, lowered: str
+    user_id: UUID, lowered: str, *, sharing: bool = False
 ) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
     """``(exact, partial)`` task filters for a query shaped like "vic-38".
 
@@ -76,7 +103,9 @@ def _identifier_conditions(
     keystrokes on the way there ("vic", "vic-", "vic-3"), so the `#` panel
     narrows to that project's tasks instead of going blank until the number is
     complete. Both are ``false()`` for any other query. Shared by the `#`
-    picker and the cmd+K search.
+    picker and the cmd+K search; ``sharing`` looks the key up across every
+    board the caller can read, where one key can name several projects because
+    keys are only unique per owner.
     """
     match = _IDENTIFIER_QUERY.match(lowered)
     if match is None:
@@ -85,9 +114,12 @@ def _identifier_conditions(
     # Keys and digits are alphanumeric, so neither LIKE needs escaping.
     project_key = func.upper(Project.key)
     key_match = project_key == key if dash else project_key.like(f"{key}%")
-    in_project = Task.project_id.in_(
-        select(Project.id).where(Project.user_id == user_id, key_match)
+    visible = (
+        Project.id.in_(access.visible_project_select(user_id, grant_scope="tasks"))
+        if sharing
+        else Project.user_id == user_id
     )
+    in_project = Task.project_id.in_(select(Project.id).where(visible, key_match))
     if not digits:
         return false(), in_project
     return (
@@ -99,12 +131,19 @@ def _identifier_conditions(
 def extract_snippet(text: str, query: str) -> str:
     """A single-line window of text around the first case-insensitive hit."""
     flattened = " ".join(text.split())
-    idx = flattened.lower().find(query.lower())
+    lowered = flattened.lower()
+    hit = query.lower()
+    idx = lowered.find(hit)
+    if idx < 0:
+        # The words of a query can match apart: center on the earliest one.
+        found = [(lowered.find(word), word) for word in hit.split() if word in lowered]
+        if found:
+            idx, hit = min(found)
     if idx < 0:
         end = SNIPPET_BEFORE + SNIPPET_AFTER
         return flattened[:end] + ("…" if len(flattened) > end else "")
     start = max(0, idx - SNIPPET_BEFORE)
-    end = min(len(flattened), idx + len(query) + SNIPPET_AFTER)
+    end = min(len(flattened), idx + len(hit) + SNIPPET_AFTER)
     prefix = "…" if start > 0 else ""
     suffix = "…" if end < len(flattened) else ""
     return prefix + flattened[start:end] + suffix
@@ -163,16 +202,17 @@ def _message_tier_recent(
 def search_sessions(db: Session, user_id: UUID, query: str, limit: int) -> list[dict]:
     """Sessions matched by name, project path, or message content."""
     lowered = query.lower()
+    words = lowered.split()
     contains = f"%{_escape_like(lowered)}%"
     prefix = f"{_escape_like(lowered)}%"
 
     name_match = func.lower(AgentInstance.name).like(contains, escape="\\")
-    project_match = func.lower(AgentInstance.project).like(contains, escape="\\")
     rank = case(
         (func.lower(AgentInstance.name) == lowered, 0),
         (func.lower(AgentInstance.name).like(prefix, escape="\\"), 1),
         (name_match, 2),
-        else_=3,
+        (_has_every_word([AgentInstance.name], words), 3),
+        else_=4,
     )
 
     instances = (
@@ -181,7 +221,7 @@ def search_sessions(db: Session, user_id: UUID, query: str, limit: int) -> list[
         .filter(
             AgentInstance.user_id == user_id,
             AgentInstance.status != AgentStatus.DELETED,
-            or_(name_match, project_match),
+            _has_every_word([AgentInstance.name, AgentInstance.project], words),
         )
         .order_by(rank, AgentInstance.updated_at.desc())
         .limit(limit)
@@ -217,7 +257,7 @@ def search_sessions(db: Session, user_id: UUID, query: str, limit: int) -> list[
     results = []
     for instance in instances:
         name = instance.name or ""
-        match_source = "name" if lowered in name.lower() else "project"
+        match_source = "name" if _contains_every_word(name, words) else "project"
         results.append(
             _session_row(instance, stats, match_source=match_source, snippet=None)
         )
@@ -255,22 +295,22 @@ def _session_row(
     }
 
 
-def search_tasks(db: Session, user_id: UUID, query: str, limit: int) -> list[dict]:
+def search_tasks(
+    db: Session, user_id: UUID, query: str, limit: int, *, sharing: bool = False
+) -> list[dict]:
     """Tasks matched by title, description or identifier; open tasks rank above
     closed, except that a full "VIC-42" names one task outright and leads."""
     lowered = query.lower()
+    words = lowered.split()
     contains = f"%{_escape_like(lowered)}%"
     prefix = f"{_escape_like(lowered)}%"
 
     title_match = func.lower(Task.title).like(contains, escape="\\")
-    description_match = func.lower(func.coalesce(Task.description, "")).like(
-        contains, escape="\\"
-    )
     # Only once the dash is typed: unlike the `#` panel, this is a text search,
     # and a bare word like "fix" would otherwise pull in every task of a
     # project keyed FIX..., burying the text matches.
     exact_id, partial_id = (
-        _identifier_conditions(user_id, lowered)
+        _identifier_conditions(user_id, lowered, sharing=sharing)
         if "-" in lowered
         else (false(), false())
     )
@@ -279,15 +319,21 @@ def search_tasks(db: Session, user_id: UUID, query: str, limit: int) -> list[dic
         (func.lower(Task.title) == lowered, 0),
         (or_(func.lower(Task.title).like(prefix, escape="\\"), partial_id), 1),
         (title_match, 2),
-        else_=3,
+        (_has_every_word([Task.title], words), 3),
+        else_=4,
     )
     closed_rank = case((Task.status.in_(["done", "cancelled"]), 1), else_=0)
 
     tasks = (
         db.query(Task)
         .filter(
-            owned_task_filter(user_id),
-            or_(title_match, description_match, partial_id),
+            _visible_task_filter(user_id, sharing=sharing),
+            or_(
+                _has_every_word(
+                    [Task.title, func.coalesce(Task.description, "")], words
+                ),
+                partial_id,
+            ),
         )
         .order_by(rank, closed_rank, Task.updated_at.desc())
         .limit(limit)
@@ -297,11 +343,12 @@ def search_tasks(db: Session, user_id: UUID, query: str, limit: int) -> list[dic
     results = []
     for task, response in zip(tasks, serialize_tasks(db, tasks)):
         snippet = None
-        if lowered in task.title.lower():
+        description = (task.description or "").lower()
+        if _contains_every_word(task.title, words):
             match_source = "title"
-        elif task.description and lowered in task.description.lower():
+        elif any(word in description for word in words):
             match_source = "description"
-            snippet = extract_snippet(task.description, query)
+            snippet = extract_snippet(task.description or "", query)
         else:
             match_source = "identifier"
         results.append(
@@ -325,21 +372,25 @@ def search_automations(
 ) -> list[dict]:
     """Automations matched by title or prompt."""
     lowered = query.lower()
+    words = lowered.split()
     contains = f"%{_escape_like(lowered)}%"
     prefix = f"{_escape_like(lowered)}%"
 
     title_match = func.lower(Automation.title).like(contains, escape="\\")
-    prompt_match = func.lower(Automation.prompt).like(contains, escape="\\")
     rank = case(
         (func.lower(Automation.title) == lowered, 0),
         (func.lower(Automation.title).like(prefix, escape="\\"), 1),
         (title_match, 2),
-        else_=3,
+        (_has_every_word([Automation.title], words), 3),
+        else_=4,
     )
 
     automations = (
         db.query(Automation)
-        .filter(Automation.user_id == user_id, or_(title_match, prompt_match))
+        .filter(
+            Automation.user_id == user_id,
+            _has_every_word([Automation.title, Automation.prompt], words),
+        )
         .order_by(rank, Automation.updated_at.desc())
         .limit(limit)
         .all()
@@ -347,7 +398,7 @@ def search_automations(
 
     results = []
     for automation in automations:
-        matched_title = lowered in automation.title.lower()
+        matched_title = _contains_every_word(automation.title, words)
         results.append(
             {
                 "id": automation.id,

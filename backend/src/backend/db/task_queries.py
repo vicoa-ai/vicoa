@@ -918,8 +918,8 @@ def owned_task_filter(user_id: UUID):
 
     `tasks.user_id` alone is not enough once a project can belong to a team:
     it stays the project's `user_id` — whoever created it — and that person
-    may since have left the team. Their CLI, search and `#` references must
-    stop reaching the team's board the moment their membership does.
+    may since have left the team. Their CLI and `#` references must stop
+    reaching the team's board the moment their membership does.
     """
     return and_(
         Task.user_id == user_id,

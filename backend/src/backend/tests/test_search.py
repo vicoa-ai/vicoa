@@ -3,7 +3,16 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from shared.database import AgentInstance, Automation, Machine, Message, Task, User
+from shared.database import (
+    AgentInstance,
+    Automation,
+    Machine,
+    Message,
+    Project,
+    ProjectGrant,
+    Task,
+    User,
+)
 from shared.database.enums import AgentStatus, SenderType
 
 
@@ -215,6 +224,176 @@ class TestSearchAPI:
             "tasks": [],
             "automations": [],
         }
+
+    def _granted_board(self, db, grantee, key, title, scopes):
+        owner = _make_user(db, f"{uuid4()}@example.com")
+        project = Project(user_id=owner.id, name=f"{key} board", key=key)
+        db.add(project)
+        db.flush()
+        task = Task(user_id=owner.id, project_id=project.id, number=1, title=title)
+        db.add(task)
+        db.add(
+            ProjectGrant(
+                project_id=project.id,
+                principal_type="user",
+                principal_id=grantee.id,
+                role="viewer",
+                scopes=scopes,
+                granted_by_user_id=owner.id,
+            )
+        )
+        db.commit()
+        return task
+
+    def test_granted_board_tasks_match_and_carry_their_identifier(
+        self, authenticated_client, test_db, test_user
+    ):
+        task = self._granted_board(
+            test_db, test_user, "SHB", "Rotate the keys", ["tasks"]
+        )
+
+        for q in ("rotate", "SHB-1"):
+            tasks = authenticated_client.get("/api/v1/search", params={"q": q}).json()[
+                "tasks"
+            ]
+            assert [t["id"] for t in tasks] == [str(task.id)]
+            assert tasks[0]["identifier"] == "SHB-1"
+
+    def test_one_identifier_on_two_boards_finds_both(
+        self, authenticated_client, test_db, test_user
+    ):
+        """Keys are unique per owner, so a board shared with you can use the
+        same key as one of your own."""
+        own = Project(user_id=test_user.id, name="Mine", key="SHB")
+        test_db.add(own)
+        test_db.flush()
+        mine = Task(user_id=test_user.id, project_id=own.id, number=1, title="Mine")
+        test_db.add(mine)
+        theirs = self._granted_board(test_db, test_user, "SHB", "Theirs", ["tasks"])
+
+        tasks = authenticated_client.get(
+            "/api/v1/search", params={"q": "shb-1"}
+        ).json()["tasks"]
+        assert {t["id"] for t in tasks} == {str(mine.id), str(theirs.id)}
+
+    def test_grant_without_the_tasks_scope_finds_nothing(
+        self, authenticated_client, test_db, test_user
+    ):
+        self._granted_board(test_db, test_user, "SHB", "Rotate keys", ["sessions"])
+
+        for q in ("rotate", "shb-1"):
+            body = authenticated_client.get("/api/v1/search", params={"q": q}).json()
+            assert body["tasks"] == []
+
+    def _task_titles(self, client, q):
+        return [
+            t["title"]
+            for t in client.get("/api/v1/search", params={"q": q}).json()["tasks"]
+        ]
+
+    def test_words_match_in_any_order(self, authenticated_client):
+        authenticated_client.post(
+            "/api/v1/tasks", json={"title": "Add search bar to Tasks"}
+        )
+
+        assert self._task_titles(authenticated_client, "tasks search bar") == [
+            "Add search bar to Tasks"
+        ]
+        assert self._task_titles(authenticated_client, "tasks search zebra") == []
+
+    def test_a_phrase_outranks_scattered_words(self, authenticated_client):
+        for title in ("Bar for the search page", "The search bar"):
+            authenticated_client.post("/api/v1/tasks", json={"title": title})
+
+        assert self._task_titles(authenticated_client, "search bar") == [
+            "The search bar",
+            "Bar for the search page",
+        ]
+
+    def test_words_can_span_title_and_description(self, authenticated_client):
+        authenticated_client.post(
+            "/api/v1/tasks",
+            json={"title": "Fix login", "description": "It breaks on Safari only"},
+        )
+
+        hit = authenticated_client.get(
+            "/api/v1/search", params={"q": "safari login"}
+        ).json()["tasks"][0]
+        assert hit["match_source"] == "description"
+        assert "Safari" in hit["snippet"]
+
+    def test_session_words_can_span_name_and_project(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        test_db.add(
+            AgentInstance(
+                id=uuid4(),
+                agent_type_id=test_agent_type.id,
+                user_id=test_user.id,
+                status=AgentStatus.ACTIVE,
+                started_at=datetime.now(timezone.utc),
+                name="Rotate the widget",
+                project="/work/garden",
+            )
+        )
+        test_db.commit()
+
+        for q, source in (("widget rotate", "name"), ("garden rotate", "project")):
+            sessions = authenticated_client.get(
+                "/api/v1/search", params={"q": q}
+            ).json()["sessions"]
+            assert [s["match_source"] for s in sessions] == [source]
+
+    def test_automation_words_match_in_any_order(
+        self, authenticated_client, test_db, test_user
+    ):
+        machine = Machine(user_id=test_user.id, display_name="m", hostname="m.local")
+        test_db.add(machine)
+        test_db.flush()
+        test_db.add(
+            Automation(
+                user_id=test_user.id,
+                title="Nightly widget check",
+                prompt="check things",
+                machine_id=machine.id,
+                directory="/tmp",
+                session_config={"agent": "claude"},
+                schedule_kind="once",
+            )
+        )
+        test_db.commit()
+
+        body = authenticated_client.get(
+            "/api/v1/search", params={"q": "widget nightly"}
+        ).json()
+        assert [a["title"] for a in body["automations"]] == ["Nightly widget check"]
+
+    def test_message_tier_stays_a_phrase(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        instance = AgentInstance(
+            id=uuid4(),
+            agent_type_id=test_agent_type.id,
+            user_id=test_user.id,
+            status=AgentStatus.ACTIVE,
+            started_at=datetime.now(timezone.utc),
+            name="unrelated name",
+        )
+        test_db.add(instance)
+        test_db.add(
+            Message(
+                agent_instance_id=instance.id,
+                sender_type=SenderType.AGENT,
+                content="the needle is buried in this haystack of text",
+                requires_user_input=False,
+            )
+        )
+        test_db.commit()
+
+        body = authenticated_client.get(
+            "/api/v1/search", params={"q": "haystack needle"}
+        ).json()
+        assert body["sessions"] == []
 
     def test_blank_query_rejected(self, authenticated_client):
         assert (
