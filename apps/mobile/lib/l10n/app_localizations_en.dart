@@ -545,6 +545,38 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get chatAnnotationAdd => 'Add';
+
+  @override
+  String get chatAnnotationAddComment => 'Add comment';
+
+  @override
+  String get chatAnnotationCommentHint => 'Add optional comment ...';
+
+  @override
+  String get chatAnnotationDelete => 'Delete annotation';
+
+  @override
+  String get chatAnnotationEditComment => 'Edit comment';
+
+  @override
+  String get chatAnnotationSend => 'Send';
+
+  @override
+  String chatAnnotationsCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count annotations',
+      one: '1 annotation',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get chatAnnotationsRemoveAll => 'Remove all annotations';
+
+  @override
   String get chatErrorLoadMessagesFailed =>
       'Failed to load messages. Please check your connection.';
 
@@ -616,6 +648,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatOptionsUnread => 'Unread';
+
+  @override
+  String get chatSelectionAddToChat => 'Add to chat';
+
+  @override
+  String get chatSelectionContinueInNewSession => 'Continue in new session';
 
   @override
   String get commonBack => 'Back';

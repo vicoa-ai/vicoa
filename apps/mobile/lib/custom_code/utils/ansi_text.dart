@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '/custom_code/widgets/transcript_selection.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 
 bool hasAnsiOrLocalCommand(String text) {
@@ -121,7 +122,7 @@ Widget buildAnsiRichText(BuildContext context, String text, TextStyle baseStyle)
   buffer += cleaned.substring(lastIndex);
   flushBuffer();
 
-  return SelectionArea(
+  return TranscriptSelectionArea(
     child: Text.rich(
       TextSpan(children: spans),
       style: baseStyle,

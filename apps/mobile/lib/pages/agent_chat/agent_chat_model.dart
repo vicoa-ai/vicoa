@@ -7,6 +7,7 @@ import '/custom_code/actions/ws_protocol.dart' as ws_protocol;
 import '/backend/agent_catalog.dart' show AgentCatalog, agentCatalogFallback, normalizeModelLabel;
 import '/backend/posthog/posthog_analytics.dart';
 import '/custom_code/utils/text_sanitizer.dart';
+import '/custom_code/utils/chat_annotations.dart';
 import '/custom_code/utils/composer_references.dart';
 import '/custom_code/utils/file_mention_utils.dart';
 import '/custom_code/utils/slash_command_utils.dart';
@@ -57,7 +58,7 @@ const List<String> _webPreviewLinkKeywords = ['trycloudflare.com', 'ngrok'];
 final RegExp _webUrlRegex = RegExp(r'''https?://[^\s<>"'`]+''', caseSensitive: false);
 
 class AgentChatModel extends FlutterFlowModel<AgentChatWidget>
-    with FileMentionMixin, SlashCommandMixin, ComposerReferenceMixin {
+    with FileMentionMixin, SlashCommandMixin, ComposerReferenceMixin, ChatAnnotationsMixin {
   final Map<String, DebugDataField> debugGeneratorVariables = {};
   final Map<String, DebugDataField> debugBackendQueries = {};
   final Map<String, FlutterFlowModel> widgetBuilderComponents = {};
@@ -147,6 +148,16 @@ String? latestWebPreviewUrl;
   TextEditingController get referenceTextController => messageController;
   @override
   VoidCallback? get referenceOnStateChanged => onStateChanged;
+
+  @override
+  VoidCallback? get annotationsOnStateChanged => onStateChanged;
+
+  // Written through on every change: unlike the draft there is no text field to
+  // read back when the screen goes away.
+  @override
+  void onAnnotationsChanged() {
+    if (instanceId != null) FFAppState().setChatAnnotations(instanceId!, [for (final a in annotations) a.toJson()]);
+  }
   // `#` lists the viewer's own things and a task link files this session, so
   // it is the owner's alone, as on the web. `is_owner` arrives with the
   // details, so only an explicit false turns it off.
@@ -235,6 +246,11 @@ String? latestWebPreviewUrl;
         );
       }
     }
+  }
+
+  // Restore the annotations this session's composer was left holding.
+  void restoreAnnotations() {
+    if (instanceId != null) annotations = parseAnnotations(FFAppState().getChatAnnotations(instanceId!));
   }
 
   // Clear the draft message from FFAppState
@@ -1332,8 +1348,11 @@ String? latestWebPreviewUrl;
 
   // Send message to agent
   Future<void> sendMessage(BuildContext context, String content, {bool isOptionClick = false}) async {
+    // Quotes picked for the composer ride its next message; an option click is
+    // not composer text, so it neither carries nor consumes them.
+    final sentAnnotations = isOptionClick ? const <ChatAnnotation>[] : annotations;
     if (instanceId == null ||
-        (content.trim().isEmpty && pendingAttachments.isEmpty)) {
+        (content.trim().isEmpty && pendingAttachments.isEmpty && sentAnnotations.isEmpty)) {
       return;
     }
 
@@ -1369,7 +1388,7 @@ String? latestWebPreviewUrl;
     // `#` references whose token survived editing ride below the text, the
     // same block the web sends; an option click is not composer text.
     final refs = isOptionClick ? const <ComposerReference>[] : liveReferences(content);
-    final outgoing = composeOutgoingMessage(content, refs);
+    final outgoing = composeOutgoingMessage(appendAnnotations(content, sentAnnotations), refs);
 
     isSendingMessage = true;
     isWaitingForAgentResponse = true;
@@ -1384,7 +1403,7 @@ String? latestWebPreviewUrl;
     }
     final sendAttachments =
         pendingAttachments.where((a) => a.id != null).toList();
-    if (content.trim().isEmpty && sendAttachments.isEmpty) {
+    if (content.trim().isEmpty && sendAttachments.isEmpty && sentAnnotations.isEmpty) {
       // Image-only send and every upload failed — nothing to post.
       isSendingMessage = false;
       isWaitingForAgentResponse = false;
@@ -1406,6 +1425,7 @@ String? latestWebPreviewUrl;
       filterSlashCommands('');
       filterFileMentions('');
       clearPendingReferences();
+      removeSentAnnotations(sentAnnotations);
     }
     // Referencing a task files the session under it: the same late link the
     // Tasks board draws. Never re-files a session that already has a task.

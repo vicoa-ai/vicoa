@@ -528,6 +528,37 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get chatAnnotationAdd => '添加';
+
+  @override
+  String get chatAnnotationAddComment => '添加评论';
+
+  @override
+  String get chatAnnotationCommentHint => '添加评论（可选）...';
+
+  @override
+  String get chatAnnotationDelete => '删除批注';
+
+  @override
+  String get chatAnnotationEditComment => '编辑评论';
+
+  @override
+  String get chatAnnotationSend => '发送';
+
+  @override
+  String chatAnnotationsCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count 条批注',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get chatAnnotationsRemoveAll => '移除全部批注';
+
+  @override
   String get chatErrorLoadMessagesFailed => '加载消息失败，请检查网络连接。';
 
   @override
@@ -591,6 +622,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get chatOptionsUnread => '未读';
+
+  @override
+  String get chatSelectionAddToChat => '添加到聊天';
+
+  @override
+  String get chatSelectionContinueInNewSession => '在新任务中继续';
 
   @override
   String get commonBack => '返回';

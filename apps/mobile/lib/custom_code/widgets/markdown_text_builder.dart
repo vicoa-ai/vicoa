@@ -15,6 +15,7 @@ import '/custom_code/utils/edited_files.dart';
 import '/custom_code/utils/markdown_diff_utils.dart';
 import '/custom_code/widgets/syntax_highlighted_code_block.dart';
 import '/custom_code/widgets/tool_icon.dart';
+import '/custom_code/widgets/transcript_selection.dart';
 
 
 Widget buildMarkdownText(
@@ -985,7 +986,7 @@ Widget _buildCodeBlock(
   final scrollContent = SingleChildScrollView(
     scrollDirection: Axis.horizontal,
     padding: const EdgeInsets.symmetric(vertical: 12.0),
-    child: SelectionArea(
+    child: TranscriptSelectionArea(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: codeWidgets,

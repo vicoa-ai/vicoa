@@ -6,6 +6,7 @@ import '/l10n/app_localizations.dart';
 import '/flutter_flow/custom_functions.dart' as functions;
 import '/custom_code/widgets/index.dart' as custom_widgets;
 import '/custom_code/utils/vibing_messages.dart';
+import '/custom_code/utils/chat_annotations.dart';
 import '/custom_code/utils/fork_transcript.dart';
 import '/custom_code/utils/message_time.dart';
 import '/pages/common/session_actions.dart';
@@ -15,8 +16,10 @@ import '/pages/share_session_sheet/share_session_sheet_widget.dart';
 import '/pages/agent_chat/components/slash_commands.dart';
 import '/pages/agent_chat/components/file_mentions.dart';
 import '/custom_code/widgets/reference_suggestions.dart';
+import '/custom_code/widgets/transcript_selection.dart';
 import '/constants/slash_commands.dart';
 import '/pages/agent_chat/components/chat_input_area.dart';
+import '/pages/agent_chat/components/annotations_chip.dart';
 import '/pages/agent_chat/components/ask_user_question_panel.dart';
 import '/pages/agent_chat/components/message_attachments.dart';
 import '/pages/agent_chat/components/message_queue_status.dart';
@@ -153,6 +156,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
   int _previousFileMentionRevision = 0;
   int _previousReferenceRevision = 0;
   int _previousAttachmentsRevision = 0;
+  int _previousAnnotationsRevision = 0;
   int _previousMessageMetadataRevision = 0;
   bool _previousVoiceDictationVisible = false;
   String _previousVoiceTranscript = '';
@@ -448,6 +452,10 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       try {
         _model.instanceId = widget.instanceId;
         _model.instanceData = widget.instanceData;
+
+        // Before anything shows: cached messages can be selected from while the
+        // load below is still running, and an add writes the whole list through.
+        _model.restoreAnnotations();
 
         // Check if we have cached messages
         final cachedMessages = FFAppState().getCachedMessages(widget.instanceId);
@@ -852,6 +860,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     final referenceStateChanged = _model.referenceRevision != _previousReferenceRevision;
     final attachmentsStateChanged =
         _model.pendingAttachmentsRevision != _previousAttachmentsRevision;
+    final annotationsStateChanged = _model.annotationsRevision != _previousAnnotationsRevision;
     final messageMetadataStateChanged =
         _model.messageMetadataRevision != _previousMessageMetadataRevision;
     final voiceStateChanged = _model.isVoiceDictationVisible != _previousVoiceDictationVisible ||
@@ -871,6 +880,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
         fileMentionStateChanged ||
         referenceStateChanged ||
         attachmentsStateChanged ||
+        annotationsStateChanged ||
         messageMetadataStateChanged ||
         voiceStateChanged;
 
@@ -884,6 +894,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     _previousFileMentionRevision = _model.fileMentionSuggestionsRevision;
     _previousReferenceRevision = _model.referenceRevision;
     _previousAttachmentsRevision = _model.pendingAttachmentsRevision;
+    _previousAnnotationsRevision = _model.annotationsRevision;
     _previousMessageMetadataRevision = _model.messageMetadataRevision;
     _previousVoiceDictationVisible = _model.isVoiceDictationVisible;
     _previousVoiceTranscript = _model.voiceDisplayTranscript;
@@ -1870,7 +1881,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     bool isCancelled = false,
   }) {
     final rendered = formatTaskNotifications(content);
-    Widget markdownContent = SelectionArea(
+    Widget markdownContent = TranscriptSelectionArea(
       child: custom_widgets.buildMarkdownText(
         context,
         rendered,
@@ -2268,15 +2279,54 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       agentType: _forkAgentId(),
     );
     if (!mounted) return;
-    final result = await context.pushNamed(
-      NewSessionWidget.routeName,
-      extra: <String, dynamic>{'forkContext': forkContext.toJson()},
+    await _openNewSessionFromHere(<String, dynamic>{'forkContext': forkContext.toJson()});
+  }
+
+  /// Selection menu → "Add to chat": the passage joins the composer's pill at
+  /// once; the optional comment, and a send, follow from the sheet.
+  Future<void> _addSelectionToChat(String quote) async {
+    final annotation = _model.addAnnotation(quote);
+    if (annotation == null) return;
+    logFirebaseEvent('AGENT_CHAT_add_annotation');
+    final result = await showAnnotationCommentSheet(context, quote: annotation.quote, canSend: _canSendComposerNow);
+    if (!mounted) return;
+    if (result.comment.trim().isNotEmpty) _model.updateAnnotationComment(annotation.id, result.comment);
+    if (!result.send || !_canSendComposerNow) return;
+    // The whole composer goes: any typed text and attachments, every annotation.
+    _requestAutoScrollForNextMessages();
+    logFirebaseEvent('AGENT_CHAT_send_message');
+    _model.isSendingMessage = true;
+    safeSetState(() {});
+    await _model.sendMessage(context, _model.messageController.text);
+    if (mounted) safeSetState(() {});
+  }
+
+  /// The same gate the composer's send button applies.
+  bool get _canSendComposerNow => _model.canSendMessages() && !_model.isSendingMessage && !_model.hasUploadingAttachments;
+
+  /// Selection menu → "Continue in new session": only the selected text goes
+  /// along, as an annotation in the new session's composer, not the history
+  /// (that is what the fork button is for). The owner lands on this session's
+  /// machine, folder and agent like a fork; anyone else starts from their own.
+  Future<void> _continueSelectionInNewSession(String quote) async {
+    logFirebaseEvent('AGENT_CHAT_continue_in_new_session');
+    final isOwner = _forkInstanceData?['is_owner'] != false;
+    final handoff = ChatAnnotationHandoff(
+      annotations: [createAnnotation(quote)],
+      machineId: isOwner ? _forkMachineId() : null,
+      directory: isOwner ? _forkDirectory() : null,
+      agentType: isOwner ? _forkAgentId() : null,
     );
+    await _openNewSessionFromHere(<String, dynamic>{'annotationHandoff': handoff.toJson()});
+  }
+
+  Future<void> _openNewSessionFromHere(Map<String, dynamic> extra) async {
+    final result = await context.pushNamed(NewSessionWidget.routeName, extra: extra);
     // The new-session screen pops its result onto whoever opened it — here,
-    // the session that was forked. Landing back on the old conversation is
-    // never what the fork was for, so open the new one, the same way the home
-    // and task flows do. It stacks above this chat, so back returns to the
-    // point the fork was taken from (useful for a second fork).
+    // the session it was opened from. Landing back on the old conversation is
+    // never what that was for, so open the new one, the same way the home and
+    // task flows do. It stacks above this chat, so back returns to the point it
+    // was taken from (useful for a second fork).
     if (!mounted) return;
     final newInstanceId = (result is Map ? result['instanceId'] : null)?.toString();
     if (result is! Map || result['status'] != 'success' || newInstanceId == null || newInstanceId.isEmpty) {
@@ -2791,6 +2841,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
       firebaseEventName: 'AGENT_CHAT_delete_session_confirmed',
       onSuccess: () async {
         _model.clearDraftMessage();
+        FFAppState().clearChatAnnotations(widget.instanceId);
         if (mounted) context.pop('deleted');
       },
       onFailure: () async {
@@ -3028,7 +3079,11 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
         final keyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
         final bottomSpacerHeight = keyboardVisible ? 12.0 : 18.0;
 
-        return GestureDetector(
+        return TranscriptSelectionActions(
+          onAddToChat: _model.canSendMessages() ? _addSelectionToChat : null,
+          // The demo session has no machine or folder to carry over.
+          onContinueInNewSession: isWelcomeDemoInstance(widget.instanceId) ? null : _continueSelectionInNewSession,
+          child: GestureDetector(
           onTap: () {
             // Always unfocus when tapping outside, including ask user question input
             FocusScope.of(context).unfocus();
@@ -3498,6 +3553,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
             ),
           ),
           ),
+        ),
         );
       },
     );

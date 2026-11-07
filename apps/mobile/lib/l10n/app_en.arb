@@ -232,6 +232,21 @@
       }
     }
   },
+  "chatAnnotationAdd": "Add",
+  "chatAnnotationAddComment": "Add comment",
+  "chatAnnotationCommentHint": "Add optional comment ...",
+  "chatAnnotationDelete": "Delete annotation",
+  "chatAnnotationEditComment": "Edit comment",
+  "chatAnnotationSend": "Send",
+  "chatAnnotationsCount": "{count, plural, =1{1 annotation} other{{count} annotations}}",
+  "@chatAnnotationsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatAnnotationsRemoveAll": "Remove all annotations",
   "chatErrorLoadMessagesFailed": "Failed to load messages. Please check your connection.",
   "chatInputAddToChat": "Add to chat",
   "chatInputAgentStopped": "Agent stopped. Tap the menu in the top right and choose Resume.",
@@ -260,6 +275,8 @@
   "chatOptionsRename": "Rename",
   "chatOptionsUnpin": "Unpin",
   "chatOptionsUnread": "Unread",
+  "chatSelectionAddToChat": "Add to chat",
+  "chatSelectionContinueInNewSession": "Continue in new session",
   "commonBack": "Back",
   "commonCancel": "Cancel",
   "commonClose": "Close",
