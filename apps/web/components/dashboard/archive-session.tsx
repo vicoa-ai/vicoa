@@ -29,6 +29,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { STATUS_CONFIG, StatusIcon } from '@/components/dashboard/task-ui';
 import {
@@ -42,6 +43,7 @@ import {
 } from '@/lib/archive-task';
 import { archiveTaskAction } from '@/lib/archive-task-pref';
 import { getBackendAPI, refusalReason, type TaskResponse, type TaskStatus } from '@/lib/backend-api';
+import { descriptionPreview } from '@/lib/description-preview';
 import { isImeComposing } from '@/lib/ime';
 import { isDesktopLocal } from '@/lib/runtime-config';
 import { toast } from '@/lib/toast';
@@ -176,6 +178,26 @@ function ArchiveSessionDialog({
 
   const task = context?.task ?? null;
   const others = context?.otherOpenSessions ?? 0;
+  const preview = descriptionPreview(task?.description);
+  const taskName = task ? `${task.identifier ? `${task.identifier} ` : ''}${task.title}` : '';
+
+  // The task, as a way into it. Following the link leaves this page, so the
+  // dialog closes without archiving, as the Settings link below does.
+  const taskLink = task && (
+    <Link
+      href={`/dashboard/tasks/${task.id}`}
+      onClick={onCancel}
+      className="group flex cursor-pointer items-start gap-2 rounded-md text-sm"
+    >
+      <StatusIcon status={task.status} className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="min-w-0">
+        <div className="truncate font-medium group-hover:underline group-hover:underline-offset-2">
+          {taskName}
+        </div>
+        <div className="text-xs text-muted-foreground">Task {STATUS_CONFIG[task.status].label}</div>
+      </div>
+    </Link>
+  );
 
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
@@ -190,18 +212,23 @@ function ArchiveSessionDialog({
         </DialogHeader>
         {task && (
           <div className="min-w-0 space-y-3">
-            <div className="flex items-start gap-2 text-sm">
-              <StatusIcon status={task.status} className="mt-0.5 h-4 w-4 shrink-0" />
-              <div className="min-w-0">
-                <div className="truncate font-medium">
-                  {task.identifier ? `${task.identifier} ` : ''}
-                  {task.title}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  Task {STATUS_CONFIG[task.status].label}
-                </div>
-              </div>
-            </div>
+            {preview ? (
+              <HoverCard openDelay={300} closeDelay={150}>
+                <HoverCardTrigger asChild>{taskLink}</HoverCardTrigger>
+                {/* A peek, not the task: the title in full (the row cuts it
+                    off) and the first lines of the description. Clamped
+                    rather than scrolled, since the card closes when the
+                    pointer leaves it; the link is the way to read the rest. */}
+                <HoverCardContent side="top" align="start" className="w-80 space-y-1.5 p-3">
+                  <div className="break-words text-sm font-medium">{taskName}</div>
+                  <p className="line-clamp-6 whitespace-pre-line break-words text-xs text-muted-foreground">
+                    {preview}
+                  </p>
+                </HoverCardContent>
+              </HoverCard>
+            ) : (
+              taskLink
+            )}
             <RadioGroup
               value={choice}
               onValueChange={(value) => setChoice(value as ArchiveTaskChoice)}
