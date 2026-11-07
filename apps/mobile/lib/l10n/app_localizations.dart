@@ -1070,6 +1070,54 @@ abstract class AppLocalizations {
   /// **'Error loading paywall: {error}'**
   String billingXPaywallLoadError(Object error);
 
+  /// No description provided for @chatAnnotationAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add'**
+  String get chatAnnotationAdd;
+
+  /// No description provided for @chatAnnotationAddComment.
+  ///
+  /// In en, this message translates to:
+  /// **'Add comment'**
+  String get chatAnnotationAddComment;
+
+  /// No description provided for @chatAnnotationCommentHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Add optional comment ...'**
+  String get chatAnnotationCommentHint;
+
+  /// No description provided for @chatAnnotationDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete annotation'**
+  String get chatAnnotationDelete;
+
+  /// No description provided for @chatAnnotationEditComment.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit comment'**
+  String get chatAnnotationEditComment;
+
+  /// No description provided for @chatAnnotationSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Send'**
+  String get chatAnnotationSend;
+
+  /// No description provided for @chatAnnotationsCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 annotation} other{{count} annotations}}'**
+  String chatAnnotationsCount(int count);
+
+  /// No description provided for @chatAnnotationsRemoveAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove all annotations'**
+  String get chatAnnotationsRemoveAll;
+
   /// No description provided for @chatErrorLoadMessagesFailed.
   ///
   /// In en, this message translates to:
@@ -1195,6 +1243,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Unread'**
   String get chatOptionsUnread;
+
+  /// No description provided for @chatSelectionAddToChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Add to chat'**
+  String get chatSelectionAddToChat;
+
+  /// No description provided for @chatSelectionContinueInNewSession.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue in new session'**
+  String get chatSelectionContinueInNewSession;
 
   /// No description provided for @commonBack.
   ///

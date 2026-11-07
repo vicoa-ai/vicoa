@@ -101,6 +101,15 @@ class FFAppState extends ChangeNotifier {
       }
     });
     _safeInit(() {
+      final annotationsJson = prefs.getString('ff_chatAnnotations') ?? '{}';
+      try {
+        _chatAnnotations = Map<String, dynamic>.from(jsonDecode(annotationsJson) as Map);
+      } catch (e) {
+        debugPrint("Can't decode chat annotations. Error: $e.");
+        _chatAnnotations = {};
+      }
+    });
+    _safeInit(() {
       final lastSeenIdsJson = prefs.getString('ff_lastSeenMessageIds') ?? '{}';
       try {
         final decoded = jsonDecode(lastSeenIdsJson) as Map<String, dynamic>;
@@ -490,6 +499,29 @@ class FFAppState extends ChangeNotifier {
     debugLogAppState(this);
   }
 
+  // Text selected in a session's transcript with "Add to chat", per session, as
+  // stored maps (see custom_code/utils/chat_annotations.dart). Kept like the
+  // draft so leaving the session and coming back keeps them.
+  Map<String, dynamic> _chatAnnotations = {};
+
+  void setChatAnnotations(String instanceId, List<Map<String, dynamic>> annotations) {
+    if (annotations.isEmpty) {
+      _chatAnnotations.remove(instanceId);
+    } else {
+      _chatAnnotations[instanceId] = annotations;
+    }
+    prefs.setString('ff_chatAnnotations', jsonEncode(_chatAnnotations));
+  }
+
+  dynamic getChatAnnotations(String instanceId) => _chatAnnotations[instanceId];
+
+  void clearChatAnnotations(String instanceId) => setChatAnnotations(instanceId, const []);
+
+  void clearAllChatAnnotations() {
+    _chatAnnotations = {};
+    prefs.remove('ff_chatAnnotations');
+  }
+
   Map<String, String> _lastSeenMessageIds = {};
   Map<String, String> get lastSeenMessageIds => _lastSeenMessageIds;
 
@@ -806,6 +838,8 @@ class FFAppState extends ChangeNotifier {
     cachedCheckoutBranches = {};
     clearLastWebPreviewUrl();
     setLastWebPreviewDesktopMode(false);
+    // Quotes from this account's sessions.
+    clearAllChatAnnotations();
 
     // Reset the getting-started checklist so a different account on this device
     // starts fresh (progress is per-account, not per-device).

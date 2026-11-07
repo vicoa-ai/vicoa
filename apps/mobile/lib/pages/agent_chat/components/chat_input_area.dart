@@ -8,6 +8,7 @@ import '/flutter_flow/flutter_flow_theme.dart';
 import '/l10n/app_localizations.dart';
 import '/pages/agent_chat/agent_chat_model.dart';
 import '/pages/agent_chat/components/add_to_chat_actions.dart';
+import '/pages/agent_chat/components/annotations_chip.dart';
 import '/pages/agent_chat/components/pending_attachment.dart';
 import '/pages/agent_chat/components/agent_config_panel.dart';
 import '/pages/agent_chat/components/chat_usage_indicator.dart';
@@ -89,10 +90,10 @@ class ChatInputArea extends StatelessWidget {
         provider: provider!);
   }
 
-  /// Text alone, or at least one picked image (uploads happen at send time);
-  /// blocked while a send-time upload is already in flight.
+  /// Text alone, a transcript annotation, or at least one picked image (uploads
+  /// happen at send time); blocked while a send-time upload is already in flight.
   bool _canSubmit(String message) =>
-      (message.trim().isNotEmpty || model.pendingAttachments.isNotEmpty) &&
+      (message.trim().isNotEmpty || model.annotations.isNotEmpty || model.pendingAttachments.isNotEmpty) &&
       !model.hasUploadingAttachments;
 
   Widget _buildTextInputContainer(
@@ -121,6 +122,10 @@ class ChatInputArea extends StatelessWidget {
             message: AppLocalizations.of(context).chatInputReferenceLinkOnSend,
             padding: const EdgeInsetsDirectional.fromSTEB(8.0, 2.0, 8.0, 6.0),
           ),
+          if (model.annotations.isNotEmpty) ...[
+            AnnotationsChip(composer: model),
+            const SizedBox(height: 6.0),
+          ],
           if (model.pendingAttachments.isNotEmpty) ...[
             PendingAttachmentStrip(
               attachments: model.pendingAttachments,

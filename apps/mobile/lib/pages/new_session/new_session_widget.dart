@@ -6,11 +6,13 @@ import '/l10n/app_localizations.dart';
 import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/utils/rpc_error_messages.dart';
 import '/backend/posthog/posthog_analytics.dart';
+import '/custom_code/utils/chat_annotations.dart';
 import '/custom_code/utils/fork_transcript.dart';
 import '/custom_code/widgets/file_mention_suggestions.dart';
 import '/custom_code/widgets/reference_suggestions.dart';
 import '/pages/agent_chat/components/slash_commands.dart';
 import '/pages/agent_chat/components/add_to_chat_actions.dart';
+import '/pages/agent_chat/components/annotations_chip.dart';
 import '/pages/agent_chat/components/pending_attachment.dart';
 import 'fork_context_chip.dart';
 import '/components/agent_type_icon/agent_type_icon_widget.dart';
@@ -37,7 +39,7 @@ export 'new_session_model.dart';
 
 class NewSessionWidget extends StatefulWidget {
   const NewSessionWidget(
-      {super.key, this.taskId, this.initialPrompt, this.subtaskIds, this.forkContext, this.projectId});
+      {super.key, this.taskId, this.initialPrompt, this.subtaskIds, this.forkContext, this.annotationHandoff, this.projectId});
 
   /// When launched from a task, the spawned session is linked back to this task
   /// (its `task_id` is set) and the task is advanced to in_progress on success.
@@ -50,6 +52,11 @@ class NewSessionWidget extends StatefulWidget {
   /// prepended to the first message, and the source of the machine / folder /
   /// agent this screen opens on.
   final ForkSessionContext? forkContext;
+
+  /// Text carried over by the chat's "Continue in new session": the composer's
+  /// annotations, and for the source session's owner the machine / folder /
+  /// agent this screen opens on.
+  final ChatAnnotationHandoff? annotationHandoff;
 
   /// Backlog/todo sub-tasks bundled into this session — advanced to in_progress
   /// on success alongside the parent task.
@@ -78,7 +85,7 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _model = createModel(context, () => NewSessionModel(forkContext: widget.forkContext, seedTaskId: widget.taskId, seedProjectId: widget.projectId));
+    _model = createModel(context, () => NewSessionModel(forkContext: widget.forkContext, annotationHandoff: widget.annotationHandoff, seedTaskId: widget.taskId, seedProjectId: widget.projectId));
     _model.onStateChanged = () {
       if (mounted) setState(() {});
     };
@@ -635,6 +642,10 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
               fork: _model.forkContext!,
               onRemove: _model.removeForkContext,
             ),
+          if (_model.annotations.isNotEmpty) ...[
+            AnnotationsChip(composer: _model),
+            const SizedBox(height: 6.0),
+          ],
           // Starting will file this session under a `#`-referenced task.
           ReferenceLinkHint(
             mixin: _model,

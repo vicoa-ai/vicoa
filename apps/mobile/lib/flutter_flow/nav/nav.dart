@@ -6,6 +6,7 @@ import 'package:page_transition/page_transition.dart';
 import 'package:provider/provider.dart';
 
 import '/backend/schema/structs/index.dart';
+import '/custom_code/utils/chat_annotations.dart';
 import '/custom_code/utils/fork_transcript.dart';
 
 import '/auth/base_auth_user_provider.dart';
@@ -328,6 +329,8 @@ GoRouter createRouter(AppStateNotifier appStateNotifier) => GoRouter(
             final forkContext = params.getParam('forkContext', ParamType.JSON);
             return NewSessionWidget(
               forkContext: ForkSessionContext.fromJson(forkContext),
+              // Set by the chat's "Continue in new session" selection action.
+              annotationHandoff: ChatAnnotationHandoff.fromJson(params.getParam('annotationHandoff', ParamType.JSON)),
               // Home's row for a project with no session yet.
               projectId: params.getParam('projectId', ParamType.String),
               taskId: taskContext is Map

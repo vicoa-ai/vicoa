@@ -943,6 +943,7 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     appState.cachedAgentInstances = agentInstances;
     appState.cachedAgentInstancesTimestamp = DateTime.now();
     appState.clearChatDraft(instanceId);
+    appState.clearChatAnnotations(instanceId);
     return index;
   }
 
@@ -978,6 +979,7 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
 
         // Clear the draft message for this session
         appState.clearChatDraft(instanceId);
+        appState.clearChatAnnotations(instanceId);
         return true;
       }
       return false;

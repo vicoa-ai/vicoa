@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_highlight/themes/monokai-sublime.dart';
 import 'package:highlight/highlight.dart' show highlight, Node;
 
+import '/custom_code/widgets/transcript_selection.dart';
 import '/l10n/app_localizations.dart';
 
 // Create a custom theme without background colors
@@ -211,7 +212,9 @@ class SelectableHighlightView extends StatelessWidget {
             style: resolvedStyle,
             children: _convert(nodes),
           ),
-          contextMenuBuilder: (context, state) {
+          // `context` stays the block's own: the actions' scope is not above
+          // the overlay this menu is built in.
+          contextMenuBuilder: (_, state) {
             final filteredItems = state.contextMenuButtonItems
                 .where(
                   (item) =>
@@ -252,7 +255,16 @@ class SelectableHighlightView extends StatelessWidget {
 
             return AdaptiveTextSelectionToolbar.buttonItems(
               anchors: state.contextMenuAnchors,
-              buttonItems: filteredItems,
+              buttonItems: withTranscriptSelectionActions(
+                context,
+                filteredItems,
+                selectedText: () => state.textEditingValue.selection.textInside(state.textEditingValue.text),
+                dismiss: () {
+                  final value = state.textEditingValue;
+                  state.hideToolbar();
+                  state.userUpdateTextEditingValue(value.copyWith(selection: TextSelection.collapsed(offset: value.selection.end)), SelectionChangedCause.toolbar);
+                },
+              ),
             );
           },
           maxLines: null,

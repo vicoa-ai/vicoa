@@ -5,6 +5,7 @@ import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/actions/rpc_git.dart';
 import '/custom_code/utils/composer_references.dart';
 import '/custom_code/utils/file_mention_utils.dart';
+import '/custom_code/utils/chat_annotations.dart';
 import '/custom_code/utils/fork_transcript.dart';
 import '/custom_code/utils/machine_utils.dart';
 import '/custom_code/utils/project_paths.dart';
@@ -23,9 +24,11 @@ import 'dart:async';
 import 'dart:convert';
 
 class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
-    with FileMentionMixin, SlashCommandMixin, ComposerReferenceMixin {
-  NewSessionModel({this.forkContext, this.seedTaskId, String? seedProjectId})
-      : _pendingProjectId = seedProjectId;
+    with FileMentionMixin, SlashCommandMixin, ComposerReferenceMixin, ChatAnnotationsMixin {
+  NewSessionModel({this.forkContext, this.annotationHandoff, this.seedTaskId, String? seedProjectId})
+      : _pendingProjectId = seedProjectId {
+    annotations = annotationHandoff?.annotations ?? const [];
+  }
 
   /// The task this session was started from (Tasks → Start session). Its title
   /// and description already top the prompt and the session is linked to it,
@@ -39,6 +42,13 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
   /// prompt, a history that outlived the screen would quietly attach itself to
   /// an unrelated session later.
   ForkSessionContext? forkContext;
+
+  /// Text selected in another session ("Continue in new session"): the
+  /// composer's annotations start from it, and for the session's owner it names
+  /// the machine / folder / agent this screen opens on. Kept after the pill is
+  /// removed, the way a removed fork leaves the screen where it is. Like the
+  /// fork, deliberately NOT persisted.
+  final ChatAnnotationHandoff? annotationHandoff;
 
   /// Whether the fork's agent won over the remembered one, so the async
   /// preference restore below does not undo it.
@@ -147,11 +157,12 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
   }
 
   /// The first message the new session receives: the forked conversation (when
-  /// one is attached) above whatever the user typed. Both spawn paths go
-  /// through here — the prompt bundled into the spawn command, and the
-  /// deferred send used when attachments are waiting on an instance id.
+  /// one is attached) above whatever the user typed, with any annotations under
+  /// it. Both spawn paths go through here — the prompt bundled into the spawn
+  /// command, and the deferred send used when attachments are waiting on an
+  /// instance id.
   String composeFirstMessage() {
-    final typed = composeOutgoingMessage(promptController.text.trim(), firstMessageReferences());
+    final typed = composeOutgoingMessage(appendAnnotations(promptController.text.trim(), annotations), firstMessageReferences());
     final history = forkContext?.text.trim() ?? '';
     if (history.isEmpty) return typed;
     return typed.isEmpty ? history : '$history\n\n$typed';
@@ -257,6 +268,9 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
   @override
   VoidCallback? get referenceOnStateChanged => onStateChanged;
 
+  @override
+  VoidCallback? get annotationsOnStateChanged => onStateChanged;
+
   // SlashCommandMixin requirements
   @override
   TextEditingController get slashCommandTextController => promptController;
@@ -278,8 +292,8 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
     // Restore last-used agent type, falling back to first selectable
     final appState = FFAppState();
     // A fork continues a specific run, so the source session's agent wins over
-    // whatever this screen was last left on.
-    final forkAgent = forkContext?.agentType;
+    // whatever this screen was last left on. Same for a carried-over selection.
+    final forkAgent = forkContext?.agentType ?? annotationHandoff?.agentType;
     final savedAgent = appState.userPreferences.newSessionAgentType;
     if (forkAgent != null && isAgentTypeSelectable(forkAgent)) {
       selectedAgentType = forkAgent;
@@ -298,7 +312,7 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
     // Restore last-used machine (validated after machines load). A fork lands
     // on the machine the source session ran on — its folder only exists there.
     selectedMachineId =
-        forkContext?.machineId ?? appState.userPreferences.newSessionMachineId;
+        forkContext?.machineId ?? annotationHandoff?.machineId ?? appState.userPreferences.newSessionMachineId;
     voiceTranscriptionProvider = DeepgramVoiceTranscriptionProvider();
 
     _loadMachines();
@@ -950,7 +964,7 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
     // A fork opens on the source session's folder. Any worktree is left to the
     // git probe that follows: it normalises a worktree path back to its repo
     // and re-selects the worktree, which is also what a typed path does.
-    final forkDir = forkContext?.directory?.trim();
+    final forkDir = (forkContext?.directory ?? annotationHandoff?.directory)?.trim();
     if (forkDir != null && forkDir.isNotEmpty) {
       directoryController.text = forkDir;
       resetWorktreeSelection();
