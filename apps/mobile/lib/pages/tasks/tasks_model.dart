@@ -72,7 +72,9 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
     return null;
   }
 
-  Future<bool> createTask(Map<String, dynamic> values) async {
+  /// Creates the task and reloads the list. Returns the created task as the
+  /// server sent it, or null when the request failed.
+  Future<dynamic> createTask(Map<String, dynamic> values) async {
     final result = await actions.apiCreateTask(
       title: values['title'] as String,
       description: values['description'] as String?,
@@ -81,11 +83,9 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
       priority: values['priority'] as String?,
       labelIds: (values['label_ids'] as List?)?.cast<String>(),
     );
-    if (result != null) {
-      await load();
-      return true;
-    }
-    return false;
+    if (result == null) return null;
+    await load();
+    return result;
   }
 
   Future<bool> updateTask(String id, Map<String, dynamic> updates) async {
@@ -109,6 +109,11 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
   void toggleCollapsed(String status) {
     if (!collapsed.remove(status)) collapsed.add(status);
     _bump();
+  }
+
+  /// Unfolds a section, e.g. so a task just created inside it is on screen.
+  void expandSection(String status) {
+    if (collapsed.remove(status)) _bump();
   }
 
   void setProjectFilter(String? projectId) {

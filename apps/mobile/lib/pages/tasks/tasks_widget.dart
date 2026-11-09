@@ -3,6 +3,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import '/components/floating_tab_bar.dart';
 import '/custom_code/utils/task_utils.dart' as tutils;
@@ -42,6 +43,7 @@ class _TasksWidgetState extends State<TasksWidget> {
   late TasksModel _model;
   final scaffoldKey = GlobalKey<ScaffoldState>();
   final GlobalKey _filterButtonKey = GlobalKey();
+  final ItemScrollController _scrollController = ItemScrollController();
 
   @override
   void initState() {
@@ -159,11 +161,44 @@ class _TasksWidgetState extends State<TasksWidget> {
       defaultProjectId: _defaultProjectId(),
     );
     if (!mounted || values == null) return;
-    final ok = await _model.createTask(values);
-    if (!ok && mounted) {
-      await SessionActions.showSnack(
-          context, AppLocalizations.of(context).tasksSaveFailed);
+    final created = await _model.createTask(values);
+    if (!mounted) return;
+    final l10n = AppLocalizations.of(context);
+    if (created == null) {
+      await SessionActions.showSnack(context, l10n.tasksSaveFailed);
+      return;
     }
+    _revealTask(tutils.taskId(created));
+    await SessionActions.showSnack(context, l10n.tasksTaskCreated);
+  }
+
+  /// Brings the task with [id] into view after it was created: unfolds its
+  /// section and scrolls the list to it. Does nothing when the project filter
+  /// hides it (the "Task created" snack is then the only feedback).
+  void _revealTask(String id) {
+    if (id.isEmpty) return;
+    final task = _model.filteredTasks.firstWhere(
+      (t) => tutils.taskId(t) == id,
+      orElse: () => null,
+    );
+    if (task == null) return;
+    _model.expandSection(tutils.taskStatus(task));
+    // Wait for the rebuild that adds the row (or unfolds its section); a frame
+    // is requested explicitly because nothing else may be pending.
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.isAttached) return;
+      final rows = tutils.flattenTaskRows(
+          tutils.groupTasksByStatus(_model.filteredTasks), _model.collapsed);
+      final index = tutils.indexOfTaskRow(rows, id);
+      if (index < 0) return;
+      _scrollController.scrollTo(
+        index: index,
+        alignment: 0.15,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeInOut,
+      );
+    });
+    SchedulerBinding.instance.ensureVisualUpdate();
   }
 
   Future<void> _editTask(dynamic task) async {
@@ -356,17 +391,26 @@ class _TasksWidgetState extends State<TasksWidget> {
       );
     }
 
-    final grouped = tutils.groupTasksByStatus(visible);
-    final children = <Widget>[];
-    for (final status in tutils.kTaskStatusOrder) {
-      final items = grouped[status] ?? const [];
-      if (items.isEmpty) continue;
-      final collapsed = _model.collapsed.contains(status);
-      children.add(_buildSectionHeader(theme, l10n, status, items.length,
-          collapsed));
-      if (!collapsed) {
-        for (final t in items) {
-          children.add(TaskCard(
+    final rows = tutils.flattenTaskRows(
+        tutils.groupTasksByStatus(visible), _model.collapsed);
+
+    return RefreshIndicator(
+      color: theme.primary,
+      onRefresh: () => _model.load(),
+      child: ScrollablePositionedList.builder(
+        itemScrollController: _scrollController,
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.only(
+            top: 4.0, bottom: floatingTabBarBottomInset(context)),
+        itemCount: rows.length,
+        itemBuilder: (context, i) {
+          final row = rows[i];
+          if (row.isHeader) {
+            return _buildSectionHeader(
+                theme, l10n, row.status, row.count, row.collapsed);
+          }
+          final t = row.task;
+          return TaskCard(
             task: t,
             project: _model.projectById(tutils.taskProjectId(t)),
             showStatus: _model.showStatus,
@@ -374,19 +418,8 @@ class _TasksWidgetState extends State<TasksWidget> {
             showProject: _model.showProject,
             showLabels: _model.showLabels,
             onTap: () => _openTask(t),
-          ));
-        }
-      }
-    }
-
-    return RefreshIndicator(
-      color: theme.primary,
-      onRefresh: () => _model.load(),
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: EdgeInsets.only(
-            top: 4.0, bottom: floatingTabBarBottomInset(context)),
-        children: children,
+          );
+        },
       ),
     );
   }

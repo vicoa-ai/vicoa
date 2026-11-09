@@ -156,6 +156,54 @@ Map<String, List<dynamic>> groupTasksByStatus(List<dynamic> tasks) {
   return map;
 }
 
+/// One row of the flattened tasks list: a status section header, or a task
+/// card under it.
+class TaskListRow {
+  const TaskListRow.header(this.status, this.count, this.collapsed)
+      : task = null,
+        isHeader = true;
+  const TaskListRow.task(this.status, this.task)
+      : count = 0,
+        collapsed = false,
+        isHeader = false;
+
+  final bool isHeader;
+  final String status;
+
+  /// Header only: how many tasks the section holds, and whether it is folded.
+  final int count;
+  final bool collapsed;
+
+  /// Task row only.
+  final dynamic task;
+}
+
+/// The list top-to-bottom: for each non-empty status in [kTaskStatusOrder], its
+/// header, then its tasks unless the section is in [collapsed]. One flat list
+/// so the page can build rows lazily and scroll to a row by index.
+List<TaskListRow> flattenTaskRows(
+  Map<String, List<dynamic>> grouped,
+  Set<String> collapsed,
+) {
+  final rows = <TaskListRow>[];
+  for (final status in kTaskStatusOrder) {
+    final items = grouped[status] ?? const [];
+    if (items.isEmpty) continue;
+    final folded = collapsed.contains(status);
+    rows.add(TaskListRow.header(status, items.length, folded));
+    if (folded) continue;
+    for (final t in items) {
+      rows.add(TaskListRow.task(status, t));
+    }
+  }
+  return rows;
+}
+
+/// Index of the row showing task [id], or -1 when it isn't in [rows] (filtered
+/// out, or its section is folded).
+int indexOfTaskRow(List<TaskListRow> rows, String id) =>
+    rows.indexWhere((r) => !r.isHeader && taskId(r.task) == id);
+
 // --- Colors -----------------------------------------------------------------
 
 /// Parse a `#rrggbb` (or `#aarrggbb`) hex string into a [Color].

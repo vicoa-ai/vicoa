@@ -41,6 +41,7 @@
   "tasksStatusInProgress": "In Progress",
   "tasksStatusInReview": "In Review",
   "tasksStatusTodo": "Todo",
+  "tasksTaskCreated": "Task created",
   "tasksTaskDeleted": "Task deleted",
   "tasksTitle": "Tasks",
   "tasksTitleFieldLabel": "TITLE",
