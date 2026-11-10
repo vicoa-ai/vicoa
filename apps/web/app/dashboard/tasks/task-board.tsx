@@ -260,10 +260,15 @@ function BoardColumn({
   // The column body is droppable so cards can be dropped on empty columns.
   const { setNodeRef, isOver } = useDroppable({ id: columnDroppableId(status) });
 
+  // The column is as tall as the board (the row stretches it) and its body
+  // scrolls on its own: the tint always covers the cards and the heading
+  // stays put. Grown to fit instead, the stretch would make every column as
+  // tall as the longest one, and the whole board would scroll its headings
+  // away.
   return (
     <div
       style={{ width: BOARD_COL_WIDTH }}
-      className={cn('flex shrink-0 flex-col rounded-xl p-2', STATUS_CONFIG[status].columnBg)}
+      className={cn('flex min-h-0 shrink-0 flex-col rounded-xl p-2', STATUS_CONFIG[status].columnBg)}
     >
       <div className="mb-2 flex items-center justify-between px-1.5">
         <StatusHeading status={status} count={total} />
@@ -283,7 +288,7 @@ function BoardColumn({
         <div
           ref={setNodeRef}
           className={cn(
-            'flex min-h-[200px] flex-1 flex-col gap-2 rounded-lg p-1 transition-colors',
+            'custom-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto rounded-lg p-1 transition-colors',
             isOver && 'bg-accent/60',
           )}
         >
