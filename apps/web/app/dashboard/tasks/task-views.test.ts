@@ -3,11 +3,13 @@ import { describe, expect, it } from 'vitest';
 import {
   NO_PROJECT_FILTER,
   activeLabelFilter,
+  capColumnIds,
+  compareTasks,
   createProjectDefault,
   labelFilterOptions,
   taskMatchesLabels,
 } from './task-views';
-import type { TaskLabelResponse, TaskResponse } from '@/lib/backend-api';
+import type { TaskLabelResponse, TaskResponse, TaskStatus } from '@/lib/backend-api';
 
 const label = (id: string, name: string): TaskLabelResponse => ({
   id,
@@ -95,5 +97,67 @@ describe('createProjectDefault', () => {
     // A stale saved view, or a board shared read-only: not offered by the dialog.
     expect(createProjectDefault('gamma', writable)).toBeUndefined();
     expect(createProjectDefault('alpha', [])).toBeUndefined();
+  });
+});
+
+// A row with the fields the comparator reads; `updatedDay` is a day in October.
+const row = (
+  id: string,
+  status: TaskStatus,
+  position: number,
+  updatedDay: number,
+  priority: TaskResponse['priority'] = 'none',
+): TaskResponse => ({
+  ...task(id, []),
+  status,
+  position,
+  priority,
+  updated_at: `2026-10-${String(updatedDay).padStart(2, '0')}T00:00:00Z`,
+});
+
+const order = (tasks: TaskResponse[], sortBy: Parameters<typeof compareTasks>[2]) =>
+  [...tasks].sort((a, b) => compareTasks(a, b, sortBy, 'asc')).map((t) => t.id);
+
+describe('compareTasks', () => {
+  it('lists a closed column newest first under Manual, whatever the positions', () => {
+    // d-new was finished last but kept the high position it had in Todo.
+    const tasks = [row('d-old', 'done', 1, 2), row('d-new', 'done', 9, 20), row('d-mid', 'done', 5, 10)];
+    expect(order(tasks, 'position')).toEqual(['d-new', 'd-mid', 'd-old']);
+  });
+
+  it('keeps open columns in manual position order', () => {
+    const tasks = [row('t-b', 'todo', 2, 20), row('t-a', 'todo', 1, 2)];
+    expect(order(tasks, 'position')).toEqual(['t-a', 't-b']);
+  });
+
+  it('applies an explicit ordering to closed columns too', () => {
+    const tasks = [row('d-low', 'done', 1, 20, 'low'), row('d-urgent', 'done', 2, 2, 'urgent')];
+    expect(order(tasks, 'priority')).toEqual(['d-urgent', 'd-low']);
+  });
+
+  it('is a total order over mixed statuses (each column comes out the same)', () => {
+    // Without grouping by status first, open-vs-closed pairs compared by
+    // position and closed pairs by recency would form a cycle.
+    const tasks = [row('d1', 'done', 3, 20), row('d2', 'done', 1, 2), row('t1', 'todo', 2, 10)];
+    for (const shuffled of [tasks, [...tasks].reverse(), [tasks[2], tasks[0], tasks[1]]]) {
+      const ids = order(shuffled, 'position');
+      expect(ids.filter((id) => id.startsWith('d'))).toEqual(['d1', 'd2']);
+    }
+  });
+});
+
+describe('capColumnIds', () => {
+  const ids = ['a', 'b', 'c', 'd'];
+
+  it('keeps a column at or under the cap whole', () => {
+    expect(capColumnIds(ids, 4, null)).toBe(ids);
+  });
+
+  it('cuts a longer column to the cap', () => {
+    expect(capColumnIds(ids, 2, null)).toEqual(['a', 'b']);
+  });
+
+  it('keeps the card being dragged even past the cap', () => {
+    expect(capColumnIds(ids, 2, 'c')).toEqual(['a', 'b', 'c']);
   });
 });

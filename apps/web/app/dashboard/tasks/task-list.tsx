@@ -42,6 +42,7 @@ import {
 import { cn } from '@/lib/utils';
 import type { ChildProgressMap, TasksById } from './task-board';
 import { TaskViewProperties } from './task-views';
+import { ColumnShowMore } from './column-show-more';
 import { columnDroppableId, useStatusColumnsDnd } from './use-status-dnd';
 
 type RowProps = {
@@ -181,6 +182,9 @@ function SortableTaskRow(props: RowProps) {
 function ListSection({
   status,
   taskIds,
+  total,
+  expanded,
+  onToggleExpanded,
   tasksById,
   projects,
   parentById,
@@ -197,7 +201,13 @@ function ListSection({
   canEdit,
 }: {
   status: TaskStatus;
+  /** The ids this section renders (a closed section's are capped). */
   taskIds: string[];
+  /** Every task in the section, hidden ones included: the header count. */
+  total: number;
+  /** Expanded past the closed-column cap. */
+  expanded: boolean;
+  onToggleExpanded: (status: TaskStatus) => void;
   tasksById: TasksById;
   projects: ProjectResponse[];
   parentById?: TasksById;
@@ -232,7 +242,7 @@ function ListSection({
               !collapsed && 'rotate-90',
             )}
           />
-          <StatusHeading status={status} count={taskIds.length} />
+          <StatusHeading status={status} count={total} />
         </button>
         {onCreate && (
           <div className="pr-2">
@@ -276,6 +286,13 @@ function ListSection({
                 );
               })
             )}
+            <ColumnShowMore
+              variant="list"
+              total={total}
+              visible={taskIds.length}
+              expanded={expanded}
+              onToggle={() => onToggleExpanded(status)}
+            />
           </div>
         </SortableContext>
       )}
@@ -321,8 +338,17 @@ export function TaskList({
   /** See TaskBoard `canEdit`. Omitted ⇒ every task is editable. */
   canEdit?: (task: TaskResponse) => boolean;
 }) {
-  const { columns, tasksById, activeTask, sensors, collisionDetection, dndHandlers } =
-    useStatusColumnsDnd(tasks, onPatch, manualOrder);
+  const {
+    columns,
+    visibleColumns,
+    expanded,
+    toggleExpanded,
+    tasksById,
+    activeTask,
+    sensors,
+    collisionDetection,
+    dndHandlers,
+  } = useStatusColumnsDnd(tasks, onPatch, manualOrder);
 
   return (
     <DndContext sensors={sensors} collisionDetection={collisionDetection} {...dndHandlers}>
@@ -331,7 +357,10 @@ export function TaskList({
           <ListSection
             key={status}
             status={status}
-            taskIds={columns[status]}
+            taskIds={visibleColumns[status]}
+            total={columns[status].length}
+            expanded={expanded.has(status)}
+            onToggleExpanded={toggleExpanded}
             tasksById={tasksById}
             projects={projects}
             parentById={parentById}
