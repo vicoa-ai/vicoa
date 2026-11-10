@@ -1,12 +1,19 @@
 """Unit tests for shared.llms.openrouter — single-key multi-provider gateway."""
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
-from shared.llms.openrouter import (
-    _parse_title_json,
-    call_openrouter,
-    generate_title_via_openrouter,
-)
+import pytest
+
+from shared.llms.openrouter import _client_for, _strip_markdown_fence, call_openrouter
+
+
+@pytest.fixture(autouse=True)
+def _fresh_clients() -> Iterator[None]:
+    # Clients are cached per key; each test patches `openai.OpenAI` anew.
+    _client_for.cache_clear()
+    yield
+    _client_for.cache_clear()
 
 
 def _mock_completion(text: str, *, cost: float | None = None) -> MagicMock:
@@ -56,6 +63,26 @@ class TestCallOpenRouter:
                 mock_openai_cls.call_args.kwargs["base_url"]
                 == "https://openrouter.ai/api/v1"
             )
+
+    def test_reuses_one_client_per_key(self):
+        # A new client opens a new connection each call, ~0.1s of the 1s a
+        # new worktree waits for its name.
+        with (
+            patch("shared.llms.openrouter.settings") as mock_settings,
+            patch("openai.OpenAI") as mock_openai_cls,
+        ):
+            mock_settings.openrouter_api_key = "sk-or-a"
+            mock_openai_cls.return_value.chat.completions.create.return_value = (
+                _mock_completion("{}")
+            )
+            call_openrouter("deepseek/deepseek-v4.1-flash", "one")
+            call_openrouter("deepseek/deepseek-v4.1-flash", "two")
+            assert mock_openai_cls.call_count == 1
+
+            mock_settings.openrouter_api_key = "sk-or-b"
+            call_openrouter("deepseek/deepseek-v4.1-flash", "three")
+            assert mock_openai_cls.call_count == 2
+            assert mock_openai_cls.call_args.kwargs["api_key"] == "sk-or-b"
 
     def test_passes_json_mode_and_usage_flags(self):
         with (
@@ -157,101 +184,17 @@ class TestCallOpenRouter:
             assert result.cost_usd is None
 
 
-class TestParseTitleJson:
-    def test_well_formed(self):
-        assert _parse_title_json('{"title": "Auth bug fix"}') == "Auth bug fix"
+class TestStripMarkdownFence:
+    # Some models wrap JSON output in ```json ... ``` even when asked for raw
+    # JSON; callers unwrap before json.loads.
+    def test_json_fence(self):
+        assert _strip_markdown_fence('```json\n{"title": "A"}\n```') == '{"title": "A"}'
 
-    def test_long_title_returned_verbatim(self):
-        # No server-side cap: cutting at 40 chars left titles ending mid-word.
-        long_title = "Refactor auth middleware permission gate logic"
-        assert _parse_title_json('{"title": "%s"}' % long_title) == long_title
+    def test_plain_fence(self):
+        assert _strip_markdown_fence('```\n{"title": "A"}\n```') == '{"title": "A"}'
 
-    def test_bad_json_returns_none(self):
-        assert _parse_title_json("not json") is None
+    def test_inline_fence(self):
+        assert _strip_markdown_fence('```json {"title": "A"} ```') == '{"title": "A"}'
 
-    def test_none_input_returns_none(self):
-        assert _parse_title_json(None) is None
-
-    def test_missing_title_field_returns_none(self):
-        assert _parse_title_json('{"summary": "nope"}') is None
-
-    def test_empty_title_returns_none(self):
-        assert _parse_title_json('{"title": "   "}') is None
-
-    def test_strips_markdown_json_fence(self):
-        # Some models wrap JSON output in ```json ... ``` even when asked for
-        # raw JSON. Parser must unwrap before json.loads.
-        assert _parse_title_json('```json\n{"title": "Auth fix"}\n```') == "Auth fix"
-
-    def test_strips_plain_markdown_fence(self):
-        assert _parse_title_json('```\n{"title": "Auth fix"}\n```') == "Auth fix"
-
-    def test_strips_inline_fence(self):
-        # Some models emit the fence on a single line with spaces.
-        assert _parse_title_json('```json {"title": "Auth fix"} ```') == "Auth fix"
-
-
-class TestGenerateTitleViaOpenRouter:
-    def test_returns_parsed_title_on_success(self):
-        with (
-            patch("shared.llms.openrouter.settings") as mock_settings,
-            patch("openai.OpenAI") as mock_openai_cls,
-        ):
-            mock_settings.openrouter_api_key = "sk-or-xxx"
-            client = MagicMock()
-            client.chat.completions.create.return_value = _mock_completion(
-                '{"title": "Safari logout bug"}', cost=0.0001
-            )
-            mock_openai_cls.return_value = client
-
-            result = generate_title_via_openrouter(
-                "Fix the Safari auto-logout bug",
-                model="anthropic/claude-3.5-haiku",
-            )
-
-            assert result.parsed
-            assert result.title == "Safari logout bug"
-            assert result.input_tokens == 120
-            assert result.cost_usd == 0.0001
-
-    def test_propagates_api_error(self):
-        with (
-            patch("shared.llms.openrouter.settings") as mock_settings,
-            patch("openai.OpenAI") as mock_openai_cls,
-        ):
-            mock_settings.openrouter_api_key = "sk-or-xxx"
-            client = MagicMock()
-            client.chat.completions.create.side_effect = RuntimeError(
-                "404 model not found"
-            )
-            mock_openai_cls.return_value = client
-
-            result = generate_title_via_openrouter(
-                "anything", model="nonexistent/model"
-            )
-
-            assert not result.parsed
-            assert result.title is None
-            assert result.error is not None
-            assert "404" in result.error
-
-    def test_prompt_sets_no_char_limit(self):
-        # A "<= 40 chars" instruction made the LLM chase the boundary.
-        with (
-            patch("shared.llms.openrouter.settings") as mock_settings,
-            patch("openai.OpenAI") as mock_openai_cls,
-        ):
-            mock_settings.openrouter_api_key = "sk-or-xxx"
-            client = MagicMock()
-            client.chat.completions.create.return_value = _mock_completion(
-                '{"title": "Auth fix"}'
-            )
-            mock_openai_cls.return_value = client
-
-            generate_title_via_openrouter("Fix the auth bug")
-
-            call_kwargs = client.chat.completions.create.call_args.kwargs
-            prompt = call_kwargs["messages"][-1]["content"]
-            assert "Fix the auth bug" in prompt
-            assert "40" not in prompt
-            assert call_kwargs["model"] == "deepseek/deepseek-v3.2"
+    def test_unfenced_text_is_only_stripped(self):
+        assert _strip_markdown_fence('  {"title": "A"}\n') == '{"title": "A"}'
