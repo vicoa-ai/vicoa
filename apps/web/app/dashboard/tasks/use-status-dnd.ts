@@ -6,6 +6,10 @@
 // reordering within a column writes {position} as the midpoint of the new
 // neighbours (double precision keeps subdividing safely). Kept in one place so
 // the two views can never drift apart.
+//
+// It also owns the closed-column cap (task-views CLOSED_COLUMN_LIMIT): Done
+// and Cancelled render their newest cards until expanded, and the drop logic
+// accounts for the cards the cap hides.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -18,6 +22,7 @@ import {
 } from '@dnd-kit/core';
 import { TaskResponse, TaskStatus, UpdateTaskRequest } from '@/lib/backend-api';
 import { STATUS_ORDER, makeKanbanCollision } from '@/components/dashboard/task-ui';
+import { CLOSED_COLUMN_LIMIT, capColumnIds, isClosedStatus } from './task-views';
 
 export type ColumnMap = Record<TaskStatus, string[]>;
 
@@ -61,6 +66,9 @@ export function useStatusColumnsDnd(
   const [columns, setColumns] = useState<ColumnMap>(() => buildColumns(tasks));
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const draggingRef = useRef(false);
+  // Closed columns the user expanded past the cap. Lives for the mount, not
+  // the saved view: the capped default is the point, so a reload restores it.
+  const [expanded, setExpanded] = useState<ReadonlySet<TaskStatus>>(() => new Set());
 
   useEffect(() => {
     if (!draggingRef.current) {
@@ -72,6 +80,19 @@ export function useStatusColumnsDnd(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
   const collisionDetection = useMemo(() => makeKanbanCollision(COLUMN_IDS), []);
+
+  const limitFor = useCallback(
+    (status: TaskStatus) =>
+      isClosedStatus(status) && !expanded.has(status) ? CLOSED_COLUMN_LIMIT : Infinity,
+    [expanded],
+  );
+  // A column whose order the drop can't choose: every column under a sorted
+  // view, and a closed one under Manual too (newest first, see compareTasks).
+  // A drop there writes the status only.
+  const isSortedColumn = useCallback(
+    (status: TaskStatus) => !manualOrder || isClosedStatus(status),
+    [manualOrder],
+  );
 
   const findColumn = useCallback(
     (id: string): TaskStatus | null => {
@@ -101,17 +122,25 @@ export function useStatusColumnsDnd(
       const to = findColumn(overId);
       if (!from || !to || from === to) return;
 
-      // Re-parent the card into the hovered column at the hovered index.
+      // Re-parent the card into the hovered column at the hovered index. A
+      // closed column under Manual puts a just-closed task on top, so preview
+      // it there. Over the column body rather than a card, land after the last
+      // card shown, not after the cards a capped column is hiding.
       setColumns((prev) => {
         const fromIds = prev[from].filter((id) => id !== activeId);
         const toIds = [...prev[to]];
         const overIndex = toIds.indexOf(overId);
-        const insertAt = overIndex >= 0 ? overIndex : toIds.length;
+        const insertAt =
+          manualOrder && isClosedStatus(to)
+            ? 0
+            : overIndex >= 0
+              ? overIndex
+              : Math.min(toIds.length, limitFor(to));
         toIds.splice(insertAt, 0, activeId);
         return { ...prev, [from]: fromIds, [to]: toIds };
       });
     },
-    [findColumn],
+    [findColumn, limitFor, manualOrder],
   );
 
   const onDragEnd = useCallback(
@@ -133,12 +162,13 @@ export function useStatusColumnsDnd(
         return;
       }
 
-      // Non-manual ordering: persist a status change (cross-column drop) only;
-      // never a position. The live cross-column re-parent from onDragOver stays
+      // Sorted column (any column under a non-manual ordering, a closed one
+      // under Manual): persist a status change (cross-column drop) only; never
+      // a position. The live cross-column re-parent from onDragOver stays
       // until the optimistic patch flows back and the sort re-derives order. A
       // same-column reorder is discarded — dnd-kit's transforms reset the card
       // to its sorted slot on drop.
-      if (!manualOrder) {
+      if (isSortedColumn(column)) {
         if (task.status !== column) onPatch(activeId, { status: column });
         return;
       }
@@ -179,7 +209,7 @@ export function useStatusColumnsDnd(
         return next;
       });
     },
-    [findColumn, onPatch, tasks, tasksById, manualOrder],
+    [findColumn, onPatch, tasks, tasksById, isSortedColumn],
   );
 
   const onDragCancel = useCallback(() => {
@@ -190,8 +220,35 @@ export function useStatusColumnsDnd(
 
   const activeTask = activeTaskId ? tasksById.get(activeTaskId) ?? null : null;
 
+  // What each column renders. `columns` stays complete, so drop neighbours and
+  // header counts see every card, hidden or not.
+  const visibleColumns = useMemo(
+    () =>
+      Object.fromEntries(
+        STATUS_ORDER.map((status) => [
+          status,
+          capColumnIds(columns[status], limitFor(status), activeTaskId),
+        ]),
+      ) as ColumnMap,
+    [columns, limitFor, activeTaskId],
+  );
+
+  const toggleExpanded = useCallback(
+    (status: TaskStatus) =>
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        if (next.has(status)) next.delete(status);
+        else next.add(status);
+        return next;
+      }),
+    [],
+  );
+
   return {
     columns,
+    visibleColumns,
+    expanded,
+    toggleExpanded,
     tasksById,
     activeTask,
     sensors,

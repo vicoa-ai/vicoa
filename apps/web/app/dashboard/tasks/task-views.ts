@@ -22,7 +22,8 @@ export type TaskViewMode = 'list' | 'board';
 
 /**
  * How tasks are ordered within each status group (multica's "Display →
- * ordering"). 'position' is the manual drag order; the rest map to a
+ * ordering"). 'position' is the manual drag order (except in Done/Cancelled,
+ * which list newest first, see compareTasks); the rest map to a
  * `TaskResponse` field. 'status' is intentionally absent — the list/board are
  * always grouped by status (sections / columns), so sorting by it is a no-op.
  */
@@ -61,12 +62,50 @@ const PRIORITY_RANK: Record<TaskPriority, number> = {
 };
 
 /**
+ * Statuses whose column only ever grows: nothing moves a task out of Done or
+ * Cancelled on its own, so these two are capped (CLOSED_COLUMN_LIMIT) and
+ * listed newest first rather than left to pile up.
+ */
+export function isClosedStatus(status: TaskStatus): boolean {
+  return status === 'done' || status === 'cancelled';
+}
+
+/**
+ * Cards a closed column shows until "Show N more" expands it (all at once:
+ * every task is already loaded, so the cap is about attention, not paging).
+ * 15 fills a tall screen's board column (10 left a large display half empty);
+ * a board column scrolls on its own, so a longer one costs the other columns
+ * nothing, and in the list it is 540px of rows between In review and Blocked.
+ * Open columns are never capped: they get worked down.
+ */
+export const CLOSED_COLUMN_LIMIT = 15;
+
+/**
+ * The ids a column renders: the first `limit`, plus the card being dragged if
+ * it sits past the cap (a drop preview must never vanish into the hidden tail).
+ */
+export function capColumnIds(
+  ids: string[],
+  limit: number,
+  activeId: string | null,
+): string[] {
+  if (ids.length <= limit) return ids;
+  return ids.filter((id, index) => index < limit || id === activeId);
+}
+
+/**
  * Comparator for the chosen ordering (mirrors multica's compareIssuesForSort).
  * Manual ('position') ignores direction; every other field honours asc/desc.
  * Missing start/due dates always sort last — an empty due date isn't "early".
  * Ties break on created_at then id so the order is stable across renders.
  * `created_at`/`updated_at`/dates are ISO-8601, so a string compare is
  * chronological (no Date parsing needed).
+ *
+ * Under Manual, a closed column lists the most recently updated first: a
+ * finished task keeps the position it had in its open column, so position
+ * order would bury today's work among older done tasks, and the cap would hide
+ * it. The list is grouped by status first so this mixed rule stays a total
+ * order (the columns bucket by status anyway, so the grouping is invisible).
  */
 export function compareTasks(
   a: TaskResponse,
@@ -77,6 +116,10 @@ export function compareTasks(
   const dir = sortBy !== 'position' && direction === 'desc' ? -1 : 1;
   const tieBreak = () =>
     a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id);
+  if (a.status !== b.status) return a.status.localeCompare(b.status);
+  if (sortBy === 'position' && isClosedStatus(a.status)) {
+    return b.updated_at.localeCompare(a.updated_at) || tieBreak();
+  }
   const byDate = (av: string | null, bv: string | null) => {
     if (!av && !bv) return tieBreak();
     if (!av) return 1;

@@ -308,12 +308,18 @@ function TasksPageInner() {
   );
 
   // Optimistic patch: apply locally, PATCH, reconcile with the server row,
-  // refresh on error (use-session-operations style).
+  // refresh on error (use-session-operations style). `updated_at` moves now
+  // too, as the server's will: a closed column lists the most recently updated
+  // first (compareTasks), so a task just marked done lands on top at once
+  // instead of after the round trip.
   const patchTask = useCallback(
     async (taskId: string, patch: UpdateTaskRequest) => {
       if (!api) return;
+      const now = new Date().toISOString();
       setTasks((prev) =>
-        prev.map((t) => (t.id === taskId ? ({ ...t, ...patch } as TaskResponse) : t)),
+        prev.map((t) =>
+          t.id === taskId ? ({ ...t, ...patch, updated_at: now } as TaskResponse) : t,
+        ),
       );
       try {
         const updated = await api.updateTask(taskId, patch);

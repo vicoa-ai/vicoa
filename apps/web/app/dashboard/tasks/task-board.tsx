@@ -41,6 +41,7 @@ import {
 } from '@/components/dashboard/task-ui';
 import { cn } from '@/lib/utils';
 import { TaskViewProperties } from './task-views';
+import { ColumnShowMore } from './column-show-more';
 import { columnDroppableId, useStatusColumnsDnd } from './use-status-dnd';
 
 export const BOARD_COL_WIDTH = 280;
@@ -219,6 +220,9 @@ function SortableTaskCard(props: {
 function BoardColumn({
   status,
   taskIds,
+  total,
+  expanded,
+  onToggleExpanded,
   tasksById,
   projects,
   parentById,
@@ -233,7 +237,13 @@ function BoardColumn({
   canEdit,
 }: {
   status: TaskStatus;
+  /** The ids this column renders (a closed column's are capped). */
   taskIds: string[];
+  /** Every card in the column, hidden ones included: the header count. */
+  total: number;
+  /** Expanded past the closed-column cap. */
+  expanded: boolean;
+  onToggleExpanded: (status: TaskStatus) => void;
   tasksById: Map<string, TaskResponse>;
   projects: ProjectResponse[];
   parentById?: TasksById;
@@ -256,7 +266,7 @@ function BoardColumn({
       className={cn('flex shrink-0 flex-col rounded-xl p-2', STATUS_CONFIG[status].columnBg)}
     >
       <div className="mb-2 flex items-center justify-between px-1.5">
-        <StatusHeading status={status} count={taskIds.length} />
+        <StatusHeading status={status} count={total} />
         {onCreate && (
           <Button
             variant="ghost"
@@ -300,6 +310,13 @@ function BoardColumn({
               />
             );
           })}
+          <ColumnShowMore
+            variant="board"
+            total={total}
+            visible={taskIds.length}
+            expanded={expanded}
+            onToggle={() => onToggleExpanded(status)}
+          />
         </div>
       </SortableContext>
     </div>
@@ -343,8 +360,17 @@ export function TaskBoard({
    */
   canEdit?: (task: TaskResponse) => boolean;
 }) {
-  const { columns, tasksById, activeTask, sensors, collisionDetection, dndHandlers } =
-    useStatusColumnsDnd(tasks, onPatch, manualOrder);
+  const {
+    columns,
+    visibleColumns,
+    expanded,
+    toggleExpanded,
+    tasksById,
+    activeTask,
+    sensors,
+    collisionDetection,
+    dndHandlers,
+  } = useStatusColumnsDnd(tasks, onPatch, manualOrder);
 
   return (
     <DndContext
@@ -357,7 +383,10 @@ export function TaskBoard({
           <BoardColumn
             key={status}
             status={status}
-            taskIds={columns[status]}
+            taskIds={visibleColumns[status]}
+            total={columns[status].length}
+            expanded={expanded.has(status)}
+            onToggleExpanded={toggleExpanded}
             tasksById={tasksById}
             projects={projects}
             parentById={parentById}
