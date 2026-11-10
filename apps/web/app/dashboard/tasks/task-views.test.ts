@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { activeLabelFilter, labelFilterOptions, taskMatchesLabels } from './task-views';
+import {
+  NO_PROJECT_FILTER,
+  activeLabelFilter,
+  createProjectDefault,
+  labelFilterOptions,
+  taskMatchesLabels,
+} from './task-views';
 import type { TaskLabelResponse, TaskResponse } from '@/lib/backend-api';
 
 const label = (id: string, name: string): TaskLabelResponse => ({
@@ -69,5 +75,25 @@ describe('taskMatchesLabels', () => {
     expect(taskMatchesLabels(task('t1', [docs]), active)).toBe(true);
     expect(taskMatchesLabels(task('t2', [ui]), active)).toBe(false);
     expect(taskMatchesLabels(task('t3', []), active)).toBe(false);
+  });
+});
+
+describe('createProjectDefault', () => {
+  const writable = [{ id: 'alpha' }, { id: 'beta' }];
+
+  it('starts a new task in the project the view is filtered to', () => {
+    expect(createProjectDefault('alpha', writable)).toBe('alpha');
+    expect(createProjectDefault('beta', writable)).toBe('beta');
+  });
+
+  it('starts unfiled under "All" and "No project"', () => {
+    expect(createProjectDefault('all', writable)).toBeUndefined();
+    expect(createProjectDefault(NO_PROJECT_FILTER, writable)).toBeUndefined();
+  });
+
+  it('ignores a project the caller cannot file into', () => {
+    // A stale saved view, or a board shared read-only: not offered by the dialog.
+    expect(createProjectDefault('gamma', writable)).toBeUndefined();
+    expect(createProjectDefault('alpha', [])).toBeUndefined();
   });
 });

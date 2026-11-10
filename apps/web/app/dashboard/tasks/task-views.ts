@@ -145,6 +145,21 @@ export const TASK_PROPERTY_OPTIONS: { key: keyof TaskViewProperties; label: stri
 export const NO_PROJECT_FILTER = 'none';
 
 /**
+ * The project a new task starts in while the view is filtered to one project,
+ * so "New task" files it where the user is looking. `undefined` for the
+ * "all" and "No project" filters (the dialog starts unfiled), and for a project
+ * the caller can't file into (a stale saved view, or a viewer-only board), which
+ * the create dialog doesn't offer.
+ */
+export function createProjectDefault(
+  projectFilter: string,
+  writableProjects: readonly { id: string }[],
+): string | undefined {
+  if (projectFilter === 'all' || projectFilter === NO_PROJECT_FILTER) return undefined;
+  return writableProjects.some((p) => p.id === projectFilter) ? projectFilter : undefined;
+}
+
+/**
  * Labels the filter can offer: the caller's vocabulary plus any label already
  * on a task. A board shared by another person carries that owner's labels,
  * which `listTaskLabels` does not return, so they come from the tasks. Deduped

@@ -69,6 +69,7 @@ import {
   activeLabelFilter,
   cloneView,
   compareTasks,
+  createProjectDefault,
   defaultView,
   labelFilterOptions,
   loadActiveViewId,
@@ -120,7 +121,7 @@ function TasksPageInner() {
   const [dialog, setDialog] = useState<{
     open: boolean;
     task: TaskResponse | null;
-    defaults?: { status?: TaskStatus };
+    defaults?: { status?: TaskStatus; project_id?: string };
   }>({ open: false, task: null });
   // Sessions started from the task the dialog is editing (agent instances whose
   // task_id points here). Fetched on open so the dialog can show a linked-
@@ -472,11 +473,6 @@ function TasksPageInner() {
     [collapsed, updateActiveView],
   );
 
-  const openCreateDialog = useCallback(
-    (defaults?: { status?: TaskStatus }) =>
-      setDialog({ open: true, task: null, defaults }),
-    [],
-  );
   // Opening an existing task goes to its page, not to the dialog: that page is
   // where comments, history and the full property set live, and a task the
   // ⌘K palette or a "VIC-42" reference resolves to has to land somewhere
@@ -601,6 +597,21 @@ function TasksPageInner() {
   const writableProjects = useMemo(
     () => projects.filter((p) => projectRoleAtLeast(p.role, 'editor')),
     [projects],
+  );
+  // A new task starts in the project the view is filtered to (every entry
+  // point: header button, empty state, board column "+"); under "All" or "No
+  // project" it starts unfiled.
+  const openCreateDialog = useCallback(
+    (defaults?: { status?: TaskStatus }) =>
+      setDialog({
+        open: true,
+        task: null,
+        defaults: {
+          ...defaults,
+          project_id: createProjectDefault(projectFilter, writableProjects),
+        },
+      }),
+    [projectFilter, writableProjects],
   );
 
   return (
