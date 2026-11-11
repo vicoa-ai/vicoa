@@ -5,6 +5,15 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.9.15
+11 November, 2026
+- Codex, Pi and Antigravity sessions are now titled from your first message, the way Claude Code sessions are, instead of every one being named "Codex", "Pi" or "Antigravity"
+- Session titles are written in the language of your own message. An English message is no longer titled in Spanish or German, a question after a pasted email follows your language rather than the email's, and a forked session is titled from the new message instead of the history it carries
+- A plugin can ship a page of its own that opens inside the app and reaches Vicoa only through what its `plugin.json` declares; `vicoa plugin init --template page` scaffolds one
+- Develop a plugin without reinstalling it: `vicoa plugin link ./my-plugin` uses the directory in place, `vicoa plugin reload <id>` makes open apps pick up changes, and `vicoa plugin logs <id>` prints its log
+- A plugin page can read files only from the places its `plugin.json` names, and never from `~/.vicoa`, `~/.ssh` or other credential folders
+- Remove the plugin sidebar `rpc` action, which could call any daemon method; a plugin whose manifest changed after you trusted it now has to be trusted again
+
 ### v1.9.14
 2 November, 2026
 - A new worktree started without a typed name is now named from your first prompt, and its session opens already titled, instead of getting a random pair of words. If the name takes longer than a second, or the server has no model to ask, you get a random name as before
