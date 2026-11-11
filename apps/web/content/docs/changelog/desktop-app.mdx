@@ -5,6 +5,18 @@ description: Release notes for the Vicoa desktop app (macOS, Windows) — new fe
 
 # Desktop App
 
+### v0.1.43
+11 November, 2026
+- Bundle Vicoa CLI daemon [v1.9.15](/docs/changelog/vicoa-cli#v1915)
+- Plugins can add pages of their own, opened from the sidebar. A page runs in a sandbox and can use only the permissions, files and network sites its plugin declares; the new Dashboard example plugin is built on it
+- Open a task or a session in a resizable side panel next to a plugin page; a session shows its latest report and can be continued or resumed from there. J and K step through the items and Esc closes the panel
+- A plugin's trust prompt is shorter and says where the plugin came from, which machine it is on and what its pages can reach. Settings → Plugins gets a settings form and the plugin's log, and each plugin has one sidebar row across your machines
+- ⌘K search finds tasks on team and shared boards and matches the words of a query in any order. Each group shows five rows with a "Show N more" row that expands in place
+- The archive dialog links to the task, and hovering it shows the full title and the first lines of its description
+- New task starts in the project your Tasks view is filtered to, from the header button, the empty state and a board column's "+"
+- Done and Cancelled show the 15 most recent tasks, newest first, with "Show N more" and "Show less". Each board column now scrolls inside its own tint
+- Session titles are written in the language of your own message, and Codex, Pi and Antigravity sessions are titled from your first message instead of being named "Codex", "Pi" or "Antigravity"
+
 ### v0.1.42
 2 November, 2026
 - Bundle Vicoa CLI daemon [v1.9.14](/docs/changelog/vicoa-cli#v1914)
