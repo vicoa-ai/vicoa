@@ -11,6 +11,7 @@ that can read a file can use these.
 |---|---|
 | [`vicoa-cli/`](vicoa-cli/) | Operate Vicoa from the terminal with the `vicoa` CLI — sessions and transcripts across machines, the task backlog, projects and labels, share links, scheduled automations. |
 | [`live-preview/`](live-preview/) | Start (or reuse) the project's dev server, expose it through a Cloudflare or ngrok tunnel, and return the public URL for the Vicoa app's Live Preview. Runs only when invoked as `/live-preview`. |
+| [`vicoa-plugins/`](vicoa-plugins/) | Build or change a Vicoa plugin page (a dashboard or any custom view in the app) and keep the Dashboard plugin's per-project snapshot up to date. Never approves a plugin for the user. |
 
 ## Install
 

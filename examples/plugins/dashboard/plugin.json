@@ -1,0 +1,46 @@
+{
+  "id": "dashboard",
+  "apiVersion": 2,
+  "name": "Dashboard",
+  "version": "0.1.0",
+  "description": "What needs you, what your agents did, and how each project is doing.",
+  "author": "Vicoa",
+  "homepage": "https://vicoa.ai/docs",
+  "permissions": ["projects:read", "tasks:read", "sessions:read", "automations:read"],
+  "files": ["~/**/.vicoa/dashboard.local.json"],
+  "settings": {
+    "needsLabel": {
+      "type": "string",
+      "default": "needs-human",
+      "title": "Needs-you label",
+      "description": "Open tasks with this label are listed under Needs you."
+    },
+    "projects": {
+      "type": "array",
+      "items": "string",
+      "default": [],
+      "title": "Projects",
+      "description": "Project keys or names to show, in order, one per line. Leave empty to show every project with open work, recent runs or a snapshot."
+    },
+    "lanes": {
+      "type": "object",
+      "default": {},
+      "title": "Automation columns",
+      "description": "Which column each automation's runs go in, by automation id: \"build\", \"growth\" or \"ops\". Easier to set from a project page."
+    },
+    "runsScope": {
+      "type": "string",
+      "enum": ["automations", "all"],
+      "default": "automations",
+      "title": "Agent runs",
+      "description": "Show only runs started by automations, or every session.",
+      "scope": "device"
+    }
+  },
+  "surfaces": [
+    { "id": "home", "kind": "page", "title": "Dashboard", "entry": "pages/index.html", "icon": "layout-dashboard" }
+  ],
+  "sidebarItems": [
+    { "id": "open", "label": "Dashboard", "icon": "layout-dashboard", "action": { "type": "surface", "surfaceId": "home" } }
+  ]
+}

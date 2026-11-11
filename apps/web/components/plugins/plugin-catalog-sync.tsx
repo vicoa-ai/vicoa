@@ -35,6 +35,8 @@ const LOCAL_BOOT_RETRY_MS = [1_000, 1_000, 2_000, 4_000, 8_000, 16_000];
 export function PluginCatalogSync() {
   const { api } = useAgentDashboard();
   const etags = useRef<Record<string, string>>({});
+  /** Machine names from the last machine list, for the trust prompt. */
+  const labels = useRef<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -48,7 +50,10 @@ export function PluginCatalogSync() {
         if (cancelled) return;
         if (res.not_modified) return;
         if (res.etag) etags.current[machineId] = res.etag;
-        pluginRegistry.setMachinePlugins(machineId, mapCatalog(machineId, res));
+        pluginRegistry.setMachinePlugins(
+          machineId,
+          mapCatalog(machineId, res, labels.current[machineId]),
+        );
       } catch {
         // Machine unreachable or daemon too old to know the RPC; keep prior
         // state rather than dropping the plugins mid-session.
@@ -81,6 +86,8 @@ export function PluginCatalogSync() {
         try {
           const now = Date.now();
           for (const m of await api.listMachines()) {
+            const label = m.display_name || m.hostname;
+            if (label) labels.current[m.machine_id] = label;
             if (isMachineOnline(m, now)) targets.add(m.machine_id);
           }
         } catch {
@@ -107,8 +114,10 @@ export function PluginCatalogSync() {
 
     void tick();
     const id = window.setInterval(() => void tick(), POLL_MS);
+    const stopListening = pluginRegistry.onSyncRequest(() => void tick());
     return () => {
       cancelled = true;
+      stopListening();
       window.clearInterval(id);
       if (localRetryTimer !== null) window.clearTimeout(localRetryTimer);
     };

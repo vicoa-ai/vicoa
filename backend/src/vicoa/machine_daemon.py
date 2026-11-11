@@ -2397,6 +2397,38 @@ class MachineDaemon:
             from vicoa.rpc import plugin_ops
 
             return plugin_ops.grant_plugin_trust(**(frame.get("params") or {}))
+        if method == "plugin-file":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.plugin_file(**(frame.get("params") or {}))
+        if method == "plugin-data-read":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.plugin_data_read(**(frame.get("params") or {}))
+        if method == "plugin-settings-get":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.plugin_settings_get(**(frame.get("params") or {}))
+        if method == "plugin-settings-set":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.plugin_settings_set(**(frame.get("params") or {}))
+        if method == "plugin-reload":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.reload_plugin(**(frame.get("params") or {}))
+        if method == "plugin-log":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.plugin_log(**(frame.get("params") or {}))
+        if method == "plugin-logs-read":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.plugin_logs_read(**(frame.get("params") or {}))
+        if method == "plugin-link":
+            from vicoa.rpc import plugin_ops
+
+            return plugin_ops.link_plugin(**(frame.get("params") or {}))
         if method == "git-status":
             from vicoa.rpc import git_ops
 
@@ -2558,6 +2590,14 @@ class MachineDaemon:
             "plugin-enable",
             "plugin-set-enabled",
             "plugin-trust-grant",
+            "plugin-file",
+            "plugin-data-read",
+            "plugin-settings-get",
+            "plugin-settings-set",
+            "plugin-reload",
+            "plugin-log",
+            "plugin-logs-read",
+            "plugin-link",
             "git-status",
             "git-diff",
             "git-log",

@@ -31,6 +31,7 @@ import { OnboardingModal, ONBOARDING_KEY } from '@/components/dashboard/onboardi
 import { DesktopSettings } from '@/components/dashboard/desktop-settings';
 import { ProvidersSettingsSection } from '@/components/dashboard/providers-settings-section';
 import { MachinesSettingsSection } from '@/components/dashboard/machines-settings-section';
+import { PluginsSettingsSection } from '@/components/dashboard/plugins-settings-section';
 import { TasksSettingsSection } from '@/components/dashboard/tasks-settings-section';
 import { TeamsSettingsSection } from '@/components/dashboard/teams-settings-section';
 import { ThemeSelect } from '@/components/plugins/theme-select';
@@ -74,6 +75,7 @@ const tabs = [
   { id: 'appearance', label: 'Appearance' },
   { id: 'providers', label: 'Providers' },
   { id: 'machines', label: 'Machines' },
+  { id: 'plugins', label: 'Plugins' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'teams', label: 'Teams' },
   { id: 'billing', label: 'Billing' },
@@ -434,6 +436,8 @@ function SettingsContent() {
             {activeTab === 'providers' && <ProvidersSettingsSection />}
 
             {activeTab === 'machines' && <MachinesSettingsSection />}
+
+            {activeTab === 'plugins' && <PluginsSettingsSection />}
 
             {activeTab === 'billing' && (
               <BillingSettingsSection checkoutSuccess={searchParams.get('checkout') === 'success'} />

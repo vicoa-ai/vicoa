@@ -63,6 +63,7 @@ import { DesktopConnectionBanner } from '@/components/dashboard/desktop-connecti
 import { DesktopNotificationNudge } from '@/components/dashboard/desktop-notification-nudge';
 import { DesktopChromeProvider } from '@/components/dashboard/desktop-chrome-context';
 import { PluginSidebarItems } from '@/components/plugins/plugin-sidebar-items';
+import { PLUGIN_ROUTE_PREFIX } from '@/lib/plugins/sidebar';
 import { PluginCatalogSync } from '@/components/plugins/plugin-catalog-sync';
 import { PluginTrustGate } from '@/components/plugins/plugin-trust-gate';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
@@ -494,6 +495,13 @@ function DashboardSidebar({
           <PluginSidebarItems
             slot="nav"
             collapsed={!showSideBar}
+            rowClassName={
+              !showSideBar
+                ? "h-9 w-9 justify-center rounded-lg px-0 bg-transparent"
+                : "w-full justify-start h-auto py-1.5 mt-1 text-xs"
+            }
+            iconClassName={cn("h-4 w-4", showSideBar && "mr-2")}
+            selectedClassName={showSideBar ? sidebarItemSelected : undefined}
             onNavigate={onMobileClose}
           />
 
@@ -779,6 +787,7 @@ function DashboardContent({
     pathname === '/dashboard/tasks' ||
     pathname === '/dashboard/skills' ||
     pathname === '/dashboard/agents' ||
+    !!pathname?.startsWith(PLUGIN_ROUTE_PREFIX) ||
     !!pathname?.match(/^\/dashboard\/sessions\/[^\/]+$/);
   if (isFullHeightPage) {
     return (
@@ -849,7 +858,8 @@ function DashboardShell({
     shellPathname === '/dashboard/automation' ||
     shellPathname === '/dashboard/tasks' ||
     shellPathname === '/dashboard/skills' ||
-    shellPathname === '/dashboard/agents';
+    shellPathname === '/dashboard/agents' ||
+    !!shellPathname?.startsWith(PLUGIN_ROUTE_PREFIX);
   // Frameless windows (Windows, and Linux unless the user kept their desktop
   // environment's title bar) draw their own min/max/close cluster fixed at the
   // top-right (DesktopWindowControls). Instance pages clear it via the chat/files
@@ -1083,6 +1093,11 @@ export default function DashboardLayout({
       setSelectedInstanceId(null);
     } else if (pathname === '/dashboard/agents') {
       setActiveTab('agents');
+      setSelectedInstanceId(null);
+    } else if (pathname.startsWith(PLUGIN_ROUTE_PREFIX)) {
+      // A plugin page: its own sidebar row shows the selection, so clear the
+      // built-in tab rather than leave the last one highlighted.
+      setActiveTab('plugin');
       setSelectedInstanceId(null);
     } else if (pathname === '/dashboard/sessions/new') {
       setActiveTab('session');

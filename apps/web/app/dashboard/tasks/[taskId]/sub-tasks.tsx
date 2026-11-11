@@ -135,12 +135,15 @@ function SubTaskRow({
   childProgress,
   viewer,
   onStatusChange,
+  compact = false,
 }: {
   task: TaskResponse;
   /** The sub-task's own children — it can be a parent too. */
   childProgress?: Progress;
   viewer: Principal | null;
   onStatusChange?: (status: TaskStatus) => void;
+  /** A narrow column (the peek panel): the title keeps the room the labels took. */
+  compact?: boolean;
 }) {
   const closed = isClosed(task);
   const due = formatTaskDate(task.due_date);
@@ -165,9 +168,13 @@ function SubTaskRow({
         >
           {task.title}
         </span>
-        <span className="hidden md:inline-flex">
-          <LabelChips labels={task.labels} max={2} />
-        </span>
+        {/* The breakpoint reads the viewport, not the column, so a narrow
+            panel on a wide screen drops the chips by flag instead. */}
+        {!compact && (
+          <span className="hidden md:inline-flex">
+            <LabelChips labels={task.labels} max={2} />
+          </span>
+        )}
         {childProgress && childProgress.total > 0 && (
           <ChildProgressChip done={childProgress.done} total={childProgress.total} />
         )}
@@ -251,6 +258,7 @@ export function SubTasksSection({
   canEditTask,
   onAdd,
   onStatusChange,
+  compact = false,
 }: {
   subTasks: TaskResponse[];
   /** task id -> its own children's progress, for sub-tasks that are parents. */
@@ -262,6 +270,8 @@ export function SubTasksSection({
   canEditTask: (task: TaskResponse) => boolean;
   onAdd: (title: string) => Promise<void>;
   onStatusChange: (task: TaskResponse, status: TaskStatus) => void;
+  /** Rows for a narrow column: no label chips. */
+  compact?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -334,6 +344,7 @@ export function SubTasksSection({
               onStatusChange={
                 canEditTask(child) ? (status) => onStatusChange(child, status) : undefined
               }
+              compact={compact}
             />
           ))}
           {adding && canAdd && (

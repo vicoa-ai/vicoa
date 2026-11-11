@@ -17,6 +17,13 @@ export interface CatalogPluginWire {
   server_available: boolean;
   source?: string | null;
   api_compatible: boolean;
+  /** Daemons from before plugin pages omit these. */
+  requirements_ok?: boolean;
+  requirement_error?: string | null;
+  linked?: boolean;
+  reload_nonce?: number;
+  /** SHA-256 of the exact plugin.json this entry was read from. */
+  manifest_sha256?: string | null;
 }
 
 export interface CatalogWire {
@@ -24,6 +31,8 @@ export interface CatalogWire {
   plugins_enabled?: boolean;
   plugins?: CatalogPluginWire[];
   not_modified?: boolean;
+  /** The daemon's CLI version; absent on daemons from before plugin pages. */
+  vicoa_version?: string;
 }
 
 /**
@@ -32,7 +41,11 @@ export interface CatalogWire {
  * master switch contributes nothing, while per-plugin state stays visible to the
  * settings surface (which queries `plugin-list` directly).
  */
-export function mapCatalog(machineId: string, res: CatalogWire): RegisteredPlugin[] {
+export function mapCatalog(
+  machineId: string,
+  res: CatalogWire,
+  machineLabel?: string,
+): RegisteredPlugin[] {
   const enabledGlobally = res.plugins_enabled !== false;
   return (res.plugins ?? [])
     .filter((p) => p.manifest && p.api_compatible)
@@ -44,5 +57,11 @@ export function mapCatalog(machineId: string, res: CatalogWire): RegisteredPlugi
       trusted: p.trusted,
       serverAvailable: p.server_available,
       builtin: false,
+      source: p.source ?? null,
+      machineLabel,
+      requirementError: p.requirements_ok === false ? (p.requirement_error ?? 'Needs a newer Vicoa') : null,
+      reloadNonce: p.reload_nonce ?? 0,
+      manifestHash: p.manifest_sha256 ?? null,
+      daemonVersion: res.vicoa_version ?? null,
     }));
 }

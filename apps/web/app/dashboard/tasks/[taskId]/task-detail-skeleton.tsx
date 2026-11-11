@@ -4,7 +4,11 @@
 // link, identifier line, title, description, timeline and composer on the
 // left, the property rail on the right. The first paint then has the shape the
 // page settles into, in the same pulse-bar style as the task list and
-// session skeletons, rather than a lone "Loading…" line.
+// session skeletons, rather than a lone "Loading…" line. The `panel` variant
+// is the same idea for the peek panel's single column: identifier line, title,
+// the pill row, description, timeline and composer.
+
+import { cn } from '@/lib/utils';
 
 const BAR = 'rounded-full bg-muted-foreground/15';
 const FAINT_BAR = 'rounded-full bg-muted-foreground/10';
@@ -32,7 +36,61 @@ function ActivityLine({ width }: { width: string }) {
   );
 }
 
-export function TaskDetailSkeleton() {
+/** The peek panel's column (TaskDetailPanel's layout). */
+function PanelSkeleton({ className }: { className?: string }) {
+  return (
+    <div className={cn('px-4 py-4', className)} aria-hidden>
+      <div className="animate-pulse space-y-4">
+        <div className="space-y-2.5">
+          {/* Identifier chip + project, actions on the right */}
+          <div className="flex h-6 items-center gap-2">
+            <div className="h-4 w-14 rounded bg-muted-foreground/15" />
+            <div className={`h-2.5 w-20 ${FAINT_BAR}`} />
+            <div className={`ml-auto h-2.5 w-16 ${FAINT_BAR}`} />
+          </div>
+          {/* Title (text-lg) */}
+          <div className="flex h-6 items-center">
+            <div className="h-4 w-3/4 rounded-full bg-muted-foreground/20" />
+          </div>
+          {/* Status / priority / labels pills */}
+          <div className="flex items-center gap-1.5">
+            {['w-20', 'w-16', 'w-20'].map((width, i) => (
+              <div key={i} className={`h-6 rounded-full border ${width}`} />
+            ))}
+          </div>
+          <div className="space-y-2.5 py-1.5">
+            {DESCRIPTION.map((width, i) => (
+              <div key={i} className={`h-3 ${FAINT_BAR} ${width}`} />
+            ))}
+          </div>
+        </div>
+        <div className="space-y-3 border-t pt-4">
+          <ActivityLine width="w-40" />
+          <div className="space-y-2.5 rounded-lg border px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <div className="size-4 shrink-0 rounded-full bg-muted-foreground/15" />
+              <div className={`h-3 w-20 ${BAR}`} />
+              <div className={`h-2.5 w-10 ${FAINT_BAR}`} />
+            </div>
+            <div className={`h-3 w-10/12 ${FAINT_BAR}`} />
+            <div className={`h-3 w-7/12 ${FAINT_BAR}`} />
+          </div>
+          <div className="h-[3.75rem] rounded-xl border border-border/50" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function TaskDetailSkeleton({
+  variant = 'page',
+  className,
+}: {
+  variant?: 'page' | 'panel';
+  /** Panel only: merged onto the column, as TaskDetail's `className` is. */
+  className?: string;
+} = {}) {
+  if (variant === 'panel') return <PanelSkeleton className={className} />;
   return (
     <div className="mx-auto max-w-5xl px-6 py-8" aria-hidden>
       <div className="animate-pulse">

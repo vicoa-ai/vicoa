@@ -38,7 +38,7 @@
 // words, and a ⋯ on every one of your comments is a column of noise. On a touch
 // screen, where nothing hovers, it simply stays visible.
 
-import { useMemo, useState } from 'react';
+import { createContext, useContext, useMemo, useState } from 'react';
 import { ChevronDown, ExternalLink, MoreHorizontal, Pencil, SmilePlus, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -167,12 +167,48 @@ function rowSessionRef(refs: SessionRefs, instanceId: unknown): TaskSessionRef |
   return typeof instanceId === 'string' ? refs.get(instanceId) : undefined;
 }
 
+/**
+ * A click on a session link, handed to the host instead of navigating: the
+ * peek panel can show the session beside the plugin page rather than leave it.
+ * Only a plain left click; ⌘/Ctrl/Shift/middle-click still opens the link the
+ * browser's way (new tab, new window). Undefined without a handler, so the
+ * link stays a plain link.
+ */
+export function sessionLinkClick(
+  sessionId: string,
+  onOpenSession: ((sessionId: string) => void) | undefined,
+): React.MouseEventHandler<HTMLAnchorElement> | undefined {
+  if (!onOpenSession) return undefined;
+  return (event) => {
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    onOpenSession(sessionId);
+  };
+}
+
+/**
+ * The host's way to open a session, for every session link the timeline draws
+ * ("via", a session card's Open). A context rather than a prop threaded
+ * through threads, comments and activity runs to reach the links at the
+ * leaves.
+ */
+const OpenSessionContext = createContext<((sessionId: string) => void) | undefined>(undefined);
+
 /** "Created in <session>" under a task's title; nothing when the viewer can't open it. */
-export function CreatedInSession({ sessionRef }: { sessionRef: TaskSessionRef | undefined }) {
+export function CreatedInSession({
+  sessionRef,
+  onOpenSession,
+}: {
+  sessionRef: TaskSessionRef | undefined;
+  /** Open the session in place; without it the line is a plain link. */
+  onOpenSession?: (sessionId: string) => void;
+}) {
   if (!sessionRef) return null;
   return (
     <Link
       href={`/dashboard/sessions/${sessionRef.id}`}
+      onClick={sessionLinkClick(sessionRef.id, onOpenSession)}
       className="group/created inline-flex max-w-full cursor-pointer items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
     >
       <span className="shrink-0 font-medium">Created in</span>
@@ -185,9 +221,11 @@ export function CreatedInSession({ sessionRef }: { sessionRef: TaskSessionRef | 
 
 /** "via <session>" after a comment's or a change's byline. */
 function ViaSession({ sessionRef }: { sessionRef: TaskSessionRef }) {
+  const onOpenSession = useContext(OpenSessionContext);
   return (
     <Link
       href={`/dashboard/sessions/${sessionRef.id}`}
+      onClick={sessionLinkClick(sessionRef.id, onOpenSession)}
       className="min-w-0 cursor-pointer truncate text-xs text-muted-foreground transition-colors hover:text-foreground hover:underline"
     >
       via {sessionRefTitle(sessionRef)}
@@ -500,7 +538,10 @@ function CommentBody({
             agent
           </span>
         )}
-        <span className="text-xs text-muted-foreground">
+        {/* Holds its width like the activity line's time, so in a narrow
+            column (the peek panel) the "via" link truncates first instead of
+            the time breaking over two lines. */}
+        <span className="shrink-0 text-xs text-muted-foreground">
           {timeLabel(comment.created_at)}
         </span>
         {via && <ViaSession sessionRef={via} />}
@@ -718,6 +759,7 @@ function SessionCard({
   absorbed: TaskActivityResponse[];
 }) {
   const [open, setOpen] = useState(false);
+  const onOpenSession = useContext(OpenSessionContext);
   const live = session.status === 'ACTIVE';
   return (
     <div className={cn(CARD_ROW, 'px-0')}>
@@ -747,6 +789,7 @@ function SessionCard({
             session"), which is the opposite of opening this session. */}
         <Link
           href={`/dashboard/sessions/${session.id}`}
+          onClick={sessionLinkClick(session.id, onOpenSession)}
           className="flex shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           Open <ExternalLink className="size-3" />
@@ -785,6 +828,7 @@ export function TaskTimeline({
   onReply,
   onEditComment,
   onDeleteComment,
+  onOpenSession,
 }: {
   comments: TaskCommentResponse[];
   activity: TaskActivityResponse[];
@@ -800,6 +844,9 @@ export function TaskTimeline({
   /** Edit / Delete on the viewer's own comments. Omitted where there is no ⋯ menu. */
   onEditComment?: (commentId: string, body: string) => Promise<void>;
   onDeleteComment?: (commentId: string) => void;
+  /** Open a session from a "via" line or a session card in place (the peek
+   *  panel). Omitted, those are plain links to the session page. */
+  onOpenSession?: (sessionId: string) => void;
 }) {
   const entries = useMemo(
     () => buildEntries(comments, activity, sessions),
@@ -811,30 +858,32 @@ export function TaskTimeline({
   );
 
   return (
-    <div className="space-y-1.5">
-      {entries.map((entry) => {
-        if (entry.kind === 'thread') {
-          return (
-            <ThreadCard
-              key={entry.id}
-              thread={entry.thread}
-              viewer={viewer}
-              sessionRefs={refs}
-              onToggleReaction={onToggleCommentReaction}
-              onReply={onReply}
-              onEdit={onEditComment}
-              onDelete={onDeleteComment}
-            />
-          );
-        }
-        if (entry.kind === 'activity') {
-          return (
-            <ActivityRun key={entry.id} rows={entry.items} viewer={viewer} sessionRefs={refs} />
-          );
-        }
-        return <SessionCard key={entry.id} session={entry.session} absorbed={entry.absorbed} />;
-      })}
-    </div>
+    <OpenSessionContext.Provider value={onOpenSession}>
+      <div className="space-y-1.5">
+        {entries.map((entry) => {
+          if (entry.kind === 'thread') {
+            return (
+              <ThreadCard
+                key={entry.id}
+                thread={entry.thread}
+                viewer={viewer}
+                sessionRefs={refs}
+                onToggleReaction={onToggleCommentReaction}
+                onReply={onReply}
+                onEdit={onEditComment}
+                onDelete={onDeleteComment}
+              />
+            );
+          }
+          if (entry.kind === 'activity') {
+            return (
+              <ActivityRun key={entry.id} rows={entry.items} viewer={viewer} sessionRefs={refs} />
+            );
+          }
+          return <SessionCard key={entry.id} session={entry.session} absorbed={entry.absorbed} />;
+        })}
+      </div>
+    </OpenSessionContext.Provider>
   );
 }
 

@@ -8,6 +8,7 @@
     "start-remote-session",
     "cli-commands",
     "live-preview",
+    "plugins",
     "alternative-models",
     "vicoa-features",
     "version-compatibility",
