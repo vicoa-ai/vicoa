@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeAccess, describeContributions, snippet } from './trust-summary';
+import { describeAccess, describeContributions, joinWords, snippet, summarizeTrust } from './trust-summary';
 
 describe('describeContributions', () => {
   it('says what each contribution does', () => {
@@ -59,5 +59,51 @@ describe('describeAccess', () => {
 
   it('flags a plugin that runs code on the machine', () => {
     expect(describeAccess({ id: 'b', apiVersion: 2, server: 'server.js' }).runsCode).toBe(true);
+  });
+});
+
+describe('summarizeTrust', () => {
+  const dashboard = {
+    id: 'dashboard',
+    apiVersion: 2,
+    permissions: ['projects:read', 'tasks:read', 'sessions:read', 'automations:read'] as const,
+    files: ['~/**/.vicoa/dashboard.local.json'],
+    surfaces: [{ id: 'home', kind: 'page' as const, entry: 'pages/index.html' }],
+    sidebarItems: [{ id: 'open', label: 'Dashboard', action: { type: 'surface' as const, surfaceId: 'home' } }],
+  };
+
+  it('says it in a few short lines', () => {
+    expect(summarizeTrust({ ...dashboard, permissions: [...dashboard.permissions] })).toEqual([
+      { kind: 'adds', text: 'Adds a page and a sidebar row' },
+      { kind: 'reads', text: 'Reads your projects, tasks, sessions and automations' },
+      { kind: 'files', text: 'Reads', code: '~/**/.vicoa/dashboard.local.json' },
+      { kind: 'network', text: 'No internet access' },
+    ]);
+  });
+
+  it('calls out acting as the user, sites and code', () => {
+    const lines = summarizeTrust({
+      id: 'x',
+      apiVersion: 2,
+      permissions: ['tasks:read', 'tasks:write', 'sessions:start'],
+      network: ['https://cdn.example.com', 'https://api.example.com', 'https://img.example.com'],
+      surfaces: [{ id: 'home', kind: 'page', entry: 'pages/index.html' }],
+      server: 'server.js',
+    });
+    expect(lines.find((l) => l.kind === 'acts')).toEqual({ kind: 'acts', text: 'Can change tasks and start sessions as you', tone: 'warn' });
+    expect(lines.find((l) => l.kind === 'network')?.text).toBe('Loads from cdn.example.com, api.example.com and 1 more');
+    expect(lines.find((l) => l.kind === 'code')?.tone).toBe('danger');
+  });
+
+  it('keeps a theme-only plugin to one line', () => {
+    expect(
+      summarizeTrust({ id: 't', apiVersion: 1, themes: [{ id: 'a', label: 'A', base: 'dark', tokens: {} }, { id: 'b', label: 'B', base: 'light', tokens: {} }] }),
+    ).toEqual([{ kind: 'adds', text: 'Adds 2 themes' }]);
+  });
+
+  it('joins words the way a person would', () => {
+    expect(joinWords(['a'])).toBe('a');
+    expect(joinWords(['a', 'b'])).toBe('a and b');
+    expect(joinWords(['a', 'b', 'c'])).toBe('a, b and c');
   });
 });

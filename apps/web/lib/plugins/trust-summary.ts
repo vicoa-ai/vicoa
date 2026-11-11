@@ -103,3 +103,82 @@ export function describeAccess(manifest: PluginManifest): AccessSummary {
     runsCode,
   };
 }
+
+// --- The short version the prompt leads with --------------------------------
+
+/** One line of the trust prompt's summary. */
+export interface SummaryLine {
+  kind: 'adds' | 'reads' | 'acts' | 'files' | 'network' | 'code';
+  text: string;
+  /** A file pattern, shown after `text` in a monospace face. */
+  code?: string;
+  /** Draw attention: the plugin can act as the user, or runs code. */
+  tone?: 'warn' | 'danger';
+}
+
+/** "a, b and c". */
+export function joinWords(words: string[]): string {
+  if (words.length <= 1) return words.join('');
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+
+const counted = (n: number, one: string, many: string) => (n === 1 ? `a ${one}` : `${n} ${many}`);
+
+const READS: Partial<Record<string, string>> = {
+  'projects:read': 'projects',
+  'tasks:read': 'tasks',
+  'sessions:read': 'sessions',
+  'automations:read': 'automations',
+};
+
+const ACTS: Partial<Record<string, string>> = {
+  'tasks:write': 'change tasks',
+  'sessions:write': 'message your sessions',
+  'sessions:start': 'start sessions',
+  'automations:run': 'run automations',
+};
+
+const host = (origin: string) => origin.replace(/^https?:\/\//, '');
+
+/**
+ * At most a handful of short lines: what the plugin adds, what its pages can
+ * read and do, which local files, and whether it reaches the internet. The
+ * item-by-item list (`describeContributions`) is the prompt's "Details".
+ */
+export function summarizeTrust(manifest: PluginManifest): SummaryLine[] {
+  const lines: SummaryLine[] = [];
+
+  const pages = (manifest.surfaces ?? []).filter((s) => s.kind === 'page').length;
+  const rows = (manifest.sidebarItems ?? []).filter((i) => isSupportedSidebarAction(i.action)).length;
+  const themes = (manifest.themes ?? []).length;
+  const composer = (manifest.composerActions ?? []).length;
+  const adds = [
+    pages ? counted(pages, 'page', 'pages') : null,
+    rows ? counted(rows, 'sidebar row', 'sidebar rows') : null,
+    themes ? counted(themes, 'theme', 'themes') : null,
+    composer ? counted(composer, 'composer action', 'composer actions') : null,
+  ].filter((x): x is string => x !== null);
+  lines.push({ kind: 'adds', text: adds.length ? `Adds ${joinWords(adds)}` : 'Adds nothing this version of Vicoa shows' });
+
+  const permissions = manifest.permissions ?? [];
+  const reads = permissions.map((p) => READS[p]).filter((x): x is string => Boolean(x));
+  if (reads.length) lines.push({ kind: 'reads', text: `Reads your ${joinWords(reads)}` });
+  const acts = permissions.map((p) => ACTS[p]).filter((x): x is string => Boolean(x));
+  if (acts.length) lines.push({ kind: 'acts', text: `Can ${joinWords(acts)} as you`, tone: 'warn' });
+
+  const files = manifest.files ?? [];
+  if (files.length === 1) lines.push({ kind: 'files', text: 'Reads', code: files[0] });
+  else if (files.length > 1) lines.push({ kind: 'files', text: `Reads files in ${files.length} places on this machine` });
+
+  if (pages) {
+    const network = manifest.network ?? [];
+    const shown = network.slice(0, 2).map(host);
+    if (network.length > 2) shown.push(`${network.length - 2} more`);
+    lines.push({ kind: 'network', text: network.length ? `Loads from ${joinWords(shown)}` : 'No internet access' });
+  }
+
+  if (manifest.server || permissions.includes('backend')) {
+    lines.push({ kind: 'code', text: 'Runs its own code on this machine', tone: 'danger' });
+  }
+  return lines;
+}

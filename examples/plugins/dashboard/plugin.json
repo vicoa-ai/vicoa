@@ -3,7 +3,7 @@
   "apiVersion": 2,
   "name": "Dashboard",
   "version": "0.1.0",
-  "description": "What needs you, what your agents did, and how each project is doing.",
+  "description": "Add a dashboard to the sidebar for an overview of your projects.",
   "author": "Vicoa",
   "homepage": "https://vicoa.ai/docs",
   "permissions": ["projects:read", "tasks:read", "sessions:read", "automations:read"],
