@@ -1,0 +1,153 @@
+---
+title: Plugins
+description: Add themes, sidebar entries, composer actions and whole pages to Vicoa with a plugin folder on your machine, and build plugin pages with the window.vicoa API.
+---
+
+# Plugins
+
+A plugin is a folder on one of your machines with a `plugin.json` in it. It can
+change how Vicoa looks, add rows to the sidebar and actions to the composer,
+and add **pages of its own**, like a dashboard of your projects. Your agent can
+write one for you: it is plain JSON, HTML and JavaScript, with no build step.
+
+## Install a plugin
+
+```bash
+vicoa plugin install ./my-plugin       # copy a folder in (or a git URL)
+vicoa plugin link ./my-plugin          # or link a folder you are editing
+vicoa plugin ls                        # what is installed
+```
+
+Installing never runs any code from the plugin. The first time Vicoa sees a
+plugin it asks you to approve it, and shows what it adds and what its pages can
+reach. It asks again whenever the plugin's `plugin.json` changes. Turn plugins
+off, see their settings and their log, or remove them in **Settings › Plugins**.
+
+Plugins live on a machine (in `~/.vicoa/plugins/`), so they show up in the
+desktop app and on the web for as long as that machine is online.
+
+## plugin.json
+
+```json
+{
+  "id": "my-dashboard",
+  "apiVersion": 2,
+  "name": "My dashboard",
+  "requirements": { "vicoa": ">=1.10.0" },
+  "permissions": ["projects:read", "tasks:read", "sessions:read"],
+  "files": ["~/**/.vicoa/numbers.local.json"],
+  "network": ["https://cdn.jsdelivr.net"],
+  "settings": {
+    "label": { "type": "string", "default": "needs-human", "title": "Label to watch" }
+  },
+  "surfaces": [
+    { "id": "home", "kind": "page", "title": "My dashboard", "entry": "pages/index.html", "icon": "layout-dashboard" }
+  ],
+  "sidebarItems": [
+    { "id": "open", "label": "My dashboard", "icon": "layout-dashboard", "action": { "type": "surface", "surfaceId": "home" } }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `id` | Lowercase letters, digits, `-` and `_`. Also the folder name. |
+| `apiVersion` | `1` for themes, sidebar rows and composer actions only; `2` once you use pages or any field below. |
+| `requirements.vicoa` | The Vicoa CLI version the plugin needs on its machine, such as `>=1.10.0`. |
+| `permissions` | What its pages may read or change (table below). Nothing is allowed unless listed. |
+| `files` | Local files its pages may read, as `~/` or absolute globs. `*` matches inside one folder, `**` across folders. A glob has to name some folder or file (`~/**` alone isn't allowed), and nothing under `~/.vicoa`, `~/.ssh`, `~/.aws` or other credential folders can be read, whatever the glob says. |
+| `network` | Sites its pages may load from, one host each (`https://cdn.example.com`; no `*` wildcards). Empty means no internet at all. |
+| `settings` | Settings Vicoa shows in Settings › Plugins and pages read with `vicoa.settings`. Types: `string` (with optional `enum`), `number`, `boolean`, `array` (of strings), `object`. `"scope": "device"` keeps a value on this device only; otherwise it is stored on the plugin's machine. |
+| `surfaces` | The plugin's pages. `entry` is a single HTML file inside the plugin folder. |
+| `sidebarItems` | Rows in the sidebar. An action is `{ "type": "surface", "surfaceId": "home" }` or `{ "type": "open-url", "url": "https://…" }`. |
+| `themes`, `composerActions` | See the [examples](https://github.com/vicoa-ai/vicoa/tree/main/examples/plugins). |
+
+### Permissions
+
+| Permission | Lets a page |
+|---|---|
+| `projects:read` | list your projects |
+| `tasks:read` | read tasks and their comments |
+| `tasks:write` | comment on, change and create tasks as you |
+| `sessions:read` | read sessions and their messages |
+| `sessions:write` | send messages to your sessions as you |
+| `sessions:start` | start new sessions on your machines |
+| `automations:read` | read automations and their runs |
+
+A page never sees more than you can: every read and write goes through your own
+account, and the backend applies the same access rules it applies to you.
+
+## How a page runs
+
+A plugin page runs in a sandboxed frame inside Vicoa. It has its own origin, so
+it can't read Vicoa's cookies, storage, login token or the rest of the app,
+can't open windows, can't navigate itself or the app anywhere, and can only load
+from the sites in `network`. If it opens a link to any other site with
+`vicoa.open.url`, Vicoa asks the user first and shows the whole link. It talks to
+Vicoa through `window.vicoa`, which Vicoa adds before the page's own scripts
+run. Vicoa draws the title bar above the page (with the plugin's name and
+machine), and the page draws everything below it, in any style.
+
+Vicoa also adds CSS variables for its current theme, `--vicoa-background`,
+`--vicoa-foreground`, `--vicoa-muted-foreground`, `--vicoa-border`,
+`--vicoa-card`, `--vicoa-primary`, `--vicoa-success`, `--vicoa-warning`,
+`--vicoa-destructive`, `--vicoa-font-sans` and the rest of the theme tokens,
+updated live when the theme changes. Use them, or ignore them.
+
+## window.vicoa
+
+Every call returns a promise. A refused or failed call rejects with an `Error`
+whose `code` is one of `permission_denied`, `not_found`, `not_allowed`,
+`invalid_params`, `rate_limited`, `machine_offline`, `daemon_outdated`,
+`not_available` or `failed`.
+
+### Data
+
+| Call | Returns | Needs |
+|---|---|---|
+| `context.get()` | `{ pluginId, pluginName, surfaceId, machineId, machineName, platform, theme, apiVersion, permissions }` | |
+| `projects.list()` | projects: `{ id, name, key, archived, directories: [{ machineId, path }] }` | `projects:read` |
+| `tasks.list({ projectId?, status?, label?, limit? })` | tasks: `{ id, identifier, projectId, title, description, status, priority, labels, dueDate, assignee, createdAt, updatedAt }` | `tasks:read` |
+| `tasks.get(id)`, `tasks.comments(id)` | a task; its comments `{ id, body, author, sessionId, createdAt }` | `tasks:read` |
+| `tasks.watch(filter, callback)` | calls back with the list now and whenever it changes; resolves to a stop function | `tasks:read` |
+| `tasks.comment(id, body)`, `tasks.update(id, patch)`, `tasks.create(data)` | | `tasks:write` |
+| `sessions.list({ since?, projectId?, taskId?, status?, limit? })` | sessions, newest first: `{ id, name, status, agent, projectId, startedAt, endedAt, lastMessage, lastMessageAt }` | `sessions:read` |
+| `sessions.get(id)`, `sessions.messages(id, { limit?, before? })` | a session; its messages `{ id, role, text, createdAt }` | `sessions:read` |
+| `sessions.watch(filter, callback)` | like `tasks.watch` | `sessions:read` |
+| `sessions.send(id, text)` | resumes a stopped session with the message | `sessions:write` |
+| `sessions.start({ machineId, directory, agent?, prompt? })` | `{ sessionId }` | `sessions:start` |
+| `automations.list({ projectId? })` | `{ id, title, projectId, enabled, nextRunAt, lastRunAt, lastRunStatus }` | `automations:read` |
+| `automations.runs(id, { limit? })` | runs: `{ id, sessionId, firedAt, status }` | `automations:read` |
+| `files.read(path)`, `files.readJson(path)` | a file's text, or its parsed JSON | a matching `files` entry |
+| `settings.get()`, `settings.set(patch)`, `settings.onChange(callback)` | the plugin's settings | |
+
+### Vicoa's own UI
+
+These open things in Vicoa; whatever the user then does there, they do
+themselves.
+
+| Call | Does |
+|---|---|
+| `open.task(id, { siblings })` | Opens the task in the side panel next to the page. With `siblings` (the ids of the list it came from), J and K move through them. |
+| `open.session(id, { siblings })` | Opens the session in the side panel: its latest message and a box to continue it. |
+| `open.newSession({ projectId?, machineId?, directory?, prompt? })` | Opens the new session page, filled in. |
+| `open.url(url)` | Opens an app path in Vicoa, or an `https://` link in the browser. A link to a site not in `network` asks the user first. |
+| `open.page(surfaceId, params)` | Opens another page of the plugin. |
+| `ui.setHeader({ title, subtitle, crumbs, tabs, activeTab, actions })` | Sets the title bar. Clicks come back as `header` events: `{ type: 'tab' \| 'crumb' \| 'title' \| 'action', id }`. |
+| `ui.toast(text, { kind })` | Shows a short message. |
+| `route.get()`, `route.set(path)`, `route.onChange(callback)` | The page's own place, kept in the URL, so reload, back and links work. |
+| `events.on(name, callback)` | `header`, `panel` (what the side panel shows), `theme`, `visibility`. |
+| `log.info()`, `log.warn()`, `log.error()` | Written to the plugin's log (Settings › Plugins, or `vicoa plugin logs`). Uncaught errors are logged too. |
+
+## Develop
+
+```bash
+vicoa plugin init ./my-plugin --template page
+vicoa plugin link ./my-plugin
+# edit pages/index.html, then press reload in the page's title bar
+vicoa plugin logs my-plugin
+```
+
+Changing the HTML needs no new approval; changing `plugin.json` does. The
+[dashboard example](https://github.com/vicoa-ai/vicoa/tree/main/examples/plugins/dashboard)
+is a complete page to start from.

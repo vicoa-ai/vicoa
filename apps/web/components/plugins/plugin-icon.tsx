@@ -9,9 +9,11 @@
  */
 
 import {
+  Activity,
   Bell,
   BookOpen,
   Bot,
+  ChartColumn,
   Bug,
   CalendarClock,
   Check,
@@ -24,10 +26,13 @@ import {
   ExternalLink,
   File,
   Folder,
+  Gauge,
   GitBranch,
   Globe,
+  Kanban,
   Key,
   Layers,
+  LayoutDashboard,
   Link as LinkIcon,
   ListTodo,
   Lock,
@@ -91,7 +96,15 @@ const ICONS: Record<string, LucideIcon> = {
   upload: Upload,
   command: Command,
   'panel-left': PanelLeft,
+  'layout-dashboard': LayoutDashboard,
+  'bar-chart': ChartColumn,
+  activity: Activity,
+  gauge: Gauge,
+  kanban: Kanban,
 };
+
+/** Every icon name a plugin may use; must equal the backend ICON_WHITELIST. */
+export const PLUGIN_ICON_NAMES: readonly string[] = Object.keys(ICONS);
 
 export function PluginIcon({
   name,

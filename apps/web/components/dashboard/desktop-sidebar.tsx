@@ -298,7 +298,12 @@ export function DesktopSidebar({
         )}
 
         {/* Nav entries contributed by installed plugins (Tier 1). */}
-        <PluginSidebarItems slot="nav" />
+        <PluginSidebarItems
+          slot="nav"
+          rowClassName="w-full justify-start h-auto py-1.5 mb-0.5 text-xs font-normal"
+          iconClassName="h-4 w-4 mr-1.5"
+          selectedClassName={ITEM_SELECTED}
+        />
 
         {/* Workspace search across sessions, tasks, automations (also ⌘K). */}
         {!hiddenNav.has('search') && (

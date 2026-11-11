@@ -47,11 +47,14 @@ export function EditableTitle({
   value,
   onSave,
   readOnly = false,
+  size = 'page',
 }: {
   value: string;
   onSave: (next: string) => void;
   /** A task on a board shared below editor: shown, never opened for editing. */
   readOnly?: boolean;
+  /** `compact` is the peek panel's: a heading sized for a narrow column. */
+  size?: 'page' | 'compact';
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -75,8 +78,9 @@ export function EditableTitle({
     onSave(next);
   }, [draft, value, onSave]);
 
-  const shared =
-    'w-full text-2xl font-semibold leading-tight tracking-[-0.01em]';
+  // The size comes before `leading-tight`: tailwind-merge drops a leading-*
+  // that precedes a text-* size, and the leading is the point of the rule above.
+  const shared = `w-full ${size === 'compact' ? 'text-lg' : 'text-2xl'} font-semibold leading-tight tracking-[-0.01em]`;
 
   if (readOnly) {
     return <h1 className={cn(shared, 'px-1 py-0.5 -mx-1')}>{value}</h1>;

@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+  <title>Hello Page</title>
+  <style>
+    body { padding: 24px 28px; max-width: 880px; }
+    h2 { font-size: 13px; font-weight: 400; color: var(--vicoa-muted-foreground); margin: 24px 0 8px; }
+    .row { display: flex; gap: 10px; align-items: baseline; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+    .row:hover { background: color-mix(in srgb, var(--vicoa-foreground) 6%, transparent); }
+    .id { font-family: var(--vicoa-font-mono); font-size: 12px; color: var(--vicoa-muted-foreground); min-width: 64px; }
+    .meta { margin-left: auto; font-size: 12px; color: var(--vicoa-muted-foreground); white-space: nowrap; }
+    .empty { color: var(--vicoa-muted-foreground); padding: 8px 10px; }
+    .muted { color: var(--vicoa-muted-foreground); }
+  </style>
+</head>
+<body>
+  <div id="hello" class="muted"></div>
+  <div id="view"></div>
+  <script>
+    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    let tab = vicoa.route.get() === '?tab=sessions' ? 'sessions' : 'tasks';
+
+    async function render() {
+      const settings = await vicoa.settings.get();
+      const ctx = await vicoa.context.get();
+      document.getElementById('hello').textContent = settings.greeting + ' from ' + ctx.pluginName + ' on ' + (ctx.machineName || ctx.machineId) + '.';
+      vicoa.ui.setHeader({
+        tabs: [{ id: 'tasks', label: 'Tasks' }, { id: 'sessions', label: 'Sessions' }],
+        activeTab: tab,
+      });
+      const view = document.getElementById('view');
+      if (tab === 'tasks') {
+        const tasks = await vicoa.tasks.list({ status: ['todo', 'in_progress'], limit: settings.limit });
+        view.innerHTML = '<h2>Open tasks</h2>' + (tasks.length ? tasks.map((t) =>
+          '<div class="row" data-task="' + esc(t.id) + '"><span class="id">' + esc(t.identifier || '') + '</span><span>' + esc(t.title) + '</span><span class="meta">' + esc(t.status.replace('_', ' ')) + '</span></div>'
+        ).join('') : '<div class="empty">No open tasks.</div>');
+        const ids = tasks.map((t) => t.id);
+        view.querySelectorAll('[data-task]').forEach((el) => el.addEventListener('click', () => vicoa.open.task(el.dataset.task, { siblings: ids })));
+      } else {
+        const sessions = await vicoa.sessions.list({ limit: settings.limit });
+        view.innerHTML = '<h2>Recent sessions</h2>' + (sessions.length ? sessions.map((s) =>
+          '<div class="row" data-session="' + esc(s.id) + '"><span>' + esc(s.name || 'Untitled') + '</span><span class="meta">' + esc(new Date(s.startedAt).toLocaleString()) + '</span></div>'
+        ).join('') : '<div class="empty">No sessions yet.</div>');
+        const ids = sessions.map((s) => s.id);
+        view.querySelectorAll('[data-session]').forEach((el) => el.addEventListener('click', () => vicoa.open.session(el.dataset.session, { siblings: ids })));
+      }
+    }
+
+    vicoa.events.on('header', (e) => {
+      if (e.type !== 'tab' || e.id === tab) return;
+      tab = e.id;
+      vicoa.route.set(tab === 'sessions' ? '?tab=sessions' : '');
+      render();
+    });
+    vicoa.route.onChange((path) => { tab = path === '?tab=sessions' ? 'sessions' : 'tasks'; render(); });
+    vicoa.settings.onChange(render);
+    render().catch((e) => { document.getElementById('view').textContent = 'Could not load: ' + e.message; vicoa.log.error(e); });
+  </script>
+</body>
+</html>

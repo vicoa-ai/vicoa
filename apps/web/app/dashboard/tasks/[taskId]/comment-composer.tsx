@@ -22,6 +22,11 @@
 // above it and marks the box as part of that conversation rather than a control
 // floating under it.
 //
+// The default variant can carry a second, secondary way to send beside the
+// round button (`secondaryAction`): the peek panel's "Reply and hand back",
+// which posts the comment and then hands the task back. Enter keeps sending the
+// plain way; the second action is a deliberate click.
+//
 // `CommentEditor` at the foot of the file is the same textarea opened in place
 // over a comment you wrote, for editing it.
 
@@ -38,6 +43,17 @@ const MIN_HEIGHT = 36;
 const INLINE_HEIGHT = 28;
 const MAX_HEIGHT = 200;
 
+/** A second send button beside the round one; see the header comment. */
+export interface CommentComposerSecondaryAction {
+  label: string;
+  /**
+   * Resolve to clear the box; reject to keep the draft for a retry. The action
+   * reports its own failure (a toast), so the composer swallows the rejection
+   * rather than rethrowing it.
+   */
+  onSubmit: (body: string) => Promise<void>;
+}
+
 export function CommentComposer({
   onSubmit,
   disabled = false,
@@ -46,6 +62,7 @@ export function CommentComposer({
   variant = 'default',
   leading,
   className,
+  secondaryAction,
 }: {
   onSubmit: (body: string) => Promise<void>;
   disabled?: boolean;
@@ -56,9 +73,12 @@ export function CommentComposer({
   /** Rendered left of the textarea — the viewer's avatar, on `inline`. */
   leading?: React.ReactNode;
   className?: string;
+  /** Default variant only: a second send button. */
+  secondaryAction?: CommentComposerSecondaryAction;
 }) {
   const [value, setValue] = useState('');
-  const [sending, setSending] = useState(false);
+  // Which button's send is in flight. Either one locks both.
+  const [sending, setSending] = useState<false | 'primary' | 'secondary'>(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Same rAF-coalesced auto-resize as the chat composer: reading scrollHeight
@@ -84,22 +104,41 @@ export function CommentComposer({
     [],
   );
 
+  const clear = useCallback(() => {
+    setValue('');
+    const el = textareaRef.current;
+    if (el) el.style.height = `${variant === 'inline' ? INLINE_HEIGHT : MIN_HEIGHT}px`;
+  }, [variant]);
+
   const send = useCallback(async () => {
     const body = value.trim();
     if (!body || sending || disabled) return;
-    setSending(true);
+    setSending('primary');
     try {
       await onSubmit(body);
-      setValue('');
-      const el = textareaRef.current;
-      if (el) el.style.height = `${variant === 'inline' ? INLINE_HEIGHT : MIN_HEIGHT}px`;
+      clear();
     } finally {
       setSending(false);
     }
-  }, [value, sending, disabled, onSubmit, variant]);
+  }, [value, sending, disabled, onSubmit, clear]);
+
+  const sendSecondary = useCallback(async () => {
+    const body = value.trim();
+    if (!body || sending || disabled || !secondaryAction) return;
+    setSending('secondary');
+    try {
+      await secondaryAction.onSubmit(body);
+      clear();
+    } catch {
+      // Draft kept for a retry; the action already said what went wrong.
+    } finally {
+      setSending(false);
+    }
+  }, [value, sending, disabled, secondaryAction, clear]);
 
   const inline = variant === 'inline';
   const empty = value.trim().length === 0;
+  const showSecondary = !inline && secondaryAction !== undefined;
 
   return (
     <div
@@ -161,11 +200,29 @@ export function CommentComposer({
           )}
         />
       </div>
-      <div className={cn('flex items-center justify-end', !inline && 'mt-0')}>
+      <div
+        className={cn(
+          'flex items-center justify-end',
+          !inline && 'mt-0',
+          showSecondary && 'gap-2',
+        )}
+      >
+        {showSecondary && (
+          <Button
+            onClick={() => void sendSecondary()}
+            disabled={disabled || !!sending || empty}
+            variant="outline"
+            size="sm"
+            className="h-7 rounded-full px-3 text-xs"
+          >
+            {sending === 'secondary' && <RefreshCw className="size-3 animate-spin" />}
+            {secondaryAction.label}
+          </Button>
+        )}
         <Button
           onClick={() => void send()}
           aria-label={inline ? 'Post reply' : 'Post comment'}
-          disabled={disabled || sending || empty}
+          disabled={disabled || !!sending || empty}
           variant="default"
           size="icon"
           className={cn(
@@ -176,7 +233,7 @@ export function CommentComposer({
             inline && empty && !sending && 'pointer-events-none opacity-30',
           )}
         >
-          {sending ? (
+          {sending === 'primary' ? (
             <RefreshCw className={cn('animate-spin', inline ? 'h-3 w-3' : 'h-3.5 w-3.5')} />
           ) : (
             <ArrowUp className={cn(inline ? 'h-3 w-3' : 'h-3.5 w-3.5')} />

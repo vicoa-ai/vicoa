@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { buildEntries, buildThreads, describeReactors, sessionRefTitle } from './task-timeline';
+import {
+  buildEntries,
+  buildThreads,
+  describeReactors,
+  sessionLinkClick,
+  sessionRefTitle,
+} from './task-timeline';
 import type {
   PrincipalResponse,
   TaskCommentResponse,
@@ -229,5 +235,52 @@ describe('sessionRefTitle', () => {
       'a Claude session',
     );
     expect(sessionRefTitle({ id: 's1', name: null, agent_type_name: null })).toBe('a session');
+  });
+});
+
+describe('sessionLinkClick', () => {
+  type Click = Parameters<NonNullable<ReturnType<typeof sessionLinkClick>>>[0];
+  type Modifiers = { button?: number; metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean };
+
+  /** Run the handler on a fake click; returns whether it stopped the navigation. */
+  const fire = (handler: ReturnType<typeof sessionLinkClick>, over: Modifiers = {}) => {
+    const preventDefault = vi.fn();
+    const event = {
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      defaultPrevented: false,
+      preventDefault,
+      ...over,
+    };
+    handler?.(event as unknown as Click);
+    return preventDefault.mock.calls.length > 0;
+  };
+
+  it('leaves the link alone when the host has no handler', () => {
+    expect(sessionLinkClick('s1', undefined)).toBeUndefined();
+  });
+
+  it('hands a plain click to the host instead of navigating', () => {
+    const open = vi.fn();
+    expect(fire(sessionLinkClick('s1', open))).toBe(true);
+    expect(open).toHaveBeenCalledWith('s1');
+  });
+
+  it('lets a modified or middle click open the link the browser way', () => {
+    const open = vi.fn();
+    const handler = sessionLinkClick('s1', open);
+    for (const over of [
+      { metaKey: true },
+      { ctrlKey: true },
+      { shiftKey: true },
+      { altKey: true },
+      { button: 1 },
+    ]) {
+      expect(fire(handler, over)).toBe(false);
+    }
+    expect(open).not.toHaveBeenCalled();
   });
 });

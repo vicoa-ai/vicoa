@@ -1,0 +1,738 @@
+<!doctype html>
+<html>
+<head>
+<title>Dashboard</title>
+<style>
+  :root {
+    --tile: color-mix(in srgb, var(--vicoa-foreground) 3%, transparent);
+    --hover: color-mix(in srgb, var(--vicoa-foreground) 6%, transparent);
+    --on: color-mix(in srgb, var(--vicoa-foreground) 9%, transparent);
+    --line: var(--vicoa-border);
+    --muted: var(--vicoa-muted-foreground);
+    --good: var(--vicoa-success, #10b981);
+    --warn: var(--vicoa-warning, #f59e0b);
+    --bad: var(--vicoa-destructive, #ef4444);
+    --info: var(--vicoa-info, #60a5fa);
+    --track: color-mix(in srgb, var(--vicoa-foreground) 10%, transparent);
+  }
+  * { box-sizing: border-box; }
+  body { font-size: 13px; }
+  button { background: none; border: 0; padding: 0; text-align: left; cursor: pointer; }
+  .page { padding: 24px 28px 56px; max-width: 1480px; }
+  .muted { color: var(--muted); }
+  .sec { display: flex; align-items: baseline; gap: 8px; margin: 26px 0 8px; font-size: 13px; color: var(--muted); }
+  .sec .grow { flex: 1; }
+  .sec .link { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; font-size: 12px; }
+  .sec .link:hover { color: var(--vicoa-foreground); }
+  .box { border: 1px solid var(--line); border-radius: 10px; background: var(--tile); overflow: hidden; }
+  .empty { padding: 14px 16px; color: var(--muted); }
+  .loading { padding: 40px 0; color: var(--muted); }
+
+  /* hero */
+  .hero { display: flex; align-items: flex-end; gap: 24px; }
+  .hero h1 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.01em; }
+  .hero p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+  .hero .today { margin-left: auto; width: 220px; text-align: right; font-size: 12px; color: var(--muted); }
+  .bar { height: 4px; border-radius: 2px; background: var(--track); overflow: hidden; margin-bottom: 6px; }
+  .bar i { display: block; height: 100%; background: var(--vicoa-primary); border-radius: 2px; }
+  .bar.good i { background: var(--good); }
+
+  /* cards */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .card { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; width: 100%; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--tile); color: inherit; }
+  button.card:hover { background: var(--hover); }
+  .card .top { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+  .card .top .for { margin-left: auto; font-weight: 400; color: var(--muted); font-size: 12px; display: inline-flex; gap: 4px; align-items: center; }
+  .card .label { margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .card .big { margin-top: 2px; font-size: 24px; font-weight: 600; letter-spacing: -0.01em; display: flex; align-items: center; gap: 10px; }
+  .card .big.unknown { color: var(--muted); font-weight: 500; }
+  .card .goal { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+  .card .note { margin-top: 8px; display: flex; gap: 6px; align-items: flex-start; font-size: 12.5px; }
+  .card .asof { margin-top: auto; padding-top: 8px; font-size: 11.5px; color: var(--muted); }
+  .spark { flex: 1; min-width: 60px; height: 28px; }
+
+  /* metrics row on a project page */
+  .metrics { display: grid; grid-template-columns: minmax(260px, 1.4fr) repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+  .metrics .card.hl .big { font-size: 40px; }
+  .metrics .card .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .metrics .card .trend { margin-top: auto; padding-top: 12px; }
+  .metrics .card .trend .spark { width: 100%; height: 34px; }
+
+  /* lists */
+  .item { display: flex; gap: 12px; align-items: flex-start; padding: 10px 16px; border-top: 1px solid var(--line); cursor: pointer; }
+  .item:first-child { border-top: 0; }
+  .item:hover { background: var(--hover); }
+  .item.on { background: var(--on); }
+  .item .body { min-width: 0; flex: 1; }
+  .item .t { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13.5px; }
+  .item .t span.txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .m { margin-top: 2px; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .time { width: 44px; flex: none; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 1px; }
+  .item .date { width: 84px; flex: none; font-size: 12px; color: var(--muted); padding-top: 1px; }
+  .item .st { flex: none; padding-top: 1px; }
+  .item.static { cursor: default; }
+  .item.static:hover { background: none; }
+  .chip { flex: none; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 4px; background: var(--hover); color: var(--muted); white-space: nowrap; }
+  .chip.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+  .chip.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+
+  .ico { width: 14px; height: 14px; flex: none; vertical-align: -2px; }
+  .good { color: var(--good); } .warn { color: var(--warn); } .bad { color: var(--bad); } .info { color: var(--info); }
+
+  /* layout */
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start; }
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+  .lane h2 { display: flex; align-items: baseline; gap: 10px; margin: 30px 0 0; padding-bottom: 10px; border-bottom: 1px solid var(--line); font-size: 17px; font-weight: 600; }
+  .lane h2 span { font-size: 12.5px; font-weight: 400; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rowbox { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+  .rowbox .cell { padding: 10px 16px; border-left: 1px solid var(--line); }
+  .rowbox .cell:first-child { border-left: 0; }
+  .rowbox .cell .t { display: flex; gap: 6px; align-items: center; font-size: 13.5px; }
+  .rowbox .cell .m { margin-top: 2px; font-size: 12px; color: var(--muted); }
+  .ops { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--tile); font-size: 12.5px; }
+  .ops span { display: inline-flex; gap: 6px; align-items: center; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; flex: none; }
+  .seg button { padding: 2px 9px; font-size: 11.5px; color: var(--muted); border-left: 1px solid var(--line); }
+  .seg button:first-child { border-left: 0; }
+  .seg button.on { background: var(--on); color: var(--vicoa-foreground); }
+  .seg button:hover { color: var(--vicoa-foreground); }
+
+  /* week */
+  .week { display: grid; grid-template-columns: 96px repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--tile); }
+  .week > div { padding: 9px 12px; border-top: 1px solid var(--line); border-left: 1px solid var(--line); min-width: 0; }
+  .week > .h { border-top: 0; font-size: 12px; color: var(--muted); }
+  .week > .d { border-left: 0; font-size: 12px; color: var(--muted); }
+  .week > .d.today { color: var(--vicoa-foreground); font-weight: 600; }
+  .week .ev { display: flex; gap: 6px; font-size: 12px; padding: 2px 0; cursor: pointer; min-width: 0; }
+  .week .ev:hover .x { text-decoration: underline; }
+  .week .ev .x { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .week .ev.plan { color: var(--muted); cursor: default; }
+  .week .ev.plan:hover .x { text-decoration: none; }
+
+  @media (max-width: 1080px) { .split { grid-template-columns: minmax(0, 1fr); } .cols { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 700px) { .page { padding: 18px 16px 40px; } .hero { flex-direction: column; align-items: flex-start; } .hero .today { margin-left: 0; text-align: left; } .rowbox { grid-auto-flow: row; } .rowbox .cell { border-left: 0; border-top: 1px solid var(--line); } .rowbox .cell:first-child { border-top: 0; } }
+</style>
+</head>
+<body>
+<div id="app" class="page"><div class="loading">Loading your dashboard…</div></div>
+<script>
+'use strict';
+
+// ---------------------------------------------------------------------------
+// Data the page uses, all through window.vicoa (see plugin.json permissions):
+//   tasks with the "needs you" label, sessions from the last day, automations
+//   and their runs, projects, and each project's optional snapshot file
+//   (<project folder>/.vicoa/dashboard.local.json, format in the README).
+// ---------------------------------------------------------------------------
+
+const OPEN = ['backlog', 'todo', 'in_progress', 'blocked'];
+const SNAPSHOT = '.vicoa/dashboard.local.json';
+const DAY = 86400000;
+const LANES = [['build', 'Build'], ['growth', 'Growth'], ['ops', 'Ops']];
+
+const S = {
+  ctx: null, settings: {}, projects: [], needs: [], handled: [], automations: [], sessions: [],
+  runs: new Map(),          // automationId -> runs (newest first)
+  bySession: new Map(),     // sessionId -> { automation, run }
+  sessionCache: new Map(),  // sessionId -> session (fetched one by one)
+  missing: new Set(),       // sessions that couldn't be read (deleted, not yours)
+  snapshots: new Map(),     // projectId -> { data } | { error }
+  open: null,               // what the host panel shows: { kind, id }
+  expanded: new Set(),      // "All N" lists that are open
+  route: { view: 'overview', projectId: null, tab: 'overview' },
+  loaded: false,
+};
+
+// --- helpers -----------------------------------------------------------------
+
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const pad = (n) => String(n).padStart(2, '0');
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const fmtTime = (iso) => { const d = new Date(iso); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+const fmtDay = (iso) => { const d = new Date(iso); return MONTHS[d.getMonth()] + ' ' + d.getDate(); };
+const fmtWhen = (iso) => fmtDay(iso) + ', ' + fmtTime(iso);
+const dayKey = (t) => { const d = new Date(t); return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate(); };
+const startOfDay = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+
+function duration(s) {
+  const end = Date.parse(s.endedAt || s.lastMessageAt || '') || Date.now();
+  const mins = Math.max(0, Math.round((end - Date.parse(s.startedAt)) / 60000));
+  if (mins < 1) return '<1 min';
+  if (mins < 60) return mins + ' min';
+  return Math.floor(mins / 60) + ' h ' + (mins % 60 ? (mins % 60) + ' min' : '');
+}
+
+/** The first sentence of an agent's last message: usually what the run did. */
+function firstSentence(text) {
+  if (!text) return '';
+  let t = String(text)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/[`*_>|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const m = t.match(/^(.{12,}?[.!?])(\s|$)/);
+  if (m) t = m[1];
+  return t.length > 220 ? t.slice(0, 219) + '…' : t;
+}
+
+const ICON = {
+  ok: '<svg class="ico good" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>',
+  fail: '<svg class="ico bad" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/></svg>',
+  run: '<svg class="ico info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10" opacity=".35"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>',
+  warn: '<svg class="ico warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>',
+  bad: '<svg class="ico bad" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>',
+  info: '<svg class="ico muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
+  good: '<svg class="ico good" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>',
+  clock: '<svg class="ico muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
+  pause: '<svg class="ico muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M10 15V9M14 15V9"/></svg>',
+  todo: '<svg class="ico muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>',
+  user: '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
+};
+const TONE_ICON = { good: ICON.good, warn: ICON.warn, bad: ICON.bad, info: ICON.info, neutral: ICON.info };
+const STATE_ICON = { done: ICON.ok, active: ICON.clock, waiting: ICON.clock, paused: ICON.pause, risk: ICON.warn, blocked: ICON.bad, todo: ICON.todo };
+
+function sessionIcon(s) {
+  if (!s) return ICON.todo;
+  if (s.status === 'FAILED' || s.status === 'KILLED') return ICON.fail;
+  if (s.status === 'ACTIVE' || s.status === 'STARTING') return ICON.run;
+  return ICON.ok;
+}
+
+function spark(values) {
+  const v = (values || []).filter((x) => typeof x === 'number' && isFinite(x));
+  if (v.length < 2) return '';
+  const w = 120, h = 28, min = Math.min.apply(null, v), max = Math.max.apply(null, v), span = max - min || 1;
+  const pts = v.map((x, i) => [(i / (v.length - 1)) * (w - 6) + 3, h - 4 - ((x - min) / span) * (h - 8)]);
+  const last = pts[pts.length - 1];
+  return '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none"><polyline fill="none" stroke="var(--muted)" stroke-width="1.5" points="' +
+    pts.map((p) => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ') + '"/><circle cx="' + last[0] + '" cy="' + last[1] + '" r="3" fill="var(--vicoa-primary)"/></svg>';
+}
+
+function progress(goal) {
+  if (!goal || typeof goal.progress !== 'number') return '';
+  const pct = Math.max(0, Math.min(1, goal.progress));
+  return '<div class="bar" style="margin-top:10px"><i style="width:' + Math.max(2, pct * 100).toFixed(1) + '%"></i></div>' +
+    '<div class="goal"><span>' + Math.round(pct * 100) + '% of ' + esc(goal.label || 'goal') + '</span><span>' + esc(goal.by || '') + '</span></div>';
+}
+
+function note(n) {
+  if (!n) return '';
+  const o = typeof n === 'string' ? { text: n } : n;
+  if (!o.text) return '';
+  return '<div class="note">' + (TONE_ICON[o.tone] || ICON.info) + '<span>' + esc(o.text) + '</span></div>';
+}
+
+/** A number, or the word Unknown: a missing value is never shown as 0. */
+const value = (v) => (v === null || v === undefined || v === '' ? null : String(v));
+
+// --- requests ----------------------------------------------------------------
+
+async function call(fn, tries) {
+  try { return await fn(); }
+  catch (e) {
+    if (e && e.code === 'rate_limited' && (tries || 0) < 4) {
+      await new Promise((r) => setTimeout(r, 1100));
+      return call(fn, (tries || 0) + 1);
+    }
+    throw e;
+  }
+}
+
+async function pool(items, size, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) { const i = next++; try { out[i] = await call(() => fn(items[i])); } catch (e) { out[i] = { __error: e }; } }
+  }
+  await Promise.all(Array.from({ length: Math.min(size, items.length) }, worker));
+  return out;
+}
+
+function projectDirs(p) {
+  const mine = (p.directories || []).filter((d) => d.machineId === (S.ctx && S.ctx.machineId));
+  return mine.map((d) => d.path.replace(/\/+$/, ''));
+}
+
+function projectOf(automation) {
+  if (automation.projectId) return automation.projectId;
+  for (const p of S.projects) {
+    if (projectDirs(p).some((d) => automation.directory === d || automation.directory.startsWith(d + '/'))) return p.id;
+  }
+  return null;
+}
+
+async function loadLive() {
+  const label = S.settings.needsLabel || 'needs-human';
+  const scope = S.settings.runsScope === 'all' ? 'all' : 'automations';
+  const [needs, handled, sessions] = await Promise.all([
+    call(() => vicoa.tasks.list({ label, status: OPEN, limit: 500 })),
+    call(() => vicoa.tasks.list({ label, status: ['in_review', 'done'], limit: 500 })),
+    call(() => vicoa.sessions.list({ since: new Date(Date.now() - DAY).toISOString(), limit: scope === 'all' ? 200 : 300 })),
+  ]);
+  S.needs = needs;
+  S.handled = handled;
+  S.sessions = sessions;
+}
+
+async function loadRuns() {
+  const recent = S.automations.filter((a) => a.lastRunAt && Date.now() - Date.parse(a.lastRunAt) < 8 * DAY);
+  const results = await pool(recent, 3, (a) => vicoa.automations.runs(a.id, { limit: 40 }));
+  S.runs = new Map();
+  S.bySession = new Map();
+  recent.forEach((a, i) => {
+    const runs = Array.isArray(results[i]) ? results[i] : [];
+    S.runs.set(a.id, runs);
+    for (const r of runs) if (r.sessionId && !S.bySession.has(r.sessionId)) S.bySession.set(r.sessionId, { automation: a, run: r });
+  });
+}
+
+async function loadSnapshots() {
+  const targets = [];
+  for (const p of S.projects) for (const d of projectDirs(p)) targets.push({ p, path: d + '/' + SNAPSHOT });
+  const results = await pool(targets, 3, (t) => vicoa.files.readJson(t.path));
+  S.snapshots = new Map();
+  targets.forEach((t, i) => {
+    const r = results[i];
+    if (r && r.__error) {
+      const code = r.__error.code;
+      if (code !== 'not_found' && !S.snapshots.has(t.p.id)) S.snapshots.set(t.p.id, { error: code === 'not_allowed' ? 'not allowed by plugin.json' : (r.__error.message || code) });
+    } else if (r && typeof r === 'object') {
+      S.snapshots.set(t.p.id, { data: r, path: t.path });
+    }
+  });
+}
+
+async function loadAll() {
+  const [ctx, settings] = await Promise.all([vicoa.context.get(), vicoa.settings.get()]);
+  S.ctx = ctx;
+  S.settings = settings || {};
+  const [projects, automations] = await Promise.all([call(() => vicoa.projects.list()), call(() => vicoa.automations.list())]);
+  S.projects = projects.filter((p) => !p.archived);
+  S.automations = automations;
+  await Promise.all([loadLive(), loadRuns(), loadSnapshots()]);
+  S.loaded = true;
+}
+
+async function sessionFor(id) {
+  if (!id) return null;
+  const live = S.sessions.find((s) => s.id === id);
+  if (live) return live;
+  if (S.sessionCache.has(id)) return S.sessionCache.get(id);
+  S.sessionCache.set(id, null);
+  try {
+    const s = await call(() => vicoa.sessions.get(id));
+    S.sessionCache.set(id, s);
+  } catch (e) {
+    S.missing.add(id);
+  }
+  scheduleRender();
+  return null;
+}
+const cachedSession = (id) => S.sessions.find((s) => s.id === id) || S.sessionCache.get(id) || null;
+
+// --- derived ----------------------------------------------------------------
+
+const projectById = (id) => S.projects.find((p) => p.id === id) || null;
+const needsFor = (pid) => S.needs.filter((t) => t.projectId === pid);
+
+function visibleProjects() {
+  const wanted = (S.settings.projects || []).map((x) => String(x).toLowerCase());
+  if (wanted.length) {
+    return wanted.map((w) => S.projects.find((p) => (p.key || '').toLowerCase() === w || p.name.toLowerCase() === w)).filter(Boolean);
+  }
+  const runsToday = new Set();
+  for (const s of S.sessions) if (s.projectId) runsToday.add(s.projectId);
+  const shown = S.projects.filter((p) => needsFor(p.id).length || runsToday.has(p.id) || S.snapshots.has(p.id));
+  return shown.sort((a, b) => needsFor(b.id).length - needsFor(a.id).length || (Date.parse(b.lastActivityAt || 0) - Date.parse(a.lastActivityAt || 0)));
+}
+
+function laneOf(a) {
+  const lanes = S.settings.lanes || {};
+  return lanes[a.id] || lanes[a.title] || null;
+}
+
+/** Runs of a project's automations, newest first, with their automation. */
+function projectRuns(pid, lane, sinceDays) {
+  const out = [];
+  const cutoff = Date.now() - (sinceDays || 7) * DAY;
+  for (const a of S.automations) {
+    if (projectOf(a) !== pid) continue;
+    if (lane !== undefined && (laneOf(a) || null) !== lane) continue;
+    for (const r of S.runs.get(a.id) || []) if (Date.parse(r.firedAt) >= cutoff && r.status === 'fired') out.push({ a, r });
+  }
+  return out.sort((x, y) => Date.parse(y.r.firedAt) - Date.parse(x.r.firedAt));
+}
+
+/**
+ * Runs in the last day, newest first: every automation run (including ones
+ * that continue a long-lived session), plus, with "All sessions", every
+ * session started in that time.
+ */
+function overviewRuns() {
+  const cutoff = Date.now() - DAY;
+  const out = [];
+  const seen = new Set();
+  for (const a of S.automations) {
+    for (const r of S.runs.get(a.id) || []) {
+      if (r.status !== 'fired' || !r.sessionId || Date.parse(r.firedAt) < cutoff) continue;
+      out.push({ id: r.sessionId, at: r.firedAt, who: a.title, fallback: a.title });
+      seen.add(r.sessionId);
+    }
+  }
+  if (S.settings.runsScope === 'all') {
+    for (const s of S.sessions) if (!seen.has(s.id)) out.push({ id: s.id, at: s.startedAt, who: s.agent || '', fallback: s.name || '' });
+  }
+  return out.sort((x, y) => Date.parse(y.at) - Date.parse(x.at));
+}
+
+// --- rendering -----------------------------------------------------------------
+
+const app = document.getElementById('app');
+let renderQueued = false;
+function scheduleRender() { if (!renderQueued) { renderQueued = true; requestAnimationFrame(() => { renderQueued = false; render(); }); } }
+
+function taskRow(t, ids, showProject) {
+  const chips = [];
+  if (t.priority === 'urgent') chips.push('<span class="chip bad">Urgent</span>');
+  else if (t.priority === 'high') chips.push('<span class="chip">High</span>');
+  if (t.status === 'blocked') chips.push('<span class="chip warn">Blocked</span>');
+  if (t.dueDate) {
+    const due = Date.parse(t.dueDate);
+    if (due < startOfDay(Date.now())) chips.push('<span class="chip bad">' + ICON.bad + ' Overdue ' + esc(fmtDay(t.dueDate)) + '</span>');
+    else if (due - Date.now() < 3 * DAY) chips.push('<span class="chip warn">Due ' + esc(fmtDay(t.dueDate)) + '</span>');
+    else chips.push('<span class="chip">Due ' + esc(fmtDay(t.dueDate)) + '</span>');
+  }
+  const p = projectById(t.projectId);
+  const first = (t.description || '').split('\n').map((l) => l.replace(/[#>*`_]/g, '').trim()).find(Boolean) || '';
+  const meta = [t.identifier, showProject && p ? p.name : null, first].filter(Boolean).map(esc).join(' · ');
+  const on = S.open && S.open.kind === 'task' && S.open.id === t.id ? ' on' : '';
+  return '<div class="item' + on + '" data-act="task" data-id="' + esc(t.id) + '" data-list="' + esc(ids) + '"><div class="body">' +
+    '<div class="t"><span class="txt">' + esc(t.title) + '</span>' + chips.join('') + '</div>' +
+    '<div class="m">' + meta + '</div></div></div>';
+}
+
+function needsBox(tasks, showProject) {
+  if (!tasks.length) return '<div class="box"><div class="empty">Nothing needs you. Tasks labeled ' + esc(S.settings.needsLabel || 'needs-human') + ' show up here.</div></div>';
+  const ids = tasks.map((t) => t.id).join(',');
+  return '<div class="box">' + tasks.map((t) => taskRow(t, ids, showProject)).join('') + '</div>';
+}
+
+/** One run: its time, how it ended, and the first sentence of its report. */
+function runRow(id, who, ids, at, fallback) {
+  const s = id ? cachedSession(id) : null;
+  if (id && !s && !S.missing.has(id)) void sessionFor(id);
+  const on = S.open && S.open.kind === 'session' && S.open.id === id ? ' on' : '';
+  const result = s ? (firstSentence(s.lastMessage) || s.name || 'No report yet') : S.missing.has(id) || !id ? (fallback || 'Session unavailable') : 'Loading…';
+  const meta = [who, s ? duration(s) : null].filter(Boolean).map(esc).join(' · ');
+  return '<div class="item' + on + '"' + (id ? ' data-act="session" data-id="' + esc(id) + '" data-list="' + esc(ids) + '"' : '') + '>' +
+    '<span class="time">' + esc(fmtTime(at || (s && s.startedAt))) + '</span><span class="st">' + (s ? sessionIcon(s) : ICON.todo) + '</span>' +
+    '<div class="body"><div class="t"><span class="txt">' + esc(result) + '</span></div><div class="m">' + meta + '</div></div></div>';
+}
+
+function listWithMore(key, rows, limit) {
+  const open = S.expanded.has(key);
+  return { rows: open ? rows : rows.slice(0, limit), more: rows.length > limit ? '<button class="link" data-act="more" data-key="' + esc(key) + '">' + (open ? 'Fewer' : 'All ' + rows.length) + '</button>' : '' };
+}
+
+function comingUp(pid) {
+  const now = Date.now();
+  const list = S.automations
+    .filter((a) => a.enabled && a.nextRunAt && Date.parse(a.nextRunAt) > now && (!pid || projectOf(a) === pid))
+    .sort((a, b) => Date.parse(a.nextRunAt) - Date.parse(b.nextRunAt))
+    .slice(0, 6);
+  if (!list.length) return '<div class="box"><div class="empty">No scheduled runs.</div></div>';
+  return '<div class="box">' + list.map((a) => {
+    const p = projectById(projectOf(a));
+    return '<div class="item" data-act="automations"><span class="date">' + esc(fmtWhen(a.nextRunAt)) + '</span><div class="body"><div class="t"><span class="txt">' + esc(a.title) + '</span></div>' +
+      (p && !pid ? '<div class="m">' + esc(p.name) + '</div>' : '') + '</div></div>';
+  }).join('') + '</div>';
+}
+
+function watchItems(pid) {
+  const items = [];
+  const week = Date.now() - 7 * DAY;
+  for (const a of S.automations) {
+    if (pid && projectOf(a) !== pid) continue;
+    if (!a.lastRunAt || Date.parse(a.lastRunAt) < week) continue;
+    if (a.lastRunStatus === 'missed_offline') items.push({ tone: 'warn', text: a.title + ' missed', detail: 'Machine offline at ' + fmtWhen(a.lastRunAt) });
+    else if (a.lastRunStatus === 'failed') items.push({ tone: 'bad', text: a.title + ' failed to start', detail: fmtWhen(a.lastRunAt) });
+  }
+  for (const p of S.projects) {
+    if (pid && p.id !== pid) continue;
+    const snap = S.snapshots.get(p.id);
+    if (snap && snap.error) items.push({ tone: 'warn', text: p.name + ': snapshot unreadable', detail: snap.error });
+    for (const f of (snap && snap.data && snap.data.flags) || []) items.push({ tone: f.tone || 'warn', text: (pid ? '' : p.name + ': ') + (f.text || ''), detail: f.detail || '' });
+  }
+  return items;
+}
+
+function watchBox(pid) {
+  const items = watchItems(pid);
+  if (!items.length) return '<div class="box"><div class="empty">Nothing to watch.</div></div>';
+  return '<div class="box">' + items.map((w) => '<div class="item static"><span class="st">' + (TONE_ICON[w.tone] || ICON.warn) + '</span><div class="body"><div class="t"><span class="txt">' + esc(w.text) + '</span></div>' +
+    (w.detail ? '<div class="m">' + esc(w.detail) + '</div>' : '') + '</div></div>').join('') + '</div>';
+}
+
+function projectCard(p) {
+  const n = needsFor(p.id).length;
+  const snap = S.snapshots.get(p.id);
+  const d = snap && snap.data;
+  const h = d && (d.card || d.headline);
+  let body;
+  if (h) {
+    const v = value(h.value);
+    body = '<div class="label">' + esc(h.label || '') + '</div>' +
+      '<div class="big' + (v ? '' : ' unknown') + '">' + esc(v || 'Unknown') + spark(h.series) + '</div>' +
+      progress(h.goal) + note(h.note);
+  } else {
+    const runs = S.sessions.filter((s) => s.projectId === p.id).length;
+    body = '<div class="label">Agent runs today</div><div class="big">' + runs + '</div>' +
+      '<div class="note muted">' + ICON.info + '<span>' + (snap && snap.error ? 'Snapshot ' + esc(snap.error) : 'No snapshot yet') + '</span></div>';
+  }
+  return '<button class="card" data-act="project" data-id="' + esc(p.id) + '"><div class="top">' + esc(p.name) +
+    '<span class="for">' + ICON.user + (n ? n + ' for you' : 'None') + '</span></div>' + body +
+    (d && d.asOf ? '<div class="asof">As of ' + esc(fmtWhen(d.asOf)) + '</div>' : '') + '</button>';
+}
+
+function renderOverview() {
+  const needs = S.needs;
+  const doneToday = S.handled.filter((t) => Date.parse(t.updatedAt) >= startOfDay(Date.now())).length;
+  const total = needs.length + doneToday;
+  const due = needs.filter((t) => t.dueDate).sort((a, b) => Date.parse(a.dueDate) - Date.parse(b.dueDate))[0];
+  const oldest = needs.slice().sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))[0];
+  let sub = '';
+  if (due) sub = 'Next due: ' + esc(due.title) + ', ' + esc(fmtDay(due.dueDate)) + '.';
+  else if (oldest) { const days = Math.floor((Date.now() - Date.parse(oldest.createdAt)) / DAY); sub = days >= 1 ? 'The oldest has waited ' + days + (days === 1 ? ' day.' : ' days.') : 'All of them came in today.'; }
+  const headline = needs.length === 0 ? 'Nothing needs you.' : needs.length === 1 ? '1 thing needs you.' : needs.length + ' things need you.';
+
+  const runs = overviewRuns();
+  const runIds = runs.map((x) => x.id).join(',');
+  const runList = listWithMore('runs', runs, 8);
+  const projects = visibleProjects();
+
+  return '<div class="hero"><div><h1>' + headline + '</h1>' + (sub ? '<p>' + sub + '</p>' : '') + '</div>' +
+    (total ? '<div class="today"><div class="bar good"><i style="width:' + (total ? (doneToday / total) * 100 : 0).toFixed(1) + '%"></i></div>' + doneToday + ' of ' + total + ' done today</div>' : '') + '</div>' +
+    (projects.length ? '<div class="sec">Projects</div><div class="cards">' + projects.map(projectCard).join('') + '</div>' : '') +
+    '<div class="split"><div class="main">' +
+      '<div class="sec">Needs you' + (needs.length ? ', ' + needs.length : '') + '</div>' + needsBox(needs, true) +
+      '<div class="sec">Agent runs, last 24 h<span class="grow"></span>' +
+        '<button class="link" data-act="scope">' + (S.settings.runsScope === 'all' ? 'Automations only' : 'All sessions') + '</button>' + runList.more + '</div>' +
+      (runs.length ? '<div class="box">' + runList.rows.map((x) => runRow(x.id, x.who, runIds, x.at, x.fallback)).join('') + '</div>'
+        : '<div class="box"><div class="empty">' + (S.settings.runsScope === 'all' ? 'No sessions in the last day.' : 'No automation runs in the last day.') + '</div></div>') +
+    '</div><div class="side">' +
+      '<div class="sec">Coming up</div>' + comingUp(null) +
+      '<div class="sec">Watch</div>' + watchBox(null) +
+    '</div></div>';
+}
+
+function groupHtml(g) {
+  const items = g.items || [];
+  if (g.layout === 'row') {
+    return '<div class="sec">' + esc(g.title || '') + '</div><div class="box rowbox">' + items.map((it) =>
+      '<div class="cell"' + (it.url ? ' data-act="url" data-url="' + esc(it.url) + '" style="cursor:pointer"' : '') + '><div class="t">' + (STATE_ICON[it.state] || '') + esc(it.title || '') + '</div><div class="m">' + esc(it.detail || '') + '</div></div>'
+    ).join('') + '</div>';
+  }
+  return '<div class="sec">' + esc(g.title || '') + (g.aside ? '<span class="grow"></span><span>' + esc(g.aside) + '</span>' : '') + '</div><div class="box">' + (items.length ? items.map((it) =>
+    '<div class="item' + (it.url ? '' : ' static') + '"' + (it.url ? ' data-act="url" data-url="' + esc(it.url) + '"' : '') + '><span class="st">' + (STATE_ICON[it.state] || ICON.todo) + '</span><div class="body"><div class="t"><span class="txt">' + esc(it.title || '') + '</span>' +
+    (it.date ? '<span class="grow"></span><span class="muted" style="margin-left:auto;font-size:12px">' + esc(it.date) + '</span>' : '') + '</div>' +
+    (it.detail ? '<div class="m">' + esc(it.detail) + '</div>' : '') + '</div></div>'
+  ).join('') : '<div class="empty">None.</div>') + '</div>';
+}
+
+function laneHtml(p, lane, title, section) {
+  const runs = projectRuns(p.id, lane);
+  const key = 'lane:' + p.id + ':' + lane;
+  const list = listWithMore(key, runs, 3);
+  const ids = runs.map((x) => x.r.sessionId).filter(Boolean).join(',');
+  const summary = section && section.summary ? '<span>' + esc(section.summary) + '</span>' : '';
+  return '<div class="lane"><h2>' + esc(title) + summary + '</h2>' +
+    ((section && section.groups) || []).map(groupHtml).join('') +
+    '<div class="sec">Latest runs<span class="grow"></span>' + list.more + '</div>' +
+    (runs.length ? '<div class="box">' + list.rows.map((x) => runRow(x.r.sessionId, x.a.title, ids, x.r.firedAt, x.a.title)).join('') + '</div>'
+      : '<div class="box"><div class="empty">No ' + esc(title.toLowerCase()) + ' runs this week. Put an automation in this column below.</div></div>') +
+    '</div>';
+}
+
+function columnsBox(p) {
+  const mine = S.automations.filter((a) => projectOf(a) === p.id);
+  if (!mine.length) return '';
+  return '<div class="sec">Automation columns<span class="grow"></span><span>where each automation’s runs show</span></div><div class="box">' + mine.map((a) => {
+    const lane = laneOf(a);
+    return '<div class="item static"><div class="body"><div class="t"><span class="txt">' + esc(a.title) + '</span></div><div class="m">' +
+      (a.nextRunAt ? 'Next ' + esc(fmtWhen(a.nextRunAt)) : a.enabled ? 'Not scheduled' : 'Off') + '</div></div>' +
+      '<span class="seg">' + LANES.map(([id, label]) => '<button class="' + (lane === id ? 'on' : '') + '" data-act="lane" data-id="' + esc(a.id) + '" data-lane="' + id + '">' + label + '</button>').join('') +
+      '<button class="' + (lane ? '' : 'on') + '" data-act="lane" data-id="' + esc(a.id) + '" data-lane="">None</button></span></div>';
+  }).join('') + '</div>';
+}
+
+function metricsHtml(d) {
+  const h = d.headline;
+  const cards = [];
+  if (h) {
+    const v = value(h.value);
+    cards.push('<div class="card hl"><div class="label" style="margin-top:0">' + esc(h.label || '') + '</div><div class="big' + (v ? '' : ' unknown') + '">' + esc(v || 'Unknown') + '</div>' + progress(h.goal) + note(h.note) + '</div>');
+  }
+  for (const m of d.metrics || []) {
+    const v = value(m.value);
+    cards.push('<div class="card"><div class="label" style="margin-top:0">' + esc(m.label || '') + '</div><div class="big' + (v ? '' : ' unknown') + '" style="font-size:22px">' + esc(v || 'Unknown') + '</div>' +
+      (m.note ? '<div class="sub">' + esc(typeof m.note === 'string' ? m.note : m.note.text) + '</div>' : '') + (m.series ? '<div class="trend">' + spark(m.series) + '</div>' : '') + '</div>');
+  }
+  return cards.length ? '<div class="metrics">' + cards.join('') + '</div>' : '';
+}
+
+function renderProjectOverview(p) {
+  const snap = S.snapshots.get(p.id);
+  const d = (snap && snap.data) || {};
+  const needs = needsFor(p.id);
+  const other = projectRuns(p.id, null);
+  const opsRuns = projectRuns(p.id, 'ops');
+  const opsItems = (d.ops || []).map((o) => '<span>' + (TONE_ICON[(o && o.tone) || 'info'] || ICON.info) + esc(typeof o === 'string' ? o : o.text) + '</span>');
+  if (opsRuns.length || other.length) {
+    const parts = [];
+    if (opsRuns.length) parts.push('Ops: ' + opsRuns.length + (opsRuns.length === 1 ? ' run' : ' runs') + ' in 7 days');
+    if (other.length) parts.push(other.length + ' more not in a column');
+    opsItems.unshift('<span>' + ICON.clock + esc(parts.join(' · ')) + '</span>');
+  }
+  return (snap && snap.data ? metricsHtml(d) : '<div class="box"><div class="empty">' +
+      (snap && snap.error ? 'This project’s snapshot couldn’t be read: ' + esc(snap.error) + '.' : 'No numbers yet. Add <code>' + SNAPSHOT + '</code> in this project’s folder to show them here (see the plugin’s README).') + '</div></div>') +
+    '<div class="sec">Needs you' + (needs.length ? ', ' + needs.length : '') + '</div>' + needsBox(needs, false) +
+    '<div class="cols">' + laneHtml(p, 'build', 'Build', d.build) + laneHtml(p, 'growth', 'Growth', d.growth) + '</div>' +
+    (opsItems.length ? '<div class="ops">' + opsItems.join('') + '</div>' : '') +
+    '<div class="split" style="margin-top:4px"><div>' + columnsBox(p) + '</div><div class="side"><div class="sec">Coming up</div>' + comingUp(p.id) +
+    (watchItems(p.id).length ? '<div class="sec">Watch</div>' + watchBox(p.id) : '') + '</div></div>';
+}
+
+function renderWeek(p) {
+  const today = startOfDay(Date.now());
+  const days = [];
+  for (let i = -6; i <= 3; i++) days.push(today + i * DAY);
+  const runs = projectRuns(p.id, undefined, 8);
+  const ids = runs.map((x) => x.r.sessionId).filter(Boolean).join(',');
+  const cell = (day, lanes) => {
+    const key = dayKey(day);
+    const past = runs.filter((x) => dayKey(Date.parse(x.r.firedAt)) === key && lanes.includes(laneOf(x.a) || null));
+    const planned = S.automations.filter((a) => projectOf(a) === p.id && a.enabled && a.nextRunAt && dayKey(Date.parse(a.nextRunAt)) === key && Date.parse(a.nextRunAt) > Date.now() && lanes.includes(laneOf(a) || null));
+    past.forEach((x) => { if (x.r.sessionId && !cachedSession(x.r.sessionId) && !S.missing.has(x.r.sessionId)) void sessionFor(x.r.sessionId); });
+    return '<div>' + past.map((x) => { const s = cachedSession(x.r.sessionId); return '<div class="ev" data-act="session" data-id="' + esc(x.r.sessionId || '') + '" data-list="' + esc(ids) + '"><span class="muted">' + fmtTime(x.r.firedAt) + '</span><span class="x" title="' + esc(s ? firstSentence(s.lastMessage) : x.a.title) + '">' + esc(s ? firstSentence(s.lastMessage) || x.a.title : x.a.title) + '</span></div>'; }).join('') +
+      planned.map((a) => '<div class="ev plan">' + ICON.clock + '<span class="muted">' + fmtTime(a.nextRunAt) + '</span><span class="x">' + esc(a.title) + '</span></div>').join('') + '</div>';
+  };
+  return '<p class="muted" style="margin:0 0 12px">Past days show what each run reported; days ahead show what is scheduled.</p>' +
+    '<div class="week"><div class="h"></div><div class="h">Build</div><div class="h">Growth</div><div class="h">Ops and other</div>' +
+    days.map((day) => '<div class="d' + (day === today ? ' today' : '') + '">' + (day === today ? 'Today' : esc(fmtDay(day))) + '</div>' + cell(day, ['build']) + cell(day, ['growth']) + cell(day, ['ops', null])).join('') +
+    '</div>';
+}
+
+let lastHeader = '';
+function setHeader(h) {
+  const key = JSON.stringify(h);
+  if (key === lastHeader) return;
+  lastHeader = key;
+  vicoa.ui.setHeader(h).catch(() => {});
+}
+
+function render() {
+  if (!S.loaded) return;
+  const r = S.route;
+  const p = r.view === 'project' ? projectById(r.projectId) : null;
+  if (r.view === 'project' && p) {
+    const snap = S.snapshots.get(p.id);
+    setHeader({
+      title: 'Dashboard',
+      crumbs: [{ id: p.id, label: p.name }],
+      tabs: [{ id: 'overview', label: 'Overview' }, { id: 'week', label: 'Week' }],
+      activeTab: r.tab,
+      subtitle: snap && snap.data && snap.data.asOf ? 'As of ' + fmtWhen(snap.data.asOf) : '',
+      actions: [{ id: 'new-session', label: 'New session', icon: 'plus' }],
+    });
+    app.innerHTML = r.tab === 'week' ? renderWeek(p) : renderProjectOverview(p);
+  } else {
+    setHeader({ title: 'Dashboard', subtitle: 'Numbers from each project’s snapshot · tasks and runs live' });
+    app.innerHTML = renderOverview();
+  }
+}
+
+// --- navigation & events ----------------------------------------------------
+
+function parseRoute(path) {
+  const q = new URLSearchParams(String(path || '').replace(/^\?/, ''));
+  const pid = q.get('p');
+  return pid ? { view: 'project', projectId: pid, tab: q.get('tab') === 'week' ? 'week' : 'overview' } : { view: 'overview', projectId: null, tab: 'overview' };
+}
+
+function go(route) {
+  S.route = route;
+  const q = route.view === 'project' ? '?p=' + encodeURIComponent(route.projectId) + (route.tab === 'week' ? '&tab=week' : '') : '';
+  vicoa.route.set(q).catch(() => {});
+  render();
+  window.scrollTo(0, 0);
+}
+
+app.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const act = el.dataset.act;
+  const ids = (el.dataset.list || '').split(',').filter(Boolean);
+  if (act === 'task') vicoa.open.task(el.dataset.id, { siblings: ids });
+  else if (act === 'session' && el.dataset.id) vicoa.open.session(el.dataset.id, { siblings: ids });
+  else if (act === 'project') go({ view: 'project', projectId: el.dataset.id, tab: 'overview' });
+  else if (act === 'more') { const k = el.dataset.key; if (S.expanded.has(k)) S.expanded.delete(k); else S.expanded.add(k); render(); }
+  else if (act === 'url') vicoa.open.url(el.dataset.url).catch(() => {});
+  else if (act === 'automations') vicoa.open.url('/dashboard/automation').catch(() => {});
+  else if (act === 'scope') {
+    const next = S.settings.runsScope === 'all' ? 'automations' : 'all';
+    vicoa.settings.set({ runsScope: next }).then((v) => { S.settings = v; return loadLive(); }).then(render).catch((err) => vicoa.log.warn(err));
+  } else if (act === 'lane') {
+    const lanes = Object.assign({}, S.settings.lanes || {});
+    if (el.dataset.lane) lanes[el.dataset.id] = el.dataset.lane; else delete lanes[el.dataset.id];
+    S.settings = Object.assign({}, S.settings, { lanes });
+    render();
+    vicoa.settings.set({ lanes }).catch((err) => { vicoa.ui.toast('Couldn’t save the column', { kind: 'error' }); vicoa.log.warn(err); });
+  }
+});
+
+vicoa.events.on('header', (e) => {
+  if (e.type === 'title') go({ view: 'overview', projectId: null, tab: 'overview' });
+  else if (e.type === 'tab') go({ view: 'project', projectId: S.route.projectId, tab: e.id });
+  else if (e.type === 'action' && e.id === 'refresh') refresh(true);
+  else if (e.type === 'action' && e.id === 'new-session') {
+    const p = projectById(S.route.projectId);
+    const dir = p ? projectDirs(p)[0] : undefined;
+    vicoa.open.newSession(dir ? { projectId: p.id, machineId: S.ctx.machineId, directory: dir } : { projectId: p && p.id });
+  }
+});
+
+vicoa.route.onChange((path) => { S.route = parseRoute(path); render(); });
+
+// Highlight what the host panel shows; something may have been handed back.
+vicoa.events.on('panel', (p) => {
+  S.open = p && p.kind ? p : null;
+  render();
+  loadLive().then(render).catch(() => {});
+});
+
+vicoa.settings.onChange((v) => { S.settings = v; render(); });
+
+let refreshing = false;
+async function refresh(all) {
+  if (refreshing) return;
+  refreshing = true;
+  try {
+    if (all) { S.sessionCache.clear(); await loadAll(); } else { await loadLive(); }
+    render();
+  } catch (err) { vicoa.log.warn('refresh failed', err); }
+  finally { refreshing = false; }
+}
+
+vicoa.events.on('visibility', (v) => { if (v && v.visible) refresh(false); });
+setInterval(() => { if (document.visibilityState === 'visible') refresh(false); }, 60000);
+
+S.route = parseRoute(vicoa.route.get());
+loadAll().then(render).catch((err) => {
+  app.innerHTML = '<div class="box"><div class="empty">Couldn’t load the dashboard: ' + esc(err && err.message) + '</div></div>';
+  vicoa.log.error(err);
+});
+</script>
+</body>
+</html>

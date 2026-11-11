@@ -1,0 +1,44 @@
+{
+  "asOf": "2026-11-08T08:00:00Z",
+  "headline": {
+    "label": "Monthly revenue",
+    "value": "$1,240",
+    "goal": { "label": "$5k", "progress": 0.25, "by": "by Mar 31" },
+    "note": { "text": "Up $80 since last month", "tone": "good" }
+  },
+  "metrics": [
+    { "label": "Paying users", "value": "62", "note": "6 new this week", "series": [51, 54, 55, 58, 60, 62] },
+    { "label": "Signups, 7 days", "value": "140", "series": [120, 131, 128, 140] },
+    { "label": "Churn, 30 days", "value": null, "note": "Unknown: the export failed" }
+  ],
+  "build": {
+    "summary": "2.3 in review",
+    "groups": [
+      {
+        "title": "Releases",
+        "layout": "row",
+        "items": [
+          { "title": "2.2", "detail": "Live since Oct 30", "state": "done" },
+          { "title": "2.3", "detail": "In review", "state": "active" },
+          { "title": "2.4", "detail": "Planned for Dec", "state": "todo" }
+        ]
+      },
+      {
+        "title": "Waiting",
+        "items": [{ "title": "Offline sync", "detail": "Waits for the design review", "state": "paused", "date": "Nov 12" }]
+      }
+    ]
+  },
+  "growth": {
+    "summary": "1 experiment running",
+    "groups": [
+      {
+        "title": "Experiments",
+        "aside": "read",
+        "items": [{ "title": "Pricing page copy, variant B", "state": "active", "date": "Nov 14" }]
+      }
+    ]
+  },
+  "ops": [{ "text": "Backups OK", "tone": "good" }],
+  "flags": [{ "text": "Certificate expires in 12 days", "tone": "warn" }]
+}

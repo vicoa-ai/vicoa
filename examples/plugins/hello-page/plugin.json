@@ -1,0 +1,18 @@
+{
+  "id": "hello-page",
+  "apiVersion": 2,
+  "name": "Hello Page",
+  "description": "A small plugin page: your open tasks and recent sessions, drawn by the plugin itself.",
+  "author": "Vicoa",
+  "permissions": ["tasks:read", "sessions:read"],
+  "settings": {
+    "limit": { "type": "number", "default": 8, "title": "Rows per list" },
+    "greeting": { "type": "string", "default": "Hello", "title": "Greeting", "scope": "device" }
+  },
+  "surfaces": [
+    { "id": "home", "kind": "page", "title": "Hello Page", "entry": "pages/index.html", "icon": "sparkles" }
+  ],
+  "sidebarItems": [
+    { "id": "open", "label": "Hello Page", "icon": "sparkles", "action": { "type": "surface", "surfaceId": "home" } }
+  ]
+}
