@@ -6,11 +6,12 @@ from unittest.mock import patch, Mock
 
 import pytest
 from fastapi import BackgroundTasks
-from sqlalchemy import event
+from sqlalchemy import event, insert
 
 from backend.auth.dependencies import get_current_user
 from shared.auth.tokens import TokenClaims
 from shared.database import users as users_module
+from shared.database.users import ensure_local_user
 from shared.database.models import User, APIKey
 
 
@@ -304,6 +305,70 @@ class TestAuthPathIsReadOnly:
         assert user.id == test_user.id
         assert writes == [], f"auth path must not write: {writes}"
         assert background_tasks.tasks == [], "existing user must not be welcomed again"
+
+
+class TestEnsureLocalUser:
+    """The first request of a signed-in user creates their `users` row; the row
+    is keyed on the auth id but `email` is unique too, so two identities for
+    one address (a second provider, a recreated auth user) can meet there."""
+
+    def test_creates_the_row_once(self, test_db):
+        user_id = uuid4()
+        user, created = ensure_local_user(
+            test_db, user_id, email="ada@example.com", display_name="Ada"
+        )
+        assert user is not None and user.id == user_id
+        assert created is True
+
+        again, created_again = ensure_local_user(
+            test_db, user_id, email="ada@example.com", display_name="Ada"
+        )
+        assert again is not None and again.id == user_id
+        assert created_again is False
+
+    def test_no_email_and_no_row_creates_nothing(self, test_db):
+        assert ensure_local_user(test_db, uuid4(), email=None) == (None, False)
+
+    def test_known_email_under_another_id_returns_that_row(self, test_db, test_user):
+        user, created = ensure_local_user(test_db, uuid4(), email=test_user.email)
+        assert user is not None and user.id == test_user.id
+        assert created is False
+
+    @pytest.mark.committed_db  # the rival is a second connection with a real COMMIT
+    @pytest.mark.parametrize("same_identity", [False, True])
+    def test_row_committed_between_the_reads_and_the_insert(
+        self, test_db, test_engine, same_identity
+    ):
+        """The reads find nothing, then a rival commits a row with that email
+        before our INSERT runs. Another identity used to make the INSERT raise
+        `users_email_key` (a 500 on the first request); a concurrent request of
+        the same identity was already absorbed by the id conflict. Either way
+        the caller gets the row that exists and is not told it created it."""
+        new_id = uuid4()
+        rival_id = new_id if same_identity else uuid4()
+        email = "ada@example.com"
+        rival_done: list[bool] = []
+
+        def rival_commits_first(conn, cursor, statement, parameters, context, many):
+            if rival_done or not statement.lstrip().upper().startswith(
+                "INSERT INTO USERS"
+            ):
+                return
+            rival_done.append(True)
+            with test_engine.begin() as other:
+                other.execute(insert(User).values(id=rival_id, email=email))
+
+        event.listen(test_engine, "before_cursor_execute", rival_commits_first)
+        try:
+            user, created = ensure_local_user(test_db, new_id, email=email)
+        finally:
+            event.remove(test_engine, "before_cursor_execute", rival_commits_first)
+
+        assert rival_done, "the test never opened the race window"
+        assert user is not None and user.id == rival_id
+        assert user.email == email
+        assert created is False
+        assert test_db.query(User).filter(User.email == email).count() == 1
 
 
 class TestDisplayNameBackfill:
