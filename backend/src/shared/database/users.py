@@ -37,7 +37,9 @@ def ensure_local_user(
     Preserves the email-fallback semantic from the original JIT helpers: if
     a row with the same email but a different id exists (Supabase auth.users
     was recreated after a delete or via a different provider), the existing
-    row is returned rather than creating a new one.
+    row is returned rather than creating a new one. That holds when the other
+    row appears between the email check and the INSERT too: the INSERT then
+    does nothing and the row holding the email is returned with created=False.
     """
     existing = db.query(User).filter(User.id == user_id).first()
     if existing:
@@ -50,10 +52,13 @@ def ensure_local_user(
     else:
         return None, False
 
+    # No conflict target: DO NOTHING covers every unique constraint on users,
+    # the id (a concurrent first request for this same user) and the email
+    # (another id took the address after the check above), so neither raises.
     stmt = (
         insert(User)
         .values(id=user_id, email=email, display_name=display_name)
-        .on_conflict_do_nothing(index_elements=["id"])
+        .on_conflict_do_nothing()
     )
     # ON CONFLICT DO NOTHING inserts one row or zero, so rowcount is what tells
     # this caller whether it won the race to create the user.
@@ -61,6 +66,22 @@ def ensure_local_user(
     db.commit()
 
     user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        # Nothing was inserted and no row has our id, so the conflict was the
+        # email: return the row that holds it, like the early check does.
+        user = db.query(User).filter(User.email == email).first()
+        if user is None:
+            # The insert did nothing, yet neither the id nor the email is on
+            # file: some other unique constraint took the conflict (one added
+            # later), or the rival row was deleted in the meantime. The caller
+            # answers "user resolution failed"; with the target gone the
+            # IntegrityError no longer says why, so say it here. Id only, no
+            # email, in the log.
+            logger.warning(
+                "ensure_local_user: insert for %s did nothing and no row holds "
+                "its id or its email",
+                user_id,
+            )
     return user, created and user is not None
 
 
