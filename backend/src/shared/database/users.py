@@ -70,6 +70,18 @@ def ensure_local_user(
         # Nothing was inserted and no row has our id, so the conflict was the
         # email: return the row that holds it, like the early check does.
         user = db.query(User).filter(User.email == email).first()
+        if user is None:
+            # The insert did nothing, yet neither the id nor the email is on
+            # file: some other unique constraint took the conflict (one added
+            # later), or the rival row was deleted in the meantime. The caller
+            # answers "user resolution failed"; with the target gone the
+            # IntegrityError no longer says why, so say it here. Id only, no
+            # email, in the log.
+            logger.warning(
+                "ensure_local_user: insert for %s did nothing and no row holds "
+                "its id or its email",
+                user_id,
+            )
     return user, created and user is not None
 
 

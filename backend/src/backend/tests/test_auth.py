@@ -1,12 +1,13 @@
 """Tests for authentication endpoints."""
 
+import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 from unittest.mock import patch, Mock
 
 import pytest
 from fastapi import BackgroundTasks
-from sqlalchemy import event, insert
+from sqlalchemy import delete, event, insert
 
 from backend.auth.dependencies import get_current_user
 from shared.auth.tokens import TokenClaims
@@ -337,7 +338,7 @@ class TestEnsureLocalUser:
     @pytest.mark.committed_db  # the rival is a second connection with a real COMMIT
     @pytest.mark.parametrize("same_identity", [False, True])
     def test_row_committed_between_the_reads_and_the_insert(
-        self, test_db, test_engine, same_identity
+        self, test_db, test_engine, same_identity, caplog
     ):
         """The reads find nothing, then a rival commits a row with that email
         before our INSERT runs. Another identity used to make the INSERT raise
@@ -369,6 +370,49 @@ class TestEnsureLocalUser:
         assert user.email == email
         assert created is False
         assert test_db.query(User).filter(User.email == email).count() == 1
+        # Finding the row is the expected outcome here, nothing to warn about.
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+    @pytest.mark.committed_db  # the rival is a second connection with a real COMMIT
+    def test_a_conflict_nothing_can_read_back_is_logged(
+        self, test_db, test_engine, caplog
+    ):
+        """The INSERT does nothing, yet neither the id nor the email is on file
+        afterwards. That is what a conflict on some other unique constraint
+        looks like (one added later); here a rival commits the email and is
+        deleted before the reads stand in for it. The caller gets
+        `(None, False)` and the log says why, with the id and without the
+        email, because the IntegrityError no longer does."""
+        new_id, rival_id = uuid4(), uuid4()
+        email = "ada@example.com"
+        steps: list[str] = []
+
+        def rival_comes_and_goes(conn, cursor, statement, parameters, context, many):
+            sql = statement.lstrip().upper()
+            if not steps and sql.startswith("INSERT INTO USERS"):
+                steps.append("inserted")
+                with test_engine.begin() as other:
+                    other.execute(insert(User).values(id=rival_id, email=email))
+            elif steps == ["inserted"] and sql.startswith("SELECT"):
+                steps.append("deleted")
+                with test_engine.begin() as other:
+                    other.execute(delete(User).where(User.id == rival_id))
+
+        event.listen(test_engine, "before_cursor_execute", rival_comes_and_goes)
+        try:
+            with caplog.at_level(logging.WARNING, logger=users_module.logger.name):
+                result = ensure_local_user(test_db, new_id, email=email)
+        finally:
+            event.remove(test_engine, "before_cursor_execute", rival_comes_and_goes)
+
+        assert steps == ["inserted", "deleted"], "the race window was not opened"
+        assert result == (None, False)
+        warnings = [
+            r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+        ]
+        assert len(warnings) == 1
+        assert str(new_id) in warnings[0]
+        assert email not in warnings[0]
 
 
 class TestDisplayNameBackfill:
