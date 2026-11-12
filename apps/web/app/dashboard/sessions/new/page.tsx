@@ -592,6 +592,34 @@ function NewSessionContent() {
 
   const currentMachine = machines.find((m) => m.machine_id === selectedMachineId) || null;
 
+  // Map the worktree selection onto the spawn directory + optional param.
+  // The folder's part below the repo root (a monorepo session at
+  // `repo/apps/web`) carries into the worktree, so the checkout and the
+  // folder stay orthogonal; the daemon's main path is the authority on
+  // where the root is, a linked project folder the fallback.
+  const currentHomeDir = currentMachine?.home_dir;
+  const worktreeSpawn = useMemo(() => {
+    const base = directory.trim();
+    const subpath =
+      (repoListing?.mainPath ? relativeSubpath(base, repoListing.mainPath, currentHomeDir) : null) ??
+      resolveProjectForDirectory(base, selectedMachineId, projects, currentHomeDir)?.subpath ??
+      '';
+    return resolveWorktreeSpawn({
+      mode: worktreeMode,
+      baseDirectory: base,
+      subpath,
+      selectedWorktreePath,
+      newWorktreeName,
+    });
+  }, [directory, repoListing, selectedMachineId, projects, currentHomeDir, worktreeMode, selectedWorktreePath, newWorktreeName]);
+  // The folder the agent will start in: the selected existing worktree (at the
+  // same subfolder), else the picked folder. A `new` worktree only exists once
+  // spawned, so until then this is the folder it forks from. The side panel,
+  // @-mentions and slash commands read this so they show the checkout the
+  // session runs in; `directory` stays the project chip (and drives git status
+  // and the worktree listing, which are about the repo, not the checkout).
+  const launchDirectory = directory.trim() ? worktreeSpawn.directory : '';
+
   // The catalog the picker renders: base catalog with the selected machine's
   // cached models/modes merged in (falls back to base when nothing is cached),
   // plus a synthesized entry for every cached agent the static catalog cannot
@@ -631,7 +659,7 @@ function NewSessionContent() {
   const { commands: slashCommands } = useSlashCommands({
     agentType: slashAgentType,
     machineId: slashOnline ? (slashMachine?.machine_id ?? null) : null,
-    projectPath: toAbsolutePath(directory.trim() || undefined, slashMachine?.home_dir),
+    projectPath: toAbsolutePath(launchDirectory || undefined, slashMachine?.home_dir),
   });
   const hasSkills = slashAgentType === 'claude' || slashAgentType === 'opencode' || slashAgentType === 'codex';
   const activeAgentDef = useMemo(() => agentById(effectiveCatalog, sessionConfig.agent), [effectiveCatalog, sessionConfig.agent]);
@@ -1696,7 +1724,7 @@ function NewSessionContent() {
       // Folder chips expand to `@path/` references (project-relative when inside
       // the chosen directory) folded onto the end of the prompt.
       const machine = machines.find((m) => m.machine_id === selectedMachineId) || null;
-      const projectPath = toAbsolutePath(directory.trim() || undefined, machine?.home_dir);
+      const projectPath = toAbsolutePath(launchDirectory || undefined, machine?.home_dir);
       const folderText = pendingFolderRefs
         .map((p) => `@${folderPathToMention(p, projectPath)}`)
         .join(' ');
@@ -1734,25 +1762,7 @@ function NewSessionContent() {
         images.length > 0 ? undefined : finalPrompt || undefined,
       );
 
-      // Map the worktree selection onto the spawn directory + optional param.
-      // The folder's part below the repo root (a monorepo session at
-      // `repo/apps/web`) carries into the worktree, so the checkout and the
-      // folder stay orthogonal; the daemon's main path is the authority on
-      // where the root is, a linked project folder the fallback.
-      const subpath =
-        (repoListing?.mainPath
-          ? relativeSubpath(directory.trim(), repoListing.mainPath, machine?.home_dir)
-          : null) ??
-        resolveProjectForDirectory(directory.trim(), selectedMachineId, projects, machine?.home_dir)
-          ?.subpath ??
-        '';
-      const spawn = resolveWorktreeSpawn({
-        mode: worktreeMode,
-        baseDirectory: directory.trim(),
-        subpath,
-        selectedWorktreePath,
-        newWorktreeName,
-      });
+      const spawn = worktreeSpawn;
 
       const result = await getWsClient().callRpc(
         selectedMachineId,
@@ -1930,7 +1940,7 @@ function NewSessionContent() {
       setErrorMessage(message);
       setIsSubmitting(false);
     }
-  }, [api, selectedMachineId, directory, sessionConfig, prompt, selectedTask, subtasks, pendingImages, pendingFolderRefs, pendingRefs, forkContext, handoffAnnotations, machines, isSubmitting, worktreeMode, selectedWorktreePath, newWorktreeName, repoListing, projects, selectedProfile, selectedProfileId, persistSelection, refreshData, router]);
+  }, [api, selectedMachineId, directory, sessionConfig, prompt, selectedTask, subtasks, pendingImages, pendingFolderRefs, pendingRefs, forkContext, handoffAnnotations, machines, isSubmitting, worktreeSpawn, launchDirectory, selectedProfile, selectedProfileId, persistSelection, refreshData, router]);
 
   // Insert the highlighted command into the prompt (vs. the chat input, which
   // sends immediately — starting a session is heavier, so we let the user
@@ -2560,7 +2570,7 @@ function NewSessionContent() {
                   ref={textareaRef}
                   value={prompt}
                   onChange={handlePromptChange}
-                  projectPath={toAbsolutePath(directory.trim() || undefined, currentMachine?.home_dir)}
+                  projectPath={toAbsolutePath(launchDirectory || undefined, currentMachine?.home_dir)}
                   machineId={isOnline ? (currentMachine?.machine_id ?? null) : null}
                   machine={currentMachine}
                   mentionsEnabled={!!directory.trim() && isOnline}
@@ -2805,7 +2815,7 @@ function NewSessionContent() {
       {panel.open && (
         <FilesGitPanel
           machineId={selectedMachineId || null}
-          cwd={directory.trim() || null}
+          cwd={launchDirectory || null}
           homeDir={currentMachine?.home_dir ?? null}
           instanceId="new-session"
           panel={panel}
