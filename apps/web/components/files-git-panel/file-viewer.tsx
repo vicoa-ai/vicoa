@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import hljs from 'highlight.js';
-import { ExternalLink } from 'lucide-react';
+import { Download, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { FileViewState } from './use-files-tab';
 import type { OpenApp } from './rpc';
@@ -65,6 +65,7 @@ function UnviewableCard({
   fileManager,
   error,
   onOpen,
+  onDownload,
 }: {
   path: string;
   message: string;
@@ -75,6 +76,8 @@ function UnviewableCard({
   fileManager?: OpenApp;
   error: string | null;
   onOpen: (appId: string) => void;
+  /** Save the file to this device. Absent when the panel can't offer it. */
+  onDownload?: () => void;
 }) {
   const name = basename(path);
   return (
@@ -87,12 +90,21 @@ function UnviewableCard({
           {size !== undefined && ` · ${formatBytes(size)}`}
         </div>
       </div>
-      {(defaultApp || fileManager) && (
+      {(defaultApp || fileManager || onDownload) && (
         <div className="mt-1 flex flex-col items-center gap-1">
           {defaultApp && (
             <Button size="sm" onClick={() => onOpen(defaultApp.id)}>
               <ExternalLink />
               Open with default app
+            </Button>
+          )}
+          {onDownload && (
+            // The default app opens on the session's machine, which is no help
+            // from a phone or a browser on another computer; the download is
+            // the way out that always lands the file on this device.
+            <Button size="sm" variant={defaultApp ? 'outline' : 'default'} onClick={onDownload}>
+              <Download />
+              Download
             </Button>
           )}
           {fileManager && (
@@ -120,12 +132,14 @@ function UnviewablePlaceholder({
   size,
   machineId,
   cwd,
+  onDownload,
 }: {
   path: string;
   message: string;
   size?: number;
   machineId: string | null;
   cwd: string | null;
+  onDownload?: () => void;
 }) {
   const noop = useCallback(() => {}, []);
   const { apps, error, setError, openWith } = useOpenIn({ machineId, cwd, path }, noop);
@@ -141,6 +155,7 @@ function UnviewablePlaceholder({
         setError(null);
         openWith(appId);
       }}
+      onDownload={onDownload}
     />
   );
 }
@@ -156,12 +171,14 @@ function VideoPreview({
   size,
   machineId,
   cwd,
+  onDownload,
 }: {
   path: string;
   url: string | undefined;
   size: number;
   machineId: string | null;
   cwd: string | null;
+  onDownload?: () => void;
 }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [url]);
@@ -174,6 +191,7 @@ function VideoPreview({
         size={size}
         machineId={machineId}
         cwd={cwd}
+        onDownload={onDownload}
       />
     );
   }
@@ -222,6 +240,7 @@ export function FileViewer({
   onDiffNav,
   machineId = null,
   cwd = null,
+  onDownload,
 }: {
   state: FileViewState;
   wrap: boolean;
@@ -231,6 +250,10 @@ export function FileViewer({
    * `null` (no machine, or not wired) hides those. */
   machineId?: string | null;
   cwd?: string | null;
+  /** Save the open file, whole, to this device. Offered on the cards for a
+   * file Vicoa can't preview here (too large, binary, a video that won't
+   * play), where the user's next step is to get the file out. */
+  onDownload?: () => void;
   /** In diff mode, lay the editor out as two side-by-side panes instead of the
    * single inline diff. */
   diffSideBySide?: boolean;
@@ -275,6 +298,7 @@ export function FileViewer({
         message="Too large to preview here"
         machineId={machineId}
         cwd={cwd}
+        onDownload={onDownload}
       />
     );
   }
@@ -292,6 +316,7 @@ export function FileViewer({
         size={result.size}
         machineId={machineId}
         cwd={cwd}
+        onDownload={onDownload}
       />
     );
   }
@@ -324,6 +349,7 @@ export function FileViewer({
         size={result.size}
         machineId={machineId}
         cwd={cwd}
+        onDownload={onDownload}
       />
     );
   }
