@@ -264,7 +264,7 @@ def test_the_same_prewarm_twice_keeps_one_standby(daemon, launches, tmp_path) ->
 @pytest.mark.parametrize(
     ("change", "reason"),
     [
-        ({"agent": "codex"}, "agent"),
+        ({"agent": "opencode"}, "agent"),
         ({"worktree": {"new": True}}, "worktree"),
         ({"resume": {"agent_instance_id": "x"}}, "resume"),
         ({"directory": "/nonexistent/vicoa-prewarm-test"}, "directory"),
@@ -363,3 +363,33 @@ def test_a_discarded_standby_leaves_no_stderr_file(daemon, tmp_path) -> None:
 
 def test_the_daemon_advertises_prewarm(daemon) -> None:
     assert "prewarm-session" in daemon._supported_rpc_methods()
+
+
+def test_codex_is_prewarmed_and_adopted_too(daemon, launches, tmp_path) -> None:
+    params = {
+        "directory": str(tmp_path),
+        "agent": "codex",
+        "metadata": {"model": "gpt-5.6-terra", "reasoning_effort": "medium"},
+    }
+    assert daemon.prewarm_session_rpc({"params": params}) == {"status": "started"}
+    [standby] = launches
+    assert standby["command"][-1] == "--standby"
+    assert "codex" in standby["command"]
+
+    spawn = {**params, "metadata": {**params["metadata"], "prompt": "fix the build"}}
+    result = daemon.spawn_session_rpc({"params": spawn})
+    assert result["prewarmed"] is True
+    assert result["agent_instance_id"] == standby["session_id"]
+    assert len(launches) == 1
+
+
+def test_a_standby_that_crashed_keeps_its_stderr(daemon, tmp_path) -> None:
+    """A standby that exited on its own failed at start-up; its stderr says why."""
+    path = daemon._session_stderr_path("sid-crash")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("RuntimeError: `codex` not found on PATH")
+    daemon._forget_standby(
+        Standby(key="k", session_id="sid-crash", process=_FakeProcess(), expires_at=0),  # type: ignore[arg-type]
+        "exited",
+    )
+    assert path.exists()

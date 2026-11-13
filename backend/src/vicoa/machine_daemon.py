@@ -658,7 +658,7 @@ def stop_background_daemon(
 
 # Agents whose headless runner can bring its engine up before registering
 # (``SUPPORTS_ENGINE_STANDBY``); only these are prewarmed.
-ENGINE_STANDBY_AGENTS = frozenset({"claude"})
+ENGINE_STANDBY_AGENTS = frozenset({"claude", "codex"})
 
 
 class MachineDaemon:
@@ -2852,7 +2852,13 @@ class MachineDaemon:
         return entry.session_id, entry.process
 
     def _forget_standby(self, entry: Standby, reason: str) -> None:
-        """A discarded standby never registered; drop its stderr capture."""
+        """A discarded standby never registered; drop its stderr capture.
+
+        Kept when the standby exited on its own: that is a crash at start-up,
+        and its stderr is the only record of why.
+        """
+        if reason == "exited":
+            return
         try:
             self._session_stderr_path(entry.session_id).unlink(missing_ok=True)
         except OSError:

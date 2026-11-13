@@ -179,6 +179,11 @@ def _build_codex_answers(
 
 
 class CodexAppServerSession:
+    # Set by the runner when a prewarmed session's first prompt is still being
+    # POSTed for display: agent messages wait for it, so no reply is filed
+    # above the prompt in chat. See ``hold_agent_posts_until``.
+    _agent_post_gate: Optional["asyncio.Task[Any]"] = None
+
     def __init__(
         self,
         *,
@@ -296,7 +301,13 @@ class CodexAppServerSession:
             self._handle_permissions_request,
         )
 
-    async def start(self) -> None:
+    async def start(self, *, report: bool = True) -> None:
+        """Bring codex up and open the thread.
+
+        ``report=False`` (a prewarmed session, not registered yet) skips the two
+        server writes at the end; the runner calls :py:meth:`report_started` or
+        :py:meth:`persist_thread_id` once the session row exists.
+        """
         await self.transport.start()
         # Start the silence watchdog now; it no-ops until a turn is open, so
         # running it across bring-up costs nothing and covers every return path.
@@ -317,8 +328,8 @@ class CodexAppServerSession:
                 self.thread_id = result.get("thread", {}).get("id", self.thread_id)
                 # Resuming can hand back a different id; persist so the *next*
                 # resume targets the thread codex actually continued.
-                await self._persist_thread_id()
-                await self._set_status(_STATUS_AWAITING_INPUT)
+                if report:
+                    await self.report_started()
                 return
             except Exception as exc:
                 # Codex CLI upgrade with thread-file schema change, deletion
@@ -335,8 +346,34 @@ class CodexAppServerSession:
 
         result = await self.transport.send_request("thread/start", {"cwd": self.cwd})
         self.thread_id = result["thread"]["id"]
+        if report:
+            await self.report_started()
+
+    async def report_started(self) -> None:
+        """Record the thread id and show the session as waiting for input."""
         await self._persist_thread_id()
         await self._set_status(_STATUS_AWAITING_INPUT)
+
+    async def persist_thread_id(self) -> None:
+        """Record the thread id only (a prewarmed session whose first turn is
+        starting right away sets its own status)."""
+        await self._persist_thread_id()
+
+    def hold_agent_posts_until(self, task: "asyncio.Task[Any]") -> None:
+        """Hold every agent message until ``task`` (the prompt's POST) is done."""
+        self._agent_post_gate = task
+
+    async def _wait_agent_post_gate(self) -> None:
+        gate = self._agent_post_gate
+        if gate is None or gate.done():
+            return
+        try:
+            await asyncio.shield(gate)
+        except asyncio.CancelledError:
+            if not gate.cancelled():
+                raise  # we were cancelled, not the POST
+        except Exception:  # noqa: BLE001 - a failed display POST must not block replies
+            pass
 
     async def discover_and_report_models(self) -> None:
         """Query codex ``model/list`` and PATCH the machine's real models onto
@@ -798,6 +835,7 @@ class CodexAppServerSession:
         self._next_permission_id += 1
         fut = self._permission_registry.create(request_id)
         try:
+            await self._wait_agent_post_gate()
             await self.vicoa_client.send_message(
                 content=body,
                 agent_type=self.agent_type,
@@ -848,6 +886,7 @@ class CodexAppServerSession:
         )
         try:
             try:
+                await self._wait_agent_post_gate()
                 response = await self.vicoa_client.send_message(
                     content=auq.ASK_USER_QUESTION_PROMPT_LABEL,
                     agent_type=self.agent_type,
@@ -1106,6 +1145,7 @@ class CodexAppServerSession:
         body = f"⚠️ **{prefix}**\n\n{message}"
         logger.warning("codex session: surfacing error to vicoa: %s", message)
         try:
+            await self._wait_agent_post_gate()
             await self.vicoa_client.send_message(
                 content=body,
                 agent_type=self.agent_type,
@@ -1138,6 +1178,7 @@ class CodexAppServerSession:
             build_thinking_metadata("codex") if item_type == "reasoning" else None
         )
         try:
+            await self._wait_agent_post_gate()
             await self.vicoa_client.send_message(
                 content=content,
                 agent_type=self.agent_type,
