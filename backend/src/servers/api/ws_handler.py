@@ -400,6 +400,16 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
     machine_id = str(frame.get("machine_id"))
     method = str(frame.get("method"))
     params = frame.get("params") or {}
+    if method == "prewarm-session" and not settings.session_prewarm_enabled:
+        # Switched off server-wide: the spawn that follows starts cold.
+        conn.enqueue(
+            {
+                "type": "rpc-result",
+                "request_id": request_id,
+                "result": {"skipped": "disabled"},
+            }
+        )
+        return
     # An agent profile's instructions are resolved from its id HERE, server-side
     # and scoped to the caller, and written into the metadata the daemon is about
     # to receive — never taken from what the client sent, so a hand-crafted

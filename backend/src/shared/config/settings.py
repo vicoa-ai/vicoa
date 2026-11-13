@@ -119,6 +119,13 @@ class Settings(BaseSettings):
     # leaves it false so it stays SSE/REST-only (server-app-split.md dual-run).
     enable_websocket: bool = False
 
+    # Whether the server relays `prewarm-session` (a daemon starting a new
+    # session's agent while its first message is typed, vicoa/prewarm.py). The
+    # emergency switch for that feature: set SESSION_PREWARM_ENABLED=false and
+    # every request is answered `skipped`, so sessions start cold as before,
+    # without waiting for a client or daemon release.
+    session_prewarm_enabled: bool = True
+
     # Whether the `backend` process runs the activation-nudge sweep — the
     # signup-anchored push + email re-engagement drip for users who never sent a
     # first message (src/cloud/activation/, closed overlay). Ships dark; flip to

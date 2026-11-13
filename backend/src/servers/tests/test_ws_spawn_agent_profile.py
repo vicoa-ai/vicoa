@@ -403,3 +403,37 @@ async def test_prewarm_does_not_name_a_worktree_or_file_a_recent_directory(
     }
 
     assert await _prewarm(monkeypatch, _connection(user.id), params) == []
+
+
+@pytest.mark.asyncio
+async def test_prewarm_is_not_relayed_when_switched_off_server_wide(
+    test_db, bound_session, monkeypatch, user
+):
+    """`SESSION_PREWARM_ENABLED=false` answers every prewarm `skipped`
+    without reaching a daemon, so sessions start cold as before."""
+    relayed: list[str] = []
+
+    async def fake_call(user_id, machine_id, method, call_params):
+        relayed.append(method)
+        return {"status": "started"}
+
+    conn = _connection(user.id)
+    monkeypatch.setattr(ws_handler.rpc_router, "call", fake_call)
+    monkeypatch.setattr(ws_handler.settings, "session_prewarm_enabled", False)
+
+    await ws_handler.handle_rpc_call(
+        conn,
+        {
+            "request_id": "r1",
+            "machine_id": "m1",
+            "method": "prewarm-session",
+            "params": {"agent": "claude", "directory": "/tmp/project"},
+        },
+    )
+
+    assert relayed == []
+    assert conn.outbox.get_nowait() == {
+        "type": "rpc-result",
+        "request_id": "r1",
+        "result": {"skipped": "disabled"},
+    }
