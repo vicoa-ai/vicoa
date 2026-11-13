@@ -36,6 +36,7 @@ import {
   ListTree,
   MoreHorizontal,
   Link as LinkIcon,
+  Download,
 } from 'lucide-react';
 import { getDesktopConfig } from '@/lib/runtime-config';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
@@ -57,6 +58,7 @@ import {
 import { rpcWorktreeRunSetup, rpcWorktreeTrustGrant } from './rpc';
 import { usePanelState } from './use-panel-state';
 import { useFilesTab } from './use-files-tab';
+import { useFileDownload } from './use-file-download';
 import { useGitTab } from './use-git-tab';
 import { useCommits } from './use-commits';
 import { FileSearchResults, FileSearchRow, FilesTab, gitStatusColor } from './files-tab';
@@ -795,6 +797,7 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
   }, []);
   const [copied, setCopied] = useState(false);
   const [pathCopied, setPathCopied] = useState(false);
+  const download = useFileDownload({ machineId, cwd });
   const [dragging, setDragging] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   // Wraps the panel's content area (viewer / diff / tree) — scopes the in-file
@@ -1503,6 +1506,16 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
                     setFileMenuOpen(false);
                   }}
                 />
+                {!noMachine && (
+                  <GitMenuItem
+                    icon={<Download className="h-3.5 w-3.5" />}
+                    label="Download file"
+                    onClick={() => {
+                      void download.start(activeFile.path);
+                      setFileMenuOpen(false);
+                    }}
+                  />
+                )}
               </div>,
               document.body,
             )}
@@ -1649,6 +1662,37 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
               <span className="min-w-0 flex-1">Couldn’t save: {saveErrorMessage(activeFile.saveError)}</span>
             </div>
           )}
+          {download.status.kind === 'downloading' && (
+            <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-3 py-1.5 text-xs text-foreground flex-shrink-0">
+              <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin" />
+              <span className="min-w-0 flex-1 truncate">
+                Downloading {basename(download.status.path)}
+                {download.status.total
+                  ? ` · ${Math.floor((download.status.received / download.status.total) * 100)}%`
+                  : '…'}
+              </span>
+              <button
+                onClick={download.cancel}
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-muted"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+          {download.status.kind === 'error' && (
+            <div className="flex items-center gap-2 border-b border-red-300 bg-red-100 px-3 py-1.5 text-xs text-red-900 flex-shrink-0 dark:border-red-500/40 dark:bg-red-950/40 dark:text-red-200">
+              <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+              <span className="min-w-0 flex-1">
+                Couldn’t download {basename(download.status.path)}: {download.status.message}
+              </span>
+              <button
+                onClick={download.dismiss}
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-red-500/20"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           <div className="flex flex-1 min-h-0">
             <div className="relative min-w-0 flex-1">
               <FileViewer
@@ -1656,6 +1700,7 @@ export function FilesGitPanel({ machineId, cwd, homeDir, instanceId, panel, over
                 wrap={true}
                 machineId={machineId}
                 cwd={cwd}
+                onDownload={() => void download.start(activeFile.path)}
                 markdownSource={markdownSource}
                 diffSideBySide={diffSideBySide}
                 revealLine={

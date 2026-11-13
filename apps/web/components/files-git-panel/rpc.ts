@@ -1,5 +1,7 @@
 import { getRpcClient, RpcError } from '@/lib/ws-client';
+import { base64ToBytes } from '@/components/terminal-pane/base64';
 import type { PrInfo } from '@/components/dashboard/pr-status';
+import type { FileSlice } from './file-download';
 
 export type RpcCode =
   | 'path_not_found'
@@ -252,6 +254,37 @@ export async function rpcReadFile(
     result.stream_url = client.httpUrl(result.stream_url);
   }
   return result as unknown as ReadFileResult;
+}
+
+/**
+ * `read-file-range` — up to `length` bytes of `path` from `offset`, decoded. The
+ * daemon clamps a slice to 1 MiB; each reply carries the file's current size and
+ * mtime so a caller copying a whole file can tell it changed between slices.
+ */
+export async function rpcReadFileRange(
+  machineId: string,
+  cwd: string,
+  path: string,
+  offset: number,
+  length: number,
+): Promise<FileSlice> {
+  const result = await getRpcClient(machineId).callRpc(machineId, 'read-file-range', {
+    cwd,
+    path,
+    offset,
+    length,
+  });
+  if (typeof result.error === 'string') {
+    throw new RpcError(result.error);
+  }
+  if (
+    typeof result.content !== 'string' ||
+    typeof result.size !== 'number' ||
+    typeof result.mtime !== 'number'
+  ) {
+    throw new RpcError('rpc_failed');
+  }
+  return { bytes: base64ToBytes(result.content), size: result.size, mtime: result.mtime };
 }
 
 /** Poll an open file's on-disk signature without transferring its contents. */
