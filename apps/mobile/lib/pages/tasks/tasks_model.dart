@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 
 import '/custom_code/actions/index.dart' as actions;
@@ -72,10 +74,12 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
     return null;
   }
 
-  /// Creates the task and reloads the list. Returns the created task as the
-  /// server sent it, or null when the request failed.
+  /// Creates the task and returns it as the server sent it, or null when the
+  /// request failed. The POST answers with the full task, in the same shape as
+  /// a list row, so it goes into the list right away; the tasks reload runs
+  /// alongside instead of being waited on.
   Future<dynamic> createTask(Map<String, dynamic> values) async {
-    final result = await actions.apiCreateTask(
+    final created = await actions.apiCreateTask(
       title: values['title'] as String,
       description: values['description'] as String?,
       projectId: values['project_id'] as String?,
@@ -83,9 +87,26 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
       priority: values['priority'] as String?,
       labelIds: (values['label_ids'] as List?)?.cast<String>(),
     );
-    if (result == null) return null;
-    await load();
-    return result;
+    if (created == null) return null;
+    tasks = [...tasks, created];
+    _bump();
+    unawaited(_refreshTasksAfterCreate(created));
+    return created;
+  }
+
+  /// Replaces the list with the server's copy after [createTask]. Only tasks
+  /// are fetched: creating one changes neither projects nor labels.
+  /// `apiGetTasks` returns [] on error, and a task was just created, so an
+  /// empty answer is a failed fetch: keep what is on screen. A copy without
+  /// the new task (a lagging read) gets it added back.
+  Future<void> _refreshTasksAfterCreate(dynamic created) async {
+    final fresh = await actions.apiGetTasks();
+    if (fresh.isEmpty) return;
+    final id = tutils.taskId(created);
+    tasks = fresh.any((t) => tutils.taskId(t) == id)
+        ? fresh
+        : [...fresh, created];
+    _bump();
   }
 
   Future<bool> updateTask(String id, Map<String, dynamic> updates) async {
