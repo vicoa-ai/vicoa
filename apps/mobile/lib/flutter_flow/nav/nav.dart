@@ -12,7 +12,6 @@ import '/custom_code/utils/fork_transcript.dart';
 import '/auth/base_auth_user_provider.dart';
 
 import '/main.dart';
-import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/lat_lng.dart';
 import '/flutter_flow/place.dart';
 import '/flutter_flow/flutter_flow_util.dart';
@@ -25,6 +24,13 @@ export 'package:go_router/go_router.dart';
 export 'serialization_util.dart';
 
 const kTransitionInfoKey = '__transition_info__';
+
+/// Background of the launch splash, in both themes. The iOS launch screen
+/// (ios/Runner/Base.lproj/LaunchScreen.storyboard) is drawn before any Dart
+/// runs and can only follow the system appearance, never the in-app theme, so
+/// both use this fixed colour (the dark theme's secondaryBackground) and the
+/// handover from the native screen to this splash is invisible.
+const kLaunchBackgroundColor = Color(0xFF161C24);
 
 GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -552,7 +558,11 @@ class FFRoute {
           return null;
         },
         pageBuilder: (context, state) {
-          fixStatusBarOniOS16AndBelow(context);
+          if (appStateNotifier.loading) {
+            setLaunchSplashStatusBar();
+          } else {
+            fixStatusBarOniOS16AndBelow(context);
+          }
           final ffParams = FFParameters(state, asyncParams);
           final page = ffParams.hasFutures
               ? FutureBuilder(
@@ -562,7 +572,7 @@ class FFRoute {
               : builder(context, ffParams);
           final child = appStateNotifier.loading
               ? Container(
-                  color: FlutterFlowTheme.of(context).secondaryBackground,
+                  color: kLaunchBackgroundColor,
                   child: Column(
                     children: [
                       const Spacer(flex: 5),
