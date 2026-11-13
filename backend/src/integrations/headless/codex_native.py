@@ -128,6 +128,10 @@ class CodexNativeRunner:
     ``tests/test_codex_app_server.py``, ``test_codex_subprocess.py``, etc.
     """
 
+    # Start-up model discovery + report, run in the background (see ``run``).
+    # Class-level so a runner built without ``__init__`` (tests) has none.
+    _models_task: Optional[asyncio.Task[None]] = None
+
     def __init__(
         self,
         *,
@@ -352,14 +356,10 @@ class CodexNativeRunner:
             # Discover the machine's real codex models (account/version
             # filtered, with the true default) via `model/list` and PATCH them
             # onto session_config, so the gear shows the actual list instead of
-            # static-catalog guesses. Best-effort; never blocks bring-up.
-            try:
-                await self.session.discover_and_report_models()
-            except Exception:
-                logger.warning(
-                    "codex_native: model discovery failed (non-fatal)",
-                    exc_info=True,
-                )
+            # static-catalog guesses. Only the gear reads it, so it runs in the
+            # background rather than as a server round trip in front of the
+            # first prompt; ``_patch_session_config`` waits for it.
+            self._models_task = asyncio.create_task(self._report_models_quietly())
 
             # Start the single turn consumer before the WS subscriber can
             # deliver anything, so no message races ahead of its drain. Held on
@@ -435,6 +435,12 @@ class CodexNativeRunner:
                 self._consumer_task.cancel()
                 try:
                     await self._consumer_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            if self._models_task is not None and not self._models_task.done():
+                self._models_task.cancel()
+                try:
+                    await self._models_task
                 except (asyncio.CancelledError, Exception):
                     pass
             # Stop heartbeating before end_session, so an in-flight beat can't
@@ -864,12 +870,39 @@ class CodexNativeRunner:
             except Exception:
                 logger.exception("codex_native: turn processing failed")
 
+    async def _report_models_quietly(self) -> None:
+        if self.session is None:
+            return
+        try:
+            await self.session.discover_and_report_models()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "codex_native: model discovery failed (non-fatal)",
+                exc_info=True,
+            )
+
+    async def _await_models_report(self) -> None:
+        """Let the start-up model report land first: it carries
+        ``current_model``, so arriving after a mid-session model change would
+        put the gear back on the old model."""
+        task = self._models_task
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if not task.cancelled():
+                raise  # we were cancelled, not the report
+
     async def _patch_session_config(self, delta: dict) -> None:
         """Best-effort PATCH so the mobile gear pill reflects mid-session
         model / effort / permission_mode changes. Fire-and-forget; the next
         successful PATCH overwrites any stale partial state."""
         if self.vicoa_client is None:
             return
+        await self._await_models_report()
         try:
             await self.vicoa_client.patch_agent_instance(
                 self.session_id, session_config=delta

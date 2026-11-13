@@ -77,6 +77,24 @@ def sync_project_files_async(api_key: str, base_url: str, project_path: str) -> 
     thread.start()
 
 
+def sync_user_commands_async(api_key: str, base_url: str, agent_type: str) -> None:
+    """Run the slash-command/skill upload in the background.
+
+    It only refreshes the server's copy of the index, which the dashboard reads
+    when it cannot ask the machine directly (offline machine, automation
+    editor); the composer asks the daemon live. As a blocking call it sat in
+    front of every headless session start, and its client retries for up to
+    30s per attempt when the server is slow.
+    """
+    thread = threading.Thread(
+        target=sync_user_commands,
+        args=(api_key, base_url, agent_type),
+        daemon=True,
+        name="vicoa-command-sync",
+    )
+    thread.start()
+
+
 def run_python_module(module_path, args_list, env_vars=None):
     """Run a Python module either as subprocess (normal) or direct import (frozen).
 
@@ -656,10 +674,10 @@ def cmd_headless(args, unknown_args):
     """Handle the 'headless' subcommand"""
     api_key = ensure_api_key(args)
 
-    # Sync slash commands to backend
+    # Sync slash commands to backend, off the session's start path.
     agent_type = getattr(args, "agent", "claude").lower()
     base_url = getattr(args, "base_url", DEFAULT_API_URL)
-    sync_user_commands(api_key, base_url, agent_type)
+    sync_user_commands_async(api_key, base_url, agent_type)
 
     # Sync project files to backend
     import os
@@ -2566,8 +2584,11 @@ Examples:
     if args.command == "opencode":
         args.agent = "opencode"
 
-    # Check for updates
-    check_for_updates()
+    # Check for updates. Not for `headless`: that is an agent session the
+    # daemon launches in the background, nobody reads its banner, and the
+    # registry request (up to 2s) would sit in front of every session start.
+    if args.command != "headless":
+        check_for_updates()
 
     # Handle subcommands
     if args.command == "mcp":

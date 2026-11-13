@@ -388,6 +388,10 @@ def setup_logging(session_id: str, console_output: bool = True, debug: bool = Fa
 class HeadlessClaudeRunner:
     """Headless Claude Code runner that integrates with Vicoa SDK."""
 
+    # Start-up model-list report, run in the background (see ``initialize``).
+    # Class-level so a runner built without ``__init__`` (tests) has none.
+    _models_task: Optional[asyncio.Task[None]] = None
+
     def __init__(
         self,
         vicoa_api_key: str,
@@ -1060,6 +1064,29 @@ class HeadlessClaudeRunner:
         }
         return {k: v for k, v in sc.items() if v is not None}
 
+    async def _report_models_quietly(self) -> None:
+        try:
+            await self.discover_and_report_models()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.warning(
+                "claude: model discovery failed (non-fatal)", exc_info=True
+            )
+
+    async def _await_models_report(self) -> None:
+        """Let the start-up model report land before another session_config
+        write: it carries ``current_model``, so arriving after a model switch
+        would put the gear back on the old model."""
+        task = self._models_task
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if not task.cancelled():
+                raise  # we were cancelled, not the report
+
     async def discover_and_report_models(self) -> None:
         """Report Claude's available models onto ``session_config`` for the
         mid-session gear, mirroring codex's ``discover_and_report_models``.
@@ -1211,13 +1238,9 @@ class HeadlessClaudeRunner:
         # Report the machine's real Claude models (catalog + the user's
         # ~/.claude custom models) onto session_config so the mid-session gear
         # shows the actual switchable set, mirroring codex's model/list
-        # discovery. Best-effort; never blocks bring-up.
-        try:
-            await self.discover_and_report_models()
-        except Exception:
-            self.logger.warning(
-                "claude: model discovery failed (non-fatal)", exc_info=True
-            )
+        # discovery. Only the gear reads it, so it runs in the background
+        # rather than as a server round trip in front of the first prompt.
+        self._models_task = asyncio.create_task(self._report_models_quietly())
 
         self.logger.info("Creating initial Vicoa session...")
         if not self.vicoa_client:
@@ -2954,6 +2977,9 @@ class HeadlessClaudeRunner:
         self.logger.info(
             f"Received control command: {setting}{'=' + str(value) if value is not None else ''}"
         )
+        # The branches below PATCH session_config; keep them after the
+        # start-up model report so it cannot overwrite them.
+        await self._await_models_report()
 
         if setting == "permission_mode":
             # Mirrors claude_agent_sdk.types.PermissionMode. "auto" is the
@@ -3621,6 +3647,13 @@ class HeadlessClaudeRunner:
                 self._status_watchdog_task.cancel()
                 try:
                     await self._status_watchdog_task
+                except asyncio.CancelledError:
+                    pass
+
+            if self._models_task and not self._models_task.done():
+                self._models_task.cancel()
+                try:
+                    await self._models_task
                 except asyncio.CancelledError:
                     pass
 

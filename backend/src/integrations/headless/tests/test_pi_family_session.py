@@ -84,6 +84,13 @@ async def _close_sessions():
     _OPEN_SESSIONS.clear()
 
 
+async def start_and_report(session: PiRuntimeSession) -> None:
+    """Bring the session up and let the UI-only start-up reports (model list,
+    command index) finish; ``start`` sends them in the background."""
+    await session.start()
+    await session._after_startup_reports()
+
+
 def make_session(agent="omp", responses=None, **kwargs):
     transport = FakeTransport(responses)
     client = FakeClient()
@@ -351,7 +358,7 @@ async def test_bring_up_captures_the_session_id_and_reports_live_models():
             },
         },
     )
-    await session.start()
+    await start_and_report(session)
     assert session.agent_session_id == "01a0-xyz"
     # The label is the display name alone — the clients render the qualified id
     # underneath it, so "(anthropic)" in the label would just say it twice.
@@ -363,6 +370,56 @@ async def test_bring_up_captures_the_session_id_and_reports_live_models():
     ]
     assert client.commands[0]["agent_type"] == "omp"
     assert client.statuses[-1] == "AWAITING_INPUT"
+
+
+async def test_bring_up_does_not_wait_for_the_ui_only_reports():
+    """The model list and command index are two server round trips that only
+    the gear and the slash menu read; the first prompt must not queue behind
+    them."""
+    session, _transport, client = make_session(
+        "omp",
+        responses={
+            "get_state": {"sessionId": "s"},
+            "get_available_models": {
+                "models": [{"id": "m", "provider": "p", "name": "M"}]
+            },
+        },
+    )
+    release = asyncio.Event()
+    sent: list[dict] = []
+
+    async def slow_patch(_instance_id, **kwargs):
+        if "session_config" in kwargs:  # the session-id write stays in line
+            await release.wait()
+        sent.append(kwargs)
+
+    client.patch_agent_instance = slow_patch
+    await asyncio.wait_for(session.start(), timeout=1.0)
+    assert client.statuses[-1] == "AWAITING_INPUT"
+    assert not any("session_config" in p for p in sent)
+
+    release.set()
+    await session._after_startup_reports()
+    assert any("available_models" in p.get("session_config", {}) for p in sent)
+
+
+async def test_a_later_session_config_write_lands_after_the_start_up_report():
+    """The start-up report carries ``current_model``; arriving after a model
+    change it would put the gear back on the old one."""
+    session, _transport, client = make_session(
+        "omp",
+        responses={
+            "get_state": {"sessionId": "s"},
+            "get_available_models": {
+                "models": [{"id": "m", "provider": "p", "name": "M"}]
+            },
+        },
+    )
+    await session.start()
+    await session._patch_session_config({"current_model": "p/other"})
+    configs = [p["session_config"] for p in client.patches if "session_config" in p]
+    assert "available_models" in configs[0]
+    assert configs[-1] == {"current_model": "p/other"}
 
 
 async def test_the_reported_current_model_is_what_the_agent_is_running():
@@ -391,7 +448,7 @@ async def test_the_reported_current_model_is_what_the_agent_is_running():
             },
         },
     )
-    await session.start()
+    await start_and_report(session)
     assert session.current_model == "anthropic/claude-haiku-4-5"
     config = next(
         p["session_config"]
@@ -417,7 +474,7 @@ async def test_the_current_model_key_matches_an_entry_in_the_advertised_list():
             },
         },
     )
-    await session.start()
+    await start_and_report(session)
     assert session.current_model in {m["id"] for m in session.available_models}
 
 
@@ -443,7 +500,7 @@ async def test_a_model_changed_event_republishes_the_new_model():
 
 async def test_pi_bring_up_skips_the_subagent_subscription_it_cannot_serve():
     session, transport, _client = make_session("pi", responses={"get_state": {}})
-    await session.start()
+    await start_and_report(session)
     assert "set_subagent_subscription" not in [c for c, _ in transport.requests]
     assert "get_commands" in [c for c, _ in transport.requests]
 

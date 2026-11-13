@@ -251,3 +251,50 @@ def test_rpc_wait_surfaces_the_windows_status_instead_of_try_again(
         "Couldn't start the session: the agent exited with 0xC0000142 "
         "(STATUS_DLL_INIT_FAILED: Windows could not initialize the process)"
     )
+
+
+# ----- the spawn-time heartbeat is off the launch path -----
+
+
+def test_spawn_does_not_wait_for_the_machine_heartbeat(
+    daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """It was a blocking server round trip in front of every launch."""
+    import threading
+
+    release = threading.Event()
+    beats: list[str] = []
+
+    def slow_heartbeat() -> None:
+        release.wait(5)
+        beats.append("sent")
+
+    monkeypatch.setattr(daemon, "send_heartbeat", slow_heartbeat)
+    calls = _stub_launch(daemon, monkeypatch, _FakeProcess())
+    monkeypatch.setattr(daemon, "_monitor_session_process", lambda **kw: None)
+    monkeypatch.setattr(
+        daemon, "_wait_for_registration", lambda session_id, process, **kw: None
+    )
+
+    result = daemon.spawn_session_rpc(
+        {"params": {"directory": str(tmp_path), "agent": "codex"}}
+    )
+
+    assert "error" not in result
+    assert calls  # launched while the heartbeat is still in flight
+    assert beats == []
+    release.set()
+
+
+def test_spawn_with_a_known_dead_credential_fails_before_launching(
+    daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls = _stub_launch(daemon, monkeypatch, _FakeProcess())
+    daemon._fatal_auth.set()
+
+    result = daemon.spawn_session_rpc(
+        {"params": {"directory": str(tmp_path), "agent": "codex"}}
+    )
+
+    assert "401" in result.get("error", "")
+    assert calls == []

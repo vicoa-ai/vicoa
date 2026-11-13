@@ -1181,6 +1181,28 @@ class MachineDaemon:
             # A failed tick is a reason to try again soon, not to wait long.
             self._heartbeat_interval_next = float(self.heartbeat_interval)
 
+    def _spawn_time_heartbeat(self) -> None:
+        """The "this machine is active" heartbeat a spawn sends, off its path.
+
+        It used to be a blocking request (one server round trip, every spawn,
+        every agent) right before the launch. Liveness does not depend on it:
+        the daemon's socket is the signal and the heartbeat loop keeps ticking.
+        A 401 is still recorded by ``_post`` (``_fatal_auth``) for the loop to
+        act on; a credential already known to be dead fails the spawn here.
+        """
+        if self._fatal_auth.is_set():
+            # The same error the blocking heartbeat raised here, so callers
+            # keep treating it as a dead credential.
+            raise AuthenticationError("agent server rejected credentials (401)")
+
+        def beat() -> None:
+            try:
+                self.send_heartbeat()
+            except Exception:  # noqa: BLE001 - best-effort; the loop retries
+                logger.debug("spawn-time heartbeat failed", exc_info=True)
+
+        Thread(target=beat, name="spawn-heartbeat", daemon=True).start()
+
     # ------------------------------------------------------------------
     # Spawn handling
     # ------------------------------------------------------------------
@@ -2906,7 +2928,7 @@ class MachineDaemon:
                 is_resuming=resume_instance_id is not None,
                 agent_session_id=resume_agent_session_id,
             )
-            self.send_heartbeat()
+            self._spawn_time_heartbeat()
             # A resume reuses the id; make sure no stale marker from a previous
             # run can satisfy the wait below.
             clear_session_registered(session_id)
@@ -3291,8 +3313,8 @@ class MachineDaemon:
                 f"[daemon] launching {normalized_agent} session (request={request_id}) at {expanded_directory}"
             )
 
-            # Send immediate heartbeat to show machine is active
-            self.send_heartbeat()
+            # Show the machine as active, without waiting on the server.
+            self._spawn_time_heartbeat()
 
             try:
                 process = self._launch_session_process(

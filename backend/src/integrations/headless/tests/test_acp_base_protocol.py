@@ -1762,3 +1762,50 @@ def test_unknown_terminal_method_is_still_method_not_found() -> None:
 
     with pytest.raises(ACPMethodNotFound):
         wrapper.handle_request("terminal/resize", {"sessionId": _SESSION_ID})
+
+
+# ---------------------------------------------------------------------------
+# bring-up session_config PATCHes go out in the background, in order
+# ---------------------------------------------------------------------------
+
+
+def test_bring_up_config_patches_do_not_block_and_keep_their_order() -> None:
+    import time
+
+    gate = threading.Event()
+    sent: list[Dict[str, Any]] = []
+
+    def patch(_instance_id: str, session_config: Dict[str, Any]) -> None:
+        if "available_models" in session_config:
+            gate.wait(5)  # a slow server on the start-up report
+        sent.append(session_config)
+
+    client = MagicMock()
+    client.patch_agent_instance.side_effect = patch
+    wrapper = _build_wrapper(vicoa_client=client)
+
+    wrapper._background_config_patches = True  # inside run()'s bring-up
+    started = time.monotonic()
+    wrapper._patch_session_config(
+        {"available_models": [{"id": "a"}], "current_model": "a"}
+    )
+    assert time.monotonic() - started < 0.5
+    wrapper._background_config_patches = False
+
+    # A user's model change right after bring-up waits for the start-up report.
+    later = threading.Thread(
+        target=wrapper._patch_session_config, args=({"current_model": "b"},)
+    )
+    later.start()
+    time.sleep(0.05)
+    assert sent == []
+    gate.set()
+    later.join(5)
+    assert [c.get("current_model") for c in sent] == ["a", "b"]
+
+
+def test_config_patches_outside_bring_up_stay_synchronous() -> None:
+    client = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=client)
+    wrapper._patch_session_config({"current_mode": "plan"})
+    assert client.patch_agent_instance.call_count == 1
