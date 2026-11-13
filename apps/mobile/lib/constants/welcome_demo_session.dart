@@ -17,6 +17,8 @@
 /// `id`, `content`, `sender_type`, `created_at`, optional `message_metadata`.
 library;
 
+import 'package:flutter/foundation.dart';
+
 import '/flutter_flow/app_locale.dart';
 
 /// Sentinel instance id for the local welcome demo session. Used across the
@@ -34,6 +36,15 @@ const String kWelcomeDemoMetadataKey = 'welcome_demo';
 
 /// True when [id] refers to the local welcome demo session.
 bool isWelcomeDemoInstance(String? id) => id == kWelcomeDemoInstanceId;
+
+/// On Android the sample session is presented under Vicoa's own name and mark.
+bool get _welcomeDemoUsesVicoaMark => defaultTargetPlatform == TargetPlatform.android;
+
+/// Agent name shown for the sample session.
+String welcomeDemoAgentName() => _welcomeDemoUsesVicoaMark ? 'Vicoa' : 'Claude Code';
+
+/// Key [AgentTypeIconWidget] resolves to the sample session's icon.
+String welcomeDemoIconKey() => _welcomeDemoUsesVicoaMark ? 'vicoa' : 'claude';
 
 /// The trailing code-demo portion of the demo-9 agent message. Kept OUT of the
 /// localized string (and hardcoded English, like all code) because the fenced
@@ -63,7 +74,7 @@ Map<String, dynamic> buildWelcomeDemoInstance() {
     'name': tr().welcomeDemoInstanceName,
     'status': 'REVIEWED',
     'agent_type': 'claude',
-    'agent_type_name': 'Claude Code',
+    'agent_type_name': welcomeDemoAgentName(),
     'project': '',
     'home_dir': '',
     'started_at': now.subtract(const Duration(minutes: 6)).toIso8601String(),
