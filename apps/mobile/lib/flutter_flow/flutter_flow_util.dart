@@ -393,6 +393,22 @@ void fixStatusBarOniOS16AndBelow(BuildContext context) {
   }
 }
 
+/// The launch splash is dark in both themes (kLaunchBackgroundColor), so its
+/// status bar text is white even when the app's theme is light. Clearing
+/// [_lastBrightness] makes the first real page apply the theme's style again.
+void setLaunchSplashStatusBar() {
+  if (!isiOS) {
+    return;
+  }
+  _lastBrightness = null;
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarBrightness: Brightness.dark,
+      systemStatusBarContrastEnforced: true,
+    ),
+  );
+}
+
 extension ColorOpacityExt on Color {
   Color applyAlpha(double val) => withValues(alpha: val);
 }
