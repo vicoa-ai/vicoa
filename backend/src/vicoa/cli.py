@@ -721,6 +721,19 @@ def cmd_headless(args, unknown_args):
     module = importlib.import_module(module_name)
     headless_main = getattr(module, "main")
 
+    # Standby (prewarm) launch, see vicoa.standby: the runner brings its engine
+    # up and waits on stdin for the go before it registers. Only a runner that
+    # can do that opts in; the daemon never asks another one.
+    if getattr(args, "standby", False):
+        from vicoa.standby import STANDBY_ENV
+
+        if not getattr(module, "SUPPORTS_ENGINE_STANDBY", False):
+            print(
+                f"--standby is not supported for agent {agent_type!r}", file=sys.stderr
+            )
+            sys.exit(2)
+        os.environ[STANDBY_ENV] = "1"
+
     # Prepare sys.argv for the headless runner
     original_argv = sys.argv
     new_argv = [argv_prog, "--api-key", api_key]
@@ -1627,6 +1640,14 @@ Examples:
         "--session-id",
         type=str,
         help="Session ID for the headless agent instance",
+    )
+    headless_parser.add_argument(
+        "--standby",
+        action="store_true",
+        help=(
+            "Prewarm: bring the agent up, then wait for one JSON line on stdin "
+            '({"prompt": ...} to start, end of file to exit) before registering.'
+        ),
     )
     headless_parser.add_argument(
         "--debug",

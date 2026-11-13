@@ -405,7 +405,13 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
     # to receive — never taken from what the client sent, so a hand-crafted
     # `system_prompt` cannot ride along and the two can never disagree.
     agent_profile: dict | None = None
-    if method == "spawn-session" and isinstance(params, dict):
+    # `prewarm-session` launches early exactly the session a later
+    # `spawn-session` will ask for, and the daemon only hands the prompt to a
+    # prewarmed session whose settings match. So it needs the same
+    # server-resolved instructions (and the same refusal of client-sent ones),
+    # but none of a spawn's side effects: no worktree naming, no
+    # recent-directory push.
+    if method in ("spawn-session", "prewarm-session") and isinstance(params, dict):
         raw_profile_id = params.pop("agent_profile_id", None)
         if isinstance(raw_profile_id, str) and raw_profile_id:
             agent_profile = await asyncio.to_thread(
@@ -423,7 +429,8 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
             metadata["system_prompt"] = agent_profile["system_prompt"]
         if metadata:
             params["metadata"] = metadata
-        start_worktree_naming(conn.user_id, machine_id, params)
+        if method == "spawn-session":
+            start_worktree_naming(conn.user_id, machine_id, params)
 
     try:
         result = await rpc_router.call(conn.user_id, machine_id, method, params)

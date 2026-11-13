@@ -25,6 +25,16 @@ from requests import Response
 from integrations.utils.heartbeat import next_interval_from_response
 from vicoa.rpc.worktree_auto_name import AUTO_NAME_BUDGET_SECONDS, AutoNameInbox
 from vicoa.session_markers import clear_session_registered, registered_marker_path
+from vicoa.prewarm import (
+    PLACEHOLDER_SESSION_ID,
+    PREWARM_MIN_AVAILABLE_BYTES,
+    PrewarmPool,
+    Standby,
+    available_memory_bytes,
+    prewarm_disabled,
+    send_go,
+    standby_key,
+)
 from vicoa.spawn_ws_client import SpawnRequestWsClient
 from vicoa.terminal.coalescer import TerminalOutputCoalescer
 from vicoa.terminal.rpc import PTY_ORDERED_METHODS, PTY_RPC_METHODS, handle_pty_rpc
@@ -646,6 +656,11 @@ def stop_background_daemon(
     return False, "Failed to stop Vicoa connection."
 
 
+# Agents whose headless runner can bring its engine up before registering
+# (``SUPPORTS_ENGINE_STANDBY``); only these are prewarmed.
+ENGINE_STANDBY_AGENTS = frozenset({"claude"})
+
+
 class MachineDaemon:
     def __init__(
         self,
@@ -689,6 +704,8 @@ class MachineDaemon:
         # signal that the credential is dead: a background heartbeat thread
         # sets it, the main loop watches it to stop the stream and exit.
         self._fatal_auth = Event()
+        # Prewarmed sessions waiting for their spawn (see vicoa.prewarm).
+        self._prewarm = PrewarmPool(on_discard=self._forget_standby)
         # Set when registration is refused for want of plan capacity (402 with
         # the `limit.machines` capability). Separate from _fatal_auth because
         # the credential is fine — only the plan is full — so the state file
@@ -1053,6 +1070,7 @@ class MachineDaemon:
         return [
             "worktree",
             "worktree-name",
+            "prewarm",
             "agent-scan",
             "provider-config",
             "file-index",
@@ -2164,6 +2182,7 @@ class MachineDaemon:
         cwd: str,
         env: dict[str, str],
         session_id: str,
+        stdin_pipe: bool = False,
     ) -> subprocess.Popen[bytes]:
         """Start a headless session child, detached from the daemon.
 
@@ -2184,7 +2203,9 @@ class MachineDaemon:
                 command,
                 cwd=cwd,
                 env=env,
-                stdin=subprocess.DEVNULL,
+                # A standby reads its go line here (vicoa.standby); the pipe
+                # closing with the daemon is what ends an unadopted one.
+                stdin=subprocess.PIPE if stdin_pipe else subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=stderr_log,
                 start_new_session=True,
@@ -2347,6 +2368,8 @@ class MachineDaemon:
             )
         if method == "spawn-session":
             return self.spawn_session_rpc(frame)
+        if method == "prewarm-session":
+            return self.prewarm_session_rpc(frame)
         if method == "list-files":
             from vicoa.rpc import file_ops
 
@@ -2594,6 +2617,7 @@ class MachineDaemon:
         """
         return [
             "spawn-session",
+            "prewarm-session",
             "list-files",
             "read-file",
             "read-file-range",
@@ -2778,6 +2802,139 @@ class MachineDaemon:
             # not worth failing the scan over.
             logger.warning("failed to publish available_agents", exc_info=True)
 
+    def _session_env(
+        self, agent: str, session_id: str, auto_title: str | None = None
+    ) -> dict[str, str]:
+        """The environment a headless session child runs with."""
+        env = os.environ.copy()
+        env.setdefault("VICOA_API_KEY", self.api_key)
+        env.setdefault("VICOA_AGENT_TYPE", self._agent_display_name(agent))
+        env["VICOA_AGENT_INSTANCE_ID"] = session_id
+        # Recorded as instance_metadata['source'] when the agent registers.
+        env["VICOA_SPAWN_SOURCE"] = "app"
+        # Hand the agent the title that named its worktree; never pass on
+        # one this daemon itself inherited.
+        env.pop(SESSION_TITLE_ENV, None)
+        if auto_title:
+            env[SESSION_TITLE_ENV] = auto_title
+        return env
+
+    def _standby_key_for(
+        self, directory: str, agent: str, metadata: dict[str, Any] | None
+    ) -> str:
+        """Pool key: the command this spawn would run, minus prompt and id."""
+        settings = {k: v for k, v in (metadata or {}).items() if k != "prompt"}
+        command = self._build_headless_command(
+            directory=directory,
+            agent=agent,
+            session_id=PLACEHOLDER_SESSION_ID,
+            metadata=settings or None,
+        )
+        return standby_key(command, PLACEHOLDER_SESSION_ID, directory)
+
+    def _adopt_standby(
+        self, directory: str, agent: str, metadata: dict[str, Any] | None
+    ) -> tuple[str, subprocess.Popen[bytes]] | None:
+        """Take the standby prewarmed for this spawn and give it the prompt.
+
+        None when there is none (or it died), and the spawn starts cold.
+        """
+        if agent not in ENGINE_STANDBY_AGENTS:
+            return None
+        entry = self._prewarm.take(self._standby_key_for(directory, agent, metadata))
+        if entry is None:
+            return None
+        clear_session_registered(entry.session_id)
+        if not send_go(entry.process, self._extract_prompt(metadata)):
+            self._prewarm.discard(entry, "gone")
+            return None
+        print(f"[daemon] adopted prewarmed {agent} session {entry.session_id}")
+        return entry.session_id, entry.process
+
+    def _forget_standby(self, entry: Standby, reason: str) -> None:
+        """A discarded standby never registered; drop its stderr capture."""
+        try:
+            self._session_stderr_path(entry.session_id).unlink(missing_ok=True)
+        except OSError:
+            pass  # still open on Windows; harmless
+
+    def prewarm_session_rpc(self, frame: dict[str, Any]) -> dict[str, Any]:
+        """Handle `prewarm-session`: start the session a spawn would start, early.
+
+        Same params as `spawn-session` minus the prompt. The session is launched
+        with ``--standby`` (see vicoa.standby): its engine comes up now, and it
+        registers only when a matching `spawn-session` hands it the prompt. The
+        server never hears of an unused one.
+
+        Returns `{"status": "started" | "warm"}`, `{"skipped": <reason>}` when
+        this request is not one to prewarm, or `{"error": ...}`.
+        """
+        params = frame.get("params") or {}
+        try:
+            directory = params.get("directory")
+            if not isinstance(directory, str) or not directory.strip():
+                raise ValueError("Invalid directory supplied")
+            agent = self._normalize_agent(str(params.get("agent") or "claude"))
+            metadata_raw = params.get("metadata")
+            metadata = (
+                {k: v for k, v in metadata_raw.items() if k != "prompt"}
+                if isinstance(metadata_raw, dict)
+                else None
+            )
+            self._validate_session_metadata(agent, metadata)
+        except ValueError as exc:
+            return {"error": str(exc)}
+
+        worktree_param = params.get("worktree")
+        if prewarm_disabled():
+            return {"skipped": "disabled"}
+        if agent not in ENGINE_STANDBY_AGENTS:
+            return {"skipped": "agent"}
+        if params.get("resume"):
+            return {"skipped": "resume"}
+        if isinstance(worktree_param, dict) and worktree_param.get("new") is True:
+            # Named from the prompt before launch, so it cannot start early.
+            return {"skipped": "worktree"}
+        if self._fatal_auth.is_set():
+            return {"skipped": "auth"}
+        expanded_directory = os.path.expanduser(directory.strip())
+        if not os.path.isdir(expanded_directory):
+            return {"skipped": "directory"}
+
+        key = self._standby_key_for(expanded_directory, agent, metadata)
+        if self._prewarm.refresh(key) is not None:
+            return {"status": "warm"}
+        available = available_memory_bytes()
+        if available is not None and available < PREWARM_MIN_AVAILABLE_BYTES:
+            return {"skipped": "memory"}
+        if self._check_agent_installation(agent):
+            return {"skipped": "not_installed"}
+
+        def launch() -> tuple[str, subprocess.Popen[bytes]]:
+            session_id = str(uuid4())
+            command = self._build_headless_command(
+                directory=expanded_directory,
+                agent=agent,
+                session_id=session_id,
+                metadata=metadata,
+            )
+            command.append("--standby")
+            process = self._launch_session_process(
+                command,
+                cwd=expanded_directory,
+                env=self._session_env(agent, session_id),
+                session_id=session_id,
+                stdin_pipe=True,
+            )
+            return session_id, process
+
+        try:
+            self._prewarm.add(key, launch)
+        except Exception as exc:  # noqa: BLE001 - a failed prewarm is just a cold spawn
+            return {"error": f"Failed to prewarm: {exc}"}
+        print(f"[daemon] prewarming {agent} session at {expanded_directory}")
+        return {"status": "started"}
+
     def spawn_session_rpc(self, frame: dict[str, Any]) -> dict[str, Any]:
         """Handle a `spawn-session` RPC: launch a headless agent, return its id.
 
@@ -2904,37 +3061,35 @@ class MachineDaemon:
             if install_error:
                 raise RuntimeError(install_error)
 
-            session_id = resume_instance_id or str(uuid4())
-
-            env = os.environ.copy()
-            env.setdefault("VICOA_API_KEY", self.api_key)
-            env.setdefault(
-                "VICOA_AGENT_TYPE", self._agent_display_name(normalized_agent)
+            # A session prewarmed for exactly this spawn (same directory, agent
+            # and settings) is already running its engine: hand it the prompt
+            # instead of launching a cold one. Never for a resume or a new
+            # worktree, which are not prewarmed.
+            adopted = (
+                self._adopt_standby(expanded_directory, normalized_agent, metadata)
+                if resume_instance_id is None and worktree_info is None
+                else None
             )
-            env["VICOA_AGENT_INSTANCE_ID"] = session_id
-            # Recorded as instance_metadata['source'] when the agent registers.
-            env["VICOA_SPAWN_SOURCE"] = "app"
-            # Hand the agent the title that named its worktree; never pass on
-            # one this daemon itself inherited.
-            env.pop(SESSION_TITLE_ENV, None)
-            if auto_title:
-                env[SESSION_TITLE_ENV] = auto_title
-
-            command = self._build_headless_command(
-                directory=expanded_directory,
-                agent=normalized_agent,
-                session_id=session_id,
-                metadata=metadata,
-                is_resuming=resume_instance_id is not None,
-                agent_session_id=resume_agent_session_id,
-            )
-            self._spawn_time_heartbeat()
-            # A resume reuses the id; make sure no stale marker from a previous
-            # run can satisfy the wait below.
-            clear_session_registered(session_id)
-            process = self._launch_session_process(
-                command, cwd=expanded_directory, env=env, session_id=session_id
-            )
+            if adopted is not None:
+                session_id, process = adopted
+            else:
+                session_id = resume_instance_id or str(uuid4())
+                env = self._session_env(normalized_agent, session_id, auto_title)
+                command = self._build_headless_command(
+                    directory=expanded_directory,
+                    agent=normalized_agent,
+                    session_id=session_id,
+                    metadata=metadata,
+                    is_resuming=resume_instance_id is not None,
+                    agent_session_id=resume_agent_session_id,
+                )
+                self._spawn_time_heartbeat()
+                # A resume reuses the id; make sure no stale marker from a
+                # previous run can satisfy the wait below.
+                clear_session_registered(session_id)
+                process = self._launch_session_process(
+                    command, cwd=expanded_directory, env=env, session_id=session_id
+                )
         except (ValueError, RuntimeError) as exc:
             self._rollback_worktree(worktree_info)
             return {"error": str(exc)}
@@ -2967,6 +3122,8 @@ class MachineDaemon:
             return {"error": failure}
         print(f"[daemon] RPC spawn-session launched {normalized_agent}: {session_id}")
         result: dict[str, Any] = {"agent_instance_id": session_id}
+        if adopted is not None:
+            result["prewarmed"] = True
         # The repo's main checkout for whatever the agent's cwd is — a
         # subfolder, a linked worktree — so the server files the *project's*
         # folder (not the worktree, not the subfolder) as the recent directory.
@@ -3507,6 +3664,9 @@ class MachineDaemon:
             return
         finally:
             self._stop_renewal.set()
+            # Unused standbys would exit on their own once the daemon's pipes
+            # close; say so explicitly rather than rely on process teardown.
+            self._prewarm.close()
 
         if self._fatal_auth.is_set():
             self._handle_fatal_auth()
