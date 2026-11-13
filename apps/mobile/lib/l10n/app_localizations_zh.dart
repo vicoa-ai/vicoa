@@ -132,6 +132,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get tasksStatusTodo => '待办';
 
   @override
+  String get tasksTaskCreated => '待办已创建';
+
+  @override
   String get tasksTaskDeleted => '待办已删除';
 
   @override

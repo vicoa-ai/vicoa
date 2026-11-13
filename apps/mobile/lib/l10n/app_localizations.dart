@@ -344,6 +344,12 @@ abstract class AppLocalizations {
   /// **'Todo'**
   String get tasksStatusTodo;
 
+  /// No description provided for @tasksTaskCreated.
+  ///
+  /// In en, this message translates to:
+  /// **'Task created'**
+  String get tasksTaskCreated;
+
   /// No description provided for @tasksTaskDeleted.
   ///
   /// In en, this message translates to:

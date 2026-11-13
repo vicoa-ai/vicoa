@@ -41,6 +41,7 @@
   "tasksStatusInProgress": "进行中",
   "tasksStatusInReview": "审核中",
   "tasksStatusTodo": "待办",
+  "tasksTaskCreated": "待办已创建",
   "tasksTaskDeleted": "待办已删除",
   "tasksTitle": "待办",
   "tasksTitleFieldLabel": "标题",

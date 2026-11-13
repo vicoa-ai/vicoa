@@ -134,6 +134,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get tasksStatusTodo => 'Todo';
 
   @override
+  String get tasksTaskCreated => 'Task created';
+
+  @override
   String get tasksTaskDeleted => 'Task deleted';
 
   @override
