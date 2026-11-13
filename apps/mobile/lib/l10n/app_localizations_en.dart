@@ -1267,7 +1267,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get impactWithRatingTestimonialSarah =>
-      'Finally! Claude Code on mobile. I can code during my commute and fix bugs on the go.';
+      'Finally! I can run my coding agents from my phone. I can code during my commute and fix bugs on the go.';
 
   @override
   String get impactWithRatingTestimonialTom =>
@@ -1821,7 +1821,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get ratingTestimonialSarah =>
-      'Finally! Claude Code on mobile. I can code during my commute and fix bugs on the go.';
+      'Finally! I can run my coding agents from my phone. I can code during my commute and fix bugs on the go.';
 
   @override
   String get ratingTestimonialTom =>

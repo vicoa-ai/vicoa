@@ -2351,7 +2351,7 @@ abstract class AppLocalizations {
   /// No description provided for @impactWithRatingTestimonialSarah.
   ///
   /// In en, this message translates to:
-  /// **'Finally! Claude Code on mobile. I can code during my commute and fix bugs on the go.'**
+  /// **'Finally! I can run my coding agents from my phone. I can code during my commute and fix bugs on the go.'**
   String get impactWithRatingTestimonialSarah;
 
   /// No description provided for @impactWithRatingTestimonialTom.
@@ -3347,7 +3347,7 @@ abstract class AppLocalizations {
   /// No description provided for @ratingTestimonialSarah.
   ///
   /// In en, this message translates to:
-  /// **'Finally! Claude Code on mobile. I can code during my commute and fix bugs on the go.'**
+  /// **'Finally! I can run my coding agents from my phone. I can code during my commute and fix bugs on the go.'**
   String get ratingTestimonialSarah;
 
   /// No description provided for @ratingTestimonialTom.
