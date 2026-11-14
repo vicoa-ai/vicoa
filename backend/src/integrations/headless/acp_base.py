@@ -87,6 +87,10 @@ FILE_DUMP_BLOCK_PATTERN = re.compile(
 )
 CONTROL_JSON_PATTERN = re.compile(r'\{[^}]*"type"\s*:\s*"control"[^}]*\}')
 
+# How long a session_config PATCH waits for the bring-up ones still in flight
+# before sending anyway (see ``ACPWrapperBase._patch_session_config``).
+_BACKGROUND_CONFIG_PATCH_WAIT_SECONDS = 10.0
+
 
 class ACPWrapperConfig(ABC):
     """Base configuration for ACP wrappers.
@@ -187,6 +191,14 @@ class ACPWrapperBase(ABC):
     _prompt_cancel_grace_period_seconds: float = 10.0
     _hard_interrupt_fallback_delay_seconds: float = 0.0
     _permission_cancelled_option_id: str = "__vicoa_cancelled__"
+    # Session_config PATCHes made while ``run()`` brings the session up (live
+    # modes/models, the spawn-time mode) only feed the UI, so they go out from
+    # a background thread instead of each holding up the first prompt; the
+    # last such thread is kept so later PATCHes can wait for it. See
+    # ``_patch_session_config``. Class-level so every instance starts off
+    # (some tests build wrappers without ``__init__``).
+    _background_config_patches: bool = False
+    _config_patch_thread: Optional[threading.Thread] = None
 
     def __init__(self, config: ACPWrapperConfig):
         """Initialize ACP wrapper.
@@ -561,11 +573,15 @@ class ACPWrapperBase(ABC):
         # Start ACP client
         self._start_acp_client()
 
-        # Initialize ACP session
-        self._initialize_acp_session()
+        self._background_config_patches = True
+        try:
+            # Initialize ACP session
+            self._initialize_acp_session()
 
-        # Restore the prior conversation, or start a new one.
-        self._establish_session()
+            # Restore the prior conversation, or start a new one.
+            self._establish_session()
+        finally:
+            self._background_config_patches = False
 
         # Bring up the WS subscriber BEFORE POSTing the initial prompt so the
         # broadcast loops back to us via the live ``new-message`` channel and
@@ -1574,7 +1590,40 @@ class ACPWrapperBase(ABC):
         return str(catalog_id) if catalog_id else self.config.agent_type.lower()
 
     def _patch_session_config(self, updates: Dict[str, Any]) -> None:
-        """Persist a session_config change so the chat-header pill updates."""
+        """Persist a session_config change so the chat-header pill updates.
+
+        During bring-up the PATCH is handed to a background thread, each one
+        chained behind the previous, so it is not a server round trip in front
+        of the first prompt. Any later PATCH first waits for those, so they
+        still land in the order they were made (the start-up one carries
+        ``current_model``/``current_mode`` and must not overwrite a change).
+        """
+        if not self.vicoa_client:
+            return
+        previous = self._config_patch_thread
+        if self._background_config_patches:
+
+            def send_after_previous() -> None:
+                if previous is not None:
+                    previous.join()
+                self._send_session_config_patch(updates)
+
+            # Daemon: a PATCH stuck on a dead server must not hold up exit.
+            thread = threading.Thread(
+                target=send_after_previous, name="acp-config-patch", daemon=True
+            )
+            self._config_patch_thread = thread
+            thread.start()
+            return
+        if (
+            previous is not None
+            and previous is not threading.current_thread()
+            and previous.is_alive()
+        ):
+            previous.join(timeout=_BACKGROUND_CONFIG_PATCH_WAIT_SECONDS)
+        self._send_session_config_patch(updates)
+
+    def _send_session_config_patch(self, updates: Dict[str, Any]) -> None:
         if not self.vicoa_client:
             return
         try:

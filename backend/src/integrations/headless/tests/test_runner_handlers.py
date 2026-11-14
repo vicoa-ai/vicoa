@@ -1301,3 +1301,40 @@ async def test_send_to_vicoa_defaults_message_metadata_to_none(make_runner):
     await runner.send_to_vicoa("x")
 
     assert fake.sent_messages[-1]["message_metadata"] is None
+
+
+async def test_control_commands_wait_for_the_start_up_model_report(make_runner):
+    """The start-up model report (background) carries ``current_model``; the
+    PATCH a model/effort/permission command makes must not be overtaken by it."""
+    runner = make_runner()
+    calls: list[str] = []
+
+    async def recorded() -> None:
+        calls.append("waited")
+
+    runner._await_models_report = recorded  # type: ignore[method-assign]
+    await runner._handle_control_command(
+        json.dumps({"type": "control", "setting": "no_such_setting", "value": "x"})
+    )
+    assert calls == ["waited"]
+
+
+async def test_awaiting_the_model_report_returns_once_it_lands_or_is_cancelled(
+    make_runner,
+):
+    runner = make_runner()
+    release = asyncio.Event()
+
+    async def report() -> None:
+        await release.wait()
+
+    runner._models_task = asyncio.create_task(report())
+    waiter = asyncio.create_task(runner._await_models_report())
+    await asyncio.sleep(0)
+    assert not waiter.done()
+    release.set()
+    await waiter
+
+    runner._models_task = asyncio.create_task(asyncio.sleep(10))
+    runner._models_task.cancel()
+    await runner._await_models_report()  # a cancelled report must not raise

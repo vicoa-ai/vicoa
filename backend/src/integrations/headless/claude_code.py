@@ -43,6 +43,7 @@ from vicoa.attachments import (
 from vicoa.sdk.async_client import AsyncVicoaClient
 from vicoa.session_markers import clear_session_registered, mark_session_registered
 from vicoa.session_ws_client import SessionMessagesWsClient
+from vicoa.standby import read_go_async, standby_requested
 from vicoa.utils import derive_ws_url, get_project_path
 from integrations.headless.session_lifecycle import instance_update_requests_stop
 from integrations.utils.heartbeat import AsyncSessionHeartbeat
@@ -187,6 +188,17 @@ _CLAUDE_STDOUT_MAX_BUFFER_SIZE = int(
 # inflates by ~4/3, so 20MB encodes to ~27MB — safely under Anthropic's 32MB
 # per-request limit. Larger files are handed to the agent by path instead.
 _MAX_INLINE_ATTACHMENT_BYTES = 20 * 1024 * 1024
+
+
+# This runner can bring the Claude CLI up before it registers, so a standby
+# launch (``vicoa headless --standby``, see ``vicoa.standby``) warms the engine
+# while the user is still typing.
+SUPPORTS_ENGINE_STANDBY = True
+
+
+class StandbyDiscarded(Exception):
+    """The launcher dropped this standby (or it timed out) before adopting it.
+    It never registered, so there is no session to report on or end."""
 
 
 @dataclass(frozen=True)
@@ -387,6 +399,20 @@ def setup_logging(session_id: str, console_output: bool = True, debug: bool = Fa
 
 class HeadlessClaudeRunner:
     """Headless Claude Code runner that integrates with Vicoa SDK."""
+
+    # Start-up model-list report, run in the background (see ``initialize``).
+    # Class-level so a runner built without ``__init__`` (tests) has none.
+    _models_task: Optional[asyncio.Task[None]] = None
+    # Standby launch (``vicoa.standby``): the CLI comes up before registration
+    # and the first prompt arrives with the go line. That prompt runs locally at
+    # once; its display POST runs in the background and ``_route`` drops the
+    # row it creates by the id the POST returns.
+    _standby: bool = False
+    _engine_preconnected: bool = False
+    _adopted_prompt: Optional[str] = None
+    _adopted_prompt_message_id: Optional[str] = None
+    _prompt_post_task: Optional[asyncio.Task[None]] = None
+    _prompt_post_holds_lock: bool = False
 
     def __init__(
         self,
@@ -1060,6 +1086,128 @@ class HeadlessClaudeRunner:
         }
         return {k: v for k, v in sc.items() if v is not None}
 
+    async def _standby_bring_up(self) -> None:
+        """Connect the Claude CLI, then wait for the go line (``vicoa.standby``).
+
+        Nothing the user can see happens here: no registration, no WS, no
+        stream reader (the SDK buffers the CLI's start-up messages until the
+        reader starts). A discard raises ``StandbyDiscarded`` before any
+        session row exists.
+        """
+        self.logger.info("Standby: initializing Claude Agent SDK client...")
+        self.claude_client = ClaudeSDKClient(options=self.claude_options)
+        await self.claude_client.connect()
+        self._engine_preconnected = True
+        self.logger.info("Standby ready; waiting for go")
+        go = await read_go_async()
+        if go is None:
+            raise StandbyDiscarded()
+        prompt = go.get("prompt")
+        if isinstance(prompt, str) and prompt.strip():
+            self._adopted_prompt = prompt
+        self.logger.info("Standby adopted")
+
+    async def _feed_adopted_prompt(self, prompt: str) -> None:
+        """Start turn 1 from the prompt that came with the go, and show it in
+        chat from the background.
+
+        Posting first and waiting for the broadcast to come back costs a server
+        round trip before the turn can start. The row the POST creates still
+        reaches ``_route`` (the live broadcast, and every catch-up or reconcile
+        replay until the first agent message moves the read cursor), so
+        ``_route`` drops it by the id the POST returns.
+
+        The POST holds ``_send_lock``, which every agent message also takes, so
+        no reply can be filed above the prompt in chat. The lock is taken here,
+        before the turn is queued, so the turn cannot win the race for it.
+        """
+        self._adopted_prompt = prompt
+        await self._send_lock.acquire()
+        self._prompt_post_holds_lock = True
+        try:
+            await self._user_message_queue.put(InboundUserMessage(prompt, (), None))
+            task = asyncio.create_task(self._post_adopted_prompt(prompt))
+        except BaseException:
+            self._release_prompt_post_lock()
+            raise
+        # A task cancelled before its first step never runs its ``finally``.
+        task.add_done_callback(lambda _task: self._release_prompt_post_lock())
+        self._prompt_post_task = task
+
+    def _release_prompt_post_lock(self) -> None:
+        if self._prompt_post_holds_lock:
+            self._prompt_post_holds_lock = False
+            self._send_lock.release()
+
+    async def _post_adopted_prompt(self, prompt: str) -> None:
+        """POST the adopted prompt for display; runs holding ``_send_lock``
+        (taken by ``_feed_adopted_prompt``) and always releases it."""
+        try:
+            # ``mark_as_read=False`` for the reason spelled out in ``initialize``.
+            response = await self.vicoa_client.send_user_message(  # type: ignore[union-attr]
+                agent_instance_id=self.session_id,
+                content=prompt,
+                mark_as_read=False,
+            )
+            message_id = response.get("message_id") if response else None
+            if isinstance(message_id, str) and message_id:
+                self._adopted_prompt_message_id = message_id
+                self._remember_message_id(message_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # No row means no echo to drop; the turn already ran locally.
+            self.logger.exception("Failed to POST the adopted standby prompt")
+        finally:
+            self._release_prompt_post_lock()
+
+    async def _is_adopted_prompt_echo(
+        self, content: str, message_id: Optional[str]
+    ) -> bool:
+        """True for the row our own adopted-prompt POST created.
+
+        Decided by id only. Content just says whether it is worth waiting for an
+        in-flight POST to learn that id, so a user who sends the same text
+        again still gets it run.
+        """
+        task = self._prompt_post_task
+        if (
+            task is not None
+            and not task.done()
+            and self._adopted_prompt is not None
+            and content.strip() == self._adopted_prompt.strip()
+        ):
+            # The broadcast overtook the POST's response.
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                if not task.cancelled():
+                    raise  # this route was cancelled, not the POST
+        return message_id is not None and message_id == self._adopted_prompt_message_id
+
+    async def _report_models_quietly(self) -> None:
+        try:
+            await self.discover_and_report_models()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.logger.warning(
+                "claude: model discovery failed (non-fatal)", exc_info=True
+            )
+
+    async def _await_models_report(self) -> None:
+        """Let the start-up model report land before another session_config
+        write: it carries ``current_model``, so arriving after a model switch
+        would put the gear back on the old model."""
+        task = self._models_task
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if not task.cancelled():
+                raise  # we were cancelled, not the report
+
     async def discover_and_report_models(self) -> None:
         """Report Claude's available models onto ``session_config`` for the
         mid-session gear, mirroring codex's ``discover_and_report_models``.
@@ -1112,6 +1260,12 @@ class HeadlessClaudeRunner:
             api_key=self.vicoa_api_key, base_url=self.vicoa_base_url
         )
 
+        if standby_requested() and not self.is_resuming:
+            # Engine up now; registration, which makes the session visible,
+            # only once the launcher says go.
+            self._standby = True
+            await self._standby_bring_up()
+
         if self.is_resuming:
             # The row already exists, and re-registering the same id is
             # rejected (409). Just reopen it so the UI stops showing the
@@ -1153,6 +1307,12 @@ class HeadlessClaudeRunner:
                 )
                 updated_session_id = registration.agent_instance_id
                 if updated_session_id and updated_session_id != self.session_id:
+                    if self._engine_preconnected:
+                        # The CLI already runs under the old id (its transcript
+                        # is filed under it); a standby can't be re-keyed.
+                        raise RuntimeError(
+                            f"registration changed the session id to {updated_session_id}"
+                        )
                     self.logger.info(
                         f"Session ID updated from {self.session_id} to {updated_session_id}"
                     )
@@ -1192,9 +1352,10 @@ class HeadlessClaudeRunner:
         )
         self._heartbeat.start()
 
-        self.logger.info("Initializing Claude Agent SDK client...")
-        self.claude_client = ClaudeSDKClient(options=self.claude_options)
-        await self.claude_client.connect()
+        if not self._engine_preconnected:
+            self.logger.info("Initializing Claude Agent SDK client...")
+            self.claude_client = ClaudeSDKClient(options=self.claude_options)
+            await self.claude_client.connect()
         # Initial connect succeeded — subsequent rebuilds (model / effort /
         # thinking toggle) must use resume= so the SDK doesn't refuse the
         # already-live session_id.
@@ -1211,19 +1372,17 @@ class HeadlessClaudeRunner:
         # Report the machine's real Claude models (catalog + the user's
         # ~/.claude custom models) onto session_config so the mid-session gear
         # shows the actual switchable set, mirroring codex's model/list
-        # discovery. Best-effort; never blocks bring-up.
-        try:
-            await self.discover_and_report_models()
-        except Exception:
-            self.logger.warning(
-                "claude: model discovery failed (non-fatal)", exc_info=True
-            )
+        # discovery. Only the gear reads it, so it runs in the background
+        # rather than as a server round trip in front of the first prompt.
+        self._models_task = asyncio.create_task(self._report_models_quietly())
 
         self.logger.info("Creating initial Vicoa session...")
         if not self.vicoa_client:
             raise RuntimeError("Vicoa client not initialized")
 
-        if self.initial_prompt and self.initial_prompt.strip():
+        if self._adopted_prompt:
+            await self._feed_adopted_prompt(self._adopted_prompt)
+        elif self.initial_prompt and self.initial_prompt.strip():
             # POST the prompt as a user message so the dashboard shows it in
             # chat. Do NOT also feed it directly to ``run_conversation_turn``
             # — vicoa-server broadcasts the POSTed row back to our own /ws
@@ -2724,6 +2883,10 @@ class HeadlessClaudeRunner:
         before they're seen as plain user input; control commands queue
         out-of-band so a slow reconnect doesn't block this routing.
         """
+        if await self._is_adopted_prompt_echo(content, message_id):
+            # Our own adopted-prompt row: it already ran. Checked first, before
+            # it could be read as a reply or a control command.
+            return
         if content:
             if await self._maybe_route_ask_user_question_reply(content):
                 return
@@ -2954,6 +3117,9 @@ class HeadlessClaudeRunner:
         self.logger.info(
             f"Received control command: {setting}{'=' + str(value) if value is not None else ''}"
         )
+        # The branches below PATCH session_config; keep them after the
+        # start-up model report so it cannot overwrite them.
+        await self._await_models_report()
 
         if setting == "permission_mode":
             # Mirrors claude_agent_sdk.types.PermissionMode. "auto" is the
@@ -3568,6 +3734,10 @@ class HeadlessClaudeRunner:
         except (KeyboardInterrupt, asyncio.CancelledError):
             self.logger.info("Received interrupt/cancel signal, shutting down...")
             self.running = False
+        except StandbyDiscarded:
+            # Never registered, so there is nothing to report or end.
+            self.logger.info("Standby discarded; exiting without registering")
+            self.running = False
         except Exception as e:
             self.logger.error(f"Fatal error in headless runner: {e}")
             fatal = e
@@ -3621,6 +3791,20 @@ class HeadlessClaudeRunner:
                 self._status_watchdog_task.cancel()
                 try:
                     await self._status_watchdog_task
+                except asyncio.CancelledError:
+                    pass
+
+            if self._models_task and not self._models_task.done():
+                self._models_task.cancel()
+                try:
+                    await self._models_task
+                except asyncio.CancelledError:
+                    pass
+
+            if self._prompt_post_task and not self._prompt_post_task.done():
+                self._prompt_post_task.cancel()
+                try:
+                    await self._prompt_post_task
                 except asyncio.CancelledError:
                     pass
 

@@ -291,3 +291,46 @@ async def test_interrupt_feedback_precedes_the_stop() -> None:
     await runner._route(json.dumps({"type": "control", "setting": "interrupt"}))
 
     assert order == ["send_message", "session.interrupt"]
+
+
+# ---------------------------------------------------------------------------
+# start-up model report (background) vs later session_config writes
+# ---------------------------------------------------------------------------
+
+
+async def test_a_session_config_patch_waits_for_the_start_up_model_report() -> None:
+    """The start-up report carries ``current_model``; it runs in the background
+    now, so a model change PATCHed meanwhile must land after it, not before."""
+    import asyncio
+
+    fake = FakeAsyncVicoaClient()
+    runner = _build_runner(vicoa_client=fake, session=_FakeSession(model="gpt-5.4"))
+    release = asyncio.Event()
+
+    async def start_up_report() -> None:
+        await release.wait()
+        await fake.patch_agent_instance(
+            "s", session_config={"current_model": "gpt-5.4"}
+        )
+
+    runner._models_task = asyncio.create_task(start_up_report())
+    change = asyncio.create_task(runner._patch_session_config({"model": "gpt-5.5"}))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert fake.patch_calls == []
+
+    release.set()
+    await change
+    configs = [c.get("session_config") for c in fake.patch_calls]
+    assert configs == [{"current_model": "gpt-5.4"}, {"model": "gpt-5.5"}]
+
+
+async def test_a_failed_or_cancelled_model_report_does_not_block_writes() -> None:
+    import asyncio
+
+    fake = FakeAsyncVicoaClient()
+    runner = _build_runner(vicoa_client=fake, session=_FakeSession(model="gpt-5.4"))
+    runner._models_task = asyncio.create_task(asyncio.sleep(10))
+    runner._models_task.cancel()
+    await runner._patch_session_config({"model": "gpt-5.5"})
+    assert [c.get("session_config") for c in fake.patch_calls] == [{"model": "gpt-5.5"}]

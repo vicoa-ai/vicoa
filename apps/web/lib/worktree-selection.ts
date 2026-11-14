@@ -17,7 +17,8 @@ type MetadataShape = {
   machine_metadata?: Record<string, unknown> | null;
 };
 
-function readCapabilities(machine: MetadataShape | null | undefined): unknown {
+/** The daemon's advertised `metadata.capabilities`, unvalidated. */
+export function readCapabilities(machine: MetadataShape | null | undefined): unknown {
   if (!machine) return undefined;
   const meta = machine.metadata ?? machine.machine_metadata;
   if (!meta || typeof meta !== 'object') return undefined;

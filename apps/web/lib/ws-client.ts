@@ -15,6 +15,7 @@ import { getBuiltinToken } from '@/lib/auth/builtin-client';
 import { getCloudWsUrl, getDesktopConfig } from '@/lib/runtime-config';
 import { ensureLocalMachineId, getLocalMachineId } from '@/lib/local-machine';
 import { reconnectDelayMs } from '@/lib/ws-protocol';
+import { RecentEntities } from '@/lib/recent-entities';
 
 // These bodies are written as `type` aliases, not `interface`s, so they satisfy
 // the index-signature constraint of `EntityRow` (ws-protocol.ts) — interfaces
@@ -244,6 +245,8 @@ class WsClient {
   private readonly pendingFetches = new Map<string, PendingFetch>();
   private readonly connectedWaiters = new Set<ConnectedWaiter>();
   private readonly updateListeners = new Set<UpdateListener>();
+  /** Entities this socket has received an update for; see `waitForEntity`. */
+  private readonly seenEntities = new RecentEntities();
   private readonly connectionListeners = new Set<ConnectionListener>();
   private readonly ptyOutputListeners = new Set<PtyOutputListener>();
   private readonly ptyExitListeners = new Set<PtyExitListener>();
@@ -405,10 +408,16 @@ class WsClient {
   }
 
   /**
-   * Resolve when the next `update` for `(entity, entityId)` arrives, or after
+   * Resolve when an `update` for `(entity, entityId)` has arrived, or after
    * `timeoutMs`. Used after `spawn-session` to await the daemon-spawned
    * agent's self-registration without polling REST — the user-scoped socket
    * is already receiving the `instance-created` broadcast for the dashboard.
+   *
+   * Resolves at once when this socket has already seen such an update. That
+   * is the usual case after a spawn: the server broadcasts the new row when
+   * the agent registers, before the daemon answers the RPC, so the update
+   * lands ahead of the RPC result. Listening only for later updates made the
+   * page wait for the row's next change (a heartbeat up to ~2s later).
    *
    * Returns true on the event, false on timeout.
    *
@@ -425,6 +434,7 @@ class WsClient {
     entityId: string,
     { timeoutMs = 15000 }: { timeoutMs?: number } = {},
   ): Promise<boolean> {
+    if (this.seenEntities.has(entity, entityId)) return Promise.resolve(true);
     return new Promise((resolve) => {
       let unsubscribe: () => void = () => {};
       const timer = setTimeout(() => {
@@ -732,6 +742,7 @@ class WsClient {
 
   private dispatchUpdate(payload: UpdatePayload | undefined): void {
     if (!payload || !payload.body) return;
+    this.seenEntities.note(payload.entity, payload.entity_id);
     for (const listener of this.updateListeners) {
       try {
         listener(payload);

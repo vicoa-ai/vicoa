@@ -114,6 +114,7 @@ import { ProjectIcon } from '@/components/dashboard/task-ui';
 import { loadPromptDraft, savePromptDraft, clearPromptDraft } from '@/lib/new-session-draft';
 import { clearForkContext, loadForkContext, type ForkContext } from '@/lib/fork-session';
 import { currentPathname, openCreatedSession } from '@/lib/new-session-navigation';
+import { getSessionPrewarmer, machineSupportsPrewarm, shouldPrewarm } from '@/lib/session-prewarm';
 import { getDesktopConfig } from '@/lib/runtime-config';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { DesktopCollapsedLead, DesktopWindowControlsSpacer } from '@/components/desktop/window-chrome';
@@ -1798,7 +1799,11 @@ function NewSessionContent() {
       // super properties — so hardcoding 'web' here counted every desktop
       // session as a web one. Deleting it is the whole fix: identical value on
       // web, correct value on desktop, no new key, no query migration.
-      posthog.capture('session_created', { agent_type: sessionConfig.agent });
+      posthog.capture('session_created', {
+        agent_type: sessionConfig.agent,
+        worktree: worktreeMode === 'new' ? 'new' : worktreeMode === 'existing' ? 'existing' : 'none',
+        prewarmed: result.prewarmed === true,
+      });
       if (typeof window !== 'undefined' &&
           localStorage.getItem('vicoa.hasCreatedFirstRemoteSession') !== '1') {
         localStorage.setItem('vicoa.hasCreatedFirstRemoteSession', '1');
@@ -2030,6 +2035,47 @@ function NewSessionContent() {
     ? SUBMIT_BLOCKED_COPY[submitBlockedReason][isDesktop ? 'desktop' : 'web']
     : null;
   const canSubmit = !isSubmitting && !!api && !!selectedMachineId && !!directory.trim() && isOnline;
+
+  // Start this session's agent while the user types its first message; the
+  // spawn on send takes it over (lib/session-prewarm.ts). The params are the
+  // spawn-session params handleSubmit sends, minus the prompt, so the daemon
+  // can tell it is the same session. Re-run on every keystroke; the prewarmer
+  // sends at most one request per window for unchanged params.
+  const prewarmProfileBlocked =
+    !!selectedProfile && !!agentProfileBlockedReason(selectedProfile, currentMachine ?? undefined);
+  const hasPrewarmDraft = prompt.trim().length > 0 || pendingImages.length > 0;
+  const prewarmMetadata = JSON.stringify(toSpawnMetadata(sessionConfig, undefined));
+  useEffect(() => {
+    if (
+      !shouldPrewarm({
+        machineSupports: machineSupportsPrewarm(currentMachine),
+        worktreeMode,
+        directory: worktreeSpawn.directory,
+        hasDraft: hasPrewarmDraft,
+        busy: !canSubmit || prewarmProfileBlocked,
+      })
+    ) {
+      return;
+    }
+    getSessionPrewarmer().request(selectedMachineId, {
+      directory: worktreeSpawn.directory,
+      agent: sessionConfig.agent,
+      metadata: JSON.parse(prewarmMetadata) as Record<string, unknown>,
+      ...(selectedProfileId ? { agent_profile_id: selectedProfileId } : {}),
+    });
+  }, [
+    prompt,
+    currentMachine,
+    sessionConfig.agent,
+    worktreeMode,
+    worktreeSpawn.directory,
+    hasPrewarmDraft,
+    canSubmit,
+    prewarmProfileBlocked,
+    selectedMachineId,
+    prewarmMetadata,
+    selectedProfileId,
+  ]);
 
   // Live plan usage (rate-limit windows) for the selected machine, fetched from
   // its daemon when the page opens — so limits are visible before committing

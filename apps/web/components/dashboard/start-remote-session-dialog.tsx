@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { getWsClient, RpcError } from '@/lib/ws-client';
+import { getSessionPrewarmer, machineSupportsPrewarm, shouldPrewarm } from '@/lib/session-prewarm';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -175,6 +176,41 @@ export function StartRemoteSessionDialog({
       setIsSubmitting(false);
     }
   }, [open, loadMachines]);
+
+  // Start the session's agent while the user types the prompt; the spawn on
+  // submit takes it over (lib/session-prewarm.ts). Same params as the
+  // spawn-session below, minus the prompt.
+  const selectedMachine = machines.find((m) => m.machine_id === selectedMachineId) ?? null;
+  const selectedMachineOnline = selectedMachine ? isMachineOnline(selectedMachine) : false;
+  useEffect(() => {
+    if (
+      !open ||
+      !shouldPrewarm({
+        machineSupports: machineSupportsPrewarm(selectedMachine),
+        worktreeMode: 'none',
+        directory,
+        hasDraft: prompt.trim().length > 0,
+        busy: isSubmitting || !api || !selectedMachineOnline,
+      })
+    ) {
+      return;
+    }
+    getSessionPrewarmer().request(selectedMachineId, {
+      directory: directory.trim(),
+      agent: selectedAgent,
+      metadata: { enable_thinking: true },
+    });
+  }, [
+    open,
+    prompt,
+    selectedMachine,
+    selectedMachineOnline,
+    selectedAgent,
+    directory,
+    isSubmitting,
+    api,
+    selectedMachineId,
+  ]);
 
   const handleSubmit = async () => {
     if (!api || !selectedMachineId || !directory.trim()) {

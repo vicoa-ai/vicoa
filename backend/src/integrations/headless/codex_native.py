@@ -50,6 +50,7 @@ from vicoa.attachments import AttachmentRef, extract_attachment_refs
 from vicoa.sdk.async_client import AsyncVicoaClient
 from vicoa.sdk.exceptions import AuthenticationError
 from vicoa.session_markers import clear_session_registered, mark_session_registered
+from vicoa.standby import read_go_async, standby_requested
 from vicoa.session_ws_client import SessionMessagesWsClient
 from vicoa.utils import derive_ws_url, get_project_path
 
@@ -118,6 +119,16 @@ def setup_logging(
     logger.info("codex_native: logging to %s", log_file)
 
 
+# This runner can start ``codex app-server`` and open its thread before it
+# registers, so a standby launch (``vicoa headless --standby``, see
+# ``vicoa.standby``) warms the engine while the user is still typing.
+SUPPORTS_ENGINE_STANDBY = True
+
+
+class StandbyDiscarded(Exception):
+    """The launcher dropped this standby (or it timed out) before adopting it."""
+
+
 class CodexNativeRunner:
     """Owns the WS stream loop + signal handlers + lifecycle around
     ``CodexAppServerSession``.
@@ -127,6 +138,19 @@ class CodexNativeRunner:
     composes (session, transport, spawn) are unit-tested in
     ``tests/test_codex_app_server.py``, ``test_codex_subprocess.py``, etc.
     """
+
+    # Start-up model discovery + report, run in the background (see ``run``).
+    # Class-level so a runner built without ``__init__`` (tests) has none.
+    _models_task: Optional[asyncio.Task[None]] = None
+    # Standby launch (``vicoa.standby``): codex is up before registration and
+    # the first prompt arrives with the go line. It runs locally at once; its
+    # display POST runs in the background and ``_route`` drops the row it
+    # creates by the id the POST returns.
+    _engine_preconnected: bool = False
+    _adopted_prompt: Optional[str] = None
+    _adopted_prompt_message_id: Optional[str] = None
+    _prompt_post_task: Optional[asyncio.Task[None]] = None
+    _thread_id_task: Optional[asyncio.Task[None]] = None
 
     def __init__(
         self,
@@ -275,6 +299,10 @@ class CodexNativeRunner:
             self.vicoa_client = AsyncVicoaClient(
                 api_key=self.api_key, base_url=self.base_url
             )
+            if standby_requested() and not self.is_resuming:
+                # codex up now; registration, which makes the session
+                # visible, only once the launcher says go.
+                await self._standby_bring_up()
             if self.is_resuming:
                 # The row already exists; re-registering it returns 409. Reopen
                 # it instead so the UI stops showing the session as stopped
@@ -330,36 +358,26 @@ class CodexNativeRunner:
             )
             self._heartbeat.start()
 
-            self.codex_subproc = await spawn_codex_app_server(
-                command=self.codex_binary_command,
-                cwd=self.cwd,
-                env=self._build_codex_env(),
-            )
-            self.session = CodexAppServerSession(
-                vicoa_client=self.vicoa_client,
-                instance_id=self.session_id,
-                cwd=self.cwd,
-                transport=self.codex_subproc.transport,
-                thread_id=self.thread_id,
-                agent_type="codex",
-                model=self.model,
-                effort=self.effort,
-                permission_mode=self.permission_mode,
-                system_prompt=self.system_prompt,
-            )
-            await self.session.start()
+            if not self._engine_preconnected:
+                await self._start_codex(report=True)
+            elif self._adopted_prompt:
+                # The first turn starts right away and sets the status itself;
+                # an AWAITING_INPUT landing after it would show it idle.
+                assert self.session is not None
+                self._thread_id_task = asyncio.create_task(
+                    self.session.persist_thread_id()
+                )
+            else:
+                assert self.session is not None
+                await self.session.report_started()
 
             # Discover the machine's real codex models (account/version
             # filtered, with the true default) via `model/list` and PATCH them
             # onto session_config, so the gear shows the actual list instead of
-            # static-catalog guesses. Best-effort; never blocks bring-up.
-            try:
-                await self.session.discover_and_report_models()
-            except Exception:
-                logger.warning(
-                    "codex_native: model discovery failed (non-fatal)",
-                    exc_info=True,
-                )
+            # static-catalog guesses. Only the gear reads it, so it runs in the
+            # background rather than as a server round trip in front of the
+            # first prompt; ``_patch_session_config`` waits for it.
+            self._models_task = asyncio.create_task(self._report_models_quietly())
 
             # Start the single turn consumer before the WS subscriber can
             # deliver anything, so no message races ahead of its drain. Held on
@@ -369,7 +387,9 @@ class CodexNativeRunner:
 
             self._start_ws_client()
 
-            if self.initial_prompt:
+            if self._adopted_prompt:
+                self._feed_adopted_prompt(self._adopted_prompt)
+            elif self.initial_prompt:
                 # POST as a user message so the dashboard shows it in the
                 # chat. Do NOT call deliver_user_message directly here —
                 # vicoa-server broadcasts the POSTed row back to our WS
@@ -421,6 +441,11 @@ class CodexNativeRunner:
             logger.info("codex_native: interrupted, shutting down")
             self.running = False
             return 0
+        except StandbyDiscarded:
+            # Never registered, so there is nothing to report or end.
+            logger.info("codex_native: standby discarded; exiting without registering")
+            self.running = False
+            return 0
         except Exception as exc:
             logger.exception("codex_native: fatal error")
             if not self._registered:
@@ -437,6 +462,17 @@ class CodexNativeRunner:
                     await self._consumer_task
                 except (asyncio.CancelledError, Exception):
                     pass
+            for task in (
+                self._models_task,
+                self._prompt_post_task,
+                self._thread_id_task,
+            ):
+                if task is not None and not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
             # Stop heartbeating before end_session, so an in-flight beat can't
             # make a finished session look freshly alive.
             if self._heartbeat is not None:
@@ -634,6 +670,10 @@ class CodexNativeRunner:
              handles pending permission FIFO + new turns internally).
         """
         assert self.session is not None
+        if await self._is_adopted_prompt_echo(content, message_id):
+            # Our own adopted-prompt row: it already ran. Checked first, before
+            # it could be read as a reply or a control command.
+            return
         logger.info("codex_native: routing user message (%d chars)", len(content))
         if auq.is_persist_only_message(content):
             logger.info("codex_native: dropping persist-only AUQ ack")
@@ -864,12 +904,132 @@ class CodexNativeRunner:
             except Exception:
                 logger.exception("codex_native: turn processing failed")
 
+    async def _start_codex(self, *, report: bool) -> None:
+        """Spawn ``codex app-server`` and open (or resume) the thread."""
+        self.codex_subproc = await spawn_codex_app_server(
+            command=self.codex_binary_command,
+            cwd=self.cwd,
+            env=self._build_codex_env(),
+        )
+        self.session = CodexAppServerSession(
+            vicoa_client=self.vicoa_client,
+            instance_id=self.session_id,
+            cwd=self.cwd,
+            transport=self.codex_subproc.transport,
+            thread_id=self.thread_id,
+            agent_type="codex",
+            model=self.model,
+            effort=self.effort,
+            permission_mode=self.permission_mode,
+            system_prompt=self.system_prompt,
+        )
+        await self.session.start(report=report)
+
+    async def _standby_bring_up(self) -> None:
+        """Bring codex up, then wait for the go line (``vicoa.standby``).
+
+        Nothing the user can see happens here: no registration, no server
+        write, no WS. A discard raises ``StandbyDiscarded`` before any session
+        row exists.
+        """
+        logger.info("codex_native: standby: starting codex app-server")
+        await self._start_codex(report=False)
+        self._engine_preconnected = True
+        logger.info("codex_native: standby ready; waiting for go")
+        go = await read_go_async()
+        if go is None:
+            raise StandbyDiscarded()
+        prompt = go.get("prompt")
+        if isinstance(prompt, str) and prompt.strip():
+            self._adopted_prompt = prompt
+        logger.info("codex_native: standby adopted")
+
+    def _feed_adopted_prompt(self, prompt: str) -> None:
+        """Start turn 1 from the prompt that came with the go and show it in
+        chat from the background.
+
+        The row the POST creates still reaches ``_route`` (the live broadcast
+        and any catch-up replay), so ``_route`` drops it by the id the POST
+        returns. Agent messages wait for the POST (``hold_agent_posts_until``)
+        so no reply is filed above the prompt.
+        """
+        assert self.session is not None
+        self._adopted_prompt = prompt
+        self._prompt_post_task = asyncio.create_task(self._post_adopted_prompt(prompt))
+        self.session.hold_agent_posts_until(self._prompt_post_task)
+        self._turn_queue.put_nowait((prompt, (), None))
+
+    async def _post_adopted_prompt(self, prompt: str) -> None:
+        if self.vicoa_client is None:
+            return
+        try:
+            # ``mark_as_read=False`` for the reason given at the cold-path POST.
+            response = await self.vicoa_client.send_user_message(
+                agent_instance_id=self.session_id,
+                content=prompt,
+                mark_as_read=False,
+            )
+            message_id = response.get("message_id") if response else None
+            if isinstance(message_id, str) and message_id:
+                self._adopted_prompt_message_id = message_id
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # No row means no echo to drop; the turn already ran locally.
+            logger.exception("codex_native: failed to POST the adopted standby prompt")
+
+    async def _is_adopted_prompt_echo(
+        self, content: str, message_id: Optional[str]
+    ) -> bool:
+        """True for the row our own adopted-prompt POST created (by id only;
+        content just says whether to wait for an in-flight POST's id)."""
+        task = self._prompt_post_task
+        if (
+            task is not None
+            and not task.done()
+            and self._adopted_prompt is not None
+            and content.strip() == self._adopted_prompt.strip()
+        ):
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                if not task.cancelled():
+                    raise  # this route was cancelled, not the POST
+        return message_id is not None and message_id == self._adopted_prompt_message_id
+
+    async def _report_models_quietly(self) -> None:
+        if self.session is None:
+            return
+        try:
+            await self.session.discover_and_report_models()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "codex_native: model discovery failed (non-fatal)",
+                exc_info=True,
+            )
+
+    async def _await_models_report(self) -> None:
+        """Let the start-up model report land first: it carries
+        ``current_model``, so arriving after a mid-session model change would
+        put the gear back on the old model."""
+        task = self._models_task
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if not task.cancelled():
+                raise  # we were cancelled, not the report
+
     async def _patch_session_config(self, delta: dict) -> None:
         """Best-effort PATCH so the mobile gear pill reflects mid-session
         model / effort / permission_mode changes. Fire-and-forget; the next
         successful PATCH overwrites any stale partial state."""
         if self.vicoa_client is None:
             return
+        await self._await_models_report()
         try:
             await self.vicoa_client.patch_agent_instance(
                 self.session_id, session_config=delta

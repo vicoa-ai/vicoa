@@ -153,6 +153,8 @@ class PiRuntimeSession:
         self._turn_active = False
         self._settle_task: Optional["asyncio.Task[None]"] = None
         self._watchdog_task: Optional["asyncio.Task[None]"] = None
+        # Start-up model list + command index, sent in the background; see start().
+        self._startup_reports_task: Optional["asyncio.Task[None]"] = None
         self._close_task: Optional["asyncio.Task[None]"] = None
         #: Background tasks for dialogs, which must not block the read loop.
         self._dialog_tasks: set["asyncio.Task[None]"] = set()
@@ -195,9 +197,32 @@ class PiRuntimeSession:
             )
 
         await self._refresh_state()
-        await self._report_models()
-        await self._pull_commands()
+        # The model list and the command index only feed the UI (gear, slash
+        # menu), so they go out in the background instead of as two server
+        # round trips in front of the first prompt. Later writes of the same
+        # kind wait for them (``_after_startup_reports``) so they keep their order.
+        self._startup_reports_task = asyncio.create_task(self._send_startup_reports())
         await self._set_status(_STATUS_AWAITING_INPUT)
+
+    async def _send_startup_reports(self) -> None:
+        try:
+            await self._report_models()
+            await self._pull_commands()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("pi_family: start-up reports failed", exc_info=True)
+
+    async def _after_startup_reports(self) -> None:
+        """Wait for the start-up model/command reports, unless we are them."""
+        task = self._startup_reports_task
+        if task is None or task.done() or task is asyncio.current_task():
+            return
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if not task.cancelled():
+                raise  # we were cancelled, not the reports
 
     async def _refresh_state(self) -> None:
         """Read ``get_state`` for the session id and the live current model.
@@ -265,6 +290,7 @@ class PiRuntimeSession:
         await self._sync_commands(data.get("commands"))
 
     async def _sync_commands(self, commands: Any) -> None:
+        await self._after_startup_reports()
         index = commands_mod.build_command_index(commands)
         if not index or index == self._last_commands:
             return
@@ -859,6 +885,9 @@ class PiRuntimeSession:
             logger.warning("pi_family: failed to push status=%s", new_status)
 
     async def _patch_session_config(self, delta: dict) -> None:
+        # The start-up report carries ``current_model``; landing after a model
+        # change it would put the gear back on the old model.
+        await self._after_startup_reports()
         try:
             await self.vicoa_client.patch_agent_instance(
                 self.instance_id, session_config=delta
@@ -934,7 +963,7 @@ class PiRuntimeSession:
     async def aclose(self) -> None:
         self._closed = True
         self._cancel_settle()
-        for task in (self._watchdog_task, self._close_task):
+        for task in (self._watchdog_task, self._close_task, self._startup_reports_task):
             if task is not None and not task.done():
                 task.cancel()
                 try:
