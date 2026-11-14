@@ -22,7 +22,6 @@ from sqlalchemy.exc import IntegrityError, OperationalError as SAOperationalErro
 from shared.access_handlers import install_access_exception_handlers
 from shared.auth.user_fk import make_user_gone_exception_handler
 from shared.config import settings
-from shared.database.errors import is_db_disconnect
 from shared.database.models import User
 from shared.database.session import SessionLocal
 from shared.telemetry import (
@@ -45,6 +44,7 @@ from servers.api.shares import share_router
 from servers.api.tasks import task_router
 from servers.api.media import media_router
 from servers.api.ws_handler import ws_router
+from servers.db_disconnect import on_db_disconnect
 from servers.presence import LeaseFlusher, presence
 from servers.scheduler import AutomationScheduler
 from shared.pg_listener import start_hub, stop_hub
@@ -244,31 +244,10 @@ app.exception_handler(IntegrityError)(
 install_access_exception_handlers(app)
 
 
-@app.exception_handler(SAOperationalError)
-async def _on_db_disconnect(request: Request, exc: SAOperationalError):
-    """Convert transient flycast disconnects to 503 + Retry-After.
-
-    Daemon clients (CLI wrappers, machine heartbeats) retry on 503 naturally.
-    This stops disconnect-class errors from polluting Sentry as 500s and
-    keeps user-facing surfaces clean during flycast proxy resets.
-
-    More-specific handlers run before the generic `Exception` handler below.
-    """
-    if is_db_disconnect(exc):
-        inner = getattr(exc, "orig", exc)
-        logger.warning(
-            "DB disconnect on %s %s -> 503: %s",
-            request.method,
-            request.url.path,
-            str(inner)[:200],
-        )
-        return JSONResponse(
-            status_code=503,
-            headers={"Retry-After": "1"},
-            content={"detail": "Database temporarily unavailable, please retry."},
-        )
-    # Not a transient disconnect — fall through to the generic 500 handler.
-    raise exc
+# A transient flycast disconnect: 503 + Retry-After on HTTP, a 1013 close on
+# `/ws` (servers/db_disconnect.py). More-specific handlers run before the
+# generic `Exception` handler below.
+app.exception_handler(SAOperationalError)(on_db_disconnect)
 
 
 @app.exception_handler(Exception)

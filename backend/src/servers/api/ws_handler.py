@@ -87,6 +87,10 @@ _CLOSE_FORBIDDEN = 4403
 # RFC 6455 policy violation — used when the manager sheds a slow consumer
 # because its outbox is full (websocket-migration §2.10 backpressure).
 _CLOSE_SLOW_CONSUMER = 1008
+# RFC 6455 / IANA "Try Again Later": the WebSocket analogue of 503 + Retry-After.
+# Sent when a transient database disconnect escapes the endpoint. Web and mobile
+# reconnect on any close code, and the daemons on every code but 4401.
+_CLOSE_TRY_AGAIN_LATER = 1013
 
 
 async def _safe_close(websocket: WebSocket, *, code: int, reason: str = "") -> None:
@@ -123,6 +127,16 @@ async def _safe_close(websocket: WebSocket, *, code: int, reason: str = "") -> N
     except Exception:
         logger.exception("WS close raised (code=%s); transport may leak", code)
         sentry_sdk.capture_exception()
+
+
+async def close_for_db_disconnect(websocket: WebSocket) -> None:
+    """Close `websocket` with "try again later" after a transient database
+    disconnect escaped its handler, so the client reconnects.
+
+    Safe in any socket state: before `accept()` the close becomes a rejected
+    handshake, and an already-closed socket is left alone (`_safe_close`).
+    """
+    await _safe_close(websocket, code=_CLOSE_TRY_AGAIN_LATER, reason="db_unavailable")
 
 
 def verify_ws_credentials(creds: WsCredentials) -> str:
