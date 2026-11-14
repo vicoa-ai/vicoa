@@ -1,16 +1,21 @@
 {
-  "asOf": "2026-11-08T08:00:00Z",
+  "version": 1,
+  "updatedAt": "2026-11-08T08:00:00Z",
+  "updatedBy": "examplebot",
   "headline": {
-    "label": "Monthly revenue",
-    "value": "$1,240",
-    "goal": { "label": "$5k", "progress": 0.25, "by": "by Mar 31" },
-    "note": { "text": "Up $80 since last month", "tone": "good" }
+    "label": "Revenue, 30 d",
+    "value": "$18,300",
+    "tag": "partial",
+    "note": "iOS and web; Android not in yet",
+    "asOf": "2026-11-07",
+    "goal": { "label": "$40k/month", "progress": 0.46, "by": "2027-06-30" }
   },
   "metrics": [
-    { "label": "Paying users", "value": "62", "note": "6 new this week", "series": [51, 54, 55, 58, 60, 62] },
-    { "label": "Signups, 7 days", "value": "140", "series": [120, 131, 128, 140] },
-    { "label": "Churn, 30 days", "value": null, "note": "Unknown: the export failed" }
+    { "label": "Paying users", "value": "1,420", "note": "85 new this week", "asOf": "2026-11-07", "series": [1210, 1265, 1290, 1340, 1385, 1420] },
+    { "label": "Signups, 7 d", "value": "2,310", "asOf": "2026-11-07", "series": [1980, 2150, 2090, 2310] },
+    { "label": "Churn, 30 d", "value": null, "note": "The billing export failed", "asOf": "2026-11-08" }
   ],
+  "flags": [{ "text": "Certificate expires in 12 days", "tone": "warn" }],
   "build": {
     "summary": "2.3 in review",
     "groups": [
@@ -40,5 +45,9 @@
     ]
   },
   "ops": [{ "text": "Backups OK", "tone": "good" }],
-  "flags": [{ "text": "Certificate expires in 12 days", "tone": "warn" }]
+  "laneRules": [
+    { "lane": "build", "match": "\\b(dev|release)\\b" },
+    { "lane": "growth", "match": "growth|seo" },
+    { "lane": "ops", "match": "\\b(ops|plan)\\b" }
+  ]
 }
