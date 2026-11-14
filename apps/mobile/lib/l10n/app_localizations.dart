@@ -5024,6 +5024,48 @@ abstract class AppLocalizations {
   /// **'this worktree'**
   String get worktreeActionsThisWorktree;
 
+  /// No description provided for @prChecksFailing.
+  ///
+  /// In en, this message translates to:
+  /// **'Checks failing'**
+  String get prChecksFailing;
+
+  /// No description provided for @prChecksPassed.
+  ///
+  /// In en, this message translates to:
+  /// **'Checks passed'**
+  String get prChecksPassed;
+
+  /// No description provided for @prChecksRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Checks running'**
+  String get prChecksRunning;
+
+  /// No description provided for @prStateClosed.
+  ///
+  /// In en, this message translates to:
+  /// **'Closed'**
+  String get prStateClosed;
+
+  /// No description provided for @prStateDraft.
+  ///
+  /// In en, this message translates to:
+  /// **'Draft'**
+  String get prStateDraft;
+
+  /// No description provided for @prStateMerged.
+  ///
+  /// In en, this message translates to:
+  /// **'Merged'**
+  String get prStateMerged;
+
+  /// No description provided for @prStateOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get prStateOpen;
+
   /// No description provided for @worktreeDetailBranch.
   ///
   /// In en, this message translates to:
@@ -5047,6 +5089,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This worktree wasn\'t created by Vicoa, so it can\'t be managed from the app.'**
   String get worktreeDetailNotManagedNote;
+
+  /// No description provided for @worktreeDetailOpenOnGitHub.
+  ///
+  /// In en, this message translates to:
+  /// **'Open on GitHub'**
+  String get worktreeDetailOpenOnGitHub;
 
   /// No description provided for @worktreeDetailOrigin.
   ///

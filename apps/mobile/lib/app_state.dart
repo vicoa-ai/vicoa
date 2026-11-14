@@ -237,6 +237,18 @@ class FFAppState extends ChangeNotifier {
       }
     });
     _safeInit(() {
+      final prsJson = prefs.getString('ff_cachedCheckoutPullRequests') ?? '{}';
+      try {
+        final decoded = jsonDecode(prsJson);
+        if (decoded is Map) {
+          _cachedCheckoutPullRequests = Map<String, dynamic>.from(decoded);
+        }
+      } catch (e) {
+        print("Can't decode cached checkout pull requests. Error: $e.");
+        _cachedCheckoutPullRequests = {};
+      }
+    });
+    _safeInit(() {
       final timestampStr = prefs.getString('ff_cachedAgentInstancesTimestamp');
       if (timestampStr != null) {
         try {
@@ -784,6 +796,15 @@ class FFAppState extends ChangeNotifier {
     prefs.setString('ff_cachedCheckoutBranches', jsonEncode(value));
   }
 
+  // Pull requests behind the home page's git sessions, for the branch icon's
+  // color (see `CheckoutPullRequests`). Opaque JSON owned by that class.
+  Map<String, dynamic> _cachedCheckoutPullRequests = {};
+  Map<String, dynamic> get cachedCheckoutPullRequests => _cachedCheckoutPullRequests;
+  set cachedCheckoutPullRequests(Map<String, dynamic> value) {
+    _cachedCheckoutPullRequests = value;
+    prefs.setString('ff_cachedCheckoutPullRequests', jsonEncode(value));
+  }
+
   // Cached agents
   List<dynamic> _cachedAgents = [];
   List<dynamic> get cachedAgents => _cachedAgents;
@@ -836,6 +857,7 @@ class FFAppState extends ChangeNotifier {
     cachedMachinesTimestamp = null;
     cachedProjects = [];
     cachedCheckoutBranches = {};
+    cachedCheckoutPullRequests = {};
     clearLastWebPreviewUrl();
     setLastWebPreviewDesktopMode(false);
     // Quotes from this account's sessions.

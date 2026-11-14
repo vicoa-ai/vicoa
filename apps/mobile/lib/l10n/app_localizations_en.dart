@@ -2789,6 +2789,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get worktreeActionsThisWorktree => 'this worktree';
 
   @override
+  String get prChecksFailing => 'Checks failing';
+
+  @override
+  String get prChecksPassed => 'Checks passed';
+
+  @override
+  String get prChecksRunning => 'Checks running';
+
+  @override
+  String get prStateClosed => 'Closed';
+
+  @override
+  String get prStateDraft => 'Draft';
+
+  @override
+  String get prStateMerged => 'Merged';
+
+  @override
+  String get prStateOpen => 'Open';
+
+  @override
   String get worktreeDetailBranch => 'Branch';
 
   @override
@@ -2801,6 +2822,9 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get worktreeDetailNotManagedNote =>
       'This worktree wasn\'t created by Vicoa, so it can\'t be managed from the app.';
+
+  @override
+  String get worktreeDetailOpenOnGitHub => 'Open on GitHub';
 
   @override
   String get worktreeDetailOrigin => 'Origin';

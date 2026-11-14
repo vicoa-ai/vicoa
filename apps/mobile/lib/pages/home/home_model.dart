@@ -5,11 +5,13 @@ import '/custom_code/actions/index.dart' as actions;
 import '/auth/supabase_auth/auth_util.dart';
 import 'home_widget.dart' show HomeWidget;
 import 'checkout_branches.dart';
+import 'checkout_pull_requests.dart';
 import 'collapsed_groups.dart';
 import 'project_groups.dart';
 import 'saved_date_filter.dart';
 import 'session_status.dart';
 import 'session_card_text.dart' show sessionWorktreeBranch;
+import '/custom_code/actions/rpc_github.dart' show PrInfo, kPrCacheTtl;
 import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/material.dart';
@@ -79,6 +81,22 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
   // persisted cache so cards paint on the first frame; refreshed over RPC
   // whenever the list is (re)loaded.
   late final CheckoutBranchResolver _checkoutBranches;
+  // The pull request behind each git session's checkout, for the color of
+  // its card's branch icon. Seeded from the persisted cache like the branches.
+  late final CheckoutPullRequests _pullRequests;
+  Timer? _prPollTimer;
+
+  /// How often the PRs of a repo with a linked worktree are re-checked while
+  /// Home is on screen: the backstop for what nothing announces, such as a
+  /// merge on github.com or CI finishing.
+  static const Duration _prPollInterval = Duration(minutes: 3);
+
+  /// A pull-to-refresh is the user asking for fresh state, so it reuses only a
+  /// PR answer this recent; repeated pulls still collapse into one request.
+  static const Duration _prPullMaxAge = Duration(seconds: 10);
+
+  /// A session in one of these is mid-turn; leaving them ends the turn.
+  static const Set<String> _workingStatuses = {'ACTIVE', 'STALE'};
 
   @override
   void initState(BuildContext context) {
@@ -95,13 +113,90 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     customDateRange = dateFilter.custom;
     _checkoutBranches = CheckoutBranchResolver(
       call: actions.VicoaWsClient.instance.callRpc,
-      onChanged: () => _notifyUI?.call(),
+      onChanged: () {
+        _notifyUI?.call();
+        // A main-checkout session only becomes a PR target once its branch is
+        // known (see `_prProbeTargets`).
+        _refreshPullRequests(onlyUnknown: true);
+      },
       seed: FFAppState().cachedCheckoutBranches,
       persist: (b) => FFAppState().cachedCheckoutBranches = b,
     );
+    _pullRequests = CheckoutPullRequests(
+      call: actions.VicoaWsClient.instance.callRpc,
+      onChanged: () => _notifyUI?.call(),
+      seed: FFAppState().cachedCheckoutPullRequests,
+      persist: (state) => FFAppState().cachedCheckoutPullRequests = state,
+    );
     _loadCachedData();
     _startPeriodicRefresh();
+    _startPrPoll();
     _connectWs();
+  }
+
+  /// Pull request of the checkout [instance] runs in, or null when it has
+  /// none, it isn't known yet, or the card shows no branch to color.
+  PrInfo? pullRequestFor(Map<String, dynamic> instance) {
+    final branch = _displayedBranch(instance);
+    if (branch == null) return null;
+    final machineId = instance['machine_id']?.toString() ?? '';
+    final project = instance['project']?.toString() ?? '';
+    if (machineId.isEmpty || project.isEmpty) return null;
+    return _pullRequests.prFor(machineId, project, branch: branch);
+  }
+
+  /// The branch the card's second line shows (see `sessionCardRow2`).
+  String? _displayedBranch(Map<String, dynamic> instance) {
+    final branch = sessionWorktreeBranch(instance) ?? checkoutBranchFor(instance);
+    return branch == null || branch.isEmpty ? null : branch;
+  }
+
+  /// The distinct folders behind the git sessions on screen: those whose card
+  /// shows a branch, on a machine the list doesn't report offline.
+  List<PrProbeTarget> _prProbeTargets() {
+    final seen = <String>{};
+    final targets = <PrProbeTarget>[];
+    for (final group in getGroupedSessions()) {
+      for (final s in group.sessions) {
+        if (s is! Map<String, dynamic>) continue;
+        if (s['live_state']?.toString() == actions.kLiveStateMachineOffline) continue;
+        if (_displayedBranch(s) == null) continue;
+        final machineId = s['machine_id']?.toString() ?? '';
+        final project = s['project']?.toString() ?? '';
+        if (machineId.isEmpty || project.isEmpty) continue;
+        if (seen.add('$machineId|$project')) {
+          targets.add((machineId: machineId, path: project));
+        }
+      }
+    }
+    return targets;
+  }
+
+  void _refreshPullRequests({bool onlyUnknown = false, Duration maxAge = kPrCacheTtl}) {
+    unawaited(_pullRequests.refresh(_prProbeTargets(), onlyUnknown: onlyUnknown, maxAge: maxAge));
+  }
+
+  void _startPrPoll() {
+    _prPollTimer = Timer.periodic(_prPollInterval, (_) {
+      if (!isRouteVisible) return;
+      if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) return;
+      unawaited(_pullRequests.poll(_prProbeTargets()));
+    });
+  }
+
+  /// A session stopped working: its agent may just have opened or merged a
+  /// PR, or switched a branch, while the user watched, so no other trigger
+  /// comes. Re-read that session's checkout only; no other repo changed.
+  void _onTurnEnded(Map<String, dynamic> instance) {
+    if (instance['live_state']?.toString() == actions.kLiveStateMachineOffline) return;
+    final machineId = instance['machine_id']?.toString() ?? '';
+    final project = instance['project']?.toString() ?? '';
+    if (machineId.isEmpty || project.isEmpty) return;
+    final target = (machineId: machineId, path: project);
+    if (sessionWorktreeBranch(instance) == null) {
+      unawaited(_checkoutBranches.refresh([target]));
+    }
+    if (_displayedBranch(instance) != null) _pullRequests.requestTurnRefresh(target);
   }
 
   /// Live branch of the checkout [instance] runs in (`''` for a detached
@@ -136,8 +231,11 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     return targets;
   }
 
-  void _refreshCheckoutBranches({bool onlyUnknown = false}) {
+  /// Re-read the branch labels and the PRs behind them. [prMaxAge] is how old
+  /// a reused PR answer may be.
+  void _refreshCheckoutBranches({bool onlyUnknown = false, Duration prMaxAge = kPrCacheTtl}) {
     unawaited(_checkoutBranches.refresh(_branchProbeTargets(), onlyUnknown: onlyUnknown));
+    _refreshPullRequests(onlyUnknown: onlyUnknown, maxAge: prMaxAge);
   }
 
   // Set UI notification callback
@@ -300,11 +398,16 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
       final idx = agentInstances.indexWhere((i) => i is Map && i['id'] == id);
       if (idx != -1) {
         final updated = Map<String, dynamic>.from(agentInstances[idx] as Map);
+        final before = updated['status']?.toString();
         (data as Map).forEach((k, v) { updated[k.toString()] = v; });
         agentInstances = List.from(agentInstances)..[idx] = updated;
         FFAppState().cachedAgentInstances = agentInstances;
         FFAppState().cachedAgentInstancesTimestamp = DateTime.now();
         _notifyUI?.call();
+        final after = updated['status']?.toString();
+        if (_workingStatuses.contains(before) && !_workingStatuses.contains(after)) {
+          _onTurnEnded(updated);
+        }
       } else {
         // Unknown instance — do a background refresh to pick it up
         _fetchAllData(showLoading: false, notifyUI: true);
@@ -435,7 +538,8 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
       if (notifyUI && _notifyUI != null) {
         _notifyUI!();
       }
-      _refreshCheckoutBranches();
+      // A pull-to-refresh (or a first load) wants fresh PR state.
+      _refreshCheckoutBranches(prMaxAge: showLoading ? _prPullMaxAge : kPrCacheTtl);
     } on actions.AuthenticationException catch (e) {
       debugPrint('Authentication error: $e');
       if (showLoading) {
@@ -1033,6 +1137,8 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _prPollTimer?.cancel();
+    _pullRequests.dispose();
     _realtimeDegradedDebounceTimer?.cancel();
     _wsSubscription?.cancel();
     _messageArrivedSubscription?.cancel();
