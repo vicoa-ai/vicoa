@@ -5,6 +5,15 @@ description: Release notes for the Vicoa desktop app (macOS, Windows) — new fe
 
 # Desktop App
 
+### v0.1.44
+14 November, 2026
+- Bundle Vicoa CLI daemon [v1.9.16](/docs/changelog/vicoa-cli#v1916)
+- A new session opens as soon as it exists instead of waiting up to a couple of seconds for its next update, and Claude and Codex warm up while you type the first message
+- A task lists every session related to it: in a Sessions section in the task's right rail, in the side panel and in the board's edit dialog. Start session comes first, then one line per session with how it relates (linked, created, updated, commented or referenced), most recently active first
+- A `#` reference to a task in a message now only notes it on the task's timeline; it no longer files the session under the task or moves the task to In Progress. Starting a session from the task still does
+- Download the open file from the files panel, from the toolbar's More actions menu or from the card shown for a file that cannot be previewed. A banner shows progress with a Cancel button, and a file that changes mid-copy stops with an error instead of being saved in two versions
+- On the new session page, the side panel now follows the worktree you selected
+
 ### v0.1.43
 11 November, 2026
 - Bundle Vicoa CLI daemon [v1.9.15](/docs/changelog/vicoa-cli#v1915)
