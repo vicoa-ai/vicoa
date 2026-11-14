@@ -5,6 +5,12 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.9.16
+14 November, 2026
+- A new Claude or Codex session now starts sooner: the daemon warms the agent up while you type the first message and hands your prompt over when you send. New worktrees and resumed sessions still start cold, and `VICOA_PREWARM=0` turns it off
+- Starting a session no longer waits on an update check, a slash command upload or a status ping to the server, so a slow server does not hold a session back
+- Fix a rare server error on the first request after signing in, when another sign-in was creating an account with the same email at the same moment
+
 ### v1.9.15
 11 November, 2026
 - Codex, Pi and Antigravity sessions are now titled from your first message, the way Claude Code sessions are, instead of every one being named "Codex", "Pi" or "Antigravity"
