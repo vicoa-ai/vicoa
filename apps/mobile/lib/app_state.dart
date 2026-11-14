@@ -959,6 +959,17 @@ class UserPreferences {
     this.newSessionWorktree,
     this.homeFilterGroupBy = 'Time',
     this.homeFilterStatus = 'All',
+    this.homeCollapsedGroups = const [],
+    this.homeFilterAgentType = 'All',
+    this.homeFilterDateRange = 'All Time',
+    this.homeFilterCustomStart,
+    this.homeFilterCustomEnd,
+    this.tasksCollapsedStatuses = const [],
+    this.tasksProjectFilter,
+    this.tasksShowStatus = false,
+    this.tasksShowPriority = true,
+    this.tasksShowProject = true,
+    this.tasksShowLabels = true,
   });
 
   String? newSessionMachineId;
@@ -972,6 +983,22 @@ class UserPreferences {
   Map<String, dynamic>? newSessionWorktree;
   String homeFilterGroupBy;
   String homeFilterStatus;
+  // Home groups the user folded, as `collapsedGroupMemoryKey` names them
+  // (`project:<id>`, `status:<label>`, `pinned`); every other group is open.
+  List<String> homeCollapsedGroups;
+  String homeFilterAgentType;
+  String homeFilterDateRange;
+  // The picked days of a 'Custom' [homeFilterDateRange], as ISO 8601 strings.
+  String? homeFilterCustomStart;
+  String? homeFilterCustomEnd;
+  // Tasks list: the status sections folded, the project filtered on (a project
+  // id, `kNoProjectFilter`, or null for all) and the card properties shown.
+  List<String> tasksCollapsedStatuses;
+  String? tasksProjectFilter;
+  bool tasksShowStatus;
+  bool tasksShowPriority;
+  bool tasksShowProject;
+  bool tasksShowLabels;
 
   factory UserPreferences.fromJson(Map<String, dynamic> json) => UserPreferences(
         newSessionMachineId: json['newSessionMachineId'] as String?,
@@ -980,6 +1007,17 @@ class UserPreferences {
         newSessionWorktree: (json['newSessionWorktree'] as Map?)?.cast<String, dynamic>(),
         homeFilterGroupBy: json['homeFilterGroupBy'] as String? ?? 'Time',
         homeFilterStatus: json['homeFilterStatus'] as String? ?? 'All',
+        homeCollapsedGroups: (json['homeCollapsedGroups'] as List?)?.whereType<String>().toList() ?? const [],
+        homeFilterAgentType: json['homeFilterAgentType'] as String? ?? 'All',
+        homeFilterDateRange: json['homeFilterDateRange'] as String? ?? 'All Time',
+        homeFilterCustomStart: json['homeFilterCustomStart'] as String?,
+        homeFilterCustomEnd: json['homeFilterCustomEnd'] as String?,
+        tasksCollapsedStatuses: (json['tasksCollapsedStatuses'] as List?)?.whereType<String>().toList() ?? const [],
+        tasksProjectFilter: json['tasksProjectFilter'] as String?,
+        tasksShowStatus: json['tasksShowStatus'] as bool? ?? false,
+        tasksShowPriority: json['tasksShowPriority'] as bool? ?? true,
+        tasksShowProject: json['tasksShowProject'] as bool? ?? true,
+        tasksShowLabels: json['tasksShowLabels'] as bool? ?? true,
       );
 
   Map<String, dynamic> toJson() => {
@@ -989,6 +1027,17 @@ class UserPreferences {
         if (newSessionWorktree != null) 'newSessionWorktree': newSessionWorktree,
         'homeFilterGroupBy': homeFilterGroupBy,
         'homeFilterStatus': homeFilterStatus,
+        if (homeCollapsedGroups.isNotEmpty) 'homeCollapsedGroups': homeCollapsedGroups,
+        'homeFilterAgentType': homeFilterAgentType,
+        'homeFilterDateRange': homeFilterDateRange,
+        if (homeFilterCustomStart != null) 'homeFilterCustomStart': homeFilterCustomStart,
+        if (homeFilterCustomEnd != null) 'homeFilterCustomEnd': homeFilterCustomEnd,
+        if (tasksCollapsedStatuses.isNotEmpty) 'tasksCollapsedStatuses': tasksCollapsedStatuses,
+        if (tasksProjectFilter != null) 'tasksProjectFilter': tasksProjectFilter,
+        'tasksShowStatus': tasksShowStatus,
+        'tasksShowPriority': tasksShowPriority,
+        'tasksShowProject': tasksShowProject,
+        'tasksShowLabels': tasksShowLabels,
       };
 }
 

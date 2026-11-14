@@ -50,7 +50,6 @@ class _HomeWidgetState extends State<HomeWidget>
   final scaffoldKey = GlobalKey<ScaffoldState>();
   final _filterButtonKey = GlobalKey();
   final ScrollController _scrollController = ScrollController();
-  final Map<String, bool> _collapsedGroups = {};
   void _handleScroll() {
     if (!_scrollController.hasClients) {
       return;
@@ -347,7 +346,7 @@ class _HomeWidgetState extends State<HomeWidget>
     final useLargeHeader = groupBy == 'Project' || groupBy == 'Status';
 
     for (final group in groupedSessions) {
-      final isCollapsed = _collapsedGroups[group.key] ?? false;
+      final isCollapsed = _model.isGroupCollapsed(group);
 
       widgets.add(
         HomeGroupHeader(
@@ -357,9 +356,7 @@ class _HomeWidgetState extends State<HomeWidget>
           onTap: group.isEmptyProject
               ? () => _startNewSessionFlow(projectId: group.key)
               : () {
-                  setState(() {
-                    _collapsedGroups[group.key] = !isCollapsed;
-                  });
+                  setState(() => _model.toggleGroupCollapsed(group));
                 },
         ),
       );
