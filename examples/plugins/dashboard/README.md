@@ -15,8 +15,8 @@ your agents did, and how each project is doing.
 
 Everything except the numbers comes from Vicoa itself: tasks, sessions,
 automations and their runs. The numbers come from a **snapshot file** in each
-project's folder that you (or one of your agents) write. The plugin never calls
-an outside service and needs no keys.
+project's folder, written by you or by one of your agents with this folder's
+`snapshot.py`. The plugin never calls an outside service and needs no keys.
 
 ## Install
 
@@ -39,40 +39,61 @@ Settings › Plugins › Dashboard, or from the page itself:
 | Setting | What it does |
 |---|---|
 | Needs-you label | Open tasks with this label (default `needs-human`) are listed under Needs you. Handing one back moves it to In Review, which takes it off the list. |
-| Projects | Which projects get a card, in order, by key (`HAB`) or name. Empty: every project with open work, recent runs or a snapshot. |
-| Automation columns | Which column (Build, Growth or Ops) each automation's runs go in. Set it with the buttons under "Automation columns" on a project page. Runs of an automation with no column count under "not in a column". |
+| Projects | Which projects get a card, in order, by key (`APP`) or name. Empty: every project with open work, recent runs or a snapshot. |
+| Automation columns | Which column (Build, Growth or Ops) each automation's runs go in. Set it with the buttons under "Automation columns" on a project page, or let the project's `laneRules` (in its snapshot) sort them by title. A pick on the page wins over a rule. Runs of an automation with no column count under "not in a column". The list shows automations that are switched on, plus recurring ones that ran this week; spent one-off bookings are left out. |
 | Agent runs | Show only runs started by automations (default) or every session. Kept per device. |
 
 ## The snapshot file
 
-Put `.vicoa/dashboard.local.json` in a project's folder on the machine the
-plugin is installed on. Every field is optional; a project without the file
-still shows its tasks and runs.
+Each project's numbers come from `.vicoa/dashboard.local.json` in its folder, on the machine the plugin is
+installed on. A project without the file still shows its tasks and runs.
 
-**Keep it out of git**: add `.vicoa/*.local.json` to the project's
-`.gitignore`. Numbers like revenue don't belong in a repository.
+**Write it with `snapshot.py`** (in this folder), not by hand. It checks what you send, keeps what you didn't
+send, stamps the time, writes the file in one step, and adds it to the repo's local exclude list so numbers like
+revenue never reach git. Agents that compute your numbers call it right after they do:
+
+```bash
+python3 ~/.vicoa/plugins/dashboard/snapshot.py write --by mybot <<'EOF'
+{
+  "headline": {"label": "Revenue, 30 d", "value": "$18,300", "tag": "partial",
+               "note": "iOS and web; Android not in yet", "asOf": "2026-11-07",
+               "goal": {"label": "$40k/month", "progress": 0.46, "by": "2027-06-30"}},
+  "metrics": [
+    {"label": "Paying users", "value": "1,420", "note": "85 new this week", "asOf": "2026-11-07", "series": [1290, 1340, 1420]},
+    {"label": "Churn, 30 d", "value": null, "note": "The billing export failed", "asOf": "2026-11-08"}
+  ],
+  "flags": [{"text": "Certificate expires in 12 days", "tone": "warn"}]
+}
+EOF
+python3 ~/.vicoa/plugins/dashboard/snapshot.py check     # what the page will show, and any problem
+```
+
+`snapshot.py --help` has the same rules in short, for an agent to read. A write that breaks a rule is refused,
+with every problem listed, and the file is left as it was.
+
+| Field | Rule |
+|---|---|
+| `value` | The figure with its unit, as text: `"$18,300"`, `"~2,300"`, `"2,310/week"`. At most 16 characters. A number you couldn't read is `null`, with the reason in `note`; it shows as Unknown, never as 0. |
+| `note` | What the number covers, at most 80 characters: one line on the project page (the whole of it on hover), not on the overview card. The method and every caveat belong in your own notes. |
+| `tag` | `partial` (a channel it should cover is missing, say Android not read) or `estimate` (approximated). Shown as a chip next to the number. |
+| `asOf` | The last day the number covers, `YYYY-MM-DD` (or an ISO time with its zone). Required. Shown under the number, in the warning color once it is more than a week old. |
+| `label` | At most 32 characters. The headline is the project's card on the overview, so give every project's headline the same label. |
+| `goal` | `label`, `progress` from 0 to 1, optional `by` (`YYYY-MM-DD`). Headline only. |
+| `metrics` | At most 6, in order: the smaller numbers next to the headline. |
+| `flags` | At most 6, under Watch: what someone should act on (`text`, optional `detail`, `tone`). |
+| `series` | Numbers, oldest first, drawn as a small line. |
+| `tone` | `good`, `warn`, `bad`, `info` |
+
+`headline`, `metrics` and `flags` are one set: a write that sends any of them replaces all three, so a number or
+a flag you stop sending goes away. The keys below stay until you send them again (`null` removes one).
+`version`, `updatedAt` and `updatedBy` are stamped by `snapshot.py`: when `updatedAt` is older than
+`staleAfterDays` (default 3; set it to how often you write, plus a day), the page says so under Watch.
 
 ```jsonc
 {
-  "asOf": "2026-11-08T08:00:00Z",            // when these numbers were read
+  "staleAfterDays": 5,
 
-  // The big number at the top of the project page.
-  "headline": {
-    "label": "Monthly revenue, all channels",
-    "value": "$1,240",                        // a string, shown as is; null shows "Unknown"
-    "goal": { "label": "$5k", "progress": 0.25, "by": "by Mar 31" },
-    "note": { "text": "Up $80 since last month", "tone": "good" }
-  },
-
-  // The overview card. Falls back to "headline" when missing.
-  "card": { "label": "Monthly revenue", "value": "$1,240", "series": [1080, 1160, 1240] },
-
-  // Smaller numbers next to the headline.
-  "metrics": [
-    { "label": "Paying users", "value": "62", "note": "6 new this week", "series": [54, 58, 62] }
-  ],
-
-  // The two columns. Each has a one-line summary and groups of items.
+  // The two columns on a project page. Each has a one-line summary and groups of items.
   "build": {
     "summary": "2.3 ships Nov 20",
     "groups": [
@@ -90,24 +111,25 @@ still shows its tasks and runs.
   // One line at the bottom of the project page.
   "ops": [ { "text": "Backups OK", "tone": "good" } ],
 
-  // Shown under Watch on the overview and the project page.
-  "flags": [ { "text": "Certificate expires in 12 days", "tone": "warn" } ]
+  // Which column an automation's runs go in, by its title: the first rule whose pattern matches
+  // (a regular expression, any case) wins. Saves clicking each of a project's many one-off runs.
+  "laneRules": [
+    { "lane": "build",  "match": "\\b(dev|release)\\b" },
+    { "lane": "growth", "match": "growth|seo" },
+    { "lane": "ops",    "match": "\\b(ops|plan)\\b" }
+  ]
 }
 ```
 
 | Field | Values |
 |---|---|
-| `tone` | `good`, `warn`, `bad`, `info`, `neutral` |
 | item `state` | `done`, `active`, `waiting`, `paused`, `risk`, `blocked`, `todo` |
 | group `layout` | `row` (side by side, for a few items) or a list (default) |
-| `series` | numbers, oldest first; drawn as a small line |
 | `url` | an `https://` link the item opens |
+| `laneRules[].lane` | `build`, `growth` or `ops` |
 
-Values are text on purpose: write `"$1,240"`, `"140/week"` or `"~$90"`, and say
-what a number covers right next to it (`"web only"`). A number you couldn't
-read should be `null`, which shows as Unknown, never as 0.
-
-A [sample](sample-snapshot.json) is in this folder.
+A full [sample](sample-snapshot.json) is in this folder. The page reads the file when it opens; its automatic
+refresh every minute covers tasks and runs only.
 
 ## Make it yours
 

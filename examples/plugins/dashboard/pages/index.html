@@ -47,14 +47,18 @@
   .card .big { margin-top: 2px; font-size: 24px; font-weight: 600; letter-spacing: -0.01em; display: flex; align-items: center; gap: 10px; }
   .card .big.unknown { color: var(--muted); font-weight: 500; }
   .card .goal { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
-  .card .note { margin-top: 8px; display: flex; gap: 6px; align-items: flex-start; font-size: 12.5px; }
+  .card .note { margin-top: 8px; display: flex; gap: 6px; align-items: flex-start; font-size: 12.5px; min-width: 0; }
+  .card .note span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cards .card .note span { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   .card .asof { margin-top: auto; padding-top: 8px; font-size: 11.5px; color: var(--muted); }
+  .card .asof.old { color: var(--warn); }
+  .tag { flex: none; font-size: 11px; font-weight: 500; line-height: 18px; letter-spacing: 0; padding: 0 6px; border-radius: 4px; color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
   .spark { flex: 1; min-width: 60px; height: 28px; }
 
   /* metrics row on a project page */
   .metrics { display: grid; grid-template-columns: minmax(260px, 1.4fr) repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
   .metrics .card.hl .big { font-size: 40px; }
-  .metrics .card .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .metrics .card .asof { margin-top: 4px; padding-top: 0; }
   .metrics .card .trend { margin-top: auto; padding-top: 12px; }
   .metrics .card .trend .spark { width: 100%; height: 34px; }
 
@@ -128,11 +132,13 @@
 const OPEN = ['backlog', 'todo', 'in_progress', 'blocked'];
 const SNAPSHOT = '.vicoa/dashboard.local.json';
 const DAY = 86400000;
+const STALE_DAYS = 3;        // a snapshot not written for longer shows under Watch (the file's staleAfterDays wins)
 const LANES = [['build', 'Build'], ['growth', 'Growth'], ['ops', 'Ops']];
 
 const S = {
   ctx: null, settings: {}, projects: [], needs: [], handled: [], automations: [], sessions: [],
   runs: new Map(),          // automationId -> runs (newest first)
+  runsState: new Map(),     // automationId -> 'loading' | 'done' (runs are fetched when a view needs them)
   bySession: new Map(),     // sessionId -> { automation, run }
   sessionCache: new Map(),  // sessionId -> session (fetched one by one)
   missing: new Set(),       // sessions that couldn't be read (deleted, not yours)
@@ -151,6 +157,15 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const fmtTime = (iso) => { const d = new Date(iso); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
 const fmtDay = (iso) => { const d = new Date(iso); return MONTHS[d.getMonth()] + ' ' + d.getDate(); };
 const fmtWhen = (iso) => fmtDay(iso) + ', ' + fmtTime(iso);
+const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s));
+/** A snapshot's `asOf`: a date alone ("2026-11-11") shows as a day, with no made-up time. */
+const fmtAsOf = (iso) => (isDate(iso) ? fmtDay(iso + 'T12:00:00') : fmtWhen(iso));
+/** Days since a snapshot time (a date counts from the end of that day), or null when unreadable. */
+function ageDays(iso) {
+  if (!iso) return null;
+  const t = Date.parse(isDate(iso) ? iso + 'T23:59:59' : iso);
+  return isFinite(t) ? (Date.now() - t) / DAY : null;
+}
 const dayKey = (t) => { const d = new Date(t); return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate(); };
 const startOfDay = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
 
@@ -210,22 +225,44 @@ function spark(values) {
     pts.map((p) => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ') + '"/><circle cx="' + last[0] + '" cy="' + last[1] + '" r="3" fill="var(--vicoa-primary)"/></svg>';
 }
 
+function goalBy(by) {
+  if (!isDate(by)) return by || '';
+  const year = Number(by.slice(0, 4));
+  return 'by ' + fmtDay(by + 'T12:00:00') + (year !== new Date().getFullYear() ? ', ' + year : '');
+}
+
 function progress(goal) {
   if (!goal || typeof goal.progress !== 'number') return '';
   const pct = Math.max(0, Math.min(1, goal.progress));
   return '<div class="bar" style="margin-top:10px"><i style="width:' + Math.max(2, pct * 100).toFixed(1) + '%"></i></div>' +
-    '<div class="goal"><span>' + Math.round(pct * 100) + '% of ' + esc(goal.label || 'goal') + '</span><span>' + esc(goal.by || '') + '</span></div>';
+    '<div class="goal"><span>' + Math.round(pct * 100) + '% of ' + esc(goal.label || 'goal') + '</span><span>' + esc(goalBy(goal.by)) + '</span></div>';
 }
 
-function note(n) {
-  if (!n) return '';
-  const o = typeof n === 'string' ? { text: n } : n;
-  if (!o.text) return '';
-  return '<div class="note">' + (TONE_ICON[o.tone] || ICON.info) + '<span>' + esc(o.text) + '</span></div>';
+/** One line under a number (the full text on hover). For an Unknown, it is the reason, with a warning icon. */
+function note(text, warn) {
+  const t = typeof text === 'string' ? text : text && text.text;
+  if (!t) return '';
+  return '<div class="note" title="' + esc(t) + '">' + (warn ? ICON.warn : ICON.info) + '<span>' + esc(t) + '</span></div>';
 }
 
 /** A number, or the word Unknown: a missing value is never shown as 0. */
 const value = (v) => (v === null || v === undefined || v === '' ? null : String(v));
+
+const TAGS = ['partial', 'estimate'];
+/** The figure itself, with its "partial" or "estimate" tag, and its line when `withSpark`. */
+function bigValue(m, style, withSpark) {
+  const v = value(m.value);
+  return '<div class="big' + (v ? '' : ' unknown') + '"' + (style ? ' style="' + style + '"' : '') + '>' + esc(v || 'Unknown') +
+    (TAGS.includes(m.tag) ? '<span class="tag">' + esc(m.tag) + '</span>' : '') + (withSpark ? spark(m.series) : '') + '</div>';
+}
+
+/** When a number is from: in the warning color once it is more than a week old. */
+const OLD_FIGURE_DAYS = 7;
+function asOfLine(iso) {
+  if (!iso) return '';
+  const age = ageDays(iso);
+  return '<div class="asof' + (age !== null && age > OLD_FIGURE_DAYS ? ' old' : '') + '">As of ' + esc(fmtAsOf(iso)) + '</div>';
+}
 
 // --- requests ----------------------------------------------------------------
 
@@ -263,35 +300,51 @@ function projectOf(automation) {
   return null;
 }
 
-async function loadLive() {
-  const label = S.settings.needsLabel || 'needs-human';
-  const scope = S.settings.runsScope === 'all' ? 'all' : 'automations';
-  const [needs, handled, sessions] = await Promise.all([
-    call(() => vicoa.tasks.list({ label, status: OPEN, limit: 500 })),
-    call(() => vicoa.tasks.list({ label, status: ['in_review', 'done'], limit: 500 })),
-    call(() => vicoa.sessions.list({ since: new Date(Date.now() - DAY).toISOString(), limit: scope === 'all' ? 200 : 300 })),
+const DEFAULT_LABEL = 'needs-human';
+
+/**
+ * Tasks with the needs-you label, and the last day's sessions. The bridge
+ * fetches every task and filters here-by-label itself, so ask once for all
+ * statuses and split the answer, instead of paying for that fetch twice.
+ */
+async function loadLive(label) {
+  const [tasks, sessions] = await Promise.all([
+    call(() => vicoa.tasks.list({ label: label || S.settings.needsLabel || DEFAULT_LABEL, limit: 1000 })),
+    call(() => vicoa.sessions.list({ since: new Date(Date.now() - DAY).toISOString(), limit: 300 })),
   ]);
-  S.needs = needs;
-  S.handled = handled;
+  S.needs = tasks.filter((t) => OPEN.includes(t.status));
+  S.handled = tasks.filter((t) => t.status === 'in_review' || t.status === 'done');
   S.sessions = sessions;
 }
 
-async function loadRuns() {
-  const recent = S.automations.filter((a) => a.lastRunAt && Date.now() - Date.parse(a.lastRunAt) < 8 * DAY);
-  const results = await pool(recent, 3, (a) => vicoa.automations.runs(a.id, { limit: 40 }));
-  S.runs = new Map();
-  S.bySession = new Map();
-  recent.forEach((a, i) => {
-    const runs = Array.isArray(results[i]) ? results[i] : [];
-    S.runs.set(a.id, runs);
-    for (const r of runs) if (r.sessionId && !S.bySession.has(r.sessionId)) S.bySession.set(r.sessionId, { automation: a, run: r });
+/**
+ * Fetch the run history of the automations in `list` that ran within `windowMs`
+ * and have not been fetched yet. Each costs a request, so a view asks only for
+ * what it shows (the overview: the last day; a project page: its week) and the
+ * page draws without waiting for them.
+ */
+function ensureRuns(list, windowMs) {
+  const cutoff = Date.now() - windowMs;
+  const todo = list.filter((a) => a.lastRunAt && Date.parse(a.lastRunAt) >= cutoff && !S.runsState.has(a.id));
+  if (!todo.length) return Promise.resolve();
+  todo.forEach((a) => S.runsState.set(a.id, 'loading'));
+  return pool(todo, 8, (a) => vicoa.automations.runs(a.id, { limit: 40 })).then((results) => {
+    todo.forEach((a, i) => {
+      const runs = Array.isArray(results[i]) ? results[i] : [];
+      S.runs.set(a.id, runs);
+      S.runsState.set(a.id, 'done');
+      for (const r of runs) if (r.sessionId && !S.bySession.has(r.sessionId)) S.bySession.set(r.sessionId, { automation: a, run: r });
+    });
+    scheduleRender();
   });
 }
+
+const projectRunsLoading = (pid) => S.automations.some((a) => S.runsState.get(a.id) === 'loading' && (!pid || projectOf(a) === pid));
 
 async function loadSnapshots() {
   const targets = [];
   for (const p of S.projects) for (const d of projectDirs(p)) targets.push({ p, path: d + '/' + SNAPSHOT });
-  const results = await pool(targets, 3, (t) => vicoa.files.readJson(t.path));
+  const results = await pool(targets, 16, (t) => vicoa.files.readJson(t.path));
   S.snapshots = new Map();
   targets.forEach((t, i) => {
     const r = results[i];
@@ -305,13 +358,27 @@ async function loadSnapshots() {
 }
 
 async function loadAll() {
-  const [ctx, settings] = await Promise.all([vicoa.context.get(), vicoa.settings.get()]);
+  S.runs = new Map();
+  S.runsState = new Map();
+  S.bySession = new Map();
+  // Start everything the first paint needs at once; each request takes about
+  // a second, so doing them one after another is what made the page slow. The
+  // tasks start with the default label and are redone below if the settings
+  // say otherwise.
+  const live = loadLive(DEFAULT_LABEL);
+  live.catch(() => {});
+  const [ctx, settings, projects, automations] = await Promise.all([
+    vicoa.context.get(),
+    vicoa.settings.get(),
+    call(() => vicoa.projects.list()),
+    call(() => vicoa.automations.list()),
+  ]);
   S.ctx = ctx;
   S.settings = settings || {};
-  const [projects, automations] = await Promise.all([call(() => vicoa.projects.list()), call(() => vicoa.automations.list())]);
   S.projects = projects.filter((p) => !p.archived);
   S.automations = automations;
-  await Promise.all([loadLive(), loadRuns(), loadSnapshots()]);
+  await Promise.all([live, loadSnapshots()]);
+  if ((S.settings.needsLabel || DEFAULT_LABEL) !== DEFAULT_LABEL) await loadLive();
   S.loaded = true;
 }
 
@@ -348,9 +415,34 @@ function visibleProjects() {
   return shown.sort((a, b) => needsFor(b.id).length - needsFor(a.id).length || (Date.parse(b.lastActivityAt || 0) - Date.parse(a.lastActivityAt || 0)));
 }
 
+const ruleCache = new Map();
+function ruleMatches(pattern, text) {
+  if (typeof pattern !== 'string' || !pattern || pattern.length > 200) return false;
+  if (!ruleCache.has(pattern)) {
+    let re = null;
+    try { re = new RegExp(pattern, 'i'); } catch (e) { /* a bad pattern matches nothing */ }
+    ruleCache.set(pattern, re);
+  }
+  const re = ruleCache.get(pattern);
+  return !!re && re.test(String(text || ''));
+}
+
+/**
+ * Which column an automation's runs go in: the one picked on the project page
+ * (setting `lanes`), else the first of the project's `laneRules` (in its
+ * snapshot) whose pattern matches the automation's title. Rules are what keep
+ * a flood of one-off bookings from each needing a click.
+ */
 function laneOf(a) {
   const lanes = S.settings.lanes || {};
-  return lanes[a.id] || lanes[a.title] || null;
+  const picked = lanes[a.id] || lanes[a.title];
+  if (picked) return picked;
+  const pid = projectOf(a);
+  const snap = pid ? S.snapshots.get(pid) : null;
+  for (const r of (snap && snap.data && Array.isArray(snap.data.laneRules) && snap.data.laneRules) || []) {
+    if (r && LANES.some(([id]) => id === r.lane) && ruleMatches(r.match, a.title)) return r.lane;
+  }
+  return null;
 }
 
 /** Runs of a project's automations, newest first, with their automation. */
@@ -462,8 +554,16 @@ function watchItems(pid) {
   for (const p of S.projects) {
     if (pid && p.id !== pid) continue;
     const snap = S.snapshots.get(p.id);
-    if (snap && snap.error) items.push({ tone: 'warn', text: p.name + ': snapshot unreadable', detail: snap.error });
-    for (const f of (snap && snap.data && snap.data.flags) || []) items.push({ tone: f.tone || 'warn', text: (pid ? '' : p.name + ': ') + (f.text || ''), detail: f.detail || '' });
+    const who = pid ? '' : p.name + ': ';
+    if (snap && snap.error) items.push({ tone: 'warn', text: who + 'snapshot unreadable', detail: snap.error });
+    const d = snap && snap.data;
+    if (!d) continue;
+    // Whoever writes the numbers stamps updatedAt each time, so an old one means they stopped.
+    const age = ageDays(d.updatedAt);
+    const limit = typeof d.staleAfterDays === 'number' ? d.staleAfterDays : STALE_DAYS;
+    if (d.version !== 1) items.push({ tone: 'warn', text: who + 'snapshot is in an older format', detail: 'Write it again with the plugin’s snapshot.py (see its README)' });
+    else if (age !== null && age > limit) items.push({ tone: 'warn', text: who + 'numbers not updated for ' + Math.floor(age) + ' days', detail: 'Last written ' + fmtWhen(d.updatedAt) + (d.updatedBy ? ' by ' + d.updatedBy : '') });
+    for (const f of d.flags || []) items.push({ tone: f.tone || 'warn', text: who + (f.text || ''), detail: f.detail || '' });
   }
   return items;
 }
@@ -479,13 +579,11 @@ function projectCard(p) {
   const n = needsFor(p.id).length;
   const snap = S.snapshots.get(p.id);
   const d = snap && snap.data;
-  const h = d && (d.card || d.headline);
+  const h = d && d.headline;
   let body;
   if (h) {
-    const v = value(h.value);
-    body = '<div class="label">' + esc(h.label || '') + '</div>' +
-      '<div class="big' + (v ? '' : ' unknown') + '">' + esc(v || 'Unknown') + spark(h.series) + '</div>' +
-      progress(h.goal) + note(h.note);
+    // The number, its goal and its date only: the note is on the project page, one click away.
+    body = '<div class="label">' + esc(h.label || '') + '</div>' + bigValue(h, '', true) + progress(h.goal);
   } else {
     const runs = S.sessions.filter((s) => s.projectId === p.id).length;
     body = '<div class="label">Agent runs today</div><div class="big">' + runs + '</div>' +
@@ -493,7 +591,7 @@ function projectCard(p) {
   }
   return '<button class="card" data-act="project" data-id="' + esc(p.id) + '"><div class="top">' + esc(p.name) +
     '<span class="for">' + ICON.user + (n ? n + ' for you' : 'None') + '</span></div>' + body +
-    (d && d.asOf ? '<div class="asof">As of ' + esc(fmtWhen(d.asOf)) + '</div>' : '') + '</button>';
+    (h ? asOfLine(h.asOf) : '') + '</button>';
 }
 
 function renderOverview() {
@@ -520,7 +618,7 @@ function renderOverview() {
       '<div class="sec">Agent runs, last 24 h<span class="grow"></span>' +
         '<button class="link" data-act="scope">' + (S.settings.runsScope === 'all' ? 'Automations only' : 'All sessions') + '</button>' + runList.more + '</div>' +
       (runs.length ? '<div class="box">' + runList.rows.map((x) => runRow(x.id, x.who, runIds, x.at, x.fallback)).join('') + '</div>'
-        : '<div class="box"><div class="empty">' + (S.settings.runsScope === 'all' ? 'No sessions in the last day.' : 'No automation runs in the last day.') + '</div></div>') +
+        : '<div class="box"><div class="empty">' + (projectRunsLoading() ? 'Loading runs…' : S.settings.runsScope === 'all' ? 'No sessions in the last day.' : 'No automation runs in the last day.') + '</div></div>') +
     '</div><div class="side">' +
       '<div class="sec">Coming up</div>' + comingUp(null) +
       '<div class="sec">Watch</div>' + watchBox(null) +
@@ -551,14 +649,19 @@ function laneHtml(p, lane, title, section) {
     ((section && section.groups) || []).map(groupHtml).join('') +
     '<div class="sec">Latest runs<span class="grow"></span>' + list.more + '</div>' +
     (runs.length ? '<div class="box">' + list.rows.map((x) => runRow(x.r.sessionId, x.a.title, ids, x.r.firedAt, x.a.title)).join('') + '</div>'
-      : '<div class="box"><div class="empty">No ' + esc(title.toLowerCase()) + ' runs this week. Put an automation in this column below.</div></div>') +
+      : '<div class="box"><div class="empty">' + (projectRunsLoading(p.id) ? 'Loading runs…' : 'No ' + esc(title.toLowerCase()) + ' runs this week. Put an automation in this column below.') + '</div></div>') +
     '</div>';
 }
 
 function columnsBox(p) {
-  const mine = S.automations.filter((a) => projectOf(a) === p.id);
+  // Switched on, or recurring with a run this week. Spent one-off bookings
+  // are left out: they land in a column through the project's laneRules.
+  const mine = S.automations
+    .filter((a) => projectOf(a) === p.id && (a.enabled || (a.scheduleKind !== 'once' && (S.runs.get(a.id) || []).length)))
+    .sort((a, b) => (b.enabled ? 1 : 0) - (a.enabled ? 1 : 0) || (a.scheduleKind === 'once' ? 1 : 0) - (b.scheduleKind === 'once' ? 1 : 0) || a.title.localeCompare(b.title));
   if (!mine.length) return '';
-  return '<div class="sec">Automation columns<span class="grow"></span><span>where each automation’s runs show</span></div><div class="box">' + mine.map((a) => {
+  const list = listWithMore('cols:' + p.id, mine, 8);
+  return '<div class="sec">Automation columns<span class="grow"></span><span>where each automation’s runs show</span>' + list.more + '</div><div class="box">' + list.rows.map((a) => {
     const lane = laneOf(a);
     return '<div class="item static"><div class="body"><div class="t"><span class="txt">' + esc(a.title) + '</span></div><div class="m">' +
       (a.nextRunAt ? 'Next ' + esc(fmtWhen(a.nextRunAt)) : a.enabled ? 'Not scheduled' : 'Off') + '</div></div>' +
@@ -567,18 +670,16 @@ function columnsBox(p) {
   }).join('') + '</div>';
 }
 
+/** A number on a project page: the headline (big, with its goal) or one of the metrics. */
+function figureCard(m, headline) {
+  return '<div class="card' + (headline ? ' hl' : '') + '"><div class="label" style="margin-top:0">' + esc(m.label || '') + '</div>' +
+    bigValue(m, headline ? '' : 'font-size:22px', false) + (headline ? progress(m.goal) : '') +
+    note(m.note, value(m.value) === null) + asOfLine(m.asOf) +
+    (m.series && spark(m.series) ? '<div class="trend">' + spark(m.series) + '</div>' : '') + '</div>';
+}
+
 function metricsHtml(d) {
-  const h = d.headline;
-  const cards = [];
-  if (h) {
-    const v = value(h.value);
-    cards.push('<div class="card hl"><div class="label" style="margin-top:0">' + esc(h.label || '') + '</div><div class="big' + (v ? '' : ' unknown') + '">' + esc(v || 'Unknown') + '</div>' + progress(h.goal) + note(h.note) + '</div>');
-  }
-  for (const m of d.metrics || []) {
-    const v = value(m.value);
-    cards.push('<div class="card"><div class="label" style="margin-top:0">' + esc(m.label || '') + '</div><div class="big' + (v ? '' : ' unknown') + '" style="font-size:22px">' + esc(v || 'Unknown') + '</div>' +
-      (m.note ? '<div class="sub">' + esc(typeof m.note === 'string' ? m.note : m.note.text) + '</div>' : '') + (m.series ? '<div class="trend">' + spark(m.series) + '</div>' : '') + '</div>');
-  }
+  const cards = (d.headline ? [figureCard(d.headline, true)] : []).concat((d.metrics || []).map((m) => figureCard(m, false)));
   return cards.length ? '<div class="metrics">' + cards.join('') + '</div>' : '';
 }
 
@@ -596,7 +697,7 @@ function renderProjectOverview(p) {
     opsItems.unshift('<span>' + ICON.clock + esc(parts.join(' · ')) + '</span>');
   }
   return (snap && snap.data ? metricsHtml(d) : '<div class="box"><div class="empty">' +
-      (snap && snap.error ? 'This project’s snapshot couldn’t be read: ' + esc(snap.error) + '.' : 'No numbers yet. Add <code>' + SNAPSHOT + '</code> in this project’s folder to show them here (see the plugin’s README).') + '</div></div>') +
+      (snap && snap.error ? 'This project’s snapshot couldn’t be read: ' + esc(snap.error) + '.' : 'No numbers yet. Write them to <code>' + SNAPSHOT + '</code> in this project’s folder with the plugin’s <code>snapshot.py</code> (see its README).') + '</div></div>') +
     '<div class="sec">Needs you' + (needs.length ? ', ' + needs.length : '') + '</div>' + needsBox(needs, false) +
     '<div class="cols">' + laneHtml(p, 'build', 'Build', d.build) + laneHtml(p, 'growth', 'Growth', d.growth) + '</div>' +
     (opsItems.length ? '<div class="ops">' + opsItems.join('') + '</div>' : '') +
@@ -618,7 +719,7 @@ function renderWeek(p) {
     return '<div>' + past.map((x) => { const s = cachedSession(x.r.sessionId); return '<div class="ev" data-act="session" data-id="' + esc(x.r.sessionId || '') + '" data-list="' + esc(ids) + '"><span class="muted">' + fmtTime(x.r.firedAt) + '</span><span class="x" title="' + esc(s ? firstSentence(s.lastMessage) : x.a.title) + '">' + esc(s ? firstSentence(s.lastMessage) || x.a.title : x.a.title) + '</span></div>'; }).join('') +
       planned.map((a) => '<div class="ev plan">' + ICON.clock + '<span class="muted">' + fmtTime(a.nextRunAt) + '</span><span class="x">' + esc(a.title) + '</span></div>').join('') + '</div>';
   };
-  return '<p class="muted" style="margin:0 0 12px">Past days show what each run reported; days ahead show what is scheduled.</p>' +
+  return '<p class="muted" style="margin:0 0 12px">Past days show what each run reported; days ahead show what is scheduled.' + (projectRunsLoading(p.id) ? ' Loading runs…' : '') + '</p>' +
     '<div class="week"><div class="h"></div><div class="h">Build</div><div class="h">Growth</div><div class="h">Ops and other</div>' +
     days.map((day) => '<div class="d' + (day === today ? ' today' : '') + '">' + (day === today ? 'Today' : esc(fmtDay(day))) + '</div>' + cell(day, ['build']) + cell(day, ['growth']) + cell(day, ['ops', null])).join('') +
     '</div>';
@@ -636,6 +737,7 @@ function render() {
   if (!S.loaded) return;
   const r = S.route;
   const p = r.view === 'project' ? projectById(r.projectId) : null;
+  void ensureRuns(p ? S.automations.filter((a) => projectOf(a) === p.id) : S.automations, p ? 8 * DAY : DAY);
   if (r.view === 'project' && p) {
     const snap = S.snapshots.get(p.id);
     setHeader({
@@ -643,7 +745,7 @@ function render() {
       crumbs: [{ id: p.id, label: p.name }],
       tabs: [{ id: 'overview', label: 'Overview' }, { id: 'week', label: 'Week' }],
       activeTab: r.tab,
-      subtitle: snap && snap.data && snap.data.asOf ? 'As of ' + fmtWhen(snap.data.asOf) : '',
+      subtitle: snap && snap.data && snap.data.updatedAt ? 'Numbers updated ' + fmtWhen(snap.data.updatedAt) + (snap.data.updatedBy ? ' by ' + snap.data.updatedBy : '') : '',
       actions: [{ id: 'new-session', label: 'New session', icon: 'plus' }],
     });
     app.innerHTML = r.tab === 'week' ? renderWeek(p) : renderProjectOverview(p);
@@ -682,7 +784,7 @@ app.addEventListener('click', (e) => {
   else if (act === 'automations') vicoa.open.url('/dashboard/automation').catch(() => {});
   else if (act === 'scope') {
     const next = S.settings.runsScope === 'all' ? 'automations' : 'all';
-    vicoa.settings.set({ runsScope: next }).then((v) => { S.settings = v; return loadLive(); }).then(render).catch((err) => vicoa.log.warn(err));
+    vicoa.settings.set({ runsScope: next }).then((v) => { S.settings = v; render(); }).catch((err) => vicoa.log.warn(err));
   } else if (act === 'lane') {
     const lanes = Object.assign({}, S.settings.lanes || {});
     if (el.dataset.lane) lanes[el.dataset.id] = el.dataset.lane; else delete lanes[el.dataset.id];
