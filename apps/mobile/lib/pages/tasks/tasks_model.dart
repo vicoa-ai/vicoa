@@ -9,8 +9,9 @@ import '/pages/common/filter_panel.dart' show filterByProject;
 import 'tasks_widget.dart' show TasksWidget;
 
 /// State for the Tasks list. Fetches tasks + projects + labels over REST, holds
-/// the local project filter and per-status collapse state, and owns the CRUD
-/// calls. Tasks/projects/labels are dynamic maps (see `task_utils.dart`).
+/// the local project filter, card display options and per-status collapse
+/// state (all three remembered across launches in `UserPreferences`), and owns
+/// the CRUD calls. Tasks/projects/labels are dynamic maps (see `task_utils.dart`).
 class TasksModel extends FlutterFlowModel<TasksWidget> {
   List<dynamic> tasks = [];
   List<dynamic> projects = [];
@@ -36,7 +37,25 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
   void _bump() => _notify?.call();
 
   @override
-  void initState(BuildContext context) {}
+  void initState(BuildContext context) => restoreSavedView();
+
+  /// Opens the list the way it was left: project filter, display options and
+  /// folded sections, as saved in `UserPreferences`.
+  void restoreSavedView() {
+    final prefs = FFAppState().userPreferences;
+    projectFilter = prefs.tasksProjectFilter;
+    showStatus = prefs.tasksShowStatus;
+    showPriority = prefs.tasksShowPriority;
+    showProject = prefs.tasksShowProject;
+    showLabels = prefs.tasksShowLabels;
+    collapsed
+      ..clear()
+      ..addAll(prefs.tasksCollapsedStatuses);
+  }
+
+  void _saveCollapsed() {
+    FFAppState().updateUserPreferences((p) => p..tasksCollapsedStatuses = collapsed.toList());
+  }
 
   @override
   void dispose() {}
@@ -54,6 +73,7 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
       tasks = results[0];
       projects = results[1];
       labels = results[2];
+      dropMissingProjectFilter();
     } catch (e) {
       debugPrint('Error loading tasks: $e');
       if (tasks.isEmpty) hasError = true;
@@ -61,6 +81,17 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
       isLoading = false;
       _bump();
     }
+  }
+
+  /// A remembered project filter can outlive its project (deleted, archived,
+  /// another account signed in), which would leave the list empty for no
+  /// visible reason: fall back to all projects. An empty project list may be a
+  /// failed fetch (`apiGetProjects` returns [] on error), so it proves nothing.
+  @visibleForTesting
+  void dropMissingProjectFilter() {
+    final filter = projectFilter;
+    if (filter == null || filter == tutils.kNoProjectFilter || projects.isEmpty) return;
+    if (projectById(filter) == null) setProjectFilter(null);
   }
 
   List<dynamic> get filteredTasks =>
@@ -129,16 +160,20 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
 
   void toggleCollapsed(String status) {
     if (!collapsed.remove(status)) collapsed.add(status);
+    _saveCollapsed();
     _bump();
   }
 
   /// Unfolds a section, e.g. so a task just created inside it is on screen.
   void expandSection(String status) {
-    if (collapsed.remove(status)) _bump();
+    if (!collapsed.remove(status)) return;
+    _saveCollapsed();
+    _bump();
   }
 
   void setProjectFilter(String? projectId) {
     projectFilter = projectId;
+    FFAppState().updateUserPreferences((p) => p..tasksProjectFilter = projectId);
     _bump();
   }
 
@@ -147,6 +182,11 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
     if (priority != null) showPriority = priority;
     if (project != null) showProject = project;
     if (labels != null) showLabels = labels;
+    FFAppState().updateUserPreferences((p) => p
+      ..tasksShowStatus = showStatus
+      ..tasksShowPriority = showPriority
+      ..tasksShowProject = showProject
+      ..tasksShowLabels = showLabels);
     _bump();
   }
 }

@@ -5,7 +5,9 @@ import '/custom_code/actions/index.dart' as actions;
 import '/auth/supabase_auth/auth_util.dart';
 import 'home_widget.dart' show HomeWidget;
 import 'checkout_branches.dart';
+import 'collapsed_groups.dart';
 import 'project_groups.dart';
+import 'saved_date_filter.dart';
 import 'session_status.dart';
 import 'session_card_text.dart' show sessionWorktreeBranch;
 import 'dart:async';
@@ -86,6 +88,11 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     // 'Active' was stored as 'Not closed' before the rename; carry it over.
     selectedTab =
         prefs.homeFilterStatus == 'Not closed' ? 'Active' : prefs.homeFilterStatus;
+    selectedAgentType = prefs.homeFilterAgentType;
+    final dateFilter = restoreDateFilter(
+        prefs.homeFilterDateRange, prefs.homeFilterCustomStart, prefs.homeFilterCustomEnd);
+    selectedDateRange = dateFilter.range;
+    customDateRange = dateFilter.custom;
     _checkoutBranches = CheckoutBranchResolver(
       call: actions.VicoaWsClient.instance.callRpc,
       onChanged: () => _notifyUI?.call(),
@@ -816,7 +823,7 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     }
     return [
       if (pinned.isNotEmpty)
-        SessionGroup(key: 'Pinned', label: 'Pinned', sessions: pinned),
+        SessionGroup(key: kPinnedGroupKey, label: 'Pinned', sessions: pinned),
       ...rest,
     ];
   }
@@ -870,6 +877,28 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     return DateFormat.MMMd().format(date); // localized month + day
   }
 
+  // Folds that only last until the app closes (see `collapsedGroupMemoryKey`).
+  final Set<String> _collapsedThisRun = {};
+
+  /// Whether [group]'s sessions are folded under its header. Project, Status
+  /// and Pinned folds are remembered across launches; every group starts open.
+  bool isGroupCollapsed(SessionGroup group) {
+    final key = collapsedGroupMemoryKey(selectedGroupBy, group);
+    if (key == null) return _collapsedThisRun.contains(group.key);
+    return FFAppState().userPreferences.homeCollapsedGroups.contains(key);
+  }
+
+  void toggleGroupCollapsed(SessionGroup group) {
+    final collapse = !isGroupCollapsed(group);
+    final key = collapsedGroupMemoryKey(selectedGroupBy, group);
+    if (key == null) {
+      collapse ? _collapsedThisRun.add(group.key) : _collapsedThisRun.remove(group.key);
+      return;
+    }
+    FFAppState().updateUserPreferences((p) =>
+        p..homeCollapsedGroups = withCollapsedGroup(p.homeCollapsedGroups, key, collapse));
+  }
+
   void selectGroupBy(String groupBy) {
     selectedGroupBy = groupBy;
     FFAppState().updateUserPreferences((p) => p..homeFilterGroupBy = groupBy);
@@ -896,6 +925,7 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
 
   void selectAgentType(String agentType) {
     selectedAgentType = agentType;
+    FFAppState().updateUserPreferences((p) => p..homeFilterAgentType = agentType);
     _refreshCheckoutBranches(onlyUnknown: true);
   }
 
@@ -904,13 +934,22 @@ class HomeModel extends FlutterFlowModel<HomeWidget> {
     if (range != 'Custom') {
       customDateRange = null;
     }
+    _saveDateFilter();
     _refreshCheckoutBranches(onlyUnknown: true);
   }
 
   void selectCustomDateRange(DateTimeRange range) {
     customDateRange = range;
     selectedDateRange = 'Custom';
+    _saveDateFilter();
     _refreshCheckoutBranches(onlyUnknown: true);
+  }
+
+  void _saveDateFilter() {
+    FFAppState().updateUserPreferences((p) => p
+      ..homeFilterDateRange = selectedDateRange
+      ..homeFilterCustomStart = customDateRange?.start.toIso8601String()
+      ..homeFilterCustomEnd = customDateRange?.end.toIso8601String());
   }
 
   String get selectedDateFilterLabel {
