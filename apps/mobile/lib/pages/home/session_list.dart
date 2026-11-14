@@ -11,6 +11,8 @@ import '/flutter_flow/flutter_flow_util.dart';
 import '/l10n/app_localizations.dart';
 import '/index.dart';
 import '/custom_code/actions/index.dart' as actions;
+import '/custom_code/actions/rpc_github.dart' show PrInfo;
+import '/custom_code/utils/pr_status.dart';
 import 'session_card_text.dart';
 
 class SessionCard extends StatelessWidget {
@@ -20,6 +22,7 @@ class SessionCard extends StatelessWidget {
     required this.status,
     this.groupBy = 'Time',
     this.checkoutBranch,
+    this.pullRequest,
     required this.onAction,
     required this.onRemoveInstance,
     required this.onReload,
@@ -33,6 +36,9 @@ class SessionCard extends StatelessWidget {
   /// Live branch of the checkout this session runs in, when the home model
   /// has resolved it (see `sessionCardRow2`).
   final String? checkoutBranch;
+  /// The pull request of the branch the card shows, when known: colors the
+  /// branch icon by its state.
+  final PrInfo? pullRequest;
   final Future<void> Function(Map<String, dynamic>, String) onAction;
   final void Function(String id) onRemoveInstance;
   final Future<void> Function() onReload;
@@ -119,7 +125,8 @@ class SessionCard extends StatelessWidget {
                 instance: instance,
                 status: status,
                 groupBy: groupBy,
-                checkoutBranch: checkoutBranch),
+                checkoutBranch: checkoutBranch,
+                pullRequest: pullRequest),
           ),
         ),
       ),
@@ -134,19 +141,23 @@ class SessionCardContent extends StatelessWidget {
     required this.status,
     this.groupBy = 'Time',
     this.checkoutBranch,
+    this.pullRequest,
   });
 
   final Map<String, dynamic> instance;
   final String status;
   final String groupBy;
   final String? checkoutBranch;
+  final PrInfo? pullRequest;
 
   /// Second line: plain text, or `text  ⎇ branch` for a git session — a gap,
   /// not a separator glyph, before the icon. One Text.rich so the whole line
   /// ellipsizes as a unit; the branch is set in the monospace the worktrees
-  /// page uses for branch names.
+  /// page uses for branch names. With a pull request the icon becomes the
+  /// PR's glyph in its GitHub state color (only the icon: the name stays in
+  /// the line's own color), dimmed with the rest of a closed session's card.
   Widget _row2(BuildContext context, ({String text, String? branch}) row,
-      Color color) {
+      Color color, {required bool dimmed}) {
     final base = FlutterFlowTheme.of(context).bodySmall.override(
           color: color,
           fontSize: 14.0,
@@ -164,7 +175,14 @@ class SessionCardContent extends StatelessWidget {
             alignment: PlaceholderAlignment.middle,
             child: Padding(
               padding: EdgeInsets.only(left: row.text.isNotEmpty ? 8.0 : 0.0, right: 4.0),
-              child: FaIcon(FontAwesomeIcons.codeBranch, size: 9.0, color: color),
+              child: FaIcon(
+                prIcon(pullRequest),
+                size: 9.0,
+                color: pullRequest == null
+                    ? color
+                    : prIconColor(pullRequest, Theme.of(context).brightness, noPr: color)
+                        .withValues(alpha: dimmed ? 0.5 : 1.0),
+              ),
             ),
           ),
           TextSpan(
@@ -290,7 +308,7 @@ class SessionCardContent extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Expanded(child: _row2(context, row2, subtitleColor)),
+                  Expanded(child: _row2(context, row2, subtitleColor, dimmed: isClosed)),
                   const SizedBox(width: 8.0),
                   Text(
                     time,

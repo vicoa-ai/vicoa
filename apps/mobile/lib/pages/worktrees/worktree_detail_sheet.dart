@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '/custom_code/actions/rpc_git.dart';
+import '/custom_code/actions/rpc_github.dart' show PrInfo;
+import '/custom_code/utils/pr_status.dart';
 import '/custom_code/utils/worktree_selection.dart';
 import '/flutter_flow/flutter_flow_icon_button.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
@@ -12,15 +15,18 @@ import '/l10n/app_localizations.dart';
 import '/pages/common/session_actions.dart';
 import '/pages/common/worktree_actions.dart';
 
-/// Bottom sheet showing one worktree's details (branch, path, type, status) and,
-/// for vicoa-managed worktrees, a Remove action. Mirrors the session info sheet
-/// styling. Returns `true` if the worktree was removed.
+/// Bottom sheet showing one worktree's details (branch, path, type, status),
+/// its branch's pull request when it has one (the phone's stand-in for the
+/// desktop sidebar's hover card), and, for vicoa-managed worktrees, a Remove
+/// action. Mirrors the session info sheet styling. Returns `true` if the
+/// worktree was removed.
 Future<bool?> showWorktreeDetailSheet({
   required BuildContext context,
   required String machineId,
   required String repoCwd,
   required WorktreeInfo worktree,
   String? homeDir,
+  PrInfo? pullRequest,
 }) {
   return showModalBottomSheet<bool>(
     context: context,
@@ -33,6 +39,7 @@ Future<bool?> showWorktreeDetailSheet({
         repoCwd: repoCwd,
         worktree: worktree,
         homeDir: homeDir,
+        pullRequest: pullRequest,
       ),
     ),
   );
@@ -44,12 +51,14 @@ class _WorktreeDetailSheet extends StatefulWidget {
     required this.repoCwd,
     required this.worktree,
     this.homeDir,
+    this.pullRequest,
   });
 
   final String machineId;
   final String repoCwd;
   final WorktreeInfo worktree;
   final String? homeDir;
+  final PrInfo? pullRequest;
 
   @override
   State<_WorktreeDetailSheet> createState() => _WorktreeDetailSheetState();
@@ -180,6 +189,10 @@ class _WorktreeDetailSheetState extends State<_WorktreeDetailSheet> {
                           ? l10n.worktreeDetailStatusInUse
                           : l10n.worktreeDetailStatusIdle),
                 ]),
+                if (widget.pullRequest case final pr?) ...[
+                  const SizedBox(height: 20.0),
+                  _pullRequestGroup(theme, pr),
+                ],
                 const SizedBox(height: 20.0),
                 _actionArea(theme, inUse),
                 SizedBox(height: MediaQuery.of(context).padding.bottom),
@@ -274,6 +287,112 @@ class _WorktreeDetailSheetState extends State<_WorktreeDetailSheet> {
         ),
       ],
     );
+  }
+
+  /// The branch's PR: state, number and checks over its title, then a row
+  /// that opens it on GitHub.
+  Widget _pullRequestGroup(FlutterFlowTheme theme, PrInfo pr) {
+    final l10n = AppLocalizations.of(context);
+    final brightness = Theme.of(context).brightness;
+    final stateColor = PrColors.state(pr.state, brightness);
+    final dot = checksDotColor(pr, brightness);
+    final checks = checksLabel(pr, l10n);
+    final caption = theme.labelSmall.override(
+      font: GoogleFonts.sourceSans3(),
+      color: theme.secondaryText,
+      fontSize: 13.0,
+      letterSpacing: 0.0,
+    );
+    return _group(theme, [
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsetsDirectional.fromSTEB(16.0, 12.0, 16.0, 12.0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 20.0,
+              height: 20.0,
+              child: Center(child: FaIcon(prIcon(pr), color: stateColor, size: 15.0)),
+            ),
+            const SizedBox(width: 14.0),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text.rich(
+                    TextSpan(children: [
+                      TextSpan(
+                        text: prStateLabel(pr.state, l10n),
+                        style: caption.copyWith(color: stateColor, fontWeight: FontWeight.w600),
+                      ),
+                      TextSpan(text: '  #${pr.number}'),
+                    ]),
+                    style: caption,
+                  ),
+                  const SizedBox(height: 2.0),
+                  Text(
+                    pr.title,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.bodyMedium.override(
+                      font: GoogleFonts.sourceSans3(),
+                      color: theme.primaryText,
+                      fontSize: 16.0,
+                      letterSpacing: 0.0,
+                    ),
+                  ),
+                  if (dot != null && checks != null) ...[
+                    const SizedBox(height: 6.0),
+                    Row(
+                      children: [
+                        Container(
+                          width: 7.0,
+                          height: 7.0,
+                          decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+                        ),
+                        const SizedBox(width: 6.0),
+                        Text(checks, style: caption),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      if (Uri.tryParse(pr.url) case final uri? when uri.hasScheme)
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () {
+              HapticFeedback.lightImpact();
+              launchUrl(uri, mode: LaunchMode.externalApplication);
+            },
+            child: Padding(
+              padding: const EdgeInsetsDirectional.fromSTEB(16.0, 14.0, 16.0, 14.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      l10n.worktreeDetailOpenOnGitHub,
+                      style: theme.bodyMedium.override(
+                        font: GoogleFonts.sourceSans3(),
+                        color: theme.primaryText,
+                        fontSize: 16.0,
+                        letterSpacing: 0.0,
+                      ),
+                    ),
+                  ),
+                  Icon(Icons.open_in_new_rounded, color: theme.secondaryText, size: 20.0),
+                ],
+              ),
+            ),
+          ),
+        ),
+    ]);
   }
 
   Widget _group(FlutterFlowTheme theme, List<Widget> rows) {

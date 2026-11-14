@@ -198,6 +198,8 @@ class WorktreeInfo {
     required this.head,
     required this.managed,
     this.prunable = false,
+    this.upstream = '',
+    this.displayPath,
   });
   final String path;
   final String branch;
@@ -206,6 +208,14 @@ class WorktreeInfo {
   /// Git's own verdict that the checkout directory is gone while the
   /// registration lingers — such a worktree can't be started in.
   final bool prunable;
+  /// The remote branch [branch] pushes to (`''` when it has none, or on an
+  /// older daemon). Can differ from [branch]: `git push -u origin HEAD:other`
+  /// opens the PR under `other` while the local branch keeps its name.
+  final String upstream;
+  /// [path] in the `~/…` form a session's `project` is registered with, so a
+  /// worktree matches its sessions by plain string equality. Null on an older
+  /// daemon.
+  final String? displayPath;
 
   static WorktreeInfo fromJson(Map<String, dynamic> json) => WorktreeInfo(
         path: json['path'] as String,
@@ -213,6 +223,8 @@ class WorktreeInfo {
         head: json['head'] as String? ?? '',
         managed: json['managed'] as bool? ?? false,
         prunable: json['prunable'] as bool? ?? false,
+        upstream: json['upstream'] as String? ?? '',
+        displayPath: json['display_path'] as String?,
       );
 }
 
@@ -220,11 +232,18 @@ class WorktreeInfo {
 /// `cwd` may be any folder of the repo — a subfolder or a linked worktree —
 /// which is what makes [mainPath] useful: it resolves whatever path the
 /// caller holds to the repo root. [mainPath] is null on a daemon that
-/// predates the field.
+/// predates the field. [mainBranch] is what the main checkout has checked out
+/// (`''` when detached, null on a daemon that predates the field).
 class WorktreeListing {
-  const WorktreeListing({required this.mainPath, required this.mainDisplayPath, required this.worktrees});
+  const WorktreeListing({
+    required this.mainPath,
+    required this.mainDisplayPath,
+    required this.worktrees,
+    this.mainBranch,
+  });
   final String? mainPath;
   final String? mainDisplayPath;
+  final String? mainBranch;
   final List<WorktreeInfo> worktrees;
 }
 
@@ -247,6 +266,7 @@ Future<WorktreeListing> rpcGitWorktreeListing({
   return WorktreeListing(
     mainPath: result['main_path'] as String?,
     mainDisplayPath: result['main_display_path'] as String?,
+    mainBranch: result['main_branch'] as String?,
     worktrees: raw.map((e) => WorktreeInfo.fromJson(e as Map<String, dynamic>)).toList(),
   );
 }

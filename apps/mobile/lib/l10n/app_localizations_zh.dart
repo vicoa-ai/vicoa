@@ -2678,6 +2678,27 @@ class AppLocalizationsZh extends AppLocalizations {
   String get worktreeActionsThisWorktree => '此工作树';
 
   @override
+  String get prChecksFailing => '检查未通过';
+
+  @override
+  String get prChecksPassed => '检查已通过';
+
+  @override
+  String get prChecksRunning => '检查进行中';
+
+  @override
+  String get prStateClosed => '已关闭';
+
+  @override
+  String get prStateDraft => '草稿';
+
+  @override
+  String get prStateMerged => '已合并';
+
+  @override
+  String get prStateOpen => '开放';
+
+  @override
   String get worktreeDetailBranch => '分支';
 
   @override
@@ -2689,6 +2710,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get worktreeDetailNotManagedNote => '此工作树不是由 Vicoa 创建的，因此无法在 App 内管理。';
+
+  @override
+  String get worktreeDetailOpenOnGitHub => '在 GitHub 打开';
 
   @override
   String get worktreeDetailOrigin => '来源';

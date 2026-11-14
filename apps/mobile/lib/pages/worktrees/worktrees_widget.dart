@@ -6,7 +6,9 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/actions/rpc_git.dart';
+import '/custom_code/actions/rpc_github.dart' show PrInfo;
 import '/custom_code/utils/machine_utils.dart' as mutils;
+import '/custom_code/utils/pr_status.dart';
 import '/custom_code/utils/worktree_selection.dart';
 import '/flutter_flow/flutter_flow_icon_button.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
@@ -94,7 +96,10 @@ class _WorktreesWidgetState extends State<WorktreesWidget> {
     super.dispose();
   }
 
-  Future<void> _refresh() => _model.load(widget.machineId, widget.cwd);
+  /// A pull is the user asking for fresh state: reuse only a PR answer this
+  /// recent, so repeated pulls still collapse into one GitHub request.
+  Future<void> _refresh() => _model.load(widget.machineId, widget.cwd,
+      prMaxAge: const Duration(seconds: 10));
 
   Future<void> _openDetail(WorktreeInfo wt) async {
     HapticFeedback.lightImpact();
@@ -104,6 +109,7 @@ class _WorktreesWidgetState extends State<WorktreesWidget> {
       repoCwd: widget.cwd,
       worktree: wt,
       homeDir: _homeDir,
+      pullRequest: _model.pullRequestFor(wt),
     );
     // Snack only once the sheet has actually closed and the removal completed,
     // so it never appears over the still-open detail sheet.
@@ -224,6 +230,7 @@ class _WorktreesWidgetState extends State<WorktreesWidget> {
           final wt = _model.worktrees[index];
           return _WorktreeCard(
             worktree: wt,
+            pullRequest: _model.pullRequestFor(wt),
             displayPath: relativizeHome(wt.path, _homeDir),
             inUse: worktreeHasActiveSession(
                 wt.path, FFAppState().cachedAgentInstances,
@@ -239,15 +246,18 @@ class _WorktreesWidgetState extends State<WorktreesWidget> {
 /// One worktree row, styled like `MachineCard`. Trailing indicator encodes
 /// delete-safety: a live dot (a session runs here), a lock (external, not
 /// removable), or a trash glyph (vicoa-managed → removable from the sheet).
+/// The leading branch icon takes the branch's PR state, as on Home.
 class _WorktreeCard extends StatelessWidget {
   const _WorktreeCard({
     required this.worktree,
+    this.pullRequest,
     required this.displayPath,
     required this.inUse,
     required this.onTap,
   });
 
   final WorktreeInfo worktree;
+  final PrInfo? pullRequest;
   final String displayPath;
   final bool inUse;
   final VoidCallback onTap;
@@ -279,8 +289,10 @@ class _WorktreeCard extends StatelessWidget {
                   width: 22.0,
                   height: 22.0,
                   child: Center(
-                    child: FaIcon(FontAwesomeIcons.codeBranch,
-                        color: theme.secondaryText, size: 16.0),
+                    child: FaIcon(prIcon(pullRequest),
+                        color: prIconColor(pullRequest, Theme.of(context).brightness,
+                            noPr: theme.secondaryText),
+                        size: 16.0),
                   ),
                 ),
                 const SizedBox(width: 14.0),
