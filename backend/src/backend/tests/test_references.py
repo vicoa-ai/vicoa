@@ -9,8 +9,18 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from backend.db.reference_queries import slugify_token
-from shared.database import AgentInstance, Automation, Machine, Message, Task, User
-from shared.database.enums import AgentStatus, SenderType
+from shared.database import (
+    AgentInstance,
+    Automation,
+    Machine,
+    Message,
+    Task,
+    TaskActivity,
+    User,
+    UserInstanceAccess,
+)
+from shared.database.actor import Actor, set_session_actor
+from shared.database.enums import AgentStatus, InstanceAccessLevel, SenderType
 
 
 def _make_user(db, email):
@@ -483,13 +493,203 @@ class TestReferenceExpansion:
         assert resp.status_code == 422
 
 
-class TestReferencedTaskLinksTheSession:
-    """The session ↔ task half of `#`, on the column that already exists.
+class TestRecordTaskReferences:
+    """`POST /agent-instances/{id}/references`, what a `#` does to a task.
 
-    No new table and no new endpoint: referencing a task from the composer is
-    the same PATCH the tasks plan calls the §8b late link, so the task's
-    Sessions list picks the session up.
+    It notes the session in the task's activity and nothing else: the session
+    stays unfiled and the task keeps its status. Filing a session under a task
+    is the explicit link (`PATCH task_id`), kept for starting from the task.
     """
+
+    def _record(self, client, instance_id, *task_ids):
+        return client.post(
+            f"/api/v1/agent-instances/{instance_id}/references",
+            json={"task_ids": [str(t) for t in task_ids]},
+        )
+
+    def _referenced_rows(self, db, task_id):
+        return (
+            db.query(TaskActivity)
+            .filter(
+                TaskActivity.task_id == UUID(str(task_id)),
+                TaskActivity.action == "referenced",
+            )
+            .all()
+        )
+
+    def test_notes_the_session_without_linking_or_moving_the_task(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        instance = _make_instance(
+            test_db, test_user.id, test_agent_type.id, name="growth run"
+        )
+        task = authenticated_client.post(
+            "/api/v1/tasks", json={"title": "Refresh the comparison", "status": "todo"}
+        ).json()
+
+        set_session_actor(test_db, Actor(type="user", id=test_user.id))
+        try:
+            resp = self._record(authenticated_client, instance.id, task["id"])
+        finally:
+            set_session_actor(test_db, None)
+        assert resp.status_code == 200
+        assert resp.json() == {"recorded_task_ids": [task["id"]]}
+
+        [row] = self._referenced_rows(test_db, task["id"])
+        assert row.details == {"agent_instance_id": str(instance.id)}
+        assert (row.actor_type, row.actor_id) == ("user", test_user.id)
+
+        # The session is still unfiled, so an ACTIVE session never pulls the
+        # task to in_progress; the task's status is what it was.
+        test_db.refresh(instance)
+        assert instance.task_id is None
+        after = authenticated_client.get(f"/api/v1/tasks/{task['id']}").json()
+        assert after["status"] == "todo"
+
+        timeline = authenticated_client.get(
+            f"/api/v1/tasks/{task['id']}/timeline"
+        ).json()
+        assert [a["action"] for a in timeline["activity"]] == ["created", "referenced"]
+        assert str(instance.id) in {s["id"] for s in timeline["sessions"]}
+
+    def test_the_session_joins_the_tasks_related_sessions_as_referenced(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        instance = _make_instance(
+            test_db, test_user.id, test_agent_type.id, name="growth run"
+        )
+        task = authenticated_client.post("/api/v1/tasks", json={"title": "T"}).json()
+        self._record(authenticated_client, instance.id, task["id"])
+
+        related = authenticated_client.get(
+            f"/api/v1/tasks/{task['id']}/sessions", params={"related": "true"}
+        ).json()
+        assert [(s["id"], s["task_relations"]) for s in related] == [
+            (str(instance.id), ["referenced"])
+        ]
+        # Not filed under the task, so not on its plain (linked) list.
+        linked = authenticated_client.get(f"/api/v1/tasks/{task['id']}/sessions").json()
+        assert linked == []
+
+    def test_one_row_per_session_however_often_it_names_the_task(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        first = _make_instance(test_db, test_user.id, test_agent_type.id, name="a")
+        second = _make_instance(test_db, test_user.id, test_agent_type.id, name="b")
+        task = authenticated_client.post("/api/v1/tasks", json={"title": "T"}).json()
+
+        assert self._record(authenticated_client, first.id, task["id"]).json() == {
+            "recorded_task_ids": [task["id"]]
+        }
+        again = self._record(authenticated_client, first.id, task["id"], task["id"])
+        assert again.json() == {"recorded_task_ids": []}
+        assert self._record(authenticated_client, second.id, task["id"]).json() == {
+            "recorded_task_ids": [task["id"]]
+        }
+
+        rows = self._referenced_rows(test_db, task["id"])
+        assert sorted(r.details["agent_instance_id"] for r in rows) == sorted(
+            [str(first.id), str(second.id)]
+        )
+
+    def test_several_tasks_in_one_message_keep_their_order(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        instance = _make_instance(test_db, test_user.id, test_agent_type.id, name="w")
+        a = authenticated_client.post("/api/v1/tasks", json={"title": "A"}).json()
+        b = authenticated_client.post("/api/v1/tasks", json={"title": "B"}).json()
+
+        resp = self._record(authenticated_client, instance.id, b["id"], a["id"])
+        assert resp.json() == {"recorded_task_ids": [b["id"], a["id"]]}
+
+    def test_skips_the_task_the_session_is_filed_under(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        instance = _make_instance(test_db, test_user.id, test_agent_type.id, name="w")
+        task = authenticated_client.post("/api/v1/tasks", json={"title": "T"}).json()
+        authenticated_client.patch(
+            f"/api/v1/agent-instances/{instance.id}", json={"task_id": task["id"]}
+        )
+
+        resp = self._record(authenticated_client, instance.id, task["id"])
+        assert resp.json() == {"recorded_task_ids": []}
+        assert self._referenced_rows(test_db, task["id"]) == []
+
+    def test_skips_a_task_that_is_not_the_callers(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        other = _make_user(test_db, "other-ref@example.com")
+        foreign = Task(user_id=other.id, title="Someone else's")
+        test_db.add(foreign)
+        test_db.commit()
+        instance = _make_instance(test_db, test_user.id, test_agent_type.id, name="w")
+
+        resp = self._record(authenticated_client, instance.id, foreign.id, uuid4())
+        assert resp.status_code == 200
+        assert resp.json() == {"recorded_task_ids": []}
+        assert self._referenced_rows(test_db, foreign.id) == []
+
+    def test_someone_elses_session_is_invisible(
+        self, authenticated_client, test_db, test_agent_type
+    ):
+        other = _make_user(test_db, "other-ref2@example.com")
+        instance = _make_instance(test_db, other.id, test_agent_type.id, name="theirs")
+        task = authenticated_client.post("/api/v1/tasks", json={"title": "T"}).json()
+
+        resp = self._record(authenticated_client, instance.id, task["id"])
+        assert resp.status_code == 404
+
+    def test_a_read_only_share_cannot_record(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        other = _make_user(test_db, "other-ref3@example.com")
+        instance = _make_instance(test_db, other.id, test_agent_type.id, name="shared")
+        test_db.add(
+            UserInstanceAccess(
+                agent_instance_id=instance.id,
+                shared_email=test_user.email,
+                user_id=test_user.id,
+                access=InstanceAccessLevel.READ,
+                granted_by_user_id=other.id,
+            )
+        )
+        test_db.commit()
+        task = authenticated_client.post("/api/v1/tasks", json={"title": "T"}).json()
+
+        resp = self._record(authenticated_client, instance.id, task["id"])
+        assert resp.status_code == 403
+        assert self._referenced_rows(test_db, task["id"]) == []
+
+    def test_a_deleted_session_records_nothing(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        instance = _make_instance(
+            test_db,
+            test_user.id,
+            test_agent_type.id,
+            name="gone",
+            status=AgentStatus.DELETED,
+        )
+        task = authenticated_client.post("/api/v1/tasks", json={"title": "T"}).json()
+
+        assert (
+            self._record(authenticated_client, instance.id, task["id"]).status_code
+            == 404
+        )
+
+    def test_a_runaway_list_is_rejected(
+        self, authenticated_client, test_db, test_user, test_agent_type
+    ):
+        instance = _make_instance(test_db, test_user.id, test_agent_type.id, name="w")
+        resp = self._record(
+            authenticated_client, instance.id, *[uuid4() for _ in range(21)]
+        )
+        assert resp.status_code == 422
+
+
+class TestTaskLinkStaysExplicit:
+    """Filing a session under a task is still `PATCH task_id`: how a session
+    started from the task (its chip, `?taskId=`, `--task`) gets linked."""
 
     def test_patching_task_id_files_the_session_under_the_task(
         self, authenticated_client, test_db, test_user, test_agent_type
@@ -511,25 +711,3 @@ class TestReferencedTaskLinksTheSession:
             f"/api/v1/tasks/{task['id']}/sessions"
         ).json()
         assert [s["id"] for s in sessions] == [str(instance.id)]
-
-    def test_detail_exposes_the_link_so_the_composer_can_see_it(
-        self, authenticated_client, test_db, test_user, test_agent_type
-    ):
-        instance = _make_instance(
-            test_db, test_user.id, test_agent_type.id, name="worker"
-        )
-        detail = authenticated_client.get(
-            f"/api/v1/agent-instances/{instance.id}"
-        ).json()
-        assert detail["task_id"] is None
-
-        task = authenticated_client.post(
-            "/api/v1/tasks", json={"title": "Fix the diff editor"}
-        ).json()
-        authenticated_client.patch(
-            f"/api/v1/agent-instances/{instance.id}", json={"task_id": task["id"]}
-        )
-        detail = authenticated_client.get(
-            f"/api/v1/agent-instances/{instance.id}"
-        ).json()
-        assert detail["task_id"] == task["id"]

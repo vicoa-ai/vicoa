@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentInstanceResponse, TaskResponse, TaskStatus } from './backend-api';
+import type { TaskResponse, TaskSessionResponse, TaskStatus } from './backend-api';
 import {
   ARCHIVE_TASK_ACTIONS,
   ARCHIVE_TASK_CHOICES,
@@ -16,14 +16,14 @@ function task(id: string, status: TaskStatus): TaskResponse {
   return { id, status, identifier: null, title: id } as TaskResponse;
 }
 
-function session(id: string, status: AgentInstanceResponse['status']) {
-  return { id, status } as AgentInstanceResponse;
+function session(id: string, status: TaskSessionResponse['status']) {
+  return { id, status, task_relations: ['linked'] } as TaskSessionResponse;
 }
 
 /** A task API over fixed tasks and their sessions, recording each update. */
 function fakeApi(
   tasks: Record<string, TaskStatus>,
-  sessions: Record<string, AgentInstanceResponse[]> = {},
+  sessions: Record<string, TaskSessionResponse[]> = {},
 ) {
   const updateTask = vi.fn(async (id: string, data: { status?: TaskStatus }) =>
     task(id, data.status ?? tasks[id]),

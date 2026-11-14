@@ -601,6 +601,16 @@ ENDPOINTS: list[Endpoint] = [
         "viewer",
         lambda c, w: c.get(f"/api/v1/tasks/{w.task.id}/sessions"),
     ),
+    # The task's whole record (created in, commented from, …), not only the
+    # sessions filed under it: the same task floor.
+    Endpoint(
+        "GET /tasks/{id}/sessions?related=true",
+        "tasks",
+        "viewer",
+        lambda c, w: c.get(
+            f"/api/v1/tasks/{w.task.id}/sessions", params={"related": "true"}
+        ),
+    ),
     Endpoint(
         "POST /tasks {project_id}",
         "tasks",
@@ -679,6 +689,17 @@ ENDPOINTS: list[Endpoint] = [
         "editor",
         lambda c, w: c.post(
             f"/api/v1/agent-instances/{w.instance.id}/messages/{w.queued_message.id}/steer"
+        ),
+    ),
+    # What a `#` in a sent message records: the floor is the send's own.
+    # The task is the owner's, so a subject who passes records nothing, 200.
+    Endpoint(
+        "POST /agent-instances/{id}/references",
+        "sessions",
+        "editor",
+        lambda c, w: c.post(
+            f"/api/v1/agent-instances/{w.instance.id}/references",
+            json={"task_ids": [str(w.task.id)]},
         ),
     ),
     Endpoint(

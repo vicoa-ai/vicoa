@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo, memo, forwardRef, useImperativeHandle } from 'react';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, ArrowUp, Square, X, File as FileIcon, Link2 } from 'lucide-react';
+import { RefreshCw, ArrowUp, Square, X, File as FileIcon } from 'lucide-react';
 import { formatFileSize } from '@/components/chat-attachments';
 import { useMessageDraft } from '@/lib/hooks/use-message-draft';
 import { useSlashCommands } from '@/lib/hooks/use-slash-commands';
@@ -27,7 +27,7 @@ import {
   addReference,
   candidateToComposerReference,
   composeOutgoingMessage,
-  taskLinkForSend,
+  referencedTaskIds,
   toComposerReference,
   type ComposerReference,
 } from '@/lib/composer-references';
@@ -158,12 +158,11 @@ interface ChatInputProps {
   canSteer?: boolean;
   // Enable the `#` picker over the user's sessions, tasks and automations.
   referencesEnabled?: boolean;
-  // The task this session is already filed under, if any. A `#` reference to
-  // a task links the session only when this is null — see `taskLinkForSend`.
-  sessionTaskId?: string | null;
-  // File the session under a referenced task. The parent owns the PATCH (and
-  // the refetch that follows), since it owns the instance.
-  onLinkTask?: (taskId: string) => void;
+  // Called on send with the tasks the message referenced, so the parent can
+  // note this session in their activity (`recordReferences`). It owns the
+  // instance id the call needs. A reference never files the session under a
+  // task or moves the task's status.
+  onReferenceTasks?: (taskIds: string[]) => void;
 }
 
 export type PermissionModeValue = 'default' | 'plan' | 'acceptEdits' | 'bypassPermissions' | 'auto';
@@ -224,8 +223,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
   queuedItems = [],
   canSteer = false,
   referencesEnabled = false,
-  sessionTaskId = null,
-  onLinkTask,
+  onReferenceTasks,
 }: ChatInputProps, ref) {
   const { draft: message, setDraft: setMessage, clearDraft } = useMessageDraft({
     instanceId,
@@ -302,23 +300,6 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
   } = useChatAnnotations(instanceId);
   const annotationsRef = useRef(annotations);
   annotationsRef.current = annotations;
-
-  // References still present in the draft. Recomputed per keystroke (the list
-  // is at most a handful) so deleting a token updates the link hint below at
-  // the same moment it stops attaching context.
-  const liveRefs = useMemo(
-    () => activeReferences(pendingRefs, message.trim()),
-    [pendingRefs, message],
-  );
-  // The task that sending would file this session under, if any. Surfaced
-  // because it writes to the user's board — a side effect that big shouldn't
-  // happen from a "#" with nothing on screen to say so.
-  const pendingTaskLink = useMemo(() => {
-    const taskId = taskLinkForSend(liveRefs, sessionTaskId);
-    return taskId
-      ? (liveRefs.find((r) => r.kind === 'task' && r.id === taskId) ?? null)
-      : null;
-  }, [liveRefs, sessionTaskId]);
 
   // Anything the user could send right now — text, a finished upload, a
   // folder, or an annotation.
@@ -640,18 +621,18 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
       .map((p) => `@${folderPathToMention(p, projectPath)}`)
       .join(' ');
     // `#` references: only the ones whose token survived editing, so deleting
-    // the token is how you drop the attachment. Recomputed here rather than
-    // read off `liveRefs` so the send doesn't depend on a render having
-    // happened since the last keystroke.
+    // the token is how you drop the attachment. Read from the ref, not state,
+    // so the send doesn't depend on a render having happened since the last
+    // keystroke.
     const refs = activeReferences(pendingRefsRef.current, trimmed);
     const outgoing = composeOutgoingMessage(
       appendAnnotations([trimmed, folderText].filter(Boolean).join(' '), pendingAnnotations),
       refs,
     );
-    // Referencing a task files the session under it — the same late link the
-    // Tasks board draws, on the column that already exists.
-    const linkTaskId = taskLinkForSend(refs, sessionTaskId);
-    if (linkTaskId) onLinkTask?.(linkTaskId);
+    // Each referenced task notes this session in its activity. Nothing more:
+    // naming a task in a message is not starting work on it.
+    const taskIds = referencedTaskIds(refs);
+    if (taskIds.length > 0) onReferenceTasks?.(taskIds);
     onSendMessage(outgoing, readyAttachments.map(u => u.meta!));
     readyAttachments.forEach(u => URL.revokeObjectURL(u.previewUrl));
     // Failed picks stay in the strip for retry/removal.
@@ -669,7 +650,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
     requestAnimationFrame(() => {
       focusTextarea();
     });
-  }, [message, projectPath, sessionTaskId, onLinkTask, onSendMessage, clearAnnotations, clearDraft, focusTextarea]);
+  }, [message, projectPath, onReferenceTasks, onSendMessage, clearAnnotations, clearDraft, focusTextarea]);
 
   const handleSendMessage = useCallback(() => sendComposer(annotationsRef.current), [sendComposer]);
 
@@ -908,16 +889,6 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, ChatInputProps>(functi
       {/* Rejected-pick notice (too large / too many) */}
       {attachmentError && (
         <div className="mb-2 text-[11px] text-destructive">{attachmentError}</div>
-      )}
-
-      {/* Sending will file this session under a referenced task. */}
-      {pendingTaskLink && (
-        <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-          <Link2 className="h-3 w-3 flex-shrink-0" />
-          <span className="truncate">
-            Sending files this session under {pendingTaskLink.label}
-          </span>
-        </div>
       )}
 
       {/* Pending annotations (one pill) + attachments (uploads) + folder

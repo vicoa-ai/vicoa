@@ -38,7 +38,7 @@ import { referenceMarkdown } from '@/lib/reference-links';
 import { getPref, setPref } from '@/lib/desktop-prefs';
 import { labelOwnerForProject, labelsForProject } from '@/lib/project-vocabulary';
 import {
-  AgentInstanceResponse,
+  TaskSessionResponse,
   ProjectResponse,
   TaskLabelResponse,
   TaskPriority,
@@ -51,6 +51,7 @@ import {
   getSessionTitle,
 } from '@/components/dashboard/session-display';
 import { SessionAgentIcon } from '@/components/dashboard/agent-type-icon';
+import { TASK_SESSION_RELATION_LABEL } from '@/app/dashboard/tasks/[taskId]/task-sessions';
 import {
   DatePickerPill,
   LabelPickerPill,
@@ -124,13 +125,13 @@ export function TaskDialog({
   allTasks?: TaskResponse[];
   /** Sub-tasks of `task` (edit mode). */
   childTasks?: TaskResponse[];
-  /** Agent sessions started from `task` (edit mode), newest first. */
-  sessions?: AgentInstanceResponse[];
+  /** Every session `task`'s record names (edit mode), most recently active first. */
+  sessions?: TaskSessionResponse[];
   /** `teamId`: the project's team, whose label set a new label joins. */
   onCreateLabel?: (name: string, teamId: string | null) => Promise<TaskLabelResponse>;
   onAddSubtask?: (parent: TaskResponse, title: string) => Promise<void>;
   onOpenTask?: (task: TaskResponse) => void;
-  /** Navigate to one of the task's linked sessions. */
+  /** Navigate to one of the task's sessions. */
   onOpenSession?: (instanceId: string) => void;
   onClose: () => void;
   /** Returns the created/updated task so create-mode can attach sub-tasks. */
@@ -611,9 +612,10 @@ export function TaskDialog({
           )}
         </div>
 
-        {/* Linked sessions (edit mode): the agent sessions started from this
-            task. Hidden when the task never ran one. A row saves any pending
-            edits, then jumps into the session. */}
+        {/* The task's sessions (edit mode): every one its record names —
+            started from it, created it, changed it, commented on it — each
+            with its strongest relation. Hidden when there are none. A row
+            saves any pending edits, then jumps into the session. */}
         {task && onOpenSession && sessions.length > 0 && (
           <div className="shrink-0 border-t px-3 py-2">
             <div className="flex items-center gap-1.5 px-1 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground/70">
@@ -643,6 +645,11 @@ export function TaskDialog({
                     {project && (
                       <span className="hidden max-w-[120px] shrink-0 truncate text-xs text-muted-foreground sm:inline">
                         {project}
+                      </span>
+                    )}
+                    {session.task_relations[0] && (
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {TASK_SESSION_RELATION_LABEL[session.task_relations[0]]}
                       </span>
                     )}
                     <span className="shrink-0 text-xs text-muted-foreground">

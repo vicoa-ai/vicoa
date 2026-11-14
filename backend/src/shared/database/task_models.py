@@ -632,7 +632,9 @@ class TaskActivity(Base):
     Written by the ``after_flush`` listener in ``shared/database/task_activity``
     — never by a call site. Task mutations arrive from the human REST API, the
     agent-facing REST API, the automation runner and the instance-status sync;
-    the flush is the one point all of them pass through.
+    the flush is the one point all of them pass through. The one exception is
+    ``referenced`` (a session's message named the task with ``#``), which is
+    not a mutation and so has nothing to diff; see ``reference_activity``.
     """
 
     __tablename__ = "task_activity"

@@ -389,6 +389,7 @@ function TaskDetailPage({
           revealed={revealed}
           onReveal={onReveal}
           onStartSession={onStartSession}
+          onOpenSession={onOpenSession}
         />
       </div>
 

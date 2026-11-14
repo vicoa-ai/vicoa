@@ -1,7 +1,7 @@
 'use client';
 
-// The task page's right-hand rail: properties, project, labels and the
-// session count with "Start session". Page variant only; the peek panel packs
+// The task page's right-hand rail: properties, project, labels, and the
+// task's sessions under "Start session". Page variant only; the peek panel packs
 // the key properties into one row of pills under its title instead
 // (task-detail-panel.tsx).
 
@@ -28,6 +28,7 @@ import {
   dateOnlyToLocalDate,
 } from '@/components/dashboard/task-ui';
 import { cn } from '@/lib/utils';
+import { TaskSessionList } from './task-sessions';
 import type { TaskDetailModel } from './use-task-detail';
 
 // Properties that stay out of the rail until they carry a value or the user
@@ -58,6 +59,7 @@ export function TaskPropertyRail({
   revealed,
   onReveal,
   onStartSession,
+  onOpenSession,
 }: {
   task: TaskResponse;
   model: TaskDetailModel;
@@ -66,6 +68,8 @@ export function TaskPropertyRail({
   revealed: Set<string>;
   onReveal: (key: string) => void;
   onStartSession: () => void;
+  /** Open a session in place; without it the Sessions rows are plain links. */
+  onOpenSession?: (sessionId: string) => void;
 }) {
   const {
     canEdit,
@@ -75,7 +79,7 @@ export function TaskPropertyRail({
     labels,
     agentProfiles,
     allTasks,
-    sessions,
+    relatedSessions,
     patchTask,
     createLabelAndAttach,
   } = model;
@@ -85,135 +89,133 @@ export function TaskPropertyRail({
   const hidden = OPTIONAL_PROPERTIES.filter((p) => !isShown(p.key));
 
   return (
-    // Below editor the whole rail is inert: a disabled fieldset turns
-    // every picker trigger inside it into a plain, unclickable label.
-    <fieldset
-      disabled={!canEdit}
-      className={cn(
-        'w-60 shrink-0 space-y-5',
-        !canEdit && '[&_button]:cursor-default',
-      )}
-    >
-      {/* Grouped, not labelled per field: one heading over a column of
-          icon + value rows reads as a property list, whereas an uppercase
-          caption above every single pill is eight captions to skip past.
-          The row shape comes from <PropertyRows>. */}
-      <RailGroup label="Properties">
-        <StatusPickerPill
-          status={task.status}
-          onSelect={(status) => void patchTask({ status })}
-        />
-        <PriorityPickerPill
-          priority={task.priority}
-          onSelect={(priority) => void patchTask({ priority })}
-        />
-        <AssigneePickerPill
-          assignee={task.assignee}
-          viewer={viewer}
-          agentProfiles={agentsForProject(
-            agentProfiles,
-            projects.find((p) => p.id === task.project_id),
+    <div className="w-60 shrink-0 space-y-5">
+      {/* Below editor the properties are inert: a disabled fieldset turns
+          every picker trigger inside it into a plain, unclickable label. The
+          Sessions group stays outside it — any viewer may open a session. */}
+      <fieldset
+        disabled={!canEdit}
+        className={cn('space-y-5', !canEdit && '[&_button]:cursor-default')}
+      >
+        {/* Grouped, not labelled per field: one heading over a column of
+            icon + value rows reads as a property list, whereas an uppercase
+            caption above every single pill is eight captions to skip past.
+            The row shape comes from <PropertyRows>. */}
+        <RailGroup label="Properties">
+          <StatusPickerPill
+            status={task.status}
+            onSelect={(status) => void patchTask({ status })}
+          />
+          <PriorityPickerPill
+            priority={task.priority}
+            onSelect={(priority) => void patchTask({ priority })}
+          />
+          <AssigneePickerPill
+            assignee={task.assignee}
+            viewer={viewer}
+            agentProfiles={agentsForProject(
+              agentProfiles,
+              projects.find((p) => p.id === task.project_id),
+            )}
+            onSelect={(next) =>
+              void patchTask({
+                assignee_type: next?.type ?? null,
+                assignee_id: next?.id ?? null,
+              })
+            }
+          />
+          {isShown('due_date') && (
+            <DatePickerPill
+              label="Due date"
+              value={task.due_date ? toDateOnly(new Date(task.due_date)) : ''}
+              onChange={(value) =>
+                void patchTask({
+                  due_date: value ? dateOnlyToLocalDate(value)?.toISOString() ?? null : null,
+                })
+              }
+            />
           )}
-          onSelect={(next) =>
-            void patchTask({
-              assignee_type: next?.type ?? null,
-              assignee_id: next?.id ?? null,
-            })
-          }
-        />
-        {isShown('due_date') && (
-          <DatePickerPill
-            label="Due date"
-            value={task.due_date ? toDateOnly(new Date(task.due_date)) : ''}
-            onChange={(value) =>
-              void patchTask({
-                due_date: value ? dateOnlyToLocalDate(value)?.toISOString() ?? null : null,
-              })
-            }
-          />
-        )}
-        {isShown('start_date') && (
-          <DatePickerPill
-            label="Start date"
-            icon="start"
-            value={task.start_date ? toDateOnly(new Date(task.start_date)) : ''}
-            onChange={(value) =>
-              void patchTask({
-                start_date: value
-                  ? dateOnlyToLocalDate(value)?.toISOString() ?? null
-                  : null,
-              })
-            }
-          />
-        )}
-        {isShown('parent') && (
-          <ParentPickerPill
-            tasks={allTasks}
-            currentTaskId={task.id}
-            parentId={task.parent_task_id}
-            onSelect={(parentId) => void patchTask({ parent_task_id: parentId })}
-          />
-        )}
-        {canEdit && hidden.length > 0 && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
-              >
-                <Plus className="size-3.5" />
-                Other properties
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-44">
-              {hidden.map((property) => (
-                <DropdownMenuItem
-                  key={property.key}
-                  className="cursor-pointer"
-                  onSelect={() => onReveal(property.key)}
+          {isShown('start_date') && (
+            <DatePickerPill
+              label="Start date"
+              icon="start"
+              value={task.start_date ? toDateOnly(new Date(task.start_date)) : ''}
+              onChange={(value) =>
+                void patchTask({
+                  start_date: value
+                    ? dateOnlyToLocalDate(value)?.toISOString() ?? null
+                    : null,
+                })
+              }
+            />
+          )}
+          {isShown('parent') && (
+            <ParentPickerPill
+              tasks={allTasks}
+              currentTaskId={task.id}
+              parentId={task.parent_task_id}
+              onSelect={(parentId) => void patchTask({ parent_task_id: parentId })}
+            />
+          )}
+          {canEdit && hidden.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
                 >
-                  {property.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </RailGroup>
-
-      <RailGroup label="Project">
-        <ProjectPickerPill
-          projects={projects}
-          projectId={task.project_id}
-          onSelect={(projectId) => void patchTask({ project_id: projectId })}
-        />
-      </RailGroup>
-
-      <RailGroup label="Labels">
-        <LabelPickerPill
-          labels={labelsForProject(
-            labels,
-            projects.find((p) => p.id === task.project_id),
-            task.labels,
+                  <Plus className="size-3.5" />
+                  Other properties
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-44">
+                {hidden.map((property) => (
+                  <DropdownMenuItem
+                    key={property.key}
+                    className="cursor-pointer"
+                    onSelect={() => onReveal(property.key)}
+                  >
+                    {property.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
-          selectedIds={task.labels.map((l) => l.id)}
-          onToggle={(labelId) => {
-            const current = task.labels.map((l) => l.id);
-            void patchTask({
-              label_ids: current.includes(labelId)
-                ? current.filter((id) => id !== labelId)
-                : [...current, labelId],
-            });
-          }}
-          onCreate={(name) => void createLabelAndAttach(name)}
-        />
-      </RailGroup>
+        </RailGroup>
 
-      {/* Sessions are a count on purpose: each already renders as a card in
-          the timeline, and listing them twice says the same thing twice. */}
+        <RailGroup label="Project">
+          <ProjectPickerPill
+            projects={projects}
+            projectId={task.project_id}
+            onSelect={(projectId) => void patchTask({ project_id: projectId })}
+          />
+        </RailGroup>
+
+        <RailGroup label="Labels">
+          <LabelPickerPill
+            labels={labelsForProject(
+              labels,
+              projects.find((p) => p.id === task.project_id),
+              task.labels,
+            )}
+            selectedIds={task.labels.map((l) => l.id)}
+            onToggle={(labelId) => {
+              const current = task.labels.map((l) => l.id);
+              void patchTask({
+                label_ids: current.includes(labelId)
+                  ? current.filter((id) => id !== labelId)
+                  : [...current, labelId],
+              });
+            }}
+            onCreate={(name) => void createLabelAndAttach(name)}
+          />
+        </RailGroup>
+      </fieldset>
+
+      {/* Every session the task's record names, not only the ones started
+          from it: the timeline cards cover those, this is where you look a
+          session up to carry on in it. */}
       <RailGroup label="Sessions">
-        <span className="px-2 text-sm text-muted-foreground">
-          {sessions.length === 0 ? 'None yet' : `${sessions.length} linked`}
-        </span>
         {/* Only the owner starts sessions from a task: a session runs on
             your own machine and links back to the task, and the link is
             an owner-side write (§4's owner-only lens). */}
@@ -227,7 +229,12 @@ export function TaskPropertyRail({
             Start session
           </button>
         )}
+        {relatedSessions.length > 0 ? (
+          <TaskSessionList sessions={relatedSessions} onOpenSession={onOpenSession} />
+        ) : (
+          !isOwner && <span className="px-2 text-sm text-muted-foreground">None yet</span>
+        )}
       </RailGroup>
-    </fieldset>
+    </div>
   );
 }

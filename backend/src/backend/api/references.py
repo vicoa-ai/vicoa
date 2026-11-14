@@ -1,16 +1,19 @@
 """`#` references API — the composer's Vicoa-entity picker.
 
-Two endpoints, both owner-scoped:
+Three endpoints, all owner-scoped:
 
 * ``GET /references`` fills the panel (an empty ``q`` is legal and means
   "what's live and recent").
 * ``GET /references/{kind}/{id}`` expands one pick into the text block the
   client appends to the outgoing message.
+* ``POST /agent-instances/{id}/references`` runs after the send: each task
+  the message referenced notes, in its activity, that this session named it.
 
-Linking a referenced task to the session is *not* here: that is the existing
-``PATCH /agent-instances/{id}`` with ``task_id``, which already does the access
-check and moves the task to in_progress. A `#` reference to a task is the same
-late link the tasks plan calls §8b, triggered from the composer.
+A reference does not file the session under the task. That is
+``PATCH /agent-instances/{id}`` with ``task_id`` (the §8b late link), which
+also moves the task to in_progress, and the composer no longer calls it for a
+`#`: naming a task in a message is not starting work on it. Starting a session
+from the task (its chip, ``?taskId=``, ``--task``) still does.
 """
 
 from uuid import UUID
@@ -24,6 +27,8 @@ from shared.database.session import get_db
 from ..auth.dependencies import get_current_user
 from ..db import reference_queries
 from ..models import (
+    RecordReferencesRequest,
+    RecordReferencesResponse,
     ReferenceCandidate,
     ReferenceCandidatesResponse,
     ReferenceDetail,
@@ -69,3 +74,29 @@ def get_reference_endpoint(
             status_code=status.HTTP_404_NOT_FOUND, detail="Reference not found"
         )
     return ReferenceDetail.model_validate(detail)
+
+
+@router.post(
+    "/agent-instances/{instance_id}/references",
+    response_model=RecordReferencesResponse,
+)
+def record_references_endpoint(
+    instance_id: UUID,
+    request: RecordReferencesRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RecordReferencesResponse:
+    """Record the tasks a message sent in this session referenced.
+
+    Fire-and-forget from the composer: a task it can't record is skipped, not
+    an error. 404 for a session the caller can't see, 403 for one they can
+    only read.
+    """
+    recorded = reference_queries.record_task_references(
+        db, current_user.id, instance_id, request.task_ids
+    )
+    if recorded is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Agent instance not found"
+        )
+    return RecordReferencesResponse(recorded_task_ids=recorded)

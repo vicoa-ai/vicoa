@@ -8,6 +8,7 @@
 //   Open task), the title, and the key properties as one wrapping row of pills
 //   (status, priority, due date when set, labels) instead of the page's rail;
 // - the description and its reactions, sub-tasks only when there are some;
+// - the task's sessions (the page's rail list) only when there are some;
 // - the timeline, then the composer, whose second button is "Reply and hand
 //   back": post the reply and move the task to In Review in one step, so the
 //   host can go on to the next task.
@@ -34,6 +35,7 @@ import { CommentComposer } from './comment-composer';
 import { EditableDescription, EditableTitle } from './inline-fields';
 import { ParentTaskLink, SubTasksSection } from './sub-tasks';
 import { CreatedInSession, ReactionRow, TaskTimeline } from './task-timeline';
+import { TaskSessionList } from './task-sessions';
 import type { TaskDetailModel } from './use-task-detail';
 
 const HEADER_ACTION =
@@ -68,6 +70,7 @@ export function TaskDetailPanel({
     comments,
     activity,
     sessions,
+    relatedSessions,
     sessionRefs,
     taskReactions,
     viewer,
@@ -204,6 +207,17 @@ export function TaskDetailPanel({
           onAdd={addSubTask}
           onStatusChange={(t, status) => void setSubTaskStatus(t, status)}
         />
+      )}
+
+      {/* The page's rail list, here since a column this narrow has no rail.
+          Start session is already in the header. */}
+      {relatedSessions.length > 0 && (
+        <div>
+          <div className="mb-1 text-sm font-medium">Sessions</div>
+          <div className="-mx-2">
+            <TaskSessionList sessions={relatedSessions} onOpenSession={onOpenSession} />
+          </div>
+        </div>
       )}
 
       <div className="space-y-3 border-t pt-4">

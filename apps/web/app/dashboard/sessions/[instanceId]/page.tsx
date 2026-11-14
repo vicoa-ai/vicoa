@@ -645,20 +645,15 @@ function AgentInstanceContent() {
     if (Object.keys(patch).length > 0) getMessageStore().patchInstance(instanceId, patch);
   }, [instanceId]);
 
-  // A `#` reference to a task files this session under it (tasks plan §8b —
-  // the `agent_instances.task_id` column, no new join table). Optimistic so
-  // the composer stops offering to link on the next send, then persisted; on
-  // failure the local flip is rolled back and the next `#task` tries again.
-  const handleLinkTask = useCallback(async (taskId: string) => {
-    const previous = instance?.task_id ?? null;
-    getMessageStore().patchInstance(instanceId, { task_id: taskId });
-    try {
-      await dashboardContext.api?.updateAgentInstance(instanceId, { task_id: taskId });
-    } catch (err) {
-      console.error('Failed to link session to referenced task:', err);
-      getMessageStore().patchInstance(instanceId, { task_id: previous });
-    }
-  }, [instance?.task_id, instanceId, dashboardContext]);
+  // The tasks a sent message referenced with `#` note this session in their
+  // activity, so it shows on each task's Sessions list. Fire-and-forget: the
+  // message is already on its way, and a lost note costs a line on the task,
+  // not the send. It never files this session under the task.
+  const handleReferenceTasks = useCallback((taskIds: string[]) => {
+    void dashboardContext.api?.recordReferences(instanceId, taskIds).catch((err: unknown) => {
+      console.error('Failed to record referenced tasks:', err);
+    });
+  }, [instanceId, dashboardContext]);
 
   const handleTogglePin = useCallback(async () => {
     const wasPinned = !!instance?.pinned_at;
@@ -3074,11 +3069,10 @@ function AgentInstanceContent() {
                 usage={instance.instance_metadata?.usage ?? null}
                 queuedItems={queuedItems}
                 canSteer={canSteer}
-                // `#` references list the viewer's own sessions and tasks, and a
-                // task link files the owner's session: both the owner's alone.
+                // `#` references list the viewer's own sessions and tasks, so
+                // they are offered in the owner's own session only.
                 referencesEnabled={isOwner}
-                sessionTaskId={instance.task_id ?? null}
-                onLinkTask={isOwner ? handleLinkTask : undefined}
+                onReferenceTasks={handleReferenceTasks}
               />
             ) : (
               // A viewer reads along; sending is for the owner and editors.

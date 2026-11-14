@@ -1152,6 +1152,21 @@ class TaskActivityResponse(BaseModel):
     created_at: datetime
 
 
+# How a session relates to a task, strongest first. `linked` is the session's
+# own `task_id` (started from the task, or filed under it); the rest are what
+# the task's record says the session did to it.
+TaskSessionRelationLiteral = Literal[
+    "linked", "created", "updated", "commented", "referenced"
+]
+
+
+class TaskSessionResponse(AgentInstanceResponse):
+    """A row of GET /tasks/{id}/sessions: the session, plus how it relates."""
+
+    # Strongest first, so a client with room for one label shows `[0]`.
+    task_relations: list[TaskSessionRelationLiteral] = Field(default_factory=list)
+
+
 class TaskSessionRef(BaseModel):
     """A session the timeline mentions — "Created in", "via" — by name."""
 
@@ -1524,6 +1539,24 @@ class ReferenceDetail(BaseModel):
     # The rendered block appended to the outgoing message. Fetched at pick
     # time so sending never waits on the network.
     context: str
+
+
+# A message carries a handful of references at most; the cap only stops a
+# runaway client from writing a row per task on the board.
+MAX_RECORDED_REFERENCES = 20
+
+
+class RecordReferencesRequest(BaseModel):
+    """The tasks a message just sent in the session referenced with `#`."""
+
+    task_ids: list[UUID] = Field(max_length=MAX_RECORDED_REFERENCES)
+
+
+class RecordReferencesResponse(BaseModel):
+    # The tasks that got a new `referenced` row. The others were already
+    # recorded for this session, are the task it is filed under, or are not
+    # the caller's.
+    recorded_task_ids: list[UUID]
 
 
 # ============================================================================

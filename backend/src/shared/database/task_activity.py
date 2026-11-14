@@ -14,6 +14,12 @@ added to the session there are picked up by the flush loop `Session.commit()`
 runs until the session is clean. The recursion that implies terminates on its
 own: the second flush contains only `TaskActivity` rows, and this listener only
 ever looks at `Task`.
+
+**The one row a call site writes: `referenced`.** A `#` reference to a task in
+a session's message changes nothing on the task, so there is no diff for the
+flush to take. The row is still built here (`reference_activity`), so its shape
+lives beside every other action's; the composer's record endpoint is its only
+caller.
 """
 
 import logging
@@ -43,6 +49,9 @@ WATCHED_COLUMNS: dict[str, str] = {
     "project_id": "project_changed",
     "parent_task_id": "parent_changed",
 }
+
+# A session's message named the task with `#` (see `reference_activity`).
+REFERENCED_ACTION = "referenced"
 
 # Long free text is recorded as "changed", not as a before/after pair: a diff of
 # two 4 kB descriptions is not something a timeline row can usefully render, and
@@ -90,6 +99,29 @@ def _activity(
         actor_id=actor.id if actor else None,
         action=action,
         details=payload,
+    )
+
+
+def reference_activity(
+    db: Session, task: Task, agent_instance_id: UUID
+) -> TaskActivity:
+    """The `referenced` row: whoever sent the message (the request's actor)
+    named `task` with `#` in session `agent_instance_id`.
+
+    The session rides `details.agent_instance_id`, as on every row a session
+    produced, so the task's Sessions list and timeline find it the same way.
+    Not `direct`: the session did not change the task. Built without
+    `_activity` on purpose: that would consume a pending status-sync override
+    for this task, which belongs to a real change in the same flush.
+    """
+    actor = session_actor(db)
+    return TaskActivity(
+        task_id=task.id,
+        project_id=task.project_id,
+        actor_type=actor.type if actor else None,
+        actor_id=actor.id if actor else None,
+        action=REFERENCED_ACTION,
+        details={"agent_instance_id": str(agent_instance_id)},
     )
 
 

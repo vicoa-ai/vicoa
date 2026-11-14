@@ -141,6 +141,9 @@ export function activityText(entry: TaskActivityResponse): string {
       return 'moved this task to another project';
     case 'parent_changed':
       return d.to ? 'changed the parent task' : 'removed the parent task';
+    // A `#` in a session's message; the row's "via" names the session.
+    case 'referenced':
+      return 'referenced this task';
     default:
       return entry.action.replace(/_/g, ' ');
   }
@@ -303,14 +306,17 @@ export function buildEntries(
   // normal line instead.
   // Only the session's status churn folds, too: a row marked `direct` is a
   // change the session made itself (`vicoa task update` — "set it blocked"),
-  // and that is the line worth reading, not one to tuck into the card.
+  // and that is the line worth reading, not one to tuck into the card. Nor
+  // does anything that isn't a status change (a `referenced` row): the card
+  // counts what it absorbs as status changes.
   const linked = new Set(sessions.map((session) => session.id));
   const bySession = new Map<string, TaskActivityResponse[]>();
   const loose: TaskActivityResponse[] = [];
   for (const row of activity) {
     const instanceId = row.details?.agent_instance_id;
     const direct = row.details?.direct === true;
-    if (typeof instanceId === 'string' && linked.has(instanceId) && !direct) {
+    const churn = row.action === 'status_changed' && !direct;
+    if (typeof instanceId === 'string' && linked.has(instanceId) && churn) {
       const bucket = bySession.get(instanceId);
       if (bucket) bucket.push(row);
       else bySession.set(instanceId, [row]);
