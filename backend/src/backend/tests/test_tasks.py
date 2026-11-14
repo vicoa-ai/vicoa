@@ -963,6 +963,107 @@ class TestTaskSessions:
         data = resp.json()
         assert [s["id"] for s in data] == [str(test_agent_instance.id)]
 
+    @staticmethod
+    def _session(db, user, agent_type, started_at, **fields):
+        from shared.database import AgentInstance
+
+        instance = AgentInstance(
+            id=uuid4(),
+            agent_type_id=agent_type.id,
+            user_id=user.id,
+            status=fields.pop("status", AgentStatus.COMPLETED),
+            started_at=started_at,
+            **fields,
+        )
+        db.add(instance)
+        db.commit()
+        return instance
+
+    def test_related_names_every_relation_strongest_first(
+        self, authenticated_client, test_db, test_user, test_agent_type, other_user
+    ):
+        """`?related=true` folds the task's whole record into one list: filed
+        under it, created it, changed it, commented on it, most recently active
+        first. Sessions the viewer can't open, deleted sessions and deleted
+        comments name nothing."""
+        from shared.database import TaskActivity, TaskComment
+
+        def at(day):
+            return datetime(2026, 11, day, tzinfo=timezone.utc)
+
+        linked = self._session(test_db, test_user, test_agent_type, at(1))
+        creator = self._session(test_db, test_user, test_agent_type, at(2))
+        updater = self._session(test_db, test_user, test_agent_type, at(3))
+        commenter = self._session(test_db, test_user, test_agent_type, at(4))
+        only_deleted_comment = self._session(test_db, test_user, test_agent_type, at(5))
+        deleted = self._session(
+            test_db, test_user, test_agent_type, at(6), status=AgentStatus.DELETED
+        )
+        foreign = self._session(test_db, other_user, test_agent_type, at(7))
+
+        task = Task(user_id=test_user.id, title="t", created_in_instance_id=creator.id)
+        test_db.add(task)
+        test_db.commit()
+        linked.task_id = task.id
+        test_db.add_all(
+            [
+                TaskComment(
+                    task_id=task.id,
+                    author_id=test_user.id,
+                    agent_instance_id=commenter.id,
+                    body="from a session",
+                ),
+                TaskComment(
+                    task_id=task.id,
+                    author_id=test_user.id,
+                    agent_instance_id=creator.id,
+                    body="the creator follows up",
+                ),
+                TaskComment(
+                    task_id=task.id,
+                    author_id=test_user.id,
+                    agent_instance_id=only_deleted_comment.id,
+                    body="gone",
+                    deleted_at=at(9),
+                ),
+            ]
+            + [
+                TaskActivity(
+                    task_id=task.id,
+                    action="status_changed",
+                    details={"agent_instance_id": str(s.id), "direct": True},
+                )
+                for s in (updater, deleted, foreign)
+            ]
+        )
+        test_db.commit()
+
+        resp = authenticated_client.get(
+            f"/api/v1/tasks/{task.id}/sessions", params={"related": "true"}
+        )
+        assert resp.status_code == 200
+        rows = [(r["id"], r["task_relations"]) for r in resp.json()]
+        assert rows == [
+            (str(commenter.id), ["commented"]),
+            (str(updater.id), ["updated"]),
+            (str(creator.id), ["created", "commented"]),
+            (str(linked.id), ["linked"]),
+        ]
+
+        # Without the flag: only the session filed under the task, as before.
+        resp = authenticated_client.get(f"/api/v1/tasks/{task.id}/sessions")
+        assert [(r["id"], r["task_relations"]) for r in resp.json()] == [
+            (str(linked.id), ["linked"])
+        ]
+
+    def test_related_is_empty_for_a_task_with_no_sessions(self, authenticated_client):
+        task = authenticated_client.post("/api/v1/tasks", json={"title": "t"}).json()
+        resp = authenticated_client.get(
+            f"/api/v1/tasks/{task['id']}/sessions", params={"related": "true"}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == []
+
     def test_unknown_task_is_404(self, authenticated_client):
         resp = authenticated_client.get(f"/api/v1/tasks/{uuid4()}/sessions")
         assert resp.status_code == 404

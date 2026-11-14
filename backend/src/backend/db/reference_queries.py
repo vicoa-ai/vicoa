@@ -12,11 +12,16 @@ sessions, their tasks and their automations. Two calls back it.
   so sending never waits on the network and a dead reference degrades to its
   token instead of blocking the message.
 
+A third, :func:`record_task_references`, runs after a send: each task the
+message referenced gets one `referenced` row in its activity, naming the
+session. That is all a reference does to a task. It does not file the session
+under it (`agent_instances.task_id`) or move its status; that stays the
+explicit link, starting a session from the task or `PATCH task_id`.
+
 Owner-scoped throughout: `#` reaches your own workspace, never a collaborator's
 board, even though the cmd+K search beside it does. There is no new table here —
-a reference is a pointer to a row that already exists, and the session ↔ task
-half of it rides the `agent_instances.task_id` column the tasks plan already
-added (see `link_instance_to_task`).
+a reference is a pointer to a row that already exists, and what a session
+referenced is read back from `task_activity`.
 """
 
 import re
@@ -25,9 +30,11 @@ from uuid import UUID
 from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from shared.database import AgentInstance, Automation, Project, Task
+from shared import access
+from shared.database import AgentInstance, Automation, Project, Task, TaskActivity
 from shared.database.enums import AgentStatus
 from shared.database.project_matching import resolve_automation_project_ids
+from shared.database.task_activity import REFERENCED_ACTION, reference_activity
 
 from .queries import CLOSED_STATUSES
 from .search_queries import _escape_like, _identifier_conditions
@@ -475,3 +482,53 @@ def get_reference(db: Session, user_id: UUID, kind: str, ref_id: UUID) -> dict |
     if expand is None:
         return None
     return expand(db, user_id, ref_id)
+
+
+def record_task_references(
+    db: Session, user_id: UUID, instance_id: UUID, task_ids: list[UUID]
+) -> list[UUID] | None:
+    """Note on each referenced task that this session's message named it.
+
+    One `referenced` row per (task, session), however often the session names
+    it again: the task's record says *that* the session referenced it, and a
+    row per message would bury its real changes. Skipped without error: a task
+    that isn't the caller's own (the picker's scope), and the task the session
+    is already filed under, whose session card says more than this row could.
+    Two sends racing can each write a row; harmless, and not worth a lock.
+
+    The caller has to be someone who can prompt the session (`editor`), since
+    they just sent it a message: `AccessDenied` (→ 403) when they can only
+    read it. Returns the tasks that got a row, in request order; ``None``
+    (→ 404) when the session is invisible to them or deleted.
+    """
+    instance = db.query(AgentInstance).filter(AgentInstance.id == instance_id).first()
+    if instance is None or instance.status == AgentStatus.DELETED:
+        return None
+    role = access.instance_role(db, user_id, instance)
+    if role is None:
+        return None
+    access.require(role, "editor")
+    wanted = [tid for tid in dict.fromkeys(task_ids) if tid != instance.task_id]
+    if not wanted:
+        return []
+    tasks = {
+        task.id: task
+        for task in db.query(Task).filter(
+            Task.id.in_(wanted), owned_task_filter(user_id)
+        )
+    }
+    if not tasks:
+        return []
+    already = {
+        task_id
+        for (task_id,) in db.query(TaskActivity.task_id).filter(
+            TaskActivity.task_id.in_(list(tasks)),
+            TaskActivity.action == REFERENCED_ACTION,
+            TaskActivity.details["agent_instance_id"].astext == str(instance.id),
+        )
+    }
+    recorded = [tid for tid in wanted if tid in tasks and tid not in already]
+    if recorded:
+        db.add_all(reference_activity(db, tasks[tid], instance.id) for tid in recorded)
+        db.commit()
+    return recorded

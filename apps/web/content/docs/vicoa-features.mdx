@@ -86,13 +86,11 @@ Description: ...
 
 A session reference carries the facts that identify the run, its agent, folder and worktree, plus the command to read the transcript. An automation carries its schedule and its prompt. Every block ends with the `vicoa` command for the full record, so the agent can dig further on its own instead of asking you to paste more.
 
-### Referencing a Task Files the Session Under It
+### Referencing a Task Leaves It Where It Is
 
-Reference a task and the session joins that task's **Sessions** list, and the task moves to *In Progress*. The message box says so before you send:
+Referencing a task hands the agent its details and notes on the task that this session referenced it: the task's activity reads *referenced this task via* the session, with a link to it. The task keeps its status and the session is not filed under it, so asking an agent about a task never moves it on your board. To work on a task in a session, [start the session from the task](#tasks-and-their-sessions).
 
-> Sending files this session under Fix the diff editor
-
-A session belongs to one task at a time. If it already belongs to one, referencing another task still hands the agent that task's details, but leaves the filing alone, so nothing moves on your board by surprise.
+A session is noted once per task, however often it references it.
 
 ### Removing a Reference
 
@@ -102,11 +100,11 @@ Delete the `#token` from your message. The details attached to it go too.
 
 - Hand one agent the context of another without copying and pasting
 - Point an agent at a task without retyping the description you already wrote
-- Keep the board honest, since work started from a task ends up filed under it
+- Find the sessions that talked about a task from the task itself
 
 ## Tasks and Their Sessions
 
-A session gets onto a task when you start it from the task, or [reference the task](#referencing-a-task-files-the-session-under-it) in its first message. Starting work moves the task along for you; when the task is finished is for you or the agent to say.
+A session gets onto a task when you start it from the task. [Referencing the task](#referencing-a-task-leaves-it-where-it-is) in a message only notes the session on it. Starting work moves the task along for you; when the task is finished is for you or the agent to say.
 
 ### What Moves the Task
 

@@ -26,7 +26,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
-  AgentInstanceResponse,
+  TaskSessionResponse,
   CreateTaskRequest,
   ProjectResponse,
   TaskLabelResponse,
@@ -126,7 +126,7 @@ function TasksPageInner() {
   // Sessions started from the task the dialog is editing (agent instances whose
   // task_id points here). Fetched on open so the dialog can show a linked-
   // sessions strip; empty in create mode and for tasks that never ran one.
-  const [dialogSessions, setDialogSessions] = useState<AgentInstanceResponse[]>([]);
+  const [dialogSessions, setDialogSessions] = useState<TaskSessionResponse[]>([]);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   // Set when "Start session" is fired on a task that has sub-tasks — opens the
   // picker to choose which children ride along. Null = no picker open.
@@ -542,7 +542,8 @@ function TasksPageInner() {
     [dialog.task, tasks],
   );
 
-  // Load the linked sessions whenever the dialog opens on an existing task.
+  // Load the task's sessions (every one its record names) whenever the dialog
+  // opens on an existing task.
   // Clears first so the previous task's list never flashes under a new one; a
   // fetch failure just leaves the strip empty (it's supplementary context).
   const dialogTaskId = dialog.open ? dialog.task?.id ?? null : null;
@@ -551,7 +552,7 @@ function TasksPageInner() {
     if (!api || !dialogTaskId) return;
     let cancelled = false;
     api
-      .listTaskSessions(dialogTaskId)
+      .listTaskSessions(dialogTaskId, { related: true })
       .then((sessions) => {
         if (!cancelled) setDialogSessions(sessions);
       })

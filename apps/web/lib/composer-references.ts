@@ -192,21 +192,17 @@ export function composeOutgoingMessage(
 }
 
 /**
- * The task a send should file the session under, or null.
+ * The tasks a send referenced, first-typed first, each once.
  *
- * One task, because `agent_instances.task_id` is a single column — referencing
- * a task is the same late link the Tasks board already draws, not a new
- * many-to-many. The *first* referenced task wins so the choice is the order
- * the user typed, and an existing link is never overwritten: a session that
- * already belongs to a task keeps it, and the extra reference still ships its
- * context. Silently re-filing someone's session is the one failure mode here
- * that loses data the UI doesn't show.
+ * A `#` to a task only notes the session in that task's activity
+ * (`recordReferences`); it never files the session under the task or moves
+ * its status. That is starting a session from the task (its chip, `?taskId=`),
+ * not naming it in a message.
  */
-export function taskLinkForSend(
-  refs: ComposerReference[],
-  currentTaskId: string | null | undefined,
-): string | null {
-  if (currentTaskId) return null;
-  const task = refs.find((ref) => ref.kind === 'task');
-  return task ? task.id : null;
+export function referencedTaskIds(refs: ComposerReference[]): string[] {
+  const ids: string[] = [];
+  for (const ref of refs) {
+    if (ref.kind === 'task' && !ids.includes(ref.id)) ids.push(ref.id);
+  }
+  return ids;
 }

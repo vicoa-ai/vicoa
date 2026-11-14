@@ -1,5 +1,7 @@
 import json
 import logging
+from collections import defaultdict
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -23,6 +25,9 @@ from shared.database import (
     AgentType,
     InstanceAccessLevel,
     SenderType,
+    Task,
+    TaskActivity,
+    TaskComment,
 )
 from shared.database.liveness import LiveState, compute_live_state, is_fresh
 from shared.database.automation_models import AutomationRun
@@ -42,6 +47,8 @@ from backend.models import (
     AgentTypeOverview,
     MessageResponse,
     InstanceShareResponse,
+    TaskSessionRelationLiteral,
+    TaskSessionResponse,
 )
 
 
@@ -283,7 +290,7 @@ def _apply_grantee_view(
     db: Session,
     user_id: UUID,
     instances: list[AgentInstance],
-    responses: list[AgentInstanceResponse],
+    responses: Sequence[AgentInstanceResponse],
 ) -> None:
     """`redact_for_grantee` over every row of a list the caller does not own,
     with the owners and roles fetched in a handful of queries."""
@@ -1574,22 +1581,98 @@ def move_instance_to_project(
     return format_agent_instance(instance, message_stats)
 
 
-def list_task_instances(
-    db: Session, user_id: UUID, task_id: UUID
-) -> list[AgentInstanceResponse]:
-    """Sessions (agent instances) linked to a task, most recent first.
+# `task_relations` order, strongest first (see TaskSessionRelationLiteral).
+TASK_SESSION_RELATIONS: tuple[TaskSessionRelationLiteral, ...] = (
+    "linked",
+    "created",
+    "updated",
+    "commented",
+    "referenced",
+)
 
-    Powers the Tasks dialog's linked-sessions strip: the reverse of the §8b
-    late link that stamps ``agent_instances.task_id``. Returns the caller's
-    own sessions plus any shared to them (directly or through a project grant
-    covering sessions) and skips soft-deleted rows; an unknown or foreign task
-    simply yields an empty list. The caller is expected to have resolved the
-    task itself through the task lens first.
+
+def _activity_instance_id(details: dict | None) -> UUID | None:
+    raw = (details or {}).get("agent_instance_id")
+    try:
+        return UUID(str(raw)) if raw else None
+    except ValueError:
+        return None
+
+
+def _task_session_relations(db: Session, task: Task) -> dict[UUID, set[str]]:
+    """Every session the task's record names, and how.
+
+    Read from what is already stored, nothing new: the sessions filed under
+    the task (`task_id`), the one it was created in, the ones that commented,
+    and the ones its activity rows carry (`vicoa task update` inside a
+    session, or the status following a linked session). Not access-filtered —
+    the caller narrows the ids to the sessions the viewer may open.
     """
+    relations: dict[UUID, set[str]] = defaultdict(set)
+    for (instance_id,) in db.query(AgentInstance.id).filter(
+        AgentInstance.task_id == task.id
+    ):
+        relations[instance_id].add("linked")
+    if task.created_in_instance_id is not None:
+        relations[task.created_in_instance_id].add("created")
+    for (instance_id,) in (
+        db.query(TaskComment.agent_instance_id)
+        .filter(
+            TaskComment.task_id == task.id,
+            TaskComment.agent_instance_id.isnot(None),
+            TaskComment.deleted_at.is_(None),
+        )
+        .distinct()
+    ):
+        relations[instance_id].add("commented")
+    for action, details in db.query(TaskActivity.action, TaskActivity.details).filter(
+        TaskActivity.task_id == task.id
+    ):
+        instance_id = _activity_instance_id(details)
+        if instance_id is None:
+            continue
+        if action in ("created", "referenced"):
+            relations[instance_id].add(action)
+        else:
+            relations[instance_id].add("updated")
+    return relations
+
+
+def _recency(row: AgentInstanceResponse) -> datetime:
+    """When the session last did anything, comparable across rows (the columns
+    mix naive-UTC and aware values)."""
+    at = row.latest_message_at or row.started_at
+    return at if at.tzinfo is not None else at.replace(tzinfo=timezone.utc)
+
+
+def list_task_instances(
+    db: Session, user_id: UUID, task: Task, *, related: bool = False
+) -> list[TaskSessionResponse]:
+    """The sessions on a task's Sessions list.
+
+    By default only the sessions filed under the task (``task_id``, the §8b
+    link), most recently started first — what the timeline draws as session
+    cards. With ``related``, every session the task's record names (see
+    `_task_session_relations`), most recently active first: the list you look
+    a session up in to carry on in it.
+
+    Either way the caller's own sessions plus any shared to them (directly or
+    through a project grant covering sessions), soft-deleted rows skipped, and
+    a shared row redacted as every other session list redacts it. The caller
+    is expected to have resolved the task itself through the task lens first.
+    """
+    relations: dict[UUID, set[str]] | None = None
+    if related:
+        relations = _task_session_relations(db, task)
+        if not relations:
+            return []
+        scope = AgentInstance.id.in_(list(relations))
+    else:
+        scope = AgentInstance.task_id == task.id
     instances = (
         db.query(AgentInstance)
         .filter(
-            AgentInstance.task_id == task_id,
+            scope,
             or_(
                 AgentInstance.user_id == user_id,
                 AgentInstance.id.in_(access.shared_instance_select(user_id)),
@@ -1609,7 +1692,19 @@ def list_task_instances(
         return []
 
     message_stats = _get_instance_message_stats(db, [i.id for i in instances])
-    return [format_agent_instance(i, message_stats) for i in instances]
+    rows: list[TaskSessionResponse] = []
+    for instance in instances:
+        names = relations[instance.id] if relations is not None else {"linked"}
+        rows.append(
+            TaskSessionResponse(
+                **format_agent_instance(instance, message_stats).model_dump(),
+                task_relations=[r for r in TASK_SESSION_RELATIONS if r in names],
+            )
+        )
+    _apply_grantee_view(db, user_id, instances, rows)
+    if related:
+        rows.sort(key=_recency, reverse=True)
+    return rows
 
 
 def get_message_by_id(db: Session, message_id: UUID, user_id: UUID) -> dict | None:

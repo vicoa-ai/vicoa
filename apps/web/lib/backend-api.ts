@@ -135,8 +135,8 @@ export interface AgentInstanceResponse {
   project_id?: string | null;
   /**
    * The task this run works on. Read-only on this DTO — it is written by
-   * `updateAgentInstance(id, { task_id })`. The composer's `#` reference reads
-   * it to tell a new link from a session that already belongs to a task.
+   * `updateAgentInstance(id, { task_id })`, when a session is started from the
+   * task. A `#` reference never writes it (see `recordReferences`).
    */
   task_id?: string | null;
   home_dir?: string | null;
@@ -855,6 +855,19 @@ export interface TaskActivityResponse {
   action: string;
   details: Record<string, unknown>;
   created_at: string;
+}
+
+/**
+ * How a session relates to a task, strongest first. `linked` is the session's
+ * own `task_id` (started from the task, or filed under it); the rest are what
+ * the task's record says the session did to it.
+ */
+export type TaskSessionRelation = 'linked' | 'created' | 'updated' | 'commented' | 'referenced';
+
+/** A row of `GET /tasks/{id}/sessions`: the session, plus how it relates. */
+export interface TaskSessionResponse extends AgentInstanceResponse {
+  /** Strongest first, so a row with room for one label shows `[0]`. */
+  task_relations: TaskSessionRelation[];
 }
 
 /** A session the timeline mentions ("Created in", "via"), by name. */
@@ -2235,9 +2248,23 @@ class BackendAPI {
     return this.request<TaskResponse>(`/api/v1/tasks/${taskId}`);
   }
 
-  /** Agent sessions started from this task, most recent first. */
-  async listTaskSessions(taskId: string): Promise<AgentInstanceResponse[]> {
-    return this.request<AgentInstanceResponse[]>(`/api/v1/tasks/${taskId}/sessions`);
+  /**
+   * The task's sessions. By default the ones filed under it (started from it
+   * or linked), most recently started first. With `related`, every session
+   * the task's record names (created it, changed it, commented on it, …),
+   * most recently active first, each with its `task_relations`.
+   */
+  async listTaskSessions(
+    taskId: string,
+    options: { related?: boolean } = {},
+  ): Promise<TaskSessionResponse[]> {
+    const query = options.related ? '?related=true' : '';
+    const rows = await this.request<Array<Partial<Pick<TaskSessionResponse, 'task_relations'>> & AgentInstanceResponse>>(
+      `/api/v1/tasks/${taskId}/sessions${query}`,
+    );
+    // A server from before `related` ignores the flag and sends the filed
+    // sessions bare: that is all it knows, so they are all `linked`.
+    return rows.map((row) => ({ ...row, task_relations: row.task_relations ?? ['linked'] }));
   }
 
   /** Comments + activity in one round trip (no WS channel for tasks). */
@@ -2711,6 +2738,21 @@ class BackendAPI {
   /** One pick, expanded into the text block the agent reads. */
   async getReference(kind: ReferenceKind, id: string): Promise<ReferenceDetail> {
     return this.request<ReferenceDetail>(`/api/v1/references/${kind}/${id}`);
+  }
+
+  /**
+   * After a send: note on each task the message referenced that this session
+   * named it (one `referenced` row in the task's activity per session). Does
+   * not file the session under the task or move its status.
+   */
+  async recordReferences(
+    instanceId: string,
+    taskIds: string[],
+  ): Promise<{ recorded_task_ids: string[] }> {
+    return this.request<{ recorded_task_ids: string[] }>(
+      `/api/v1/agent-instances/${instanceId}/references`,
+      { method: 'POST', body: JSON.stringify({ task_ids: taskIds }) },
+    );
   }
 }
 

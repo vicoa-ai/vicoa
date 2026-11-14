@@ -6,9 +6,9 @@ import {
   candidateToComposerReference,
   composeOutgoingMessage,
   detectTriggerToken,
+  referencedTaskIds,
   replaceTokenWith,
   replaceTriggerToken,
-  taskLinkForSend,
   type ComposerReference,
 } from './composer-references';
 
@@ -137,22 +137,23 @@ describe('composeOutgoingMessage', () => {
   });
 });
 
-describe('taskLinkForSend', () => {
-  it('links the first referenced task when the session has none', () => {
+describe('referencedTaskIds', () => {
+  it('lists every referenced task in the order typed, sessions and automations aside', () => {
     const refs = [
       ref({ kind: 'session', id: 's', token: 'z' }),
-      ref({ id: 'task-a', token: 'VIC-42' }),
       ref({ id: 'task-b', token: 'VIC-43' }),
+      ref({ id: 'task-a', token: 'VIC-42' }),
+      ref({ kind: 'automation', id: 'x' }),
     ];
-    expect(taskLinkForSend(refs, null)).toBe('task-a');
+    expect(referencedTaskIds(refs)).toEqual(['task-b', 'task-a']);
   });
 
-  it('never re-files a session that already belongs to a task', () => {
-    expect(taskLinkForSend([ref({ id: 'task-a' })], 'task-b')).toBeNull();
+  it('names a task once however often it was picked', () => {
+    expect(referencedTaskIds([ref({ id: 'task-a' }), ref({ id: 'task-a' })])).toEqual(['task-a']);
   });
 
-  it('is null when no task was referenced', () => {
-    expect(taskLinkForSend([ref({ kind: 'automation', id: 'x' })], null)).toBeNull();
+  it('is empty when no task was referenced', () => {
+    expect(referencedTaskIds([ref({ kind: 'automation', id: 'x' })])).toEqual([]);
   });
 });
 

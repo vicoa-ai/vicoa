@@ -52,7 +52,6 @@ from ..db.task_queries import (
     TeamNotFoundError,
 )
 from ..models import (
-    AgentInstanceResponse,
     CreateTaskCommentRequest,
     ToggleTaskReactionRequest,
     TaskTimelineResponse,
@@ -69,6 +68,7 @@ from ..models import (
     TaskLabelResponse,
     TaskPriorityLiteral,
     TaskResponse,
+    TaskSessionResponse,
     TaskStatusLiteral,
     TransferProjectRequest,
     UpdateProjectRequest,
@@ -793,15 +793,19 @@ def get_task_endpoint(
     return serialize_task(db, _require_task(db, current_user.id, task_id))
 
 
-@router.get("/tasks/{task_id}/sessions", response_model=list[AgentInstanceResponse])
+@router.get("/tasks/{task_id}/sessions", response_model=list[TaskSessionResponse])
 def list_task_sessions_endpoint(
     task_id: str,
+    # Off: the sessions filed under the task (its timeline's session cards).
+    # On: every session the task's record names, each with how it relates
+    # (`task_relations`) — the task's Sessions list.
+    related: bool = Query(default=False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> list[AgentInstanceResponse]:
-    """Agent sessions started from this task, most recent first."""
+) -> list[TaskSessionResponse]:
+    """The task's sessions, most recent first (see `list_task_instances`)."""
     task = _require_task(db, current_user.id, task_id)
-    return list_task_instances(db, current_user.id, task.id)
+    return list_task_instances(db, current_user.id, task, related=related)
 
 
 @router.patch("/tasks/{task_id}", response_model=TaskResponse)

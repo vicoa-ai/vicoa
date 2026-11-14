@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  activityText,
   buildEntries,
   buildThreads,
   describeReactors,
@@ -136,10 +137,11 @@ const activityRow = (
   id: string,
   createdAt: string,
   details: Record<string, unknown> = {},
+  action = 'status_changed',
 ) => ({
   id,
   actor: person('u1', 'Nick'),
-  action: 'status_changed',
+  action,
   details,
   created_at: createdAt,
 });
@@ -223,6 +225,32 @@ describe('buildEntries', () => {
     expect(entries[0].absorbed.map((r) => r.id)).toEqual(['a1']);
     if (entries[1].kind !== 'activity') throw new Error('expected an activity entry');
     expect(entries[1].items.map((r) => r.id)).toEqual(['a2']);
+  });
+
+  it('keeps a reference from the linked session out of its card', () => {
+    // The card counts what it absorbs as status changes; a `#` to the task is
+    // not one, so it reads as its own line.
+    const session = {
+      id: 's1',
+      started_at: '2026-09-01T09:00:00Z',
+      status: 'ACTIVE',
+    } as never;
+    const entries = buildEntries(
+      [],
+      [activityRow('a1', '2026-09-01T10:00:00Z', { agent_instance_id: 's1' }, 'referenced')],
+      [session],
+    );
+    expect(entries.map((e) => e.kind)).toEqual(['session', 'activity']);
+    if (entries[0].kind !== 'session') throw new Error('expected a session entry');
+    expect(entries[0].absorbed).toEqual([]);
+  });
+});
+
+describe('activityText', () => {
+  it('reads a reference as one, the session named by the row\'s "via"', () => {
+    expect(activityText(activityRow('a1', '2026-09-01T10:00:00Z', {}, 'referenced'))).toBe(
+      'referenced this task',
+    );
   });
 });
 

@@ -17,7 +17,6 @@ import {
   ArrowUp,
   Check,
   Folder,
-  Link2,
   ListTodo,
   Monitor,
   X,
@@ -29,7 +28,7 @@ import {
   addReference,
   candidateToComposerReference,
   composeOutgoingMessage,
-  taskLinkForSend,
+  referencedTaskIds,
   toComposerReference,
   type ComposerReference,
 } from '@/lib/composer-references';
@@ -1547,17 +1546,6 @@ function NewSessionContent() {
       });
   }, [api]);
 
-  // The task a `#` reference would file the new session under. The Task chip
-  // wins when set (it already links), so this only fires without one, and is
-  // surfaced for the same reason as in the chat input: it writes to the board.
-  const pendingTaskLink = useMemo(() => {
-    const refs = activeReferences(pendingRefs, prompt.trim());
-    const taskId = taskLinkForSend(refs, selectedTask?.id);
-    return taskId
-      ? (refs.find((r) => r.kind === 'task' && r.id === taskId) ?? null)
-      : null;
-  }, [pendingRefs, prompt, selectedTask]);
-
   // Add-to-chat "+" → "Add folder": desktop only. Native OS folder picker →
   // add the chosen folder as a chip (deduped); it becomes an @path/ reference
   // in the prompt on submit. Hidden on web (no real filesystem paths).
@@ -1740,9 +1728,11 @@ function NewSessionContent() {
         appendAnnotations([composedPrompt, folderText].filter(Boolean).join(' '), handoffAnnotations),
         refs,
       );
-      // The task this session is filed under: the chip's, else the first
-      // `#`-referenced one (`taskLinkForSend`, the chat input's rule).
-      const linkTaskId = selectedTask?.id ?? taskLinkForSend(refs, null);
+      // The task this session is filed under is the chip's alone. A task the
+      // prompt `#`-references is only noted (`recordReferences` below), as in
+      // the chat input: naming a task is not starting work on it.
+      const linkTaskId = selectedTask?.id ?? null;
+      const referencedTasks = referencedTaskIds(refs);
       // A fork opens with the source transcript above whatever the user typed,
       // so the new agent reads the history first and the instruction last.
       const finalPrompt = forkContext
@@ -1875,6 +1865,14 @@ function NewSessionContent() {
             ),
           );
         }
+      }
+      // The prompt's `#` tasks note the new session in their activity.
+      // Fire-and-forget: like the link above, a failure must not strand the
+      // session.
+      if (referencedTasks.length > 0 && newInstanceId) {
+        void api
+          .recordReferences(newInstanceId, referencedTasks)
+          .catch((error) => console.error('Failed to record referenced tasks:', error));
       }
 
       // Deferred upload: only now does an instance id exist to bind the images
@@ -2468,16 +2466,6 @@ function NewSessionContent() {
               {/* Rejected-pick notice (too large / too many) */}
               {attachmentError && (
                 <div className="mb-2 text-[11px] text-destructive">{attachmentError}</div>
-              )}
-
-              {/* Starting will file this session under a referenced task. */}
-              {pendingTaskLink && (
-                <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <Link2 className="h-3 w-3 flex-shrink-0" />
-                  <span className="truncate">
-                    Starting files this session under {pendingTaskLink.label}
-                  </span>
-                </div>
               )}
 
               {/* Pending attachments — previews only; these upload after the

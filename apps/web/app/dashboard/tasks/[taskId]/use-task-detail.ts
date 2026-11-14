@@ -20,7 +20,6 @@ import {
 } from 'react';
 
 import {
-  AgentInstanceResponse,
   AgentProfile,
   BackendApiError,
   ProjectResponse,
@@ -32,6 +31,7 @@ import {
   TaskReactionSummary,
   TaskResponse,
   TaskSessionRef,
+  TaskSessionResponse,
   TaskStatus,
   TaskTimelineResponse,
   UpdateTaskRequest,
@@ -100,7 +100,14 @@ export function useTaskDetail(
   const [comments, setComments] = useState<TaskCommentResponse[]>([]);
   const [activity, setActivity] = useState<TaskActivityResponse[]>([]);
   const [taskReactions, setTaskReactions] = useState<TaskReactionSummary[]>([]);
-  const [sessions, setSessions] = useState<AgentInstanceResponse[]>([]);
+  // Every session the task's record names, most recently active first (the
+  // rail's Sessions list). The ones filed under the task are `sessions`.
+  const [relatedSessions, setRelatedSessions] = useState<TaskSessionResponse[]>([]);
+  // The sessions filed under the task: the timeline's session cards.
+  const sessions = useMemo(
+    () => relatedSessions.filter((session) => session.task_relations.includes('linked')),
+    [relatedSessions],
+  );
   // The sessions the task and its rows name ("Created in", "via") that this
   // viewer may open. Arrives with the timeline.
   const [sessionRefs, setSessionRefs] = useState<TaskSessionRef[]>([]);
@@ -131,7 +138,7 @@ export function useTaskDetail(
       const [taskRow, timeline, taskSessions, projectRows, taskRows] = await Promise.all([
         api.getTask(taskId),
         api.getTaskTimeline(taskId),
-        api.listTaskSessions(taskId),
+        api.listTaskSessions(taskId, { related: true }),
         api.listProjects(),
         // The sub-task list and the parent picker both read this. Polled with
         // the rest so a sub-task an agent closes shows here, but a failure only
@@ -143,7 +150,7 @@ export function useTaskDetail(
       setActivity(timeline.activity);
       setSessionRefs(timeline.sessions);
       setTaskReactions(timeline.reactions);
-      setSessions(taskSessions);
+      setRelatedSessions(taskSessions);
       setProjects(projectRows);
       if (taskRows) setAllTasks(taskRows);
       setError(null);
@@ -392,6 +399,7 @@ export function useTaskDetail(
     activity,
     taskReactions,
     sessions,
+    relatedSessions,
     sessionRefs,
     labels,
     allTasks,
