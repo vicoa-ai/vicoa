@@ -29,9 +29,49 @@ def _terminal_status_for_exit_code(exit_code: int) -> str:
 
 PLUGIN_NAME = "@vicoa/opencode"
 OPENCODE_CONFIG_PATH = Path.home() / ".config" / "opencode" / "config.json"
-OPENCODE_CACHE_PLUGIN_PATH = (
-    Path.home() / ".cache" / "opencode" / "node_modules" / PLUGIN_NAME
-)
+OPENCODE_CACHE_DIR = Path.home() / ".cache" / "opencode"
+
+
+def _plugin_project_dir(cache_dir: Path) -> Path:
+    """Where current OpenCode keeps the plugin for our unversioned config entry.
+
+    OpenCode 1.18+ gives each npm plugin its own small npm project,
+    ``packages/<name>@<spec>/``, with the package in its ``node_modules``. The
+    config entry `_ensure_plugin_registered` writes has no version, so the spec
+    is ``latest``.
+    """
+    return cache_dir / "packages" / f"{PLUGIN_NAME}@latest"
+
+
+def _plugin_projects(cache_dir: Path) -> list[Path]:
+    """The plugin's projects in the current layout: one per spec, so
+    ``@latest`` plus any pinned version a user's config names."""
+    return sorted(
+        d for d in (cache_dir / "packages").glob(f"{PLUGIN_NAME}@*") if d.is_dir()
+    )
+
+
+def _legacy_plugin_dir(cache_dir: Path) -> Path:
+    """Older OpenCode installed every plugin into one shared ``node_modules/``."""
+    return cache_dir / "node_modules" / PLUGIN_NAME
+
+
+def _cached_plugin_dirs(cache_dir: Path) -> list[Path]:
+    """Every cached copy of the plugin, in the current layout and the old one."""
+    dirs = _plugin_projects(cache_dir)
+    if _legacy_plugin_dir(cache_dir).is_dir():
+        dirs.append(_legacy_plugin_dir(cache_dir))
+    return dirs
+
+
+def _plugin_is_cached(cache_dir: Path) -> bool:
+    """True if some cached copy actually holds the installed package."""
+    if (_legacy_plugin_dir(cache_dir) / "package.json").is_file():
+        return True
+    return any(
+        (project / "node_modules" / PLUGIN_NAME / "package.json").is_file()
+        for project in _plugin_projects(cache_dir)
+    )
 
 
 def run_opencode(args, unknown_args: List[str], api_key: str) -> int:
@@ -277,46 +317,55 @@ def _ensure_plugin_installed() -> None:
 
     OpenCode installs plugins listed in config on startup, which causes a black
     screen while it runs npm. Pre-installing here means OpenCode finds the plugin
-    already cached and skips the install, so it opens cleanly.
+    already cached and skips the install, so it opens cleanly. An npm install
+    into the plugin's project directory is what OpenCode itself would produce,
+    and OpenCode uses it as is.
     """
-    if OPENCODE_CACHE_PLUGIN_PATH.exists():
+    cache_dir = OPENCODE_CACHE_DIR
+    if _plugin_is_cached(cache_dir):
         return
 
     npm_path = shutil.which("npm")
     if not npm_path:
         return  # No npm available; fall back to OpenCode's own install on startup
 
-    cache_dir = OPENCODE_CACHE_PLUGIN_PATH.parent.parent  # ~/.cache/opencode/
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    project_dir = _plugin_project_dir(cache_dir)
+    created = not project_dir.exists()
+    project_dir.mkdir(parents=True, exist_ok=True)
 
     print("Installing Vicoa plugin for OpenCode...", end="", flush=True)
     try:
         result = subprocess.run(
-            [npm_path, "install", PLUGIN_NAME],
-            cwd=str(cache_dir),
+            [npm_path, "install", f"{PLUGIN_NAME}@latest", "--no-audit", "--no-fund"],
+            cwd=str(project_dir),
             capture_output=True,
             text=True,
             timeout=120,
         )
-        if result.returncode == 0:
-            print(" done")
-        else:
-            print(" failed (OpenCode will retry on startup)")
+        ok = result.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
-        print(" failed (OpenCode will retry on startup)")
+        ok = False
+    if ok:
+        print(" done")
+        return
+    print(" failed (OpenCode will retry on startup)")
+    # Leave no half-installed project behind for OpenCode to trip over.
+    if created:
+        shutil.rmtree(project_dir, ignore_errors=True)
 
 
 def upgrade_plugin() -> None:
     """Upgrade the opencode-vicoa plugin.
 
-    OpenCode does not auto-update cached plugins, so we clear the cached
-    copy.  The plugin entry in config is left intact so that OpenCode
-    re-fetches the latest version on the next run.
+    OpenCode does not auto-update cached plugins (it pins the version it
+    resolved), so we clear every cached copy. The plugin entry in config is
+    left intact so that OpenCode re-fetches the latest version on the next run.
     """
-    if OPENCODE_CACHE_PLUGIN_PATH.exists():
-        shutil.rmtree(OPENCODE_CACHE_PLUGIN_PATH)
-        print(f"✓ Removed cached plugin from {OPENCODE_CACHE_PLUGIN_PATH}")
-    else:
+    cached = _cached_plugin_dirs(OPENCODE_CACHE_DIR)
+    for path in cached:
+        shutil.rmtree(path)
+        print(f"✓ Removed cached plugin from {path}")
+    if not cached:
         print("  No cached plugin found — nothing to clear")
 
     # Make sure the config entry is still present so OpenCode re-installs
