@@ -181,6 +181,9 @@ class OpenCodeACPWrapper(ACPWrapperBase):
             if response.result:
                 self.session_id = response.result.get("sessionId")
                 self.log(f"[ACP] Session created: {self.session_id}")
+                # Record it so a resume can reload this conversation
+                # (session/load) instead of starting OpenCode from nothing.
+                self._persist_acp_session_id()
                 # Capture the live model config option so mid-session model
                 # switching works (session/set_config_option) and the gear can
                 # list OpenCode's provider-aware models.

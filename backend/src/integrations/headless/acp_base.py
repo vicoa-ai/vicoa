@@ -24,7 +24,7 @@ import time
 from abc import ABC, abstractmethod
 from collections import deque
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from integrations.headless.control_command import is_control_envelope
 from integrations.headless import usage as usage_mod
@@ -960,17 +960,23 @@ class ACPWrapperBase(ABC):
         """
         if not (self.vicoa_client and self.config.agent_instance_id):
             return
-        if not self.session_id:
+        session_id = self.session_id
+        if not session_id:
             return
         if self._standby_offline:
             return  # no row yet; _report_standby_session sends it
-        try:
-            self.vicoa_client.patch_agent_instance(
-                self.config.agent_instance_id,
-                instance_metadata={"acp_session_id": self.session_id},
-            )
-        except Exception as exc:
-            self.log(f"[WARNING] Failed to persist ACP session id: {exc}")
+        client = self.vicoa_client
+        instance_id = self.config.agent_instance_id
+
+        def send() -> None:
+            try:
+                client.patch_agent_instance(
+                    instance_id, instance_metadata={"acp_session_id": session_id}
+                )
+            except Exception as exc:
+                self.log(f"[WARNING] Failed to persist ACP session id: {exc}")
+
+        self._write_in_order(send)
 
     def _establish_session(self) -> None:
         """Restore the prior conversation when possible, else start a new one.
@@ -1778,13 +1784,22 @@ class ACPWrapperBase(ABC):
         if self._standby_offline:
             # No row yet; _report_standby_session sends the live state.
             return
+        self._write_in_order(lambda: self._send_session_config_patch(updates))
+
+    def _write_in_order(self, send: Callable[[], None]) -> None:
+        """Run a write to the session row after the ones made before it.
+
+        During bring-up it goes out from a background thread chained behind the
+        previous one, so it is not a server round trip in front of the first
+        prompt. A later write first waits (bounded) for those still in flight.
+        """
         previous = self._config_patch_thread
         if self._background_config_patches:
 
             def send_after_previous() -> None:
                 if previous is not None:
                     previous.join()
-                self._send_session_config_patch(updates)
+                send()
 
             # Daemon: a PATCH stuck on a dead server must not hold up exit.
             thread = threading.Thread(
@@ -1799,7 +1814,7 @@ class ACPWrapperBase(ABC):
             and previous.is_alive()
         ):
             previous.join(timeout=_BACKGROUND_CONFIG_PATCH_WAIT_SECONDS)
-        self._send_session_config_patch(updates)
+        send()
 
     def _send_session_config_patch(self, updates: Dict[str, Any]) -> None:
         if not self.vicoa_client:

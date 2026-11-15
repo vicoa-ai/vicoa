@@ -459,3 +459,37 @@ def test_replay_flag_clears_even_when_the_load_fails():
 
     assert wrapper.load_session(_SESSION_ID) is False
     assert wrapper._replaying_session is False
+
+
+def test_recording_the_id_during_bring_up_is_off_the_start_path_and_in_order() -> None:
+    """During bring-up the id PATCH runs on the chained background thread, so
+    it is not a round trip in front of the first prompt, and a later
+    session_config PATCH still lands after it."""
+    released = threading.Event()
+    calls: list[str] = []
+    vicoa_client = MagicMock()
+
+    def patch(_instance_id: str, **kwargs: Any) -> Dict[str, Any]:
+        if "instance_metadata" in kwargs:
+            released.wait(5)
+            calls.append("acp_session_id")
+        else:
+            calls.append("session_config")
+        return {}
+
+    vicoa_client.patch_agent_instance.side_effect = patch
+    wrapper = _build_wrapper(vicoa_client=vicoa_client)
+    wrapper.session_id = "sess-new"
+    wrapper._background_config_patches = True
+
+    wrapper._persist_acp_session_id()
+    assert calls == []  # returned without waiting for the server
+
+    wrapper._background_config_patches = False
+    later = threading.Thread(
+        target=wrapper._patch_session_config, args=({"current_mode": "plan"},)
+    )
+    later.start()
+    released.set()
+    later.join(5)
+    assert calls == ["acp_session_id", "session_config"]
