@@ -670,6 +670,32 @@ def ensure_api_key(args):
         raise Exception(f"Authentication failed: {str(e)}")
 
 
+def headless_module_for(agent_type: str) -> tuple[str, str]:
+    """The headless runner module for an agent, and the argv[0] it runs under."""
+    if agent_type == "codex":
+        # Native `codex app-server` is the only supported codex backend; the
+        # legacy codex-acp adapter is retired. This is the single route every
+        # caller reaches codex through — the frozen daemon bundle (which can
+        # only invoke exposed subcommands, i.e. `vicoa headless --agent codex`)
+        # and dev runs (`python -m vicoa.cli headless`) both land here.
+        return "integrations.headless.codex_native", "headless_codex_native"
+    if agent_type == "opencode":
+        return "integrations.headless.opencode_acp", "headless_opencode_acp"
+    if agent_type in GENERIC_ACP_AGENT_CHOICES:
+        return "integrations.headless.generic_acp", f"headless_{agent_type}"
+    if agent_type in PI_FAMILY_AGENT_CHOICES:
+        # Native RPC wrapper shared by pi and omp; `--agent` picks the row in
+        # PI_FAMILY_AGENTS. Same single-route posture as codex: the frozen
+        # daemon bundle can only invoke exposed subcommands, so both it and a
+        # dev `python -m vicoa.cli headless` land here.
+        return "integrations.headless.pi_native", f"headless_{agent_type}"
+    if agent_type in ANTIGRAVITY_AGENT_CHOICES:
+        # Same single-route posture as codex/pi: the frozen daemon bundle
+        # (`vicoa headless --agent antigravity`) and a dev run both land here.
+        return "integrations.headless.antigravity.runner", "headless_antigravity"
+    return "integrations.headless.claude_code", "headless_claude"
+
+
 def cmd_headless(args, unknown_args):
     """Handle the 'headless' subcommand"""
     api_key = ensure_api_key(args)
@@ -688,35 +714,8 @@ def cmd_headless(args, unknown_args):
     # Import and run the selected headless module
     import importlib
 
-    module_name = "integrations.headless.claude_code"
-    argv_prog = "headless_claude"
     agent_type = getattr(args, "agent", "claude").lower()
-    if agent_type == "codex":
-        # Native `codex app-server` is the only supported codex backend; the
-        # legacy codex-acp adapter is retired. This is the single route every
-        # caller reaches codex through — the frozen daemon bundle (which can
-        # only invoke exposed subcommands, i.e. `vicoa headless --agent codex`)
-        # and dev runs (`python -m vicoa.cli headless`) both land here.
-        module_name = "integrations.headless.codex_native"
-        argv_prog = "headless_codex_native"
-    elif agent_type == "opencode":
-        module_name = "integrations.headless.opencode_acp"
-        argv_prog = "headless_opencode_acp"
-    elif agent_type in GENERIC_ACP_AGENT_CHOICES:
-        module_name = "integrations.headless.generic_acp"
-        argv_prog = f"headless_{agent_type}"
-    elif agent_type in PI_FAMILY_AGENT_CHOICES:
-        # Native RPC wrapper shared by pi and omp; `--agent` picks the row in
-        # PI_FAMILY_AGENTS. Same single-route posture as codex: the frozen
-        # daemon bundle can only invoke exposed subcommands, so both it and a
-        # dev `python -m vicoa.cli headless` land here.
-        module_name = "integrations.headless.pi_native"
-        argv_prog = f"headless_{agent_type}"
-    elif agent_type in ANTIGRAVITY_AGENT_CHOICES:
-        # Same single-route posture as codex/pi: the frozen daemon bundle
-        # (`vicoa headless --agent antigravity`) and a dev run both land here.
-        module_name = "integrations.headless.antigravity.runner"
-        argv_prog = "headless_antigravity"
+    module_name, argv_prog = headless_module_for(agent_type)
 
     module = importlib.import_module(module_name)
     headless_main = getattr(module, "main")

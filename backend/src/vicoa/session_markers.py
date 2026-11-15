@@ -37,6 +37,40 @@ def mark_session_registered(session_id: str) -> None:
         )
 
 
+def standby_ready_marker_path(session_id: str) -> Path:
+    return Path.home() / ".vicoa" / "session_standby" / session_id
+
+
+def mark_standby_ready(session_id: str) -> None:
+    """Signal the daemon that this standby's engine is up (``vicoa.standby``).
+
+    The daemon only hands the prompt to a standby that is ready: one still
+    bringing its engine up would otherwise hold the spawn until it is, and a
+    bring-up that then fails would leave the user with a timeout instead of the
+    reason a cold start reports in the session. Best-effort.
+    """
+    try:
+        path = standby_ready_marker_path(session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"1")
+    except Exception:  # noqa: BLE001 — a missing marker only means a cold start
+        logger.debug("could not write standby marker for %s", session_id, exc_info=True)
+
+
+def standby_is_ready(session_id: str) -> bool:
+    return standby_ready_marker_path(session_id).exists()
+
+
+def clear_standby_ready(session_id: str) -> None:
+    """Remove the standby marker (the daemon, once adopted or discarded)."""
+    try:
+        standby_ready_marker_path(session_id).unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001
+        logger.debug(
+            "could not remove standby marker for %s", session_id, exc_info=True
+        )
+
+
 def clear_session_registered(session_id: str) -> None:
     """Remove the marker (daemon after consuming it, runner on exit). Best-effort."""
     try:

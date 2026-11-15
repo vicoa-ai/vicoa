@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 import pytest
 from integrations.headless import claude_code
-from integrations.headless.claude_code import StandbyDiscarded
+from vicoa.standby import StandbyDiscarded
 from vicoa import cli
 from vicoa import standby as standby_mod
 
@@ -23,6 +23,16 @@ from vicoa import standby as standby_mod
 def _keep_test_stdin(monkeypatch):
     # The real one points fd 0 at /dev/null; the test process keeps its own.
     monkeypatch.setattr(standby_mod, "_detach_stdin", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path, monkeypatch) -> None:
+    """``read_go`` touches a marker under ~/.vicoa named by the session id in
+    the env (set for real when this suite runs inside a Vicoa session)."""
+    from pathlib import Path
+
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.delenv(standby_mod.SESSION_ID_ENV, raising=False)
 
 
 # ---- the protocol -----------------------------------------------------------
@@ -48,6 +58,23 @@ def test_go_line_parsing(line: str, expected: Optional[dict[str, Any]]) -> None:
 def test_go_line_on_stdin_adopts(monkeypatch) -> None:
     monkeypatch.setattr(sys, "stdin", io.StringIO('{"prompt": "hi"}\n'))
     assert standby_mod.read_go(2) == {"prompt": "hi"}
+
+
+def test_the_standby_says_it_is_ready_before_it_waits(monkeypatch) -> None:
+    from vicoa.session_markers import standby_is_ready
+
+    seen: list[bool] = []
+
+    def read_line(timeout: float) -> Optional[str]:
+        seen.append(standby_is_ready("sid-ready"))
+        return '{"prompt": "hi"}\n'
+
+    monkeypatch.setenv(standby_mod.SESSION_ID_ENV, "sid-ready")
+    monkeypatch.setattr(standby_mod, "_read_line_blocking", read_line)
+    monkeypatch.setattr(standby_mod, "_detach_stdin", lambda: None)
+
+    assert standby_mod.read_go(2) == {"prompt": "hi"}
+    assert seen == [True]
 
 
 def test_end_of_file_discards(monkeypatch) -> None:

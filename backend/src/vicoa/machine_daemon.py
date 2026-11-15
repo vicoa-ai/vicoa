@@ -24,7 +24,12 @@ from requests import Response
 
 from integrations.utils.heartbeat import next_interval_from_response
 from vicoa.rpc.worktree_auto_name import AUTO_NAME_BUDGET_SECONDS, AutoNameInbox
-from vicoa.session_markers import clear_session_registered, registered_marker_path
+from vicoa.session_markers import (
+    clear_session_registered,
+    clear_standby_ready,
+    registered_marker_path,
+    standby_is_ready,
+)
 from vicoa.prewarm import (
     PLACEHOLDER_SESSION_ID,
     PREWARM_MIN_AVAILABLE_BYTES,
@@ -657,8 +662,18 @@ def stop_background_daemon(
 
 
 # Agents whose headless runner can bring its engine up before registering
-# (``SUPPORTS_ENGINE_STANDBY``); only these are prewarmed.
-ENGINE_STANDBY_AGENTS = frozenset({"claude", "codex"})
+# (``SUPPORTS_ENGINE_STANDBY``); only these are prewarmed. Every ACP agent,
+# user-defined ones included, runs on the generic ACP runner, which can; see
+# ``supports_engine_standby``. tests/test_prewarm.py keeps this in step with
+# the runners. Antigravity is left out on purpose: agy records a conversation
+# in its own history the moment it starts, so every unused prewarm would leave
+# an empty one behind (and become its "last conversation" for the folder).
+ENGINE_STANDBY_AGENTS = frozenset({"claude", "codex", "opencode", *PI_FAMILY_AGENTS})
+
+
+def supports_engine_standby(agent: str) -> bool:
+    """Whether a session of this (normalized) agent can be prewarmed."""
+    return agent in ENGINE_STANDBY_AGENTS or agent in effective_acp_agents()
 
 
 class MachineDaemon:
@@ -2812,6 +2827,11 @@ class MachineDaemon:
         env["VICOA_AGENT_INSTANCE_ID"] = session_id
         # Recorded as instance_metadata['source'] when the agent registers.
         env["VICOA_SPAWN_SOURCE"] = "app"
+        # VICOA_AGENT_TYPE and VICOA_SPAWN_SOURCE also tell the @vicoa/opencode
+        # plugin, which OpenCode loads into the `opencode acp` our runner
+        # starts, that this session is already ours: it stays off instead of
+        # registering the same instance (early, for a prewarm) and ending it on
+        # exit. Keep both set for every session, prewarmed or not.
         # Hand the agent the title that named its worktree; never pass on
         # one this daemon itself inherited.
         env.pop(SESSION_TITLE_ENV, None)
@@ -2839,11 +2859,18 @@ class MachineDaemon:
 
         None when there is none (or it died), and the spawn starts cold.
         """
-        if agent not in ENGINE_STANDBY_AGENTS:
+        if not supports_engine_standby(agent):
             return None
         entry = self._prewarm.take(self._standby_key_for(directory, agent, metadata))
         if entry is None:
             return None
+        if not standby_is_ready(entry.session_id):
+            # Its engine is still coming up. Waiting would hold the spawn (and
+            # a bring-up that then fails ends in a timeout, not the reason a
+            # cold start reports in the session), so start cold instead.
+            self._prewarm.discard(entry, "not_ready")
+            return None
+        clear_standby_ready(entry.session_id)
         clear_session_registered(entry.session_id)
         if not send_go(entry.process, self._extract_prompt(metadata)):
             self._prewarm.discard(entry, "gone")
@@ -2857,6 +2884,7 @@ class MachineDaemon:
         Kept when the standby exited on its own: that is a crash at start-up,
         and its stderr is the only record of why.
         """
+        clear_standby_ready(entry.session_id)
         if reason == "exited":
             return
         try:
@@ -2894,7 +2922,7 @@ class MachineDaemon:
         worktree_param = params.get("worktree")
         if prewarm_disabled():
             return {"skipped": "disabled"}
-        if agent not in ENGINE_STANDBY_AGENTS:
+        if not supports_engine_standby(agent):
             return {"skipped": "agent"}
         if params.get("resume"):
             return {"skipped": "resume"}

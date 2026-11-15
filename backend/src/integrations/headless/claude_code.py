@@ -43,7 +43,7 @@ from vicoa.attachments import (
 from vicoa.sdk.async_client import AsyncVicoaClient
 from vicoa.session_markers import clear_session_registered, mark_session_registered
 from vicoa.session_ws_client import SessionMessagesWsClient
-from vicoa.standby import read_go_async, standby_requested
+from vicoa.standby import read_go_async, standby_requested, StandbyDiscarded
 from vicoa.utils import derive_ws_url, get_project_path
 from integrations.headless.session_lifecycle import instance_update_requests_stop
 from integrations.utils.heartbeat import AsyncSessionHeartbeat
@@ -194,11 +194,6 @@ _MAX_INLINE_ATTACHMENT_BYTES = 20 * 1024 * 1024
 # launch (``vicoa headless --standby``, see ``vicoa.standby``) warms the engine
 # while the user is still typing.
 SUPPORTS_ENGINE_STANDBY = True
-
-
-class StandbyDiscarded(Exception):
-    """The launcher dropped this standby (or it timed out) before adopting it.
-    It never registered, so there is no session to report on or end."""
 
 
 @dataclass(frozen=True)

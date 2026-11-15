@@ -16,6 +16,7 @@ import pytest
 from vicoa import machine_daemon, prewarm
 from vicoa.machine_daemon import MachineDaemon
 from vicoa.prewarm import PrewarmPool, Standby
+from vicoa.session_markers import mark_standby_ready, standby_is_ready
 
 
 class _FakeStdin:
@@ -213,6 +214,9 @@ def launches(daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch) -> list[dic
 
     def fake_launch(command, *, cwd, env, session_id, stdin_pipe=False):
         process = _FakeProcess(pid=1000 + len(calls))
+        if "--standby" in command and not getattr(daemon, "_test_standby_slow", False):
+            # A real standby touches this once its engine is up (read_go).
+            mark_standby_ready(session_id)
         calls.append(
             {
                 "command": command,
@@ -220,6 +224,7 @@ def launches(daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch) -> list[dic
                 "session_id": session_id,
                 "stdin_pipe": stdin_pipe,
                 "env_id": env.get("VICOA_AGENT_INSTANCE_ID"),
+                "env": env,
                 "process": process,
             }
         )
@@ -264,7 +269,6 @@ def test_the_same_prewarm_twice_keeps_one_standby(daemon, launches, tmp_path) ->
 @pytest.mark.parametrize(
     ("change", "reason"),
     [
-        ({"agent": "opencode"}, "agent"),
         ({"worktree": {"new": True}}, "worktree"),
         ({"resume": {"agent_instance_id": "x"}}, "resume"),
         ({"directory": "/nonexistent/vicoa-prewarm-test"}, "directory"),
@@ -276,6 +280,139 @@ def test_prewarm_skips_what_it_cannot_warm(
     params = {**_params(tmp_path), **change}
     assert daemon.prewarm_session_rpc({"params": params}) == {"skipped": reason}
     assert launches == []
+
+
+def test_prewarm_skips_an_agent_whose_runner_cannot_stand_by(
+    daemon, launches, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(machine_daemon, "supports_engine_standby", lambda agent: False)
+    assert daemon.prewarm_session_rpc({"params": _params(tmp_path)}) == {
+        "skipped": "agent"
+    }
+    assert launches == []
+
+
+def test_every_session_carries_the_markers_the_opencode_plugin_stands_down_on(
+    daemon, launches, tmp_path, monkeypatch
+) -> None:
+    """The @vicoa/opencode plugin stays off when either is set; without them
+    it would register a prewarmed session early and end it on exit."""
+    monkeypatch.delenv("VICOA_AGENT_TYPE", raising=False)
+    monkeypatch.delenv("VICOA_SPAWN_SOURCE", raising=False)
+    params = {"directory": str(tmp_path), "agent": "opencode", "metadata": {}}
+    daemon.prewarm_session_rpc({"params": params})
+    # Other settings than the prewarm's, so this one starts cold.
+    daemon.spawn_session_rpc(
+        {"params": {**params, "metadata": {"model": "x/y", "prompt": "hi"}}}
+    )
+
+    assert len(launches) == 2  # the prewarm, then a cold start
+    for call in launches:
+        assert call["env"].get("VICOA_AGENT_TYPE")
+        assert call["env"].get("VICOA_SPAWN_SOURCE") == "app"
+
+
+def test_antigravity_is_not_prewarmed(daemon, launches, tmp_path) -> None:
+    """agy records a conversation in its own history as soon as it starts, so
+    an unused prewarm would leave an empty one there."""
+    params = {"directory": str(tmp_path), "agent": "antigravity", "metadata": {}}
+    assert daemon.prewarm_session_rpc({"params": params}) == {"skipped": "agent"}
+    assert launches == []
+
+
+def _spawnable_agents() -> list[str]:
+    from vicoa.cli import (
+        ANTIGRAVITY_AGENT_CHOICES,
+        GENERIC_ACP_AGENT_CHOICES,
+        PI_FAMILY_AGENT_CHOICES,
+    )
+
+    return [
+        "claude",
+        "codex",
+        "opencode",
+        *GENERIC_ACP_AGENT_CHOICES,
+        *PI_FAMILY_AGENT_CHOICES,
+        *ANTIGRAVITY_AGENT_CHOICES,
+    ]
+
+
+@pytest.mark.parametrize("agent", _spawnable_agents())
+def test_the_daemon_prewarms_exactly_the_agents_whose_runner_can_stand_by(
+    agent: str,
+) -> None:
+    """The daemon's list must match the runners: one it prewarms but whose
+    runner refuses ``--standby`` would fail every prewarm, and one it skips
+    would never be warm."""
+    import importlib
+
+    from vicoa.cli import headless_module_for
+
+    module_name, _ = headless_module_for(agent)
+    module = importlib.import_module(module_name)
+    assert getattr(module, "SUPPORTS_ENGINE_STANDBY", False) is (
+        machine_daemon.supports_engine_standby(agent)
+    )
+
+
+# The module whose parser reads the arguments, for each ``-m`` target the daemon
+# runs a prewarmed session as.
+_ENTRY_PARSERS = {
+    "integrations.headless.opencode_acp": "integrations.headless.opencode_acp",
+    "integrations.headless.generic_acp": "integrations.headless.generic_acp",
+    "integrations.headless.pi_native": "integrations.headless.pi_family.runner",
+}
+
+
+@pytest.mark.parametrize(
+    "agent",
+    [a for a in _spawnable_agents() if machine_daemon.supports_engine_standby(a)],
+)
+def test_a_standby_command_from_a_source_install_reaches_the_runner(
+    daemon, launches, tmp_path, agent: str
+) -> None:
+    """From source the daemon runs most agents as ``python -m <runner>``, not
+    through ``vicoa headless``: the runner itself must take ``--standby``."""
+    import importlib
+
+    params = {"directory": str(tmp_path), "agent": agent, "metadata": {}}
+    assert daemon.prewarm_session_rpc({"params": params}) == {"status": "started"}
+    [call] = launches
+    command = call["command"]
+    module_name = command[command.index("-m") + 1]
+    if module_name == "vicoa.cli":
+        # ``vicoa headless --standby``: cli.py takes the flag and sets the env.
+        assert command[command.index("-m") + 2] == "headless"
+        return
+    parser_module = importlib.import_module(_ENTRY_PARSERS[module_name])
+    args = parser_module.build_arg_parser().parse_args(
+        command[command.index("-m") + 2 :]
+    )
+    assert args.standby is True
+
+
+@pytest.mark.parametrize(
+    ("agent", "metadata"),
+    [
+        ("opencode", {"model": "opencode/big-pickle"}),
+        ("cursor", {"model": "composer-2.5"}),
+        ("pi", {"model": "anthropic/claude-haiku-5-5"}),
+        ("omp", {}),
+    ],
+)
+def test_other_agents_are_prewarmed_and_adopted(
+    daemon, launches, tmp_path, agent: str, metadata: dict
+) -> None:
+    params = {"directory": str(tmp_path), "agent": agent, "metadata": metadata}
+    assert daemon.prewarm_session_rpc({"params": params}) == {"status": "started"}
+    [standby] = launches
+    assert standby["command"][-1] == "--standby"
+
+    spawn = {**params, "metadata": {**metadata, "prompt": "fix the build"}}
+    result = daemon.spawn_session_rpc({"params": spawn})
+    assert result["prewarmed"] is True
+    assert result["agent_instance_id"] == standby["session_id"]
+    assert len(launches) == 1
 
 
 def test_prewarm_skips_when_turned_off_low_on_memory_or_logged_out(
@@ -336,6 +473,32 @@ def test_a_standby_that_died_is_replaced_by_a_cold_start(
     assert len(launches) == 2
     assert result["agent_instance_id"] == launches[1]["session_id"]
     assert "prewarmed" not in result
+
+
+def test_a_standby_still_coming_up_is_dropped_and_the_spawn_starts_cold(
+    daemon, launches, tmp_path
+) -> None:
+    daemon._test_standby_slow = True
+    daemon.prewarm_session_rpc({"params": _params(tmp_path)})
+    [standby] = launches
+
+    result = daemon.spawn_session_rpc({"params": _params(tmp_path, prompt="hi")})
+
+    assert result.get("prewarmed") is not True
+    assert result["agent_instance_id"] != standby["session_id"]
+    assert len(launches) == 2 and "--standby" not in launches[1]["command"]
+    assert standby["process"].stdin.closed  # discarded, not handed the prompt
+    assert len(daemon._prewarm) == 0
+
+
+def test_adopting_a_standby_clears_its_ready_marker(daemon, launches, tmp_path) -> None:
+    daemon.prewarm_session_rpc({"params": _params(tmp_path)})
+    [standby] = launches
+    assert standby_is_ready(standby["session_id"])
+
+    daemon.spawn_session_rpc({"params": _params(tmp_path, prompt="hi")})
+
+    assert not standby_is_ready(standby["session_id"])
 
 
 def test_a_resume_never_adopts(daemon, launches, tmp_path, monkeypatch) -> None:

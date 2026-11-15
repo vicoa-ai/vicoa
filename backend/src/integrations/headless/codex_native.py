@@ -50,7 +50,7 @@ from vicoa.attachments import AttachmentRef, extract_attachment_refs
 from vicoa.sdk.async_client import AsyncVicoaClient
 from vicoa.sdk.exceptions import AuthenticationError
 from vicoa.session_markers import clear_session_registered, mark_session_registered
-from vicoa.standby import read_go_async, standby_requested
+from vicoa.standby import read_go_async, standby_requested, StandbyDiscarded
 from vicoa.session_ws_client import SessionMessagesWsClient
 from vicoa.utils import derive_ws_url, get_project_path
 
@@ -123,10 +123,6 @@ def setup_logging(
 # registers, so a standby launch (``vicoa headless --standby``, see
 # ``vicoa.standby``) warms the engine while the user is still typing.
 SUPPORTS_ENGINE_STANDBY = True
-
-
-class StandbyDiscarded(Exception):
-    """The launcher dropped this standby (or it timed out) before adopting it."""
 
 
 class CodexNativeRunner:

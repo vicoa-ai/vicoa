@@ -30,9 +30,16 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional
 
 from integrations.headless.acp_base import ACPWrapperBase, ACPWrapperConfig
+from vicoa.standby import add_standby_argument, apply_standby_argument
 
 
 logger = logging.getLogger(__name__)
+
+
+# The ACP base brings the agent up before it registers, so a standby launch
+# (``vicoa headless --standby``, see ``vicoa.standby``) warms it while the user
+# is still typing.
+SUPPORTS_ENGINE_STANDBY = True
 
 
 @dataclass(frozen=True)
@@ -61,6 +68,9 @@ class GenericAgentSpec:
     # kimi-code installs to ~/.kimi-code/bin, which isn't added to PATH). `~`
     # is expanded. Used by both spawn resolution and daemon install detection.
     extra_dirs: tuple[str, ...] = ()
+    # A prewarm also creates the session (see ACPWrapperConfig). Only where
+    # session/new is known to leave nothing in the agent's own session list.
+    standby_creates_session: bool = False
 
 
 GENERIC_ACP_AGENTS: Dict[str, GenericAgentSpec] = {
@@ -73,6 +83,10 @@ GENERIC_ACP_AGENTS: Dict[str, GenericAgentSpec] = {
         install_hint=(
             "Install the Cursor CLI: curl https://cursor.com/install -fsS | bash"
         ),
+        # session/new takes ~7s and only writes ~/.cursor/acp-sessions/<id>;
+        # `cursor-agent ls`/`resume` list ~/.cursor/chats, which it never
+        # touches, so an unused prewarm's session shows up nowhere.
+        standby_creates_session=True,
     ),
     "gemini": GenericAgentSpec(
         catalog_id="gemini",
@@ -328,6 +342,7 @@ class GenericACPConfig(ACPWrapperConfig):
         self.agent_type = name or spec.display_name
         self.agent_command = agent_command or spec.binaries[0]
         self.catalog_agent_id = spec.catalog_id
+        self.standby_creates_session = spec.standby_creates_session
         self.initialize_timeout_seconds = spec.initialize_timeout_seconds
 
         self.model = model
@@ -447,11 +462,14 @@ class GenericACPWrapper(ACPWrapperBase):
             self._apply_initial_model(self.config.model)
 
 
-def main() -> int:
+def build_arg_parser(
+    agents: Optional[Dict[str, GenericAgentSpec]] = None,
+) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Generic headless ACP agent integration for Vicoa"
     )
-    agents = effective_acp_agents()
+    if agents is None:
+        agents = effective_acp_agents()
     parser.add_argument(
         "--agent",
         required=True,
@@ -496,7 +514,14 @@ def main() -> int:
         default=None,
         help="Custom instructions, prefixed onto every turn (ACP has no system-prompt slot)",
     )
-    args = parser.parse_args()
+    add_standby_argument(parser)
+    return parser
+
+
+def main() -> int:
+    agents = effective_acp_agents()
+    args = build_arg_parser(agents).parse_args()
+    apply_standby_argument(args)
 
     logging.basicConfig(
         level=logging.INFO,
