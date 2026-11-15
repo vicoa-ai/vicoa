@@ -11,7 +11,8 @@ import pytest
 
 from integrations.headless import codex_native
 from integrations.headless.codex_app_server import CodexAppServerSession
-from integrations.headless.codex_native import CodexNativeRunner, StandbyDiscarded
+from integrations.headless.codex_native import CodexNativeRunner
+from vicoa.standby import StandbyDiscarded
 
 
 class _FakeSession:

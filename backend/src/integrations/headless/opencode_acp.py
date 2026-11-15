@@ -9,9 +9,16 @@ import uuid
 from typing import Optional, Dict, Any
 
 from integrations.headless.acp_base import ACPWrapperBase, ACPWrapperConfig
+from vicoa.standby import add_standby_argument, apply_standby_argument
 
 
 logger = logging.getLogger(__name__)
+
+
+# The ACP base brings the agent up before it registers, so a standby launch
+# (``vicoa headless --standby``, see ``vicoa.standby``) warms it while the user
+# is still typing.
+SUPPORTS_ENGINE_STANDBY = True
 
 
 class OpenCodeACPConfig(ACPWrapperConfig):
@@ -302,7 +309,7 @@ class OpenCodeACPWrapper(ACPWrapperBase):
     # Its `model` config option accepts the change immediately; no override.
 
 
-def main() -> int:
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Headless OpenCode Integration via ACP"
     )
@@ -350,7 +357,13 @@ def main() -> int:
     parser.add_argument(
         "--prompt", default=None, help="Initial prompt to send on session start"
     )
-    args = parser.parse_args()
+    add_standby_argument(parser)
+    return parser
+
+
+def main() -> int:
+    args = build_arg_parser().parse_args()
+    apply_standby_argument(args)
 
     logging.basicConfig(
         level=logging.INFO,

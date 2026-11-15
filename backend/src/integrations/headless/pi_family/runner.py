@@ -48,10 +48,21 @@ from vicoa.sdk.async_client import AsyncVicoaClient
 from vicoa.sdk.exceptions import AuthenticationError
 from vicoa.session_markers import clear_session_registered, mark_session_registered
 from vicoa.session_ws_client import SessionMessagesWsClient
+from vicoa.standby import (
+    StandbyDiscarded,
+    add_standby_argument,
+    apply_standby_argument,
+    read_go_async,
+    standby_requested,
+)
 from vicoa.utils import derive_ws_url, get_project_path
 
 
 logger = logging.getLogger(__name__)
+
+# The agent comes up before the session registers (``vicoa headless --standby``,
+# see vicoa.standby); the daemon only prewarms runners that say so.
+SUPPORTS_ENGINE_STANDBY = True
 
 
 def setup_logging(
@@ -160,6 +171,13 @@ class PiFamilyRunner:
         self._pending_by_id: Dict[str, tuple[str, tuple[AttachmentRef, ...]]] = {}
         self._steer_requested_ids: set[str] = set()
         self._steer_in_flight: Dict[str, "asyncio.Future[bool]"] = {}
+        #: Prewarm (see vicoa.standby): the agent came up before registration,
+        #: and the prompt that came with the go, run locally as turn 1.
+        self._engine_preconnected = False
+        self._adopted_prompt: Optional[str] = None
+        #: The row our POST of ``_adopted_prompt`` created; its echo is dropped.
+        self._adopted_prompt_message_id: Optional[str] = None
+        self._prompt_post_task: Optional["asyncio.Task[None]"] = None
 
     # ------------------------------------------------------------------
     # Launch
@@ -251,6 +269,10 @@ class PiFamilyRunner:
             self.vicoa_client = AsyncVicoaClient(
                 api_key=self.api_key, base_url=self.base_url
             )
+            if standby_requested() and not self.is_resuming:
+                # The agent up now; registration, which makes the session
+                # visible, only once the launcher says go.
+                await self._standby_bring_up()
             await self._register()
             # The row exists (registered, or reopened on resume). Tell the
             # daemon, which holds the spawn RPC until this lands.
@@ -263,17 +285,38 @@ class PiFamilyRunner:
             )
             self._heartbeat.start()
 
-            await self._bring_up_agent()
+            if not self._engine_preconnected:
+                await self._bring_up_agent()
+            elif self.session is None or self.session.engine_exit_reason is not None:
+                # The prewarmed agent died before the go; start it as a cold
+                # session would, rather than hand the prompt to a dead process.
+                logger.warning("pi_family: prewarmed agent gone; starting it again")
+                await self._close_agent()
+                await self._bring_up_agent()
+            else:
+                # The first turn sets the status itself when it starts now; an
+                # AWAITING_INPUT landing after it would show the session idle.
+                await self.session.report_started(
+                    set_status=self._adopted_prompt is None
+                )
 
             self._consumer_task = asyncio.create_task(self._consume_user_messages())
             self._start_ws_client()
-            await self._post_initial_prompt()
+            if self._adopted_prompt:
+                self._feed_adopted_prompt(self._adopted_prompt)
+            else:
+                await self._post_initial_prompt()
 
             while self.running:
                 await asyncio.sleep(1.0)
             return 0
         except (KeyboardInterrupt, asyncio.CancelledError):
             logger.info("pi_family: interrupted, shutting down")
+            self.running = False
+            return 0
+        except StandbyDiscarded:
+            # Never registered, so there is nothing to report or end.
+            logger.info("pi_family: standby discarded; exiting without registering")
             self.running = False
             return 0
         except PiStartupError as exc:
@@ -329,7 +372,7 @@ class PiFamilyRunner:
             label="pi_family",
         )
 
-    async def _bring_up_agent(self) -> None:
+    async def _bring_up_agent(self, *, report: bool = True) -> None:
         assert self.vicoa_client is not None
         command = self.build_command()
         logger.info("pi_family: launching %s", " ".join(command))
@@ -363,7 +406,94 @@ class PiFamilyRunner:
                 ),
                 send=self.subprocess.transport.send,
             )
-        await self.session.start(host_tools=host_tools)
+        await self.session.start(host_tools=host_tools, report=report)
+
+    async def _standby_bring_up(self) -> None:
+        """Bring the agent up, then wait for the go line (``vicoa.standby``).
+
+        Nothing the user can see happens here: no registration, no server
+        write, no WS. A discard raises ``StandbyDiscarded`` before any session
+        row exists.
+        """
+        logger.info("pi_family: standby: starting %s", self.spec.catalog_id)
+        await self._bring_up_agent(report=False)
+        self._engine_preconnected = True
+        logger.info("pi_family: standby ready; waiting for go")
+        go = await read_go_async()
+        if go is None:
+            raise StandbyDiscarded()
+        prompt = go.get("prompt")
+        if isinstance(prompt, str) and prompt.strip():
+            self._adopted_prompt = prompt
+        logger.info("pi_family: standby adopted")
+
+    async def _close_agent(self) -> None:
+        """Close the session and its process (a dead prewarmed agent)."""
+        session, self.session = self.session, None
+        subprocess, self.subprocess = self.subprocess, None
+        if session is not None:
+            try:
+                await session.aclose()
+            except Exception:
+                logger.exception("pi_family: session aclose failed")
+        if subprocess is not None:
+            try:
+                await subprocess.aclose()
+            except Exception:
+                logger.exception("pi_family: subprocess aclose failed")
+
+    def _feed_adopted_prompt(self, prompt: str) -> None:
+        """Start turn 1 from the prompt that came with the go and show it in
+        chat from the background.
+
+        The row the POST creates still reaches ``_route`` (the live broadcast
+        and any catch-up replay), so ``_route`` drops it by the id the POST
+        returns. Agent messages wait for the POST (``hold_agent_posts_until``)
+        so no reply is filed above the prompt.
+        """
+        assert self.session is not None
+        self._adopted_prompt = prompt
+        self._prompt_post_task = asyncio.create_task(self._post_adopted_prompt(prompt))
+        self.session.hold_agent_posts_until(self._prompt_post_task)
+        self._turn_queue.put_nowait((prompt, (), None))
+
+    async def _post_adopted_prompt(self, prompt: str) -> None:
+        if self.vicoa_client is None:
+            return
+        try:
+            # ``mark_as_read=False`` for the reason given at the cold-path POST.
+            response = await self.vicoa_client.send_user_message(
+                agent_instance_id=self.session_id,
+                content=prompt,
+                mark_as_read=False,
+            )
+            message_id = response.get("message_id") if response else None
+            if isinstance(message_id, str) and message_id:
+                self._adopted_prompt_message_id = message_id
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # No row means no echo to drop; the turn already ran locally.
+            logger.exception("pi_family: failed to POST the adopted standby prompt")
+
+    async def _is_adopted_prompt_echo(
+        self, content: str, message_id: Optional[str]
+    ) -> bool:
+        """True for the row our own adopted-prompt POST created (by id only;
+        content just says whether to wait for an in-flight POST's id)."""
+        task = self._prompt_post_task
+        if (
+            task is not None
+            and not task.done()
+            and self._adopted_prompt is not None
+            and content.strip() == self._adopted_prompt.strip()
+        ):
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                if not task.cancelled():
+                    raise  # this route was cancelled, not the POST
+        return message_id is not None and message_id == self._adopted_prompt_message_id
 
     async def _post_initial_prompt(self) -> None:
         """POST the spawn prompt as a user message so it shows in the chat.
@@ -429,6 +559,13 @@ class PiFamilyRunner:
             self._consumer_task.cancel()
             try:
                 await self._consumer_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        task = self._prompt_post_task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
             except (asyncio.CancelledError, Exception):
                 pass
         # Stop heartbeating before end_session so an in-flight beat can't make
@@ -584,6 +721,10 @@ class PiFamilyRunner:
         """
         session = self.session
         if session is None:
+            return
+        if await self._is_adopted_prompt_echo(content, message_id):
+            # Our own adopted-prompt row: it already ran. Checked first, before
+            # it could be read as a reply or a control command.
             return
         if auq.is_persist_only_message(content):
             return
@@ -880,11 +1021,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--agent-command", default=None, help="Explicit binary path")
     parser.add_argument("--prompt", default=None, help="Initial prompt")
     parser.add_argument("--debug", action="store_true")
+    add_standby_argument(parser)
     return parser
 
 
 def main() -> int:
     args = build_arg_parser().parse_args()
+    apply_standby_argument(args)
     spec = PI_FAMILY_AGENTS[args.agent]
 
     api_key = args.api_key or os.environ.get("VICOA_API_KEY")
@@ -920,4 +1063,11 @@ def main() -> int:
         return 0
 
 
-__all__ = ["PiFamilyRunner", "build_arg_parser", "main", "setup_logging"]
+__all__ = [
+    "SUPPORTS_ENGINE_STANDBY",
+    "PiFamilyRunner",
+    "StandbyDiscarded",
+    "build_arg_parser",
+    "main",
+    "setup_logging",
+]

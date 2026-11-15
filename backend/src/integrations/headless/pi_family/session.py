@@ -70,6 +70,10 @@ logger = logging.getLogger(__name__)
 _STATUS_ACTIVE = "ACTIVE"
 _STATUS_AWAITING_INPUT = "AWAITING_INPUT"
 
+#: Frames a prewarmed session handles even while it holds agent events: they
+#: answer the agent and write nothing to the server.
+_NEVER_HELD_EVENTS = frozenset({"host_tool_call", "host_tool_cancel"})
+
 #: 24 hours, matching the Claude and Codex AUQ timeouts — long enough that a
 #: user can step away, short enough that abandoned sessions don't leak futures.
 _AUQ_TIMEOUT_SECONDS = 24 * 60 * 60
@@ -159,6 +163,23 @@ class PiRuntimeSession:
         #: Background tasks for dialogs, which must not block the read loop.
         self._dialog_tasks: set["asyncio.Task[None]"] = set()
 
+        # Prewarm (``start(report=False)``): the session is up but its row does
+        # not exist yet, so nothing may reach the server. Agent events are held
+        # here instead and replayed in order by ``report_started``; None when
+        # not holding. Responses and host-tool frames never wait.
+        self._held_events: Optional[List[Dict[str, Any]]] = None
+        #: True from a prewarmed ``start`` until ``report_started``.
+        self._prewarm_held = False
+        self._replay_task: Optional["asyncio.Task[None]"] = None
+        #: The session id ``get_state`` returned while writes were held.
+        self._session_id_unpersisted = False
+        #: Why the agent exited while held (it must not post that reason to a
+        #: row that does not exist); the runner starts it again on adoption.
+        self.engine_exit_reason: Optional[str] = None
+        #: Agent messages wait for this (the adopted prompt's POST) so no reply
+        #: is filed above the prompt; see ``hold_agent_posts_until``.
+        self._agent_post_gate: Optional["asyncio.Task[Any]"] = None
+
         self.available_models: List[Dict[str, str]] = []
         #: The model the agent reports it is actually running, as the same
         #: ``provider/id`` key the picker uses. Read from ``get_state`` rather
@@ -178,8 +199,18 @@ class PiRuntimeSession:
     # Bring-up
     # ------------------------------------------------------------------
 
-    async def start(self, *, host_tools: Optional[HostToolRouter] = None) -> None:
-        """Handshake, capture the session id, and apply spawn-time settings."""
+    async def start(
+        self, *, host_tools: Optional[HostToolRouter] = None, report: bool = True
+    ) -> None:
+        """Handshake, capture the session id, and apply spawn-time settings.
+
+        ``report=False`` (a prewarmed session, not registered yet) makes no
+        server write at all: the session id is kept, agent events are held,
+        and the runner calls :py:meth:`report_started` once the row exists.
+        """
+        if not report:
+            self._prewarm_held = True
+            self._held_events = []
         await self.transport.start()
         if self._watchdog_task is None:
             self._watchdog_task = asyncio.create_task(self._run_status_watchdog())
@@ -196,16 +227,82 @@ class PiRuntimeSession:
                 "set_subagent_subscription", {"level": DEFAULT_SUBSCRIPTION_LEVEL}
             )
 
-        await self._refresh_state()
-        # The model list and the command index only feed the UI (gear, slash
-        # menu), so they go out in the background instead of as two server
-        # round trips in front of the first prompt. Later writes of the same
-        # kind wait for them (``_after_startup_reports``) so they keep their order.
-        self._startup_reports_task = asyncio.create_task(self._send_startup_reports())
-        await self._set_status(_STATUS_AWAITING_INPUT)
+        await self._refresh_state(persist=report)
+        if report:
+            await self.report_started()
 
-    async def _send_startup_reports(self) -> None:
+    async def report_started(self, *, set_status: bool = True) -> None:
+        """Send the start-up writes, and for a prewarmed session the held ones.
+
+        The model list and the command index only feed the UI (gear, slash
+        menu), so they go out in the background instead of as two server round
+        trips in front of the first prompt. Later writes of the same kind wait
+        for them (``_after_startup_reports``) so they keep their order. A
+        prewarmed session's session id goes out with them, and its held agent
+        events are replayed after.
+
+        ``set_status=False`` when the first turn starts right away: it sets the
+        status itself, and an AWAITING_INPUT landing after it would show the
+        session idle.
+        """
+        self._prewarm_held = False
+        persist_session_id = self._session_id_unpersisted
+        self._session_id_unpersisted = False
+        self._startup_reports_task = asyncio.create_task(
+            self._send_startup_reports(persist_session_id=persist_session_id)
+        )
+        self._release_held_events()
+        if set_status:
+            await self._set_status(_STATUS_AWAITING_INPUT)
+
+    def hold_agent_posts_until(self, task: "asyncio.Task[Any]") -> None:
+        """Hold every agent message until ``task`` (the prompt's POST) is done."""
+        self._agent_post_gate = task
+
+    async def _wait_agent_post_gate(self) -> None:
+        gate = self._agent_post_gate
+        if gate is None or gate.done():
+            return
         try:
+            await asyncio.shield(gate)
+        except asyncio.CancelledError:
+            if not gate.cancelled():
+                raise  # we were cancelled, not the POST
+        except Exception:  # noqa: BLE001 - a failed display POST must not block replies
+            pass
+
+    def _release_held_events(self) -> None:
+        held = self._held_events
+        if held is None:
+            return
+        if not held:
+            self._held_events = None
+            return
+        self._replay_task = asyncio.create_task(self._replay_held_events(held))
+
+    async def _replay_held_events(self, held: List[Dict[str, Any]]) -> None:
+        """Handle the events held while prewarmed, in order.
+
+        Events arriving meanwhile keep joining ``held`` (see ``_handle_event``),
+        so the order survives the hand-over; the hold ends once it is empty.
+        """
+        while held:
+            frame = held.pop(0)
+            try:
+                await self._dispatch_event(frame)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "pi_family: held event handler raised for type=%s",
+                    frame.get("type"),
+                )
+        self._held_events = None
+
+    async def _send_startup_reports(self, *, persist_session_id: bool = False) -> None:
+        try:
+            if persist_session_id:
+                await self._persist_session_id()
             await self._report_models()
             await self._pull_commands()
         except asyncio.CancelledError:
@@ -224,11 +321,11 @@ class PiRuntimeSession:
             if not task.cancelled():
                 raise  # we were cancelled, not the reports
 
-    async def _refresh_state(self) -> None:
+    async def _refresh_state(self, *, persist: bool = True) -> None:
         """Read ``get_state`` for the session id and the live current model.
 
         Best-effort: losing the id costs a future resume, never the session
-        starting now.
+        starting now. ``persist=False`` keeps a new id for ``report_started``.
         """
         state = await self._try_request("get_state")
         if state is None:
@@ -236,7 +333,10 @@ class PiRuntimeSession:
         session_id = as_str(state.get("sessionId"))
         if session_id and session_id != self.agent_session_id:
             self.agent_session_id = session_id
-            await self._persist_session_id()
+            if persist:
+                await self._persist_session_id()
+            else:
+                self._session_id_unpersisted = True
         current = qualified_model_id(state.get("model"))
         if current:
             self.current_model = current
@@ -467,11 +567,19 @@ class PiRuntimeSession:
     # ------------------------------------------------------------------
 
     async def _handle_event(self, frame: Dict[str, Any]) -> None:
-        frame_type = as_str(frame.get("type"))
-
         # The ready frame is consumed by the handshake gate, never rendered.
         if self._ready_gate.offer(frame):
             return
+        held = self._held_events
+        if held is not None and as_str(frame.get("type")) not in _NEVER_HELD_EVENTS:
+            # Prewarmed and not adopted yet (or still replaying what was held):
+            # keep it, in order, rather than post to a row that does not exist.
+            held.append(frame)
+            return
+        await self._dispatch_event(frame)
+
+    async def _dispatch_event(self, frame: Dict[str, Any]) -> None:
+        frame_type = as_str(frame.get("type"))
 
         if frame_type == "extension_ui_request":
             self._spawn_dialog(frame)
@@ -612,6 +720,12 @@ class PiRuntimeSession:
         if self._closed:
             return
         self._finish_turn()
+        if self._prewarm_held:
+            # Prewarmed and not adopted: there is no row to post the reason to.
+            # The runner starts the agent again if this session is adopted.
+            logger.warning("pi_family: agent exited while prewarmed: %s", reason)
+            self.engine_exit_reason = reason
+            return
         self._close_task = asyncio.create_task(self._handle_unexpected_close(reason))
 
     async def _handle_unexpected_close(self, reason: str) -> None:
@@ -670,6 +784,7 @@ class PiRuntimeSession:
         future = self._permission_registry.create(request_id)
         body = ui_requests.render_permission_prompt(frame)
         try:
+            await self._wait_agent_post_gate()
             await self.vicoa_client.send_message(
                 content=body,
                 agent_type=self.agent_type,
@@ -703,6 +818,7 @@ class PiRuntimeSession:
         )
         try:
             try:
+                await self._wait_agent_post_gate()
                 response = await self.vicoa_client.send_message(
                     content=auq.ASK_USER_QUESTION_PROMPT_LABEL,
                     agent_type=self.agent_type,
@@ -862,6 +978,7 @@ class PiRuntimeSession:
     async def _post(self, content: str, metadata: Optional[dict] = None) -> None:
         if not content:
             return
+        await self._wait_agent_post_gate()
         try:
             await self.vicoa_client.send_message(
                 content=content,
@@ -963,7 +1080,12 @@ class PiRuntimeSession:
     async def aclose(self) -> None:
         self._closed = True
         self._cancel_settle()
-        for task in (self._watchdog_task, self._close_task, self._startup_reports_task):
+        for task in (
+            self._watchdog_task,
+            self._close_task,
+            self._startup_reports_task,
+            self._replay_task,
+        ):
             if task is not None and not task.done():
                 task.cancel()
                 try:

@@ -18,16 +18,21 @@ outlive the only process that could adopt it. Once the line is read, fd 0 is
 pointed at /dev/null so nothing later in the session (or a child it starts)
 touches the pipe.
 
-The go line may arrive before the engine is up; it waits in the pipe, so a
-half-warm standby is still adopted rather than thrown away.
+Just before it blocks for the line, the standby touches its ready marker
+(:func:`vicoa.session_markers.mark_standby_ready`). The daemon only adopts a
+standby that is ready; one still bringing its engine up is discarded and the
+spawn starts cold, so the user never waits on (or for the failure of) a
+bring-up that a cold start would have shown in the session.
 
 A runner opts in with a module-level ``SUPPORTS_ENGINE_STANDBY = True`` and
-calls :func:`read_go` once its engine is up. ``vicoa headless`` refuses
+calls :func:`read_go` once its engine is up, raising :class:`StandbyDiscarded`
+when it returns None. ``vicoa headless`` refuses
 ``--standby`` for any other agent.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
@@ -35,11 +40,23 @@ import sys
 import threading
 from typing import Any, Optional
 
+from vicoa.session_markers import mark_standby_ready
+
 #: Set by ``vicoa headless --standby`` for the runner it starts.
 STANDBY_ENV = "VICOA_STANDBY"
+#: The session id the daemon gave the standby (it names the ready marker).
+SESSION_ID_ENV = "VICOA_AGENT_INSTANCE_ID"
 STANDBY_TTL_ENV = "VICOA_STANDBY_TTL"
 #: Backstop only: the daemon discards an unused standby long before this.
 DEFAULT_STANDBY_TTL_SECONDS = 15 * 60.0
+
+
+class StandbyDiscarded(Exception):
+    """The launcher dropped this standby (or it timed out) before adopting it.
+
+    Raised by a runner's bring-up when :func:`read_go` returns None; the runner
+    exits without ever registering.
+    """
 
 
 def standby_ttl_seconds() -> float:
@@ -99,7 +116,13 @@ def _read_line_blocking(timeout: float) -> Optional[str]:
 
 
 def read_go(timeout: Optional[float] = None) -> Optional[dict[str, Any]]:
-    """Block for the go line. Returns ``{"prompt": str | None}`` or None to discard."""
+    """Say the engine is up, then block for the go line.
+
+    Returns ``{"prompt": str | None}``, or None to discard.
+    """
+    session_id = os.environ.get(SESSION_ID_ENV)
+    if session_id:
+        mark_standby_ready(session_id)
     line = _read_line_blocking(standby_ttl_seconds() if timeout is None else timeout)
     payload = parse_go_line(line) if line is not None else None
     _detach_stdin()
@@ -112,3 +135,20 @@ async def read_go_async(timeout: Optional[float] = None) -> Optional[dict[str, A
 
 def standby_requested() -> bool:
     return os.environ.get(STANDBY_ENV) == "1"
+
+
+def add_standby_argument(parser: argparse.ArgumentParser) -> None:
+    """``--standby`` on a runner's own entry point.
+
+    The daemon starts some runners as ``python -m <module>`` instead of through
+    ``vicoa headless`` (a source install), so the flag reaches them directly.
+    Only a runner that can stand by adds it: a stray ``--standby`` then fails
+    argument parsing, instead of starting a session that registers at once.
+    """
+    parser.add_argument("--standby", action="store_true", help=argparse.SUPPRESS)
+
+
+def apply_standby_argument(args: argparse.Namespace) -> None:
+    """Turn a parsed ``--standby`` into what :func:`standby_requested` reads."""
+    if getattr(args, "standby", False):
+        os.environ[STANDBY_ENV] = "1"

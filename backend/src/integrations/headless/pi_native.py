@@ -15,7 +15,9 @@ so the daemon has a stable module to spawn, mirroring ``codex_native.py`` and
 
 import sys
 
-from integrations.headless.pi_family.runner import main
+from integrations.headless.pi_family.runner import SUPPORTS_ENGINE_STANDBY, main
+
+__all__ = ["SUPPORTS_ENGINE_STANDBY", "main"]
 
 
 if __name__ == "__main__":

@@ -66,6 +66,7 @@ from vicoa.sdk.client import VicoaClient
 from vicoa.sdk.exceptions import AuthenticationError
 from vicoa.session_markers import clear_session_registered, mark_session_registered
 from vicoa.session_ws_client import SessionMessagesWsClient
+from vicoa.standby import read_go, standby_requested, StandbyDiscarded
 from vicoa.utils import derive_ws_url
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,9 @@ CONTROL_JSON_PATTERN = re.compile(r'\{[^}]*"type"\s*:\s*"control"[^}]*\}')
 # How long a session_config PATCH waits for the bring-up ones still in flight
 # before sending anyway (see ``ACPWrapperBase._patch_session_config``).
 _BACKGROUND_CONFIG_PATCH_WAIT_SECONDS = 10.0
+# How long an agent message waits for the POST that files a prewarmed session's
+# first prompt, so the reply is not filed above it (see ``_feed_adopted_prompt``).
+_ADOPTED_PROMPT_POST_WAIT_SECONDS = 15.0
 
 
 class ACPWrapperConfig(ABC):
@@ -133,6 +137,11 @@ class ACPWrapperConfig(ABC):
     # Catalog id persisted in session_config PATCHes ("cursor", "gemini", …).
     # Falls back to agent_type.lower() when unset.
     catalog_agent_id: Optional[str] = None
+    # A standby (prewarm) also creates the agent's session, not just its
+    # process and handshake. Only for agents whose session/new leaves nothing
+    # in their own session history, since an unused prewarm must not; see
+    # ``ACPWrapperBase._standby_bring_up``.
+    standby_creates_session: bool = False
     # Custom instructions from an agent profile. ACP agents are the
     # PROMPT_PREFIX transport (protocol/system_prompt.py): ACP has no
     # system-prompt slot in v1 or v2, so the text rides as a leading content
@@ -199,6 +208,17 @@ class ACPWrapperBase(ABC):
     # (some tests build wrappers without ``__init__``).
     _background_config_patches: bool = False
     _config_patch_thread: Optional[threading.Thread] = None
+    # True while a standby creates its session before its row exists: the
+    # session's writes to the row (ACP session id, session_config, usage) are
+    # skipped then and sent once it registers (``_report_standby_session``).
+    _standby_offline: bool = False
+    _standby_session_created: bool = False
+    # The first prompt a prewarmed session was adopted with, the thread that
+    # POSTs it to the chat, and the id that POST returned: the server's echo of
+    # that row is dropped by id, since the prompt already ran.
+    _adopted_prompt: Optional[str] = None
+    _prompt_post_thread: Optional[threading.Thread] = None
+    _adopted_prompt_message_id: Optional[str] = None
 
     def __init__(self, config: ACPWrapperConfig):
         """Initialize ACP wrapper.
@@ -417,6 +437,11 @@ class ACPWrapperBase(ABC):
             self.log("[INFO] Interrupted (SIGINT/SIGTERM)")
             final_status = "KILLED"
             return 0
+        except StandbyDiscarded:
+            # Never registered, so there is nothing to report or end; _cleanup
+            # only stops the agent.
+            self.log("[INFO] Standby discarded; exiting without registering")
+            return 0
         except Exception as e:
             self.log(f"[ERROR] Fatal error: {e}")
             import traceback
@@ -497,6 +522,16 @@ class ACPWrapperBase(ABC):
         """Setup before main loop."""
         self.log(f"[INFO] Setting up {self.config.agent_type} wrapper...")
 
+        # A prewarmed session (``vicoa.standby``) brings the agent up first and
+        # registers only once the launcher hands it the prompt.
+        standby = (
+            standby_requested()
+            and not self.config.is_resuming
+            and self.vicoa_client is not None
+        )
+        if standby:
+            self._standby_bring_up()
+
         # Register with Vicoa if starting new session
         if not self.config.is_resuming and self.vicoa_client:
             try:
@@ -570,18 +605,32 @@ class ACPWrapperBase(ABC):
             self._registered = True
             mark_session_registered(self.config.agent_instance_id)
 
-        # Start ACP client
-        self._start_acp_client()
+        if self._adopted_prompt is not None:
+            # Show the prompt in the chat now, while the agent's session is
+            # still being created; turn 1 runs once the event loop starts.
+            self._feed_adopted_prompt(self._adopted_prompt)
 
-        self._background_config_patches = True
-        try:
-            # Initialize ACP session
-            self._initialize_acp_session()
+        if self._standby_session_created:
+            # The standby already created the session; send what it skipped.
+            self._report_standby_session()
+        else:
+            if not standby:
+                # Start ACP client
+                self._start_acp_client()
 
-            # Restore the prior conversation, or start a new one.
-            self._establish_session()
-        finally:
-            self._background_config_patches = False
+            self._background_config_patches = True
+            try:
+                if not standby:
+                    # Initialize ACP session
+                    self._initialize_acp_session()
+
+                # Restore the prior conversation, or start a new one. Most
+                # standbys do this only now: the agent records a session in its
+                # own history the moment it is created, so one made for a
+                # prewarm that is never used would be left there empty.
+                self._establish_session()
+            finally:
+                self._background_config_patches = False
 
         # Bring up the WS subscriber BEFORE POSTing the initial prompt so the
         # broadcast loops back to us via the live ``new-message`` channel and
@@ -599,7 +648,12 @@ class ACPWrapperBase(ABC):
         # subscription is registered), with the WS client's ``CatchUpBuffer``
         # deduping by message id so a later catch-up can't double-deliver.
         initial_prompt: Optional[str] = getattr(self.config, "initial_prompt", None)
-        if initial_prompt and initial_prompt.strip() and self.config.agent_instance_id:
+        if (
+            self._adopted_prompt is None
+            and initial_prompt
+            and initial_prompt.strip()
+            and self.config.agent_instance_id
+        ):
             if self._ws_client is not None:
                 ready = self._ws_client.wait_until_ready(10.0)
                 if not ready:
@@ -629,6 +683,124 @@ class ACPWrapperBase(ABC):
         # The agent is up and the session is live; anything that fails after
         # this is a mid-session crash, not a spawn failure — see run().
         self._startup_complete = True
+
+    # ------------------------------------------------------------------
+    # Standby (prewarm), see vicoa.standby
+    # ------------------------------------------------------------------
+
+    def _standby_bring_up(self) -> None:
+        """Start the agent and do the ACP handshake, then wait for the go line
+        (``vicoa.standby``).
+
+        By default only process start and ``initialize``: the session itself
+        (``session/new``) is created after registration, because agents keep
+        their own session history and an unused prewarm must leave nothing in
+        it. An agent whose session/new is known to leave nothing there
+        (``standby_creates_session``) creates it now too, with its writes to the
+        row skipped until it registers (``_standby_offline``). Nothing the user
+        can see happens here: no registration, no server write, no WS. A discard
+        raises ``StandbyDiscarded`` before any session row exists.
+        """
+        self.log("[INFO] Standby: starting the agent before registering")
+        self._start_acp_client()
+        self._initialize_acp_session()
+        if getattr(self.config, "standby_creates_session", False):
+            self._standby_offline = True
+            self._establish_session()
+            self._standby_session_created = True
+        self.log("[INFO] Standby ready; waiting for go")
+        go = read_go()
+        if go is None:
+            raise StandbyDiscarded()
+        prompt = go.get("prompt")
+        if isinstance(prompt, str) and prompt.strip():
+            self._adopted_prompt = prompt
+        self.log("[INFO] Standby adopted")
+
+    def _report_standby_session(self) -> None:
+        """Send the writes a session created during standby skipped.
+
+        The ACP session id, the live modes/models and any usage reading, read
+        from the session's current state, in one background thread so they are
+        not round trips in front of the first prompt. It is chained like the
+        bring-up PATCHes (``_config_patch_thread``), so a later session_config
+        PATCH waits for it. ``_standby_offline`` is cleared first: an update
+        racing this then either sends its own PATCH or is already in the state
+        read below.
+        """
+        self._standby_offline = False
+        previous = self._config_patch_thread
+
+        def send() -> None:
+            if previous is not None:
+                previous.join()
+            self._persist_acp_session_id()
+            self._report_live_session_state()
+            self._flush_usage()
+
+        # Daemon: a PATCH stuck on a dead server must not hold up exit.
+        thread = threading.Thread(target=send, name="acp-config-patch", daemon=True)
+        self._config_patch_thread = thread
+        thread.start()
+
+    def _feed_adopted_prompt(self, prompt: str) -> None:
+        """Run the prompt that came with the go as turn 1, and show it in chat
+        from the background.
+
+        The row the POST creates still reaches ``_on_ws_user_message`` (the
+        live broadcast and any catch-up replay), which drops it by the id the
+        POST returns. Agent messages wait for the POST
+        (``_wait_for_adopted_prompt_post``) so no reply is filed above it.
+        """
+        self._adopted_prompt = prompt
+        thread = threading.Thread(
+            target=self._post_adopted_prompt,
+            args=(prompt,),
+            name="acp-adopted-prompt",
+            daemon=True,
+        )
+        self._prompt_post_thread = thread
+        thread.start()
+        self._ingest_user_message(prompt)
+
+    def _post_adopted_prompt(self, prompt: str) -> None:
+        client = self.vicoa_client
+        if client is None or not self.config.agent_instance_id:
+            return
+        try:
+            # ``mark_as_read=False`` for the reason given at the cold-path POST.
+            response = client.send_user_message(
+                agent_instance_id=self.config.agent_instance_id,
+                content=prompt,
+                mark_as_read=False,
+            )
+            message_id = response.get("message_id") if response else None
+            if isinstance(message_id, str) and message_id:
+                self._adopted_prompt_message_id = message_id
+        except Exception as exc:
+            # No row means no echo to drop; the turn already runs locally.
+            self.log(f"[WARNING] Failed to POST the adopted standby prompt: {exc}")
+
+    def _wait_for_adopted_prompt_post(self) -> None:
+        """Hold an agent message until the adopted prompt's POST is done."""
+        thread = self._prompt_post_thread
+        if (
+            thread is None
+            or thread is threading.current_thread()
+            or not thread.is_alive()
+        ):
+            return
+        thread.join(timeout=_ADOPTED_PROMPT_POST_WAIT_SECONDS)
+
+    def _is_adopted_prompt_echo(self, content: str, message_id: Optional[str]) -> bool:
+        """True for the row our own adopted-prompt POST created (by id only;
+        content just says whether to wait for an in-flight POST's id)."""
+        prompt = self._adopted_prompt
+        if prompt is None:
+            return False
+        if content.strip() == prompt.strip():
+            self._wait_for_adopted_prompt_post()
+        return message_id is not None and message_id == self._adopted_prompt_message_id
 
     def _start_heartbeat(self) -> None:
         """Begin periodic session heartbeats (best effort)."""
@@ -790,6 +962,8 @@ class ACPWrapperBase(ABC):
             return
         if not self.session_id:
             return
+        if self._standby_offline:
+            return  # no row yet; _report_standby_session sends it
         try:
             self.vicoa_client.patch_agent_instance(
                 self.config.agent_instance_id,
@@ -1301,10 +1475,11 @@ class ACPWrapperBase(ABC):
                 return
             if self._suspend_vicoa_polling:
                 return
-            message_id = body.get("id")
-            self._ingest_user_message(
-                content, attachments, str(message_id) if message_id else None
-            )
+            message_id = str(body.get("id")) if body.get("id") else None
+            if self._is_adopted_prompt_echo(content, message_id):
+                # Our own adopted-prompt row: it already ran as turn 1.
+                return
+            self._ingest_user_message(content, attachments, message_id)
         except Exception:
             self.log("[Vicoa] WS callback raised")
             import traceback
@@ -1600,6 +1775,9 @@ class ACPWrapperBase(ABC):
         """
         if not self.vicoa_client:
             return
+        if self._standby_offline:
+            # No row yet; _report_standby_session sends the live state.
+            return
         previous = self._config_patch_thread
         if self._background_config_patches:
 
@@ -1701,6 +1879,7 @@ class ACPWrapperBase(ABC):
         if not self.vicoa_client:
             return
         try:
+            self._wait_for_adopted_prompt_post()
             response = self.vicoa_client.send_message(
                 content=content,
                 agent_type=self.config.agent_type,
@@ -2114,6 +2293,7 @@ class ACPWrapperBase(ABC):
             if self._interrupt_active:
                 return self._permission_cancelled_option_id
 
+            self._wait_for_adopted_prompt_post()
             response = self.vicoa_client.send_message(
                 content=prompt_message,
                 agent_type=self.config.agent_type,
@@ -2709,6 +2889,8 @@ class ACPWrapperBase(ABC):
         """
         if not (self.vicoa_client and self.config.agent_instance_id):
             return
+        if self._standby_offline:
+            return  # no row yet; _report_standby_session flushes it
         core = self._usage.core()
         if core is None or core == self._usage_last_core:
             return
@@ -2889,6 +3071,7 @@ class ACPWrapperBase(ABC):
             return
 
         try:
+            self._wait_for_adopted_prompt_post()
             response = self.vicoa_client.send_message(
                 content=text,
                 agent_type=self.config.agent_type,
@@ -3359,6 +3542,7 @@ class ACPWrapperBase(ABC):
 
         if self.vicoa_client:
             try:
+                self._wait_for_adopted_prompt_post()
                 self.vicoa_client.send_message(
                     content=f"Error: {message}",
                     agent_type=self.config.agent_type,
