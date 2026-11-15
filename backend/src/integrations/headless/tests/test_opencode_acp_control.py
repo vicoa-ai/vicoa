@@ -285,3 +285,23 @@ def test_reports_available_models_for_gear() -> None:
     ids = [m["id"] for m in last["available_models"]]
     assert "opencode/deepseek-v4-flash-free" in ids
     assert last["current_model"] == "opencode/big-pickle"
+
+
+def test_create_session_records_the_acp_session_id_for_resume() -> None:
+    """Without it a resume starts OpenCode on a blank conversation: the daemon
+    passes ``--acp-session-id`` from ``instance_metadata.acp_session_id``."""
+    vc = MagicMock()
+    wrapper = _build_wrapper(vicoa_client=vc)
+    response = MagicMock()
+    response.result = {"sessionId": "ses-new"}
+    response.raise_for_error = MagicMock()
+    wrapper.acp.send_request.return_value = response
+
+    wrapper.create_session()
+
+    metadata = [
+        c.kwargs["instance_metadata"]
+        for c in vc.patch_agent_instance.call_args_list
+        if c.kwargs.get("instance_metadata")
+    ]
+    assert metadata == [{"acp_session_id": "ses-new"}]
