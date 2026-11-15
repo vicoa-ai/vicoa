@@ -32,7 +32,19 @@ from shared.database import (
 from shared.database.liveness import LiveState, compute_live_state, is_fresh
 from shared.database.automation_models import AutomationRun
 from shared.hooks import CAPABILITY_GRANT_WRITE, run_user_delete_hooks
-from sqlalchemy import and_, case, cast, desc, exists, func, or_, select, text, update
+from sqlalchemy import (
+    and_,
+    case,
+    cast,
+    desc,
+    exists,
+    func,
+    or_,
+    select,
+    text,
+    true,
+    update,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session, joinedload, subqueryload
 
@@ -175,21 +187,13 @@ def _get_instance_message_stats(db: Session, instance_ids: list[UUID]) -> dict:
     if not instance_ids:
         return {}
 
-    # Use a single query with window functions to get both count and latest message
-    subquery = (
-        db.query(
-            Message.agent_instance_id,
-            Message.content,
-            Message.created_at,
-            func.row_number()
-            .over(
-                partition_by=Message.agent_instance_id,
-                order_by=desc(Message.created_at),
-            )
-            .label("rn"),
-            func.count(Message.id)
-            .over(partition_by=Message.agent_instance_id)
-            .label("msg_count"),
+    # The two counts come from one grouped pass that does not carry `content`.
+    # (A window query over every row, sorting and buffering each row's
+    # content, made a long session's list time out.)
+    counts = (
+        select(
+            Message.agent_instance_id.label("instance_id"),
+            func.count(Message.id).label("msg_count"),
             # Messages someone other than the owner sent (a shared session's
             # other writers), counted in the same pass so a list learns which
             # rows have more than one participant without scanning again.
@@ -200,26 +204,39 @@ def _get_instance_message_stats(db: Session, instance_ids: list[UUID]) -> dict:
                     Message.sender_user_id != AgentInstance.user_id,
                 )
             )
-            .over(partition_by=Message.agent_instance_id)
             .label("foreign_count"),
         )
         .join(AgentInstance, AgentInstance.id == Message.agent_instance_id)
-        .filter(Message.agent_instance_id.in_(instance_ids))
-        .subquery()
+        .where(Message.agent_instance_id.in_(instance_ids))
+        .group_by(Message.agent_instance_id)
+        .subquery("message_counts")
     )
 
-    # Get only the latest message (rn=1) with the count
-    results = (
-        db.query(
-            subquery.c.agent_instance_id,
-            subquery.c.content,
-            subquery.c.created_at,
-            subquery.c.msg_count,
-            subquery.c.foreign_count,
-        )
-        .filter(subquery.c.rn == 1)
-        .all()
+    # The latest message is one backward probe of
+    # `idx_messages_instance_created` per session, so its cost does not grow
+    # with the session's length. `id` breaks a `created_at` tie so the same
+    # row wins every time.
+    latest = (
+        select(Message.content, Message.created_at)
+        .where(Message.agent_instance_id == counts.c.instance_id)
+        .order_by(desc(Message.created_at), desc(Message.id))
+        .limit(1)
+        .lateral("latest_message")
     )
+
+    # A session with no messages has no `counts` row, so it stays out of the
+    # result, as before; callers default its stats.
+    results = db.execute(
+        select(
+            counts.c.instance_id.label("agent_instance_id"),
+            latest.c.content,
+            latest.c.created_at,
+            counts.c.msg_count,
+            counts.c.foreign_count,
+        )
+        .select_from(counts)
+        .join(latest, true())
+    ).all()
 
     # Convert to dict for easy lookup
     stats = {}
