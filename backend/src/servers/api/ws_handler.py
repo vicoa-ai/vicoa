@@ -56,6 +56,12 @@ from servers.api.media import attach_stream_url
 from servers.presence import broadcast_session_connected, presence
 from servers.profile_provenance import stamp_agent_profile_in_background
 from servers.worktree_naming import start_worktree_naming
+from servers.scheduler.task_dispatcher import (
+    brief_for_resume_blocking,
+    mark_brief_in_background,
+    task_visible_blocking,
+)
+from shared.task_dispatch_prompts import system_prompt_with_brief
 from servers.watchers import (
     cached_role,
     forget_cached_access,
@@ -137,6 +143,21 @@ async def close_for_db_disconnect(websocket: WebSocket) -> None:
     handshake, and an already-closed socket is left alone (`_safe_close`).
     """
     await _safe_close(websocket, code=_CLOSE_TRY_AGAIN_LATER, reason="db_unavailable")
+
+
+def _task_visible(user_id: str, task_id: str) -> bool:
+    try:
+        return task_visible_blocking(UUID(user_id), UUID(task_id))
+    except ValueError:
+        return False
+
+
+def _task_brief_for_resume(user_id: str, instance_id: object) -> str | None:
+    """The task brief for a resumed session that carries one, else None."""
+    try:
+        return brief_for_resume_blocking(UUID(user_id), UUID(str(instance_id)))
+    except (TypeError, ValueError):
+        return None
 
 
 def verify_ws_credentials(creds: WsCredentials) -> str:
@@ -429,6 +450,7 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
     # to receive — never taken from what the client sent, so a hand-crafted
     # `system_prompt` cannot ride along and the two can never disagree.
     agent_profile: dict | None = None
+    started_with_brief = False
     # `prewarm-session` launches early exactly the session a later
     # `spawn-session` will ask for, and the daemon only hands the prompt to a
     # prewarmed session whose settings match. So it needs the same
@@ -451,6 +473,32 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
             agent_profile = None
         if agent_profile and (agent_profile["system_prompt"] or "").strip():
             metadata["system_prompt"] = agent_profile["system_prompt"]
+        # A session started from a task (`task_id`, the task page's Start
+        # session) works on it like an assigned agent does: the task brief
+        # follows the profile's instructions. Never forwarded to the daemon.
+        raw_task_id = params.pop("task_id", None)
+        if method == "spawn-session" and isinstance(raw_task_id, str) and raw_task_id:
+            if await asyncio.to_thread(_task_visible, conn.user_id, raw_task_id):
+                metadata["system_prompt"] = system_prompt_with_brief(
+                    metadata.get("system_prompt")
+                )
+                started_with_brief = True
+        # Resuming a task session: it was started with the task brief after its
+        # profile's instructions (servers/scheduler/task_dispatcher.py), and a
+        # resume relaunches the agent, so the brief has to come back too.
+        resume = params.get("resume")
+        if (
+            method == "spawn-session"
+            and isinstance(resume, dict)
+            and not started_with_brief
+        ):
+            brief = await asyncio.to_thread(
+                _task_brief_for_resume, conn.user_id, resume.get("agent_instance_id")
+            )
+            if brief:
+                metadata["system_prompt"] = system_prompt_with_brief(
+                    metadata.get("system_prompt")
+                )
         if metadata:
             params["metadata"] = metadata
         if method == "spawn-session":
@@ -490,6 +538,11 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
                 stamp_agent_profile_in_background(
                     conn.user_id, instance_id, agent_profile["id"]
                 )
+            if started_with_brief and isinstance(instance_id, str) and instance_id:
+                try:
+                    mark_brief_in_background(UUID(conn.user_id), UUID(instance_id))
+                except ValueError:
+                    pass
     except RpcError as exc:
         if exc.code == "no_handler":
             logger.warning(

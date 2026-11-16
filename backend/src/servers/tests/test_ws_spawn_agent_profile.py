@@ -437,3 +437,118 @@ async def test_prewarm_is_not_relayed_when_switched_off_server_wide(
         "request_id": "r1",
         "result": {"skipped": "disabled"},
     }
+
+
+@pytest.mark.asyncio
+async def test_resuming_a_task_session_brings_the_task_brief_back(
+    test_db, bound_session, monkeypatch, user, profile
+):
+    """A task session runs with its profile's instructions plus the task brief
+    (servers/scheduler/task_dispatcher.py). A person's Resume relaunches the
+    agent through this path, so both have to come back."""
+    from servers.scheduler import task_dispatcher
+    from shared.task_dispatch_prompts import TASK_BRIEF
+
+    monkeypatch.setattr(task_dispatcher, "SessionLocal", bound_session)
+    instance_id = uuid4()
+    row = _instance(test_db, user, instance_id)
+    row.instance_metadata = {"task_brief": True}
+    test_db.commit()
+    params = {
+        "agent": "claude",
+        "metadata": {"prompt": "carry on"},
+        "agent_profile_id": str(profile.id),
+        "resume": {"agent_instance_id": str(instance_id)},
+    }
+
+    await _spawn(monkeypatch, _connection(user.id), params, instance_id)
+
+    prompt = params["metadata"]["system_prompt"]
+    assert prompt.startswith("Prefer small, reviewable diffs.")
+    assert prompt.endswith(TASK_BRIEF)
+
+
+@pytest.mark.asyncio
+async def test_resuming_an_ordinary_session_adds_no_brief(
+    test_db, bound_session, monkeypatch, user, profile
+):
+    from servers.scheduler import task_dispatcher
+
+    monkeypatch.setattr(task_dispatcher, "SessionLocal", bound_session)
+    instance_id = uuid4()
+    _instance(test_db, user, instance_id)
+    params = {
+        "agent": "claude",
+        "metadata": {"prompt": "carry on"},
+        "agent_profile_id": str(profile.id),
+        "resume": {"agent_instance_id": str(instance_id)},
+    }
+
+    await _spawn(monkeypatch, _connection(user.id), params, instance_id)
+
+    assert params["metadata"]["system_prompt"] == "Prefer small, reviewable diffs."
+
+
+@pytest.mark.asyncio
+async def test_a_session_started_from_a_task_gets_the_task_brief(
+    test_db, bound_session, monkeypatch, user, profile
+):
+    """The task page's Start session sends `task_id`: the session works on the
+    task like an assigned agent, so the brief follows the profile's
+    instructions, and once it registers it is flagged as carrying it."""
+    from servers.scheduler import task_dispatcher
+    from shared.database.task_models import Task
+    from shared.task_dispatch_prompts import TASK_BRIEF
+
+    monkeypatch.setattr(task_dispatcher, "SessionLocal", bound_session)
+    monkeypatch.setattr(task_dispatcher, "STAMP_DELAYS", (0.05,) * 20)
+    task = Task(user_id=user.id, title="Fix the flaky login test", status="todo")
+    test_db.add(task)
+    test_db.commit()
+    instance_id = uuid4()
+    _instance(test_db, user, instance_id)
+    params = {
+        "agent": "claude",
+        "metadata": {"prompt": "go"},
+        "agent_profile_id": str(profile.id),
+        "task_id": str(task.id),
+    }
+
+    await _spawn(monkeypatch, _connection(user.id), params, instance_id)
+
+    assert "task_id" not in params  # never forwarded to the daemon
+    prompt = params["metadata"]["system_prompt"]
+    assert prompt.startswith("Prefer small, reviewable diffs.")
+    assert prompt.endswith(TASK_BRIEF)
+    deadline = asyncio.get_running_loop().time() + 3.0
+    flagged = False
+    while asyncio.get_running_loop().time() < deadline and not flagged:
+        test_db.expire_all()
+        flagged = bool(
+            (test_db.get(AgentInstance, instance_id).instance_metadata or {}).get(
+                "task_brief"
+            )
+        )
+        await asyncio.sleep(0.05)
+    assert flagged
+
+
+@pytest.mark.asyncio
+async def test_someone_elses_task_adds_no_brief(
+    test_db, bound_session, monkeypatch, user, profile
+):
+    from servers.scheduler import task_dispatcher
+
+    monkeypatch.setattr(task_dispatcher, "SessionLocal", bound_session)
+    instance_id = uuid4()
+    _instance(test_db, user, instance_id)
+    params = {
+        "agent": "claude",
+        "metadata": {"prompt": "go"},
+        "agent_profile_id": str(profile.id),
+        "task_id": str(uuid4()),
+    }
+
+    await _spawn(monkeypatch, _connection(user.id), params, instance_id)
+
+    assert params["metadata"]["system_prompt"] == "Prefer small, reviewable diffs."

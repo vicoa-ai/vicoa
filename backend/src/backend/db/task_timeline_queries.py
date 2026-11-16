@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session
 
-from shared import access
+from shared import access, task_dispatch
 from shared.database import (
     AgentInstance,
     AgentStatus,
@@ -286,6 +286,10 @@ def create_comment(
     # user's API key is not that user choosing to follow the thread.
     if author_type == "user" and author_id == user_id:
         subscribe(db, task.id, user_id, "commenter")
+    # A person's comment may be for an agent: queue its reply
+    # (plans/todos/task-assignment-agents.md, C1). Agent comments never are.
+    db.flush()
+    task_dispatch.on_comment_created(db, task, comment)
     db.commit()
     return comment
 

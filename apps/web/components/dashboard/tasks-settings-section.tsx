@@ -1,8 +1,8 @@
 'use client';
 
 /**
- * Settings → Tasks: what archiving a session does to its task, and label
- * vocabularies. Labels are owner-scoped — one set
+ * Settings → Tasks: whether assigning an agent asks first, what archiving a
+ * session does to its task, and label vocabularies. Labels are owner-scoped — one set
  * across every personal project, and one per team across the team's projects
  * — never per-project, which is why they live at the top level of Settings
  * and not in a project's pane. A team's set is also edited on the team's page
@@ -16,9 +16,11 @@ import { Loader2, Plus, Trash2 } from 'lucide-react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Switch } from '@/components/ui/switch';
 import { ConfirmDeleteDialog } from '@/components/dashboard/session-dialogs';
 import { INLINE_LABEL_COLORS, LabelChip, inlineLabelColor } from '@/components/dashboard/task-ui';
 import { ARCHIVE_TASK_ACTIONS } from '@/lib/archive-task';
+import { setConfirmAgentStart, useConfirmAgentStart } from '@/lib/assign-agent-pref';
 import {
   setArchiveTaskAction,
   useArchiveTaskAction,
@@ -46,7 +48,8 @@ export function TasksSettingsSection() {
     <section>
       <h1 className="text-2xl font-light tracking-tight text-foreground">Tasks</h1>
 
-      {/* The logged-out desktop has no tasks to archive a session from. */}
+      {/* The logged-out desktop has no tasks to assign or archive a session from. */}
+      {!isDesktopLocal() && <AgentStartPreference />}
       {!isDesktopLocal() && <ArchivePreference />}
 
       <p className="mt-8 text-sm text-muted-foreground">
@@ -68,6 +71,35 @@ export function TasksSettingsSection() {
         </div>
       ))}
     </section>
+  );
+}
+
+/**
+ * Whether picking an agent as a task's assignee opens the confirm dialog
+ * (where it runs, "Assign only") or assigns and starts it with the defaults.
+ * Kept on this device (see `lib/assign-agent-pref.ts`).
+ */
+function AgentStartPreference() {
+  const confirm = useConfirmAgentStart();
+
+  return (
+    <label
+      htmlFor="confirm-agent-start"
+      className="mt-6 flex cursor-pointer items-start justify-between gap-4 rounded-lg border px-3 py-2.5 hover:bg-accent/40"
+    >
+      <span className="min-w-0">
+        <span className="block text-sm text-foreground">Confirm when assigning to an agent</span>
+        <span className="block text-xs text-muted-foreground">
+          See where it will work before it starts.
+        </span>
+      </span>
+      <Switch
+        id="confirm-agent-start"
+        checked={confirm}
+        onCheckedChange={setConfirmAgentStart}
+        className="mt-0.5 shrink-0"
+      />
+    </label>
   );
 }
 

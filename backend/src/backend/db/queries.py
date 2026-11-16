@@ -1714,7 +1714,10 @@ def list_task_instances(
         names = relations[instance.id] if relations is not None else {"linked"}
         rows.append(
             TaskSessionResponse(
-                **format_agent_instance(instance, message_stats).model_dump(),
+                # The field values, not `model_dump()`: that runs the datetime
+                # serializers, so each timestamp would be serialized twice and
+                # reach the client as "...+00:00Z", which no browser parses.
+                **dict(format_agent_instance(instance, message_stats)),
                 task_relations=[r for r in TASK_SESSION_RELATIONS if r in names],
             )
         )

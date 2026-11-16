@@ -169,6 +169,26 @@ def test_create_worktree_with_a_taken_name_errors_instead_of_suffixing(
     }
 
 
+def test_create_worktree_with_a_preferred_name_suffixes_it(
+    home: Path, committed_repo: Path
+):
+    """`suffix_if_taken`: the name is a preference (a task's id), so a taken
+    one becomes the first free `-2`, `-3`; a leftover branch counts as taken."""
+    from vicoa.rpc.worktree_ops import create_worktree
+
+    first = create_worktree(str(committed_repo), name="vic-7", suffix_if_taken=True)
+    assert first["branch"] == "vic-7"
+    second = create_worktree(str(committed_repo), name="vic-7", suffix_if_taken=True)
+    assert second["branch"] == "vic-7-2"
+    _git(committed_repo, "branch", "vic-7-3")
+    third = create_worktree(str(committed_repo), name="vic-7", suffix_if_taken=True)
+    assert third["branch"] == "vic-7-4"
+    # An invalid name is still refused.
+    assert create_worktree(str(committed_repo), name="a..b", suffix_if_taken=True) == {
+        "error": "invalid_name"
+    }
+
+
 def test_create_worktree_with_an_invalid_name_errors(home: Path, committed_repo: Path):
     from vicoa.rpc.worktree_ops import create_worktree
 

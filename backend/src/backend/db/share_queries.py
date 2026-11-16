@@ -175,6 +175,12 @@ def public_tasks(
     rows = serialize_tasks(db, tasks)
     for row in rows:
         row.created_in_instance_id = None
+        # Agent runs belong to the owner's machines: their state and reasons
+        # (which can name a computer) are not part of a shared board.
+        row.dispatch = None
+        row.assigned_by = None
+        row.assigner_comment = None
+        row.assigner_comment_id = None
         if row.assignee is None:
             continue
         shown = _public_principal(row.assignee, grant.link)

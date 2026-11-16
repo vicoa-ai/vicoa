@@ -54,6 +54,13 @@ from .task_models import (
     TASK_STATUSES,
 )
 from .agent_profile_models import AgentProfile
+from .task_dispatch_models import (
+    TaskDispatch,
+    TASK_DISPATCH_FINAL_STATES,
+    TASK_DISPATCH_MODES,
+    TASK_DISPATCH_STATES,
+    TASK_DISPATCH_TRIGGERS,
+)
 from .automation_models import (
     Automation,
     AutomationPosition,
@@ -122,6 +129,11 @@ __all__ = [
     "session_actor",
     "set_session_actor",
     "AgentProfile",
+    "TaskDispatch",
+    "TASK_DISPATCH_FINAL_STATES",
+    "TASK_DISPATCH_MODES",
+    "TASK_DISPATCH_STATES",
+    "TASK_DISPATCH_TRIGGERS",
     "Automation",
     "AutomationPosition",
     "AutomationRun",

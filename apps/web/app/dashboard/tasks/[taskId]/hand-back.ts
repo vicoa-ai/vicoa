@@ -1,5 +1,7 @@
-// "Reply and hand back" in the task peek panel: post the reply, then move the
-// task to In Review so whoever asked (usually an agent) sees it is their turn.
+// "Reply and hand back" in the task peek panel: post the reply, then hand the
+// task over so whoever asked sees it is their turn. For a task an agent assigned
+// to you that means assigning it back to that agent (which wakes it); otherwise
+// it moves the task to In Review (use-task-detail.ts picks).
 //
 // Two writes, so it can stop halfway. When the reply landed and the status
 // change didn't, the reply is already on the timeline; posting it again on the
@@ -26,7 +28,7 @@ export async function runHandBack<T>(
   posted: { current: string | null },
   steps: {
     postReply: (body: string) => Promise<void>;
-    moveToReview: () => Promise<T>;
+    handOver: () => Promise<T>;
   },
 ): Promise<T> {
   if (posted.current !== body) {
@@ -38,7 +40,7 @@ export async function runHandBack<T>(
     posted.current = body;
   }
   try {
-    const result = await steps.moveToReview();
+    const result = await steps.handOver();
     posted.current = null;
     return result;
   } catch (err) {

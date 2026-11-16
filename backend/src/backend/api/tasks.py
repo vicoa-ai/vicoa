@@ -31,7 +31,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
-from shared import access, project_icons, storage
+from shared import access, project_icons, storage, task_dispatch
 from shared.database.collab_models import Team
 from shared.database.models import User
 from shared.database.session import get_db
@@ -68,6 +68,9 @@ from ..models import (
     TaskLabelResponse,
     TaskPriorityLiteral,
     TaskResponse,
+    TaskRunTargetCandidate,
+    TaskRunTargetResponse,
+    TASK_RUN_FIELDS,
     TaskSessionResponse,
     TaskStatusLiteral,
     TransferProjectRequest,
@@ -719,18 +722,21 @@ def list_tasks_endpoint(
     task_priority: TaskPriorityLiteral | None = Query(default=None, alias="priority"),
     label_id: Annotated[list[UUID] | None, Query()] = None,
     created_in_instance_id: UUID | None = None,
+    assignee: str | None = Query(default=None, max_length=64),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[TaskResponse]:
     """Same filters as the agent-facing twin: ``unfiled`` selects No-project
-    tasks (exclusive with ``project_id``), ``label_id`` may repeat (AND), and
+    tasks (exclusive with ``project_id``), ``label_id`` may repeat (AND),
     ``created_in_instance_id`` keeps the tasks created in that session (the
-    session page's list)."""
+    session page's list), and ``assignee`` is ``me``, ``none`` or a
+    principal's id ("Assigned to me" is ``assignee=me``)."""
     if unfiled and project_id is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Pass either project_id or unfiled, not both",
         )
+    assignee_id, unassigned = _assignee_filter(assignee, current_user.id)
     tasks = task_queries.list_tasks(
         db,
         current_user.id,
@@ -741,8 +747,28 @@ def list_tasks_endpoint(
         unfiled=unfiled,
         label_ids=label_id,
         created_in_instance_id=created_in_instance_id,
+        assignee_id=assignee_id,
+        unassigned=unassigned,
     )
     return serialize_tasks(db, tasks)
+
+
+def _assignee_filter(value: str | None, user_id: UUID) -> tuple[UUID | None, bool]:
+    """``?assignee=`` → (assignee id, unassigned-only)."""
+    if value is None or not value.strip():
+        return None, False
+    value = value.strip().lower()
+    if value == "me":
+        return user_id, False
+    if value == "none":
+        return None, True
+    try:
+        return UUID(value), False
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="assignee must be me, none or an id",
+        ) from exc
 
 
 @router.post(
@@ -772,6 +798,7 @@ def create_task_endpoint(
             assignee_type=request.assignee_type,
             assignee_id=request.assignee_id,
             sharing=True,
+            run_options=request.run_options(),
         )
     except (
         ProjectNotFoundError,
@@ -808,6 +835,44 @@ def list_task_sessions_endpoint(
     return list_task_instances(db, current_user.id, task, related=related)
 
 
+@router.get("/tasks/{task_id}/run-target", response_model=TaskRunTargetResponse)
+def get_task_run_target_endpoint(
+    task_id: str,
+    agent_profile_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TaskRunTargetResponse:
+    """Where `agent_profile_id` would run this task if assigned now, and the
+    other computers it could run on — what the assign dialog shows.
+
+    Gated like the assignment it previews (`editor` on the task). Only the
+    caller's own runnable profile reveals anything: the machines listed are the
+    profile owner's, and anyone else's profile answers with a `problem`."""
+    task = _require_task(db, current_user.id, task_id, minimum="editor")
+    check = task_dispatch.check_can_start(db, agent_profile_id, current_user.id)
+    if check.profile is None:
+        return TaskRunTargetResponse(problem="agent not found")
+    if check.reason is not None:
+        return TaskRunTargetResponse(problem=check.reason)
+    placement = task_dispatch.resolve_placement(db, check.profile, task)
+    return TaskRunTargetResponse(
+        machine_id=placement.machine_id,
+        machine_name=placement.machine_name,
+        online=placement.online,
+        directory=placement.directory,
+        problem=placement.reason,
+        machines=[
+            TaskRunTargetCandidate(
+                machine_id=option.machine_id,
+                name=option.name,
+                online=option.online,
+                directory=option.directory,
+            )
+            for option in task_dispatch.machine_options(db, check.profile, task)
+        ],
+    )
+
+
 @router.patch("/tasks/{task_id}", response_model=TaskResponse)
 def update_task_endpoint(
     task_id: str,
@@ -815,11 +880,16 @@ def update_task_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TaskResponse:
-    fields = request.model_dump(exclude_unset=True)
+    fields = request.model_dump(exclude_unset=True, exclude=set(TASK_RUN_FIELDS))
     existing = _require_task(db, current_user.id, task_id)
     try:
         task = task_queries.update_task(
-            db, current_user.id, existing.id, fields, sharing=True
+            db,
+            current_user.id,
+            existing.id,
+            fields,
+            sharing=True,
+            run_options=request.run_options(),
         )
     except (
         ProjectNotFoundError,

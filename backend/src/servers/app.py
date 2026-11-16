@@ -46,7 +46,7 @@ from servers.api.media import media_router
 from servers.api.ws_handler import ws_router
 from servers.db_disconnect import on_db_disconnect
 from servers.presence import LeaseFlusher, presence
-from servers.scheduler import AutomationScheduler
+from servers.scheduler import AutomationScheduler, TaskDispatcher
 from shared.pg_listener import start_hub, stop_hub
 
 
@@ -183,6 +183,10 @@ async def lifespan(app: FastAPI):
         # daemon's rpc_router). Started after the hub, torn down before it.
         scheduler = AutomationScheduler()
         await scheduler.start()
+        # Task dispatch sweep — hands assigned/commented tasks to agent
+        # profiles over the same daemon RPC (plans/todos/task-assignment-agents.md).
+        task_dispatcher = TaskDispatcher()
+        await task_dispatcher.start()
         # Heartbeat ticks land in the in-memory presence registry; this task
         # renews their `last_heartbeat_at` leases in one batched UPDATE per
         # interval instead of one transaction per tick (servers/presence.py).
@@ -193,6 +197,7 @@ async def lifespan(app: FastAPI):
         finally:
             logger.info("Shutting down unified server")
             await lease_flusher.stop()
+            await task_dispatcher.stop()
             await scheduler.stop()
             await stop_hub()
 

@@ -20,10 +20,11 @@
  */
 
 import { useMemo, useState } from 'react';
-import { Loader2, Trash2, X } from 'lucide-react';
+import { Layers, Loader2, Trash2, X } from 'lucide-react';
 
 import { AvatarEditor } from '@/components/dashboard/avatar-editor';
 import { SessionConfigEditor } from '@/components/dashboard/session-config-editor';
+import { ChipDropdown, TickItem } from '@/components/dashboard/session-config-dropdown';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -64,6 +65,10 @@ function toSessionConfig(profile: AgentProfile, catalog: AgentCatalog): SessionC
 }
 
 const PERSONAL_OWNER = '__personal__';
+// Task dispatch's per-agent cap (plans/todos/task-assignment-agents.md, D7):
+// how many tasks assigned to this agent it works on at once. The API takes 1-5.
+const DEFAULT_MAX_CONCURRENT = 2;
+const MAX_CONCURRENT_CHOICES = [1, 2, 3, 4, 5] as const;
 
 export function AgentDetailPanel({
   api,
@@ -89,6 +94,7 @@ export function AgentDetailPanel({
   const [systemPrompt, setSystemPrompt] = useState(profile.system_prompt ?? '');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const maxConcurrent = profile.max_concurrent_sessions ?? DEFAULT_MAX_CONCURRENT;
 
   const config = useMemo(() => toSessionConfig(profile, catalog), [profile, catalog]);
 
@@ -202,8 +208,9 @@ export function AgentDetailPanel({
         </div>
 
         <FieldGroup title="Configuration">
-          {/* The editor brings its own flex-wrap row of chips. */}
-          <div className="px-2 py-2">
+          {/* The editor brings its own flex-wrap row of chips; the task cap
+              joins that row as one more chip. */}
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5 px-2 py-2">
             <SessionConfigEditor
               value={config}
               catalog={catalog}
@@ -215,6 +222,38 @@ export function AgentDetailPanel({
                 })
               }
             />
+            <ChipDropdown
+              title="Task sessions at once"
+              disabled={!editable}
+              side="bottom"
+              contentClassName="w-56"
+              chip={
+                <>
+                  <Layers className="size-3 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 truncate">{maxConcurrent} at once</span>
+                </>
+              }
+            >
+              {(close) => (
+                <>
+                  <p className="px-3 pb-1 pt-1.5 text-[11px] text-muted-foreground">
+                    Tasks it works on at the same time. The rest wait their turn.
+                  </p>
+                  {MAX_CONCURRENT_CHOICES.map((n) => (
+                    <TickItem
+                      key={n}
+                      label={n === 1 ? '1 task at once' : `${n} tasks at once`}
+                      isSelected={n === maxConcurrent}
+                      isPending={false}
+                      onClick={() => {
+                        close();
+                        if (n !== maxConcurrent) void save({ max_concurrent_sessions: n });
+                      }}
+                    />
+                  ))}
+                </>
+              )}
+            </ChipDropdown>
           </div>
         </FieldGroup>
 

@@ -1902,11 +1902,33 @@ Examples:
             "(repeatable: every --label must match)"
         ),
     )
+    task_ls.add_argument(
+        "--assignee",
+        metavar="WHO",
+        help="Only tasks assigned to `me`, `none`, an agent's name, or an id",
+    )
 
     task_get = task_sub.add_parser(
         "get", parents=[task_common], help="Show one task's full details"
     )
     task_get.add_argument("task_id", help="Task identifier (VIC-42) or full UUID")
+
+    def _add_assignee_args(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--assignee",
+            metavar="WHO",
+            help=(
+                "Assign to `me`, `self` (this session's agent), `none`, an agent "
+                "by name (`vicoa agent ls`), or an id. An agent starts on the task "
+                "right away unless --no-start"
+            ),
+        )
+        parser.add_argument(
+            "--no-start",
+            dest="no_start",
+            action="store_true",
+            help="With --assignee <agent>: assign only, don't start a run",
+        )
 
     task_create = task_sub.add_parser(
         "create", parents=[task_common], help="Create a task"
@@ -1943,6 +1965,7 @@ Examples:
     task_create.add_argument(
         "--due", metavar="ISO8601", help="Due date, e.g. 2026-08-01T17:00:00Z"
     )
+    _add_assignee_args(task_create)
 
     task_update = task_sub.add_parser(
         "update",
@@ -1994,6 +2017,7 @@ Examples:
     )
     task_update.add_argument("--start", metavar="ISO8601", help="New start date")
     task_update.add_argument("--due", metavar="ISO8601", help="New due date")
+    _add_assignee_args(task_update)
 
     task_comments = task_sub.add_parser(
         "comments",

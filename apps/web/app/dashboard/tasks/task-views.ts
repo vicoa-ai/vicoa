@@ -240,6 +240,45 @@ export function taskMatchesLabels(task: TaskResponse, active: Set<string>): bool
   return active.size === 0 || task.labels.some((label) => active.has(label.id));
 }
 
+/**
+ * Assignee filter values: `ASSIGNEE_ME` (whoever is signed in, so a saved
+ * "Assigned to me" view follows the account rather than an id),
+ * `ASSIGNEE_NONE` (unassigned), or an agent profile id.
+ */
+export const ASSIGNEE_ME = 'me';
+export const ASSIGNEE_NONE = 'none';
+
+/**
+ * The view's assignee filter narrowed to values that still mean something: an
+ * agent deleted or archived after it was picked would otherwise leave the view
+ * matching nothing, with no row in the menu to unpick.
+ */
+export function activeAssigneeFilter(
+  assigneeFilter: string[],
+  agentIds: readonly string[],
+): Set<string> {
+  const known = new Set<string>([ASSIGNEE_ME, ASSIGNEE_NONE, ...agentIds]);
+  return new Set(assigneeFilter.filter((value) => known.has(value)));
+}
+
+/**
+ * A task passes when its assignee is any of the active values (none active =
+ * all). `viewerId` is null until the signed-in user is known; "Me" matches
+ * nothing until then rather than everything.
+ */
+export function taskMatchesAssignee(
+  task: Pick<TaskResponse, 'assignee_type' | 'assignee_id'>,
+  active: Set<string>,
+  viewerId: string | null,
+): boolean {
+  if (active.size === 0) return true;
+  if (!task.assignee_id) return active.has(ASSIGNEE_NONE);
+  if (task.assignee_type === 'user') {
+    return active.has(ASSIGNEE_ME) && viewerId !== null && task.assignee_id === viewerId;
+  }
+  return task.assignee_type === 'agent' && active.has(task.assignee_id);
+}
+
 export interface TaskView {
   id: string;
   name: string;
@@ -248,6 +287,9 @@ export interface TaskView {
   projectFilter: string;
   /** Label ids; a task shows when it has any of them. Empty = no label filter. */
   labelFilter: string[];
+  /** ASSIGNEE_ME / ASSIGNEE_NONE / agent profile ids; a task shows when its
+   *  assignee is any of them. Empty = no assignee filter. */
+  assigneeFilter: string[];
   /** When false, sub-tasks (tasks with a parent) are hidden — parents only. */
   showSubTasks: boolean;
   /** Which optional properties render on rows/cards. */
@@ -281,6 +323,7 @@ export function defaultView(): TaskView {
     mode: 'board',
     projectFilter: 'all',
     labelFilter: [],
+    assigneeFilter: [],
     showSubTasks: true,
     properties: { ...DEFAULT_TASK_PROPERTIES },
     sortBy: DEFAULT_TASK_SORT,
@@ -300,6 +343,9 @@ function normalizeView(raw: Partial<TaskView> | null | undefined): TaskView | nu
     projectFilter: typeof raw.projectFilter === 'string' ? raw.projectFilter : 'all',
     labelFilter: Array.isArray(raw.labelFilter)
       ? raw.labelFilter.filter((id): id is string => typeof id === 'string')
+      : [],
+    assigneeFilter: Array.isArray(raw.assigneeFilter)
+      ? raw.assigneeFilter.filter((id): id is string => typeof id === 'string')
       : [],
     showSubTasks: raw.showSubTasks !== false,
     // Merge over defaults so a property added in a newer build inherits `true`
@@ -341,6 +387,7 @@ export function cloneView(source: TaskView, name: string): TaskView {
     id: newId(),
     name,
     labelFilter: [...source.labelFilter],
+    assigneeFilter: [...source.assigneeFilter],
     properties: { ...source.properties },
     collapsed: [...source.collapsed],
   };

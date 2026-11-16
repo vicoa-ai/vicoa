@@ -34,6 +34,9 @@ class _MainTabsWidgetState extends State<MainTabsWidget> {
   void initState() {
     super.initState();
     MainTabsController.instance.requestedTab.addListener(_onTabRequested);
+    // A request made before the shell existed: a push notification tapped
+    // from a cold start routes here and asks for a tab in the same breath.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onTabRequested());
   }
 
   @override
@@ -47,9 +50,10 @@ class _MainTabsWidgetState extends State<MainTabsWidget> {
   /// build-on-first-visit behavior intact.
   void _onTabRequested() {
     final requested = MainTabsController.instance.requestedTab.value;
-    if (!mounted || requested < 0 || requested > 2 || requested == _index) {
-      return;
-    }
+    if (!mounted || requested < 0 || requested > 2) return;
+    // Consumed: a later rebuild of the shell must not replay an old request.
+    MainTabsController.instance.requestedTab.value = -1;
+    if (requested == _index) return;
     setState(() {
       _built.add(requested);
       _index = requested;

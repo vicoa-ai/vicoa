@@ -24,7 +24,8 @@ class MainTabsController {
   static const int tasksTab = 1;
   static const int automationsTab = 2;
 
-  /// Last requested tab index; -1 means "no request yet".
+  /// Pending tab request; -1 means none. [MainTabsWidget] resets it once
+  /// honored, including a request made before the shell was built.
   final ValueNotifier<int> requestedTab = ValueNotifier<int>(-1);
 
   /// Item to open once its tab is ready; null when nothing is pending. The

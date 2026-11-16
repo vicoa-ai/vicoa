@@ -31,12 +31,14 @@ import {
   dateOnlyToLocalDate,
 } from '@/components/dashboard/task-ui';
 import { cn } from '@/lib/utils';
+import { TaskDispatchChip } from '@/components/dashboard/task-dispatch-chip';
 import { CommentComposer } from './comment-composer';
 import { EditableDescription, EditableTitle } from './inline-fields';
 import { ParentTaskLink, SubTasksSection } from './sub-tasks';
 import { CreatedInSession, ReactionRow, TaskTimeline } from './task-timeline';
 import { TaskSessionList } from './task-sessions';
-import type { TaskDetailModel } from './use-task-detail';
+import { composerWake, type TaskDetailModel } from './use-task-detail';
+import { isClosedStatus } from '../task-views';
 
 const HEADER_ACTION =
   'inline-flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground';
@@ -90,6 +92,8 @@ export function TaskDetailPanel({
     toggleReaction,
     addSubTask,
     setSubTaskStatus,
+    agentProfiles,
+    handBackTo,
   } = model;
   const project = projects.find((p) => p.id === task.project_id);
 
@@ -175,6 +179,8 @@ export function TaskDetailPanel({
             />
           )}
         </fieldset>
+        {/* Outside the fieldset: any viewer may open the agent's session. */}
+        <TaskDispatchChip dispatch={task.dispatch} onOpenSession={onOpenSession} />
 
         <EditableDescription
           key={task.id}
@@ -222,6 +228,8 @@ export function TaskDetailPanel({
 
       <div className="space-y-3 border-t pt-4">
         <TaskTimeline
+          composerAgents={agentProfiles}
+          taskClosed={isClosedStatus(task.status)}
           comments={comments}
           activity={activity}
           sessions={sessions}
@@ -242,9 +250,18 @@ export function TaskDetailPanel({
         {canComment ? (
           <CommentComposer
             onSubmit={(body) => postComment(body)}
-            // Handing back moves the task's status, an editor's write.
+            agents={agentProfiles}
+            wake={composerWake(task)}
+            // Handing back moves the task's status or assignee, an editor's write.
             secondaryAction={
-              canEdit ? { label: 'Reply and hand back', onSubmit: onHandBack } : undefined
+              canEdit
+                ? {
+                    label: handBackTo
+                      ? `Reply and hand back to ${handBackTo.agentName}`
+                      : 'Reply and hand back',
+                    onSubmit: onHandBack,
+                  }
+                : undefined
             }
           />
         ) : (

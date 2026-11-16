@@ -23,6 +23,7 @@ from shared.database.enums import (
     InstanceAccessLevel,
 )
 from shared.database.liveness import LiveState
+from shared.task_dispatch import RunOptions
 
 # ============================================================================
 # Message Models
@@ -991,10 +992,78 @@ class TaskResponse(BaseModel):
     # one. Just the id: whether the viewer may see that session's title is the
     # timeline's call (`TaskTimelineResponse.sessions`), not every list's.
     created_in_instance_id: UUID | None = None
+    # When and by whom the current assignee was set (the latest `assigned`
+    # activity row) — what "Assigned to me" sorts and labels by.
+    assigned_at: datetime | None = None
+    assigned_by: PrincipalResponse | None = None
+    # For a task assigned to a person: the assigner's latest comment since it
+    # assigned it — usually the question it needs answered — trimmed for a
+    # list row, with its id so a client can reply in that thread.
+    assigner_comment: str | None = None
+    assigner_comment_id: UUID | None = None
+    # The task's newest dispatch to an agent: its chip ("working", "queued",
+    # "failed: …"). None when no agent was ever asked to act on it.
+    dispatch: "TaskDispatchSummary | None" = None
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+TaskDispatchStateLiteral = Literal[
+    "queued", "dispatching", "delivered", "resumed", "started", "failed", "cancelled"
+]
+
+
+class TaskDispatchSummary(BaseModel):
+    """One request for an agent to act on a task (`task_dispatches`), as the
+    task shows it. `session_status` is the delivered-into session's status, so
+    a client can tell "working" (ACTIVE) from "waiting for you"."""
+
+    id: UUID
+    agent_profile_id: UUID
+    mode: Literal["ownership", "reply"]
+    trigger: Literal["assigned", "unblocked", "mentioned", "replied", "commented"]
+    state: TaskDispatchStateLiteral
+    detail: str | None = None
+    agent_instance_id: UUID | None = None
+    session_status: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TaskRunTarget(BaseModel):
+    """Where a new task session starts, as picked in the assign dialog.
+    Omitted fields are resolved at dispatch time."""
+
+    machine_id: UUID | None = None
+    directory: str | None = Field(default=None, max_length=4096)
+    worktree: Literal["new", "none"] | None = None
+
+
+class TaskRunFields(BaseModel):
+    """Not task fields: how an assignment to an agent starts its run.
+
+    `start=False` is "Assign only" — the agent becomes the assignee and nothing
+    runs. Ignored unless the request moves
+    the assignee to an agent profile."""
+
+    start: bool = True
+    run_target: TaskRunTarget | None = None
+
+    def run_options(self) -> RunOptions:
+        target = self.run_target
+        return RunOptions(
+            start=self.start,
+            machine_id=target.machine_id if target else None,
+            directory=(target.directory or "").strip() or None if target else None,
+            worktree=target.worktree if target else None,
+        )
+
+
+TASK_RUN_FIELDS = frozenset({"start", "run_target"})
 
 
 class TaskAssigneeFields(BaseModel):
@@ -1012,7 +1081,7 @@ class TaskAssigneeFields(BaseModel):
         return self
 
 
-class CreateTaskRequest(TaskAssigneeFields):
+class CreateTaskRequest(TaskAssigneeFields, TaskRunFields):
     title: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
     # Omitted → No project (unfiled: owned by the caller, no identifier).
@@ -1026,7 +1095,7 @@ class CreateTaskRequest(TaskAssigneeFields):
     due_date: datetime | None = None
 
 
-class UpdateTaskRequest(TaskAssigneeFields):
+class UpdateTaskRequest(TaskAssigneeFields, TaskRunFields):
     """PATCH body — only explicitly sent fields are applied, so date fields
     can be cleared by sending null."""
 
@@ -1052,14 +1121,44 @@ class CreateAgentTaskRequest(CreateTaskRequest):
     """
 
     agent_instance_id: UUID | None = None
+    # `vicoa task create --assignee …`: see `AgentAssigneeShorthand`.
+    assignee: str | None = Field(default=None, max_length=64)
 
 
 class UpdateAgentTaskRequest(UpdateTaskRequest):
     """The agent-facing PATCH body plus the calling session, which the
     activity rows the change generates carry (`direct: true`) so the task page
-    can say "via <session>". Not a task field: it is never applied."""
+    can say "via <session>". Not a task field: it is never applied.
+
+    `assignee` is the CLI's shorthand for the pair: ``me`` (the key's user),
+    ``self`` (the calling session's agent profile), ``none``, an agent
+    profile's name, or an id. Resolved server-side, so the CLI never needs to
+    know a user id; it cannot be combined with ``assignee_type``/``assignee_id``.
+    """
 
     agent_instance_id: UUID | None = None
+    assignee: str | None = Field(default=None, max_length=64)
+
+
+class TaskRunTargetCandidate(BaseModel):
+    machine_id: UUID
+    name: str
+    online: bool
+    # This task's project folder on that machine, if it has one.
+    directory: str | None = None
+
+
+class TaskRunTargetResponse(BaseModel):
+    """What the assign dialog shows before an agent is started: where it would
+    run, and the alternatives."""
+
+    machine_id: UUID | None = None
+    machine_name: str | None = None
+    online: bool = False
+    directory: str | None = None
+    # Why it can't start as things stand (no computer, no folder, a team agent).
+    problem: str | None = None
+    machines: list[TaskRunTargetCandidate] = Field(default_factory=list)
 
 
 class TaskLabelResponse(BaseModel):

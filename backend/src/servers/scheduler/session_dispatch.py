@@ -10,9 +10,11 @@ run delivers its prompt into that session:
   a launch prompt as the session's next user message, resumed or not
 - the daemon finds the agent running after all (`already_running`) → post it
 
-Each message carries `automation_id` in its metadata, so a run can tell that
-this automation's previous prompt is still waiting in the queue and skip
-rather than stack another behind it.
+Each message carries a marker in its metadata (`automation_id` for an
+automation, `task_id` for a task dispatch), so a delivery can tell that the
+same source's previous prompt is still waiting in the queue and skip rather
+than stack another behind it. `deliver_to_session` is the generic form; the
+task dispatcher (`task_dispatcher.py`) uses it too.
 """
 
 import asyncio
@@ -82,7 +84,11 @@ def _load_target_blocking(user_id: UUID, instance_id: UUID) -> _Target | None:
 
 
 def _post_prompt_blocking(
-    user_id: UUID, automation_id: UUID, instance_id: UUID, prompt: str
+    user_id: UUID,
+    instance_id: UUID,
+    prompt: str,
+    marker: tuple[str, str],
+    extra_metadata: dict | None = None,
 ) -> DispatchResult:
     """Post the prompt as the author's message, the way the composer does
     (`create_user_message_endpoint`), and fan it out to the session's agent and
@@ -106,7 +112,7 @@ def _post_prompt_blocking(
             .filter(
                 Message.agent_instance_id == instance_id,
                 Message.sender_type == SenderType.USER,
-                Message.message_metadata["automation_id"].astext == str(automation_id),
+                Message.message_metadata[marker[0]].astext == marker[1],
                 Message.message_metadata[("queue", "status")].astext.in_(
                     _WAITING_QUEUE_STATES
                 ),
@@ -120,7 +126,7 @@ def _post_prompt_blocking(
                 detail="previous run still queued",
             )
 
-        metadata: dict = {"automation_id": str(automation_id)}
+        metadata: dict = {**(extra_metadata or {}), marker[0]: marker[1]}
         if instance.status == AgentStatus.ACTIVE:
             # Mid-turn: it waits its turn, and the composer shows it queued.
             metadata["queue"] = {"status": "queued"}
@@ -150,7 +156,7 @@ def _post_prompt_blocking(
             lambda: connection_manager.broadcast_update(str(user_id), payload, rooms),
         )
         db.commit()
-    return DispatchResult(status="fired", agent_instance_id=linked)
+    return DispatchResult(status="fired", agent_instance_id=linked, via="message")
 
 
 async def dispatch_to_session(
@@ -164,13 +170,47 @@ async def dispatch_to_session(
     - agent stopped → resumed with the prompt → ``fired``
     - machine offline → ``missed_offline``; daemon error → ``failed``
     """
+    return await deliver_to_session(
+        user_id=user_id,
+        instance_id=instance_id,
+        prompt=prompt,
+        marker=("automation_id", str(automation_id)),
+    )
+
+
+async def deliver_to_session(
+    *,
+    user_id: UUID,
+    instance_id: UUID,
+    prompt: str,
+    marker: tuple[str, str],
+    extra_metadata: dict | None = None,
+    message_prompt: str | None = None,
+    system_prompt: str | None = None,
+) -> DispatchResult:
+    """Deliver `prompt` into an existing session, resuming it when stopped.
+
+    `marker` is the (metadata key, value) the posted message carries; a message
+    with the same marker still waiting in the queue means skip. `via` on the
+    result says how it went in: ``message`` or ``resume``.
+
+    A resume relaunches the agent, so it carries `system_prompt` (the
+    instructions the session runs with); a message into a running agent can't
+    change those, so `message_prompt`, when given, is what gets posted instead.
+    """
+    posted = message_prompt if message_prompt is not None else prompt
     target = await asyncio.to_thread(_load_target_blocking, user_id, instance_id)
     if target is None:
         return DispatchResult(status="failed", detail="session deleted", disable=True)
 
     if connection_manager.is_session_connected(str(instance_id)):
         return await asyncio.to_thread(
-            _post_prompt_blocking, user_id, automation_id, instance_id, prompt
+            _post_prompt_blocking,
+            user_id,
+            instance_id,
+            posted,
+            marker,
+            extra_metadata,
         )
 
     if target.machine_id is None or not target.directory:
@@ -187,7 +227,7 @@ async def dispatch_to_session(
         "directory": target.directory,
         "agent": target.session_config["agent"],
         "resume": resume,
-        "metadata": to_spawn_metadata(target.session_config, prompt),
+        "metadata": to_spawn_metadata(target.session_config, prompt, system_prompt),
     }
     try:
         result = await rpc_router.call(
@@ -210,6 +250,13 @@ async def dispatch_to_session(
         # The daemon reopened a live agent instead of launching one, and a
         # reopen ignores the launch prompt: deliver it as a message instead.
         return await asyncio.to_thread(
-            _post_prompt_blocking, user_id, automation_id, instance_id, prompt
+            _post_prompt_blocking,
+            user_id,
+            instance_id,
+            posted,
+            marker,
+            extra_metadata,
         )
-    return DispatchResult(status="fired", agent_instance_id=str(instance_id))
+    return DispatchResult(
+        status="fired", agent_instance_id=str(instance_id), via="resume"
+    )

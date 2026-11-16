@@ -56,6 +56,8 @@ from shared.database import (
 from shared.database.agent_profile_models import AgentProfile
 from shared.database.enums import AgentStatus
 from shared.database.project_matching import backfill_project_id_for_directory
+from shared import task_dispatch
+from shared.database.actor import session_actor
 from shared.database.task_identity import (
     allocate_task_number,
     ensure_project_key_committed,
@@ -955,8 +957,13 @@ def list_tasks(
     unfiled: bool = False,
     label_ids: Sequence[UUID] | None = None,
     created_in_instance_id: UUID | None = None,
+    assignee_id: UUID | None = None,
+    unassigned: bool = False,
 ) -> list[Task]:
     """Visible tasks ordered by position (board/list order), then age.
+
+    `assignee_id` keeps tasks assigned to that principal (a user or an agent
+    profile — the ids never collide); `unassigned` keeps tasks with nobody.
 
     `unfiled` keeps only No-project tasks — the one set no `project_id` value
     can select, since NULL is the filter's "any project" too. `label_ids` is a
@@ -982,6 +989,10 @@ def list_tasks(
         query = query.filter(Task.labels.any(TaskLabel.id == label_id))
     if created_in_instance_id is not None:
         query = query.filter(Task.created_in_instance_id == created_in_instance_id)
+    if unassigned:
+        query = query.filter(Task.assignee_id.is_(None))
+    elif assignee_id is not None:
+        query = query.filter(Task.assignee_id == assignee_id)
     return query.order_by(Task.position.asc(), Task.created_at.asc()).all()
 
 
@@ -1004,6 +1015,7 @@ def create_task(
     sharing: bool = False,
     creator_type: str = "user",
     created_in_instance_id: UUID | None = None,
+    run_options: task_dispatch.RunOptions | None = None,
 ) -> Task:
     """Create a task; without an explicit project it is unfiled (No project,
     owned by the caller, no identifier). Creating on someone else's project
@@ -1064,8 +1076,40 @@ def create_task(
     if labels:
         task.labels = labels
     db.add(task)
+    if assignee_id is not None:
+        db.flush()  # the dispatch row needs the task's id
+        _after_assignee_change(db, task, None, None, run_options)
     db.commit()
     return task
+
+
+def _after_assignee_change(
+    db: Session,
+    task: Task,
+    old_type: str | None,
+    old_id: UUID | None,
+    run_options: task_dispatch.RunOptions | None,
+) -> None:
+    """The assignee moved: hand it to an agent (plans/todos/task-assignment-
+    agents.md) or tell the person it is now theirs."""
+    task_dispatch.on_assignee_changed(
+        db, task, old_type=old_type, old_id=old_id, options=run_options
+    )
+    if task.assignee_type != "user" or task.assignee_id is None:
+        return
+    if task.assignee_type == old_type and task.assignee_id == old_id:
+        return
+    actor = session_actor(db)
+    # Your own hand needs no push; an agent acting through your key does.
+    if (
+        task_dispatch.is_person(actor)
+        and actor is not None
+        and actor.id == task.assignee_id
+    ):
+        return
+    from servers.shared.task_notifications import notify_task_assigned_after_commit
+
+    notify_task_assigned_after_commit(db, task, assignee_user_id=task.assignee_id)
 
 
 def get_task(
@@ -1153,13 +1197,19 @@ def update_task(
     fields: dict,
     *,
     sharing: bool = False,
+    run_options: task_dispatch.RunOptions | None = None,
 ) -> Task | None:
     """Apply the explicitly-sent PATCH fields. None when not visible; editing
-    needs `editor` on the task's project (and on the target project of a move)."""
+    needs `editor` on the task's project (and on the target project of a move).
+
+    `run_options` shape the run an assignment to an agent starts (the assign
+    dialog's "Assign only", note and target); they are not task fields."""
     task = get_task(db, user_id, task_id, sharing=sharing)
     if task is None:
         return None
     project = _require_task_editor(db, user_id, task, sharing=sharing)
+    old_assignee = (task.assignee_type, task.assignee_id)
+    old_status = task.status
 
     if "project_id" in fields:
         project_id = fields.pop("project_id")
@@ -1256,6 +1306,10 @@ def update_task(
     ):
         if key in fields:
             setattr(task, key, fields[key])
+    if task.status != old_status:
+        task_dispatch.on_status_changed(db, task, old_status=old_status)
+    if (task.assignee_type, task.assignee_id) != old_assignee:
+        _after_assignee_change(db, task, old_assignee[0], old_assignee[1], run_options)
     db.commit()
     return task
 

@@ -64,6 +64,9 @@ export interface AgentProfile {
   system_prompt: string | null;
   default_machine_id: string | null;
   default_project_id: string | null;
+  /** How many of this agent's task sessions may be mid-turn at once; the rest
+   *  of its task runs queue. Absent on older backends (treat as 2). */
+  max_concurrent_sessions?: number;
   position: number;
   is_archived: boolean;
   created_at: string;
@@ -87,6 +90,8 @@ export interface AgentProfileInput {
   system_prompt?: string | null;
   default_machine_id?: string | null;
   default_project_id?: string | null;
+  /** 1–20. */
+  max_concurrent_sessions?: number;
   position?: number;
   is_archived?: boolean;
   /** Create in (or move to) a team's list; `null` moves it back to yours. */
@@ -811,8 +816,78 @@ export interface TaskResponse {
    * Only an id: the timeline's `sessions` names it when the viewer may open it.
    */
   created_in_instance_id: string | null;
+  /** When and by whom the current assignee was set (the latest `assigned`
+   *  activity). What "Assigned to me" sorts and labels by. */
+  assigned_at?: string | null;
+  assigned_by?: PrincipalResponse | null;
+  /** For a task assigned to a person: the assigner's latest comment since it
+   *  assigned it (usually its question), trimmed, and that comment's id. */
+  assigner_comment?: string | null;
+  assigner_comment_id?: string | null;
+  /** The task's newest request for an agent to act on it. */
+  dispatch?: TaskDispatchSummary | null;
   created_at: string;
   updated_at: string;
+}
+
+export type TaskDispatchState =
+  | 'queued'
+  | 'dispatching'
+  | 'delivered'
+  | 'resumed'
+  | 'started'
+  | 'failed'
+  | 'cancelled';
+
+/**
+ * One request for an agent profile to act on a task (assigned it, or a person's
+ * comment is for it). `session_status` is the status of the session it went
+ * into, so `ACTIVE` reads as "working".
+ */
+export interface TaskDispatchSummary {
+  id: string;
+  agent_profile_id: string;
+  mode: 'ownership' | 'reply';
+  trigger: 'assigned' | 'unblocked' | 'mentioned' | 'replied' | 'commented';
+  state: TaskDispatchState;
+  detail: string | null;
+  agent_instance_id: string | null;
+  session_status: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Where a new task session starts, as picked in the assign dialog. */
+export interface TaskRunTarget {
+  machine_id?: string | null;
+  directory?: string | null;
+  worktree?: 'new' | 'none' | null;
+}
+
+/** Not task fields: how an assignment to an agent starts its run. */
+export interface TaskRunFields {
+  /** false = "Assign only". Default true. */
+  start?: boolean;
+  run_target?: TaskRunTarget | null;
+}
+
+export interface TaskRunTargetCandidate {
+  machine_id: string;
+  name: string;
+  online: boolean;
+  /** This task's project folder on that machine, if it has one. */
+  directory: string | null;
+}
+
+/** `GET /tasks/{id}/run-target`: where an agent would run this task now. */
+export interface TaskRunTargetResponse {
+  machine_id: string | null;
+  machine_name: string | null;
+  online: boolean;
+  directory: string | null;
+  /** Why it can't start as things stand. */
+  problem: string | null;
+  machines: TaskRunTargetCandidate[];
 }
 
 export interface TaskReactionSummary {
@@ -910,7 +985,7 @@ export interface UpdateProjectRequest {
   key?: string;
 }
 
-export interface CreateTaskRequest {
+export interface CreateTaskRequest extends TaskRunFields {
   title: string;
   description?: string | null;
   /** Omitted → No project (unfiled: no identifier). */
@@ -924,7 +999,7 @@ export interface CreateTaskRequest {
   due_date?: string | null;
 }
 
-export interface UpdateTaskRequest {
+export interface UpdateTaskRequest extends TaskRunFields {
   title?: string;
   description?: string | null;
   project_id?: string | null;
@@ -2227,12 +2302,19 @@ class BackendAPI {
   }
 
   async listTasks(
-    options: { projectId?: string; status?: TaskStatus; createdInInstanceId?: string } = {},
+    options: {
+      projectId?: string;
+      status?: TaskStatus;
+      createdInInstanceId?: string;
+      /** `me`, `none`, or a principal's id. */
+      assignee?: string;
+    } = {},
   ): Promise<TaskResponse[]> {
     const params = new URLSearchParams();
     if (options.projectId) params.append('project_id', options.projectId);
     if (options.status) params.append('status', options.status);
     if (options.createdInInstanceId) params.append('created_in_instance_id', options.createdInInstanceId);
+    if (options.assignee) params.append('assignee', options.assignee);
     const endpoint = `/api/v1/tasks${params.toString() ? `?${params.toString()}` : ''}`;
     return this.request<TaskResponse[]>(endpoint);
   }
@@ -2246,6 +2328,14 @@ class BackendAPI {
 
   async getTask(taskId: string): Promise<TaskResponse> {
     return this.request<TaskResponse>(`/api/v1/tasks/${taskId}`);
+  }
+
+  /** Where `agentProfileId` would run this task if assigned now (the assign dialog). */
+  async getTaskRunTarget(taskId: string, agentProfileId: string): Promise<TaskRunTargetResponse> {
+    const params = new URLSearchParams({ agent_profile_id: agentProfileId });
+    return this.request<TaskRunTargetResponse>(
+      `/api/v1/tasks/${taskId}/run-target?${params.toString()}`,
+    );
   }
 
   /**

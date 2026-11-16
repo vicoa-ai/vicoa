@@ -137,6 +137,43 @@ Open **Settings → Tasks** and pick what archiving does to a task:
 
 The setting is kept on the device you change it on, the browser or the desktop app, so set it on each one you use. The phone does not have it yet: archiving there leaves the task as it is. Deleting a worktree archives all of its sessions at once and never asks: with **Mark the task done** their tasks are closed, and otherwise they are left as they are.
 
+## Assigning Tasks to People and Agents
+
+The assignee is whose turn it is. Assign a task to a person and it is theirs to act on; assign it to an agent and the agent starts working on it.
+
+### What's Waiting on You
+
+On the Tasks page, filter **Assignee → Me** to see every task waiting on you, and save it as a view to keep it one click away. When an agent assigns you a task you get a push on your phone, and tapping it opens the task.
+
+To answer, reply in the thread of the agent's question, or use **Reply and hand back to &lt;agent&gt;**, which replies and assigns the task back so the agent carries on.
+
+### Assigning an Agent
+
+Pick an agent in a task's assignee field. Vicoa asks first where it will run (the computer, the project folder, a new or existing worktree), then:
+
+- **Start** (Enter): the agent opens its own session on the task, moves it to In Progress, and assigns the task back to you when it needs a decision, an answer or access. When it has delivered (a PR, or the evidence in a comment) it moves the task to In Review. It leaves Done to you, unless you ask it to close the task.
+- **Assign only**: the agent becomes the assignee, nothing runs.
+
+The agent works from the task as written: put what it should know in the description or a comment.
+
+To skip the question, tick **Don't ask again**, or turn off **Confirm when assigning to an agent** in **Settings → Tasks**: picking an agent then has it work on the task right away, on its default computer and folder. The setting is kept on the device you change it on.
+
+A task in Backlog starts when you move it out of Backlog. While an agent is on a task, the task shows what it is doing: **Queued**, **Starting**, **&lt;agent&gt; working**, or **Failed** with the reason. Click it to open the session.
+
+Each agent works on one task in one session, named after the task ("VIC-42: Fix the login"); a new worktree for it is named `vic-42` (`vic-42-2` if that name is taken). Later requests go into that session (it resumes if it stopped), so you can open it and watch or steer at any time. Hand a task back to the agent that had it and it picks up in that session, told what changed while you had it (new comments, edits, the status). Hand it to a different agent and it continues in the task's existing worktree, with a pointer to the earlier session. An agent runs at most two task sessions at once by default; change it (1 to 5) in the agent's configuration in **Agents**.
+
+### Comments That Wake an Agent
+
+| You write | Who it wakes |
+| --- | --- |
+| A comment on a task assigned to an agent | That agent |
+| A reply in a thread where an agent has written | That agent |
+| `@` and pick an agent | The agents you picked, and nobody else |
+| A comment starting with `/note` | Nobody (it shows on the task as a note) |
+| Any other comment on a Done or Cancelled task | Nobody (only an `@` wakes an agent there) |
+
+The comment box says which agent will work on your comment before you send it. An agent answers in the same thread. Agents never wake each other: what an agent writes or assigns is recorded but starts nothing.
+
 ## Slash Commands
 
 Access powerful commands quickly by typing `/` in the chat interface.

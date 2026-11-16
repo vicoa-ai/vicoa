@@ -35,6 +35,7 @@ from sqlalchemy import (
     Double,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     func,
@@ -134,6 +135,13 @@ class AgentProfile(Base):
 
     position: Mapped[float] = mapped_column(
         Double, default=0.0, server_default=text("0")
+    )
+    # How many of this agent's task sessions may be mid-turn at once; the rest of
+    # its task dispatches wait in the queue (plans/todos/task-assignment-agents.md
+    # D7). Counts only sessions working on a task, never ones started by hand.
+    # The API accepts 1-5.
+    max_concurrent_sessions: Mapped[int] = mapped_column(
+        Integer, default=2, server_default=text("2")
     )
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
 

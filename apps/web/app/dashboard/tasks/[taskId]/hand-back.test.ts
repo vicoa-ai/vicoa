@@ -11,7 +11,7 @@ function steps(over: { postFails?: boolean; moveFails?: boolean } = {}) {
     postReply: vi.fn(async (_body: string) => {
       if (over.postFails) throw new Error('post failed');
     }),
-    moveToReview: vi.fn(async (): Promise<Task> => {
+    handOver: vi.fn(async (): Promise<Task> => {
       if (over.moveFails) throw new Error('move failed');
       return inReview;
     }),
@@ -24,7 +24,7 @@ describe('runHandBack', () => {
     const s = steps();
     await expect(runHandBack('done, over to you', posted, s)).resolves.toBe(inReview);
     expect(s.postReply).toHaveBeenCalledWith('done, over to you');
-    expect(s.moveToReview).toHaveBeenCalledTimes(1);
+    expect(s.handOver).toHaveBeenCalledTimes(1);
     expect(posted.current).toBeNull();
   });
 
@@ -35,7 +35,7 @@ describe('runHandBack', () => {
     expect(err).toBeInstanceOf(HandBackError);
     expect((err as HandBackError).replyPosted).toBe(false);
     expect((err as HandBackError).reason).toBeInstanceOf(Error);
-    expect(s.moveToReview).not.toHaveBeenCalled();
+    expect(s.handOver).not.toHaveBeenCalled();
     expect(posted.current).toBeNull();
   });
 
@@ -55,7 +55,7 @@ describe('runHandBack', () => {
     const retry = steps();
     await expect(runHandBack('hi', posted, retry)).resolves.toBe(inReview);
     expect(retry.postReply).not.toHaveBeenCalled();
-    expect(retry.moveToReview).toHaveBeenCalledTimes(1);
+    expect(retry.handOver).toHaveBeenCalledTimes(1);
     expect(posted.current).toBeNull();
   });
 

@@ -9,6 +9,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '/custom_code/actions/index.dart' as actions;
 import '/flutter_flow/flutter_flow_util.dart';
 import '/index.dart';
+import '/pages/main_tabs/main_tabs_controller.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -440,6 +441,16 @@ class PushNotificationsHandler with WidgetsBindingObserver {
       case 'new_question':
         if (instanceId != null) {
           _openSessionFromNotification(instanceId);
+        }
+        break;
+      case 'task_assigned':
+        // Someone (usually an agent) handed this person a task: land on the
+        // Tasks tab with its detail open. The Tasks tab opens the pending id
+        // once its list has loaded, so a cold start works the same.
+        final String? taskId = data['taskId'] ?? data['task_id'];
+        context.go('/home');
+        if (taskId != null && taskId.isNotEmpty) {
+          MainTabsController.instance.showTask(taskId);
         }
         break;
       case 'credit_update':

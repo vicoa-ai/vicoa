@@ -32,12 +32,14 @@ import { TaskDetailSkeleton } from './task-detail-skeleton';
 import { TaskPropertyRail } from './task-property-rail';
 import { CreatedInSession, ReactionRow, TaskTimeline } from './task-timeline';
 import {
+  composerWake,
   type TaskDetailModel,
   type TaskReferenceData,
   useTaskDetail,
   useTaskReferenceData,
 } from './use-task-detail';
 import { StartSessionDialog } from '../start-session-dialog';
+import { isClosedStatus } from '../task-views';
 
 export interface TaskDetailProps {
   taskId: string;
@@ -137,14 +139,16 @@ function TaskDetailBody({
           // Once the reply is up, the retry only moves the status, so say so
           // rather than leave the kept draft looking unsent.
           description: posted
-            ? 'Your reply was posted. Try again to move the task to In Review.'
+            ? model.handBackTo
+              ? `Your reply was posted. Try again to assign it back to ${model.handBackTo.agentName}.`
+              : 'Your reply was posted. Try again to move the task to In Review.'
             : refusalReason(err instanceof HandBackError ? err.reason : err),
         });
         // Rejecting keeps the draft in the composer.
         throw err;
       }
     },
-    [replyAndHandBack],
+    [replyAndHandBack, model.handBackTo],
   );
 
   if (isLoading) return <TaskDetailSkeleton variant={variant} className={className} />;
@@ -232,6 +236,7 @@ function TaskDetailBody({
       onStartSession={startSession}
       onOpenSession={onOpenSession}
       onRequestDeleteComment={requestDeleteComment}
+      onHandBack={handBack}
     >
       {dialogs}
     </TaskDetailPage>
@@ -247,6 +252,7 @@ function TaskDetailPage({
   onStartSession,
   onOpenSession,
   onRequestDeleteComment,
+  onHandBack,
   children,
 }: {
   task: TaskResponse;
@@ -256,6 +262,8 @@ function TaskDetailPage({
   onStartSession: () => void;
   onOpenSession?: (sessionId: string) => void;
   onRequestDeleteComment: (commentId: string) => void;
+  /** "Reply and hand back to <agent>", offered when an agent assigned you the task. */
+  onHandBack?: (body: string) => Promise<void>;
   /** The dialogs. */
   children: React.ReactNode;
 }) {
@@ -282,6 +290,8 @@ function TaskDetailPage({
     toggleReaction,
     addSubTask,
     setSubTaskStatus,
+    agentProfiles,
+    handBackTo,
   } = model;
 
   return (
@@ -370,11 +380,23 @@ function TaskDetailPage({
               }
               onEditComment={canComment ? editComment : undefined}
               onDeleteComment={canComment ? onRequestDeleteComment : undefined}
+              composerAgents={agentProfiles}
+              taskClosed={isClosedStatus(task.status)}
             />
             {/* The bottom composer always starts a new thread; replying is
-                the affordance inside a thread. */}
+                the affordance inside a thread. A task an agent handed you
+                also offers handing it straight back. */}
             {canComment ? (
-              <CommentComposer onSubmit={(body) => postComment(body)} />
+              <CommentComposer
+                onSubmit={(body) => postComment(body)}
+                agents={agentProfiles}
+                wake={composerWake(task)}
+                secondaryAction={
+                  canEdit && handBackTo && onHandBack
+                    ? { label: `Reply and hand back to ${handBackTo.agentName}`, onSubmit: onHandBack }
+                    : undefined
+                }
+              />
             ) : (
               <p className="text-xs text-muted-foreground">
                 You can view this task. Commenting needs commenter access to its project.

@@ -50,6 +50,9 @@ confirm intent before running them:
   else the session does moves it: ending or archiving the session leaves the
   task as it is, so moving it on (`in_review`, `done`, `blocked`) is a
   `task update`.
+- `task update --assignee <agent>` **starts that agent on the task**, on the
+  user's computer, unless you pass `--no-start` (see "Assigning" below). From a
+  session started off an agent profile it only records the assignee.
 - `session share` — mints a **link that serves the session's transcript to
   anyone who has the URL**. Publishing a transcript is not reversible in the
   "nobody saw it" sense; confirm first, and pass `--audience authenticated` when
@@ -269,6 +272,39 @@ vicoa task update VIC-42 --add-label regression        # keeps existing labels
 
 vicoa task delete VIC-42 -y                    # -y skips the confirm prompt
 ```
+
+### Assigning
+
+The assignee is **whose turn it is**: a person assigned a task has to act on it;
+an agent assigned a task works on it.
+
+```bash
+vicoa task ls --assignee me                    # what's waiting on the user
+vicoa task update VIC-42 --assignee me         # hand it to the user
+vicoa task update VIC-42 --assignee reviewer   # start that agent on it
+vicoa task update VIC-42 --assignee reviewer --no-start   # record only
+vicoa task update VIC-42 --assignee self       # take it back (inside an agent's session)
+vicoa task update VIC-42 --assignee none
+```
+
+`--assignee` takes `me`, `self` (the agent profile of the session you run in),
+`none`, an agent's name (`vicoa agent ls`), or an id; `create` takes it too.
+
+- **Need the user?** Ask in one top-level comment, options first with your
+  recommendation, then `--assignee me`. They get a push, the task shows under
+  their Assignee filter, and their reply in that thread comes back to you.
+- **Assigning an agent starts it** (in its task session, on its default
+  computer or wherever the task's project lives) unless the task is in
+  `backlog` or you pass `--no-start`. Put what it should know in the task or a
+  comment. Handed back to the same agent, it continues its own session and is
+  told what changed meanwhile; a different agent continues in the task's
+  existing worktree. A person's comment on an agent's task, a
+  reply in a thread the agent wrote in, or an `@agent` mention from the web
+  wakes it too; a comment starting with `/note` wakes nobody.
+- **An agent never starts another agent.** Assignments and comments made from a
+  session started off an agent profile are recorded but start nothing.
+- `task get` shows the assignee, who assigned it and when, and the agent run's
+  state (`queued`, `working`, `failed: …`).
 
 `create` defaults to `status=backlog`, `priority=none`, and **No project** unless
 `--project` is given. `update` changes only the flags you pass. Moving a task

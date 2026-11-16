@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ASSIGNEE_ME,
+  ASSIGNEE_NONE,
   NO_PROJECT_FILTER,
+  activeAssigneeFilter,
   activeLabelFilter,
   capColumnIds,
   compareTasks,
   createProjectDefault,
   labelFilterOptions,
+  taskMatchesAssignee,
   taskMatchesLabels,
 } from './task-views';
 import type { TaskLabelResponse, TaskResponse, TaskStatus } from '@/lib/backend-api';
@@ -77,6 +81,39 @@ describe('taskMatchesLabels', () => {
     expect(taskMatchesLabels(task('t1', [docs]), active)).toBe(true);
     expect(taskMatchesLabels(task('t2', [ui]), active)).toBe(false);
     expect(taskMatchesLabels(task('t3', []), active)).toBe(false);
+  });
+});
+
+describe('activeAssigneeFilter', () => {
+  it('keeps me, unassigned and agents that still exist', () => {
+    const active = activeAssigneeFilter([ASSIGNEE_ME, ASSIGNEE_NONE, 'a1', 'gone'], ['a1']);
+    expect([...active].sort()).toEqual(['a1', ASSIGNEE_ME, ASSIGNEE_NONE].sort());
+  });
+});
+
+describe('taskMatchesAssignee', () => {
+  const assigned = (type: 'user' | 'agent' | null, id: string | null) => ({
+    assignee_type: type,
+    assignee_id: id,
+  });
+
+  it('passes everything with no filter', () => {
+    expect(taskMatchesAssignee(assigned(null, null), new Set(), 'me-id')).toBe(true);
+  });
+
+  it('matches me by the viewer id, and nothing before it is known', () => {
+    const me = new Set([ASSIGNEE_ME]);
+    expect(taskMatchesAssignee(assigned('user', 'me-id'), me, 'me-id')).toBe(true);
+    expect(taskMatchesAssignee(assigned('user', 'other'), me, 'me-id')).toBe(false);
+    expect(taskMatchesAssignee(assigned('user', 'me-id'), me, null)).toBe(false);
+  });
+
+  it('matches unassigned and agents, OR-ed', () => {
+    const filter = new Set([ASSIGNEE_NONE, 'a1']);
+    expect(taskMatchesAssignee(assigned(null, null), filter, 'me-id')).toBe(true);
+    expect(taskMatchesAssignee(assigned('agent', 'a1'), filter, 'me-id')).toBe(true);
+    expect(taskMatchesAssignee(assigned('agent', 'a2'), filter, 'me-id')).toBe(false);
+    expect(taskMatchesAssignee(assigned('user', 'me-id'), filter, 'me-id')).toBe(false);
   });
 });
 

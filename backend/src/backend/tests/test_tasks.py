@@ -963,6 +963,24 @@ class TestTaskSessions:
         data = resp.json()
         assert [s["id"] for s in data] == [str(test_agent_instance.id)]
 
+    def test_timestamps_are_serialized_once(
+        self, authenticated_client, test_agent_instance
+    ):
+        """A row's dates read like every other session list's ("...Z"), not
+        "...+00:00Z": that one fails to parse in a browser ("Invalid Date")."""
+        task = authenticated_client.post("/api/v1/tasks", json={"title": "t"}).json()
+        authenticated_client.patch(
+            f"/api/v1/agent-instances/{test_agent_instance.id}",
+            json={"task_id": task["id"]},
+        )
+        for params in ({}, {"related": "true"}):
+            [row] = authenticated_client.get(
+                f"/api/v1/tasks/{task['id']}/sessions", params=params
+            ).json()
+            started_at = row["started_at"]
+            assert started_at.endswith("Z") and "+" not in started_at
+            datetime.fromisoformat(started_at)
+
     @staticmethod
     def _session(db, user, agent_type, started_at, **fields):
         from shared.database import AgentInstance
