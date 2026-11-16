@@ -3059,6 +3059,9 @@ class MachineDaemon:
                 created = create_worktree(
                     directory,
                     name=requested_name if isinstance(requested_name, str) else None,
+                    # A preferred name (a task's), not the user's pick: take
+                    # `name-2`, … when it is taken. Old servers never send it.
+                    suffix_if_taken=worktree_param.get("suffix_if_taken") is True,
                 )
                 if "error" in created:
                     return {"error": f"Failed to create worktree: {created['error']}"}
@@ -3094,6 +3097,19 @@ class MachineDaemon:
             install_error = self._check_agent_installation(normalized_agent)
             if install_error:
                 raise RuntimeError(install_error)
+
+            # `title`: a title the spawn brings for its session (a task
+            # session is titled after its task), handed to the registration so
+            # nothing has to generate one. It beats a title that came with the
+            # worktree name; a resume keeps the session's own. Old servers
+            # never send it.
+            spawn_title = params.get("title")
+            if (
+                resume_instance_id is None
+                and isinstance(spawn_title, str)
+                and spawn_title.strip()
+            ):
+                auto_title = spawn_title.strip()
 
             # A session prewarmed for exactly this spawn (same directory, agent
             # and settings) is already running its engine: hand it the prompt

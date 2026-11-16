@@ -144,7 +144,9 @@ def _toplevel(abs_dir: Path) -> Path | None:
     return Path(raw).resolve() if raw else None
 
 
-def create_worktree(repo_dir: str, name: str | None = None) -> dict[str, Any]:
+def create_worktree(
+    repo_dir: str, name: str | None = None, *, suffix_if_taken: bool = False
+) -> dict[str, Any]:
     """Fork a fresh branch + checkout off `repo_dir`'s current HEAD.
 
     `repo_dir` may be any directory inside the checkout — a monorepo session
@@ -156,6 +158,10 @@ def create_worktree(repo_dir: str, name: str | None = None) -> dict[str, Any]:
     daemon generates a unique random slug; with one, the user's choice is used
     verbatim and a collision is an error (`name_taken`) rather than a silent
     `-2` — they asked for THAT name. An invalid ref is `invalid_name`.
+
+    `suffix_if_taken` marks `name` as a preferred name rather than the user's
+    exact pick (a task's worktree is named after the task, `vic-42`): a
+    collision then takes the first free `name-2`, `name-3`, ….
     """
     abs_dir = Path(os.path.expanduser(repo_dir)).resolve()
     if not _is_git_repo(abs_dir):
@@ -170,7 +176,14 @@ def create_worktree(repo_dir: str, name: str | None = None) -> dict[str, Any]:
     # collision check is on the middle dir under `parent`.
     if name is not None and name.strip():
         verdict = check_worktree_name(str(abs_repo), name)
-        if not verdict.get("available"):
+        suggestion = verdict.get("suggestion")
+        if (
+            suffix_if_taken
+            and verdict.get("reason") == "name_taken"
+            and isinstance(suggestion, str)
+        ):
+            name = suggestion
+        elif not verdict.get("available"):
             return {"error": str(verdict.get("reason") or "invalid_name")}
         name = name.strip()
     else:

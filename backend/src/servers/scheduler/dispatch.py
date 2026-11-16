@@ -89,7 +89,8 @@ def resolve_worktree_spawn(
 
     - none / missing → run in `directory`, no worktree param
     - new            → run in `directory`, ask the daemon for a fresh worktree
-                       (named `name` when the spec carries one)
+                       (named `name` when the spec carries one; with
+                       `suffix_if_taken`, `name-2`, … when that is taken)
     - existing       → run directly in the worktree `path`
     Mirrors the web `resolveWorktreeSpawn`."""
     if not isinstance(worktree, dict):
@@ -98,7 +99,10 @@ def resolve_worktree_spawn(
     if mode == "new":
         name = worktree.get("name")
         if isinstance(name, str) and name.strip():
-            return directory, {"new": True, "name": name.strip()}
+            param: dict = {"new": True, "name": name.strip()}
+            if worktree.get("suffix_if_taken") is True:
+                param["suffix_if_taken"] = True
+            return directory, param
         return directory, {"new": True}
     if mode == "existing":
         path = worktree.get("path")
@@ -116,8 +120,13 @@ async def dispatch_automation(
     session_config: dict,
     prompt: str,
     system_prompt: str | None = None,
+    title: str | None = None,
 ) -> DispatchResult:
     """Fire one automation run against its owning machine's daemon.
+
+    ``title`` names the new session outright: the daemon hands it to the
+    session's registration, so no model is asked for one. An old daemon
+    ignores it and the session is titled from its first message, as before.
 
     - daemon connected + spawns → ``fired`` (+ agent_instance_id)
     - daemon offline (`no_handler` after the RPC's reconnect grace) → ``missed_offline``
@@ -132,6 +141,8 @@ async def dispatch_automation(
     }
     if worktree_param is not None:
         params["worktree"] = worktree_param
+    if title and title.strip():
+        params["title"] = title.strip()
     start_worktree_naming(str(user_id), str(machine_id), params)
 
     try:

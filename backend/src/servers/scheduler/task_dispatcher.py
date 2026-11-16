@@ -21,12 +21,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import Coroutine
 from dataclasses import dataclass
 from typing import Any
 from datetime import datetime, timedelta, timezone
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
@@ -83,7 +82,6 @@ STALE_DISPATCHING = timedelta(minutes=5)
 # Comments a few seconds older than the dispatch still count as "since" it: the
 # row is created in the comment's own transaction, a moment after its insert.
 _SINCE_SLACK = timedelta(seconds=5)
-_SLUG_RE = re.compile(r"[^a-z0-9]+")
 # `instance_metadata` flag: this session has the task brief.
 TASK_BRIEF_KEY = "task_brief"
 
@@ -124,20 +122,27 @@ class _Claim:
     spawns: list[_SpawnPlan]
     # Why there is nowhere to start one, when `spawns` is empty.
     placement_problem: str | None
+    # What a new session is titled: the task, so no model has to name it.
+    title: str
 
 
-def _worktree_name(ref: str, title: str) -> str:
-    slug = _SLUG_RE.sub("-", title.lower()).strip("-")
-    return f"{ref.lower()}-{slug}"[:48].rstrip("-")
+def _task_identifier(db: Session, task: Task) -> str | None:
+    """ "VIC-42" for a task filed under a project, None for one that isn't."""
+    if task.project_id is None or task.number is None:
+        return None
+    key = db.query(Project.key).filter(Project.id == task.project_id).scalar()
+    return format_task_identifier(key, task.number) or None
 
 
 def _task_ref(db: Session, task: Task) -> str:
-    if task.project_id is not None and task.number is not None:
-        key = db.query(Project.key).filter(Project.id == task.project_id).scalar()
-        identifier = format_task_identifier(key, task.number)
-        if identifier:
-            return identifier
-    return str(task.id)
+    """How a message and its commands name the task."""
+    return _task_identifier(db, task) or str(task.id)
+
+
+def _session_title(db: Session, task: Task) -> str:
+    """ "VIC-42: Fix the login" for a filed task, its title alone otherwise."""
+    identifier = _task_identifier(db, task)
+    return f"{identifier}: {task.title}" if identifier else task.title
 
 
 def _pending_comments(
@@ -327,11 +332,18 @@ def _plan(
         db, profile, task, machine_id=row.machine_id, directory=row.directory
     )
     if placement.machine_id is not None and placement.directory:
-        worktree = dict(row.worktree) if row.worktree else {"mode": "new"}
-        if worktree.get("mode") == "new":
-            name = _worktree_name(ref, task.title)
-            # The task's worktree may still hold its name: never ask for it twice.
-            worktree["name"] = f"{name[:42]}-{uuid4().hex[:4]}" if folder else name
+        worktree: dict[str, Any] = (
+            dict(row.worktree) if row.worktree else {"mode": "new"}
+        )
+        if worktree.get("mode") == "new" and not worktree.get("name"):
+            identifier = _task_identifier(db, task)
+            if identifier is not None:
+                # Named after the task alone (`vic-42`), whatever language or
+                # length its title is; the daemon takes `vic-42-2`, … when an
+                # earlier worktree of the task still holds the name. A task
+                # outside every project gets the default naming instead.
+                worktree["name"] = identifier.lower()
+                worktree["suffix_if_taken"] = True
         elif worktree.get("mode") == "none":
             worktree = {}
         spawns.append(
@@ -457,6 +469,7 @@ def _claim_blocking() -> list[_Claim]:
                     system_prompt=system_prompt_with_brief(resolved.system_prompt),
                     spawns=spawns,
                     placement_problem=problem,
+                    title=_session_title(db, task),
                 )
             )
         db.commit()
@@ -747,6 +760,7 @@ class TaskDispatcher:
                 session_config=claim.session_config,
                 prompt=plan.prompt,
                 system_prompt=claim.system_prompt,
+                title=claim.title,
             )
             if result.status == "fired":
                 await asyncio.to_thread(_finish_blocking, claim.id, state="started")

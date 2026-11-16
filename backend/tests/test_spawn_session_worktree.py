@@ -347,6 +347,33 @@ def test_spawn_with_taken_worktree_name_errors_without_launching(
     assert calls.get("called") is not True
 
 
+def test_spawn_with_a_preferred_name_takes_the_next_free_one(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    """A task's worktree is named after the task (`vic-7`): when an earlier
+    one still holds the name, the spawn takes `vic-7-2` instead of failing."""
+    from vicoa.rpc.worktree_ops import create_worktree
+
+    create_worktree(str(committed_repo), name="vic-7")
+    daemon = _prep_daemon(monkeypatch)
+    calls: dict = {}
+    _patch_popen(monkeypatch, calls)
+
+    result = daemon.spawn_session_rpc(
+        {
+            "params": {
+                "directory": str(committed_repo),
+                "agent": "claude",
+                "worktree": {"new": True, "name": "vic-7", "suffix_if_taken": True},
+            }
+        }
+    )
+
+    assert "error" not in result, result
+    assert result["branch"] == "vic-7-2"
+    assert calls.get("called") is True
+
+
 def test_spawn_with_blank_or_non_string_name_falls_back_to_random(
     monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
 ):
@@ -540,4 +567,58 @@ def test_spawn_does_not_pass_on_a_title_the_daemon_inherited(
         }
     )
 
+    assert SESSION_TITLE_ENV not in calls["env"]
+
+
+def test_a_spawns_own_title_reaches_the_agent_and_wins(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    """A task session's spawn brings its title: the agent registers with it,
+    over the one generated with the worktree name (the branch still comes from
+    that)."""
+    from vicoa.utils import SESSION_TITLE_ENV
+
+    daemon = _prep_daemon(monkeypatch)
+    calls: dict = {}
+    _patch_popen(monkeypatch, calls)
+    daemon._auto_names.deliver(
+        {
+            "type": "worktree-name",
+            "token": "tok-1",
+            "branch": "fix-safari-logout",
+            "title": "Fix Safari logout",
+        }
+    )
+    spawn = _auto_named_spawn(committed_repo)
+    spawn["params"]["title"] = "  VIC-7: Fix the Safari logout bug "
+
+    result = daemon.spawn_session_rpc(spawn)
+
+    assert "error" not in result, result
+    assert result["branch"] == "fix-safari-logout"
+    assert calls["env"][SESSION_TITLE_ENV] == "VIC-7: Fix the Safari logout bug"
+
+
+def test_a_resume_keeps_the_title_it_has(
+    monkeypatch: pytest.MonkeyPatch, home: Path, committed_repo: Path
+):
+    from vicoa.utils import SESSION_TITLE_ENV
+
+    daemon = _prep_daemon(monkeypatch)
+    monkeypatch.setattr(daemon, "_session_process_is_running", lambda _iid: False)
+    calls: dict = {}
+    _patch_popen(monkeypatch, calls)
+
+    result = daemon.spawn_session_rpc(
+        {
+            "params": {
+                "directory": str(committed_repo),
+                "agent": "claude",
+                "resume": {"agent_instance_id": "a0d4ac23-8ec4-47ad-acf7-08c3fc6306a4"},
+                "title": "VIC-7: Fix the Safari logout bug",
+            }
+        }
+    )
+
+    assert "error" not in result, result
     assert SESSION_TITLE_ENV not in calls["env"]

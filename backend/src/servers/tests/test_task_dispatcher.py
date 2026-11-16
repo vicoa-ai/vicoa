@@ -170,9 +170,11 @@ async def test_no_session_starts_one_where_the_project_lives(
     [spawn] = recorder.spawns
     assert spawn["machine_id"] == machine.id
     assert spawn["directory"] == "/src/vicoa"
+    # Named after the task alone; `vic-7-2`, … if the name is taken.
     assert spawn["worktree"] == {
         "mode": "new",
-        "name": "vic-7-fix-the-flaky-login-test",
+        "name": "vic-7",
+        "suffix_if_taken": True,
     }
     assert spawn["session_config"]["model"] == "opus"
     assert spawn["prompt"].startswith(
@@ -181,6 +183,8 @@ async def test_no_session_starts_one_where_the_project_lives(
     # The standing rules ride in the system prompt, not in the message.
     assert "--assignee me" in spawn["system_prompt"]
     assert "--assignee me" not in spawn["prompt"]
+    # Titled after its task, so no model is asked to name it.
+    assert spawn["title"] == "VIC-7: Fix the flaky login test"
     assert _reload(test_db, row).state == "started"
 
 
@@ -361,6 +365,7 @@ async def test_the_spawned_session_is_linked_to_task_and_agent(
         system_prompt="",
         spawns=[],
         placement_problem=None,
+        title="",
     )
     await dispatcher._stamp(claim, new_id)
     test_db.expire_all()
@@ -371,10 +376,23 @@ async def test_the_spawned_session_is_linked_to_task_and_agent(
     assert test_db.get(Task, task.id).status == "in_progress"
 
 
-def test_worktree_names_are_short_and_safe():
-    name = task_dispatcher._worktree_name("VIC-7", "Fix: the *very* long title " * 5)
-    assert name.startswith("vic-7-fix-the-very-long-title")
-    assert len(name) <= 48
+async def test_a_task_outside_every_project_gets_the_default_worktree_name(
+    test_db, harness, user, machine, profile
+):
+    """No identifier to name it after: the spawn asks for a new worktree with
+    no name, so the usual naming (from the prompt, or a random one) applies."""
+    _, recorder = harness
+    loose = Task(user_id=user.id, title="unfiled", status="todo")
+    test_db.add(loose)
+    test_db.commit()
+    row = _queue(test_db, loose, profile)
+    row.machine_id, row.directory = machine.id, "/src/scratch"
+    test_db.commit()
+    await task_dispatcher.TaskDispatcher().sweep_once()
+
+    [spawn] = recorder.spawns
+    assert spawn["worktree"] == {"mode": "new"}
+    assert spawn["title"] == "unfiled"
 
 
 class FlakySpawn(Recorder):
@@ -502,11 +520,13 @@ async def test_unresumable_session_restarts_in_its_worktree_then_a_new_one(
     first, second = flaky.spawns
     assert first["directory"] == "/Users/me/worktrees/vic-7-flaky"
     assert first["worktree"] is None
-    # The old worktree's name may still be taken: the new one gets its own.
+    # The old worktree may still hold the name: the daemon suffixes it.
     assert second["directory"] == "/src/vicoa"
-    assert second["worktree"]["mode"] == "new"
-    assert second["worktree"]["name"].startswith("vic-7-fix-the-flaky")
-    assert second["worktree"]["name"] != "vic-7-fix-the-flaky-login-test"
+    assert second["worktree"] == {
+        "mode": "new",
+        "name": "vic-7",
+        "suffix_if_taken": True,
+    }
     assert "could not be resumed" in second["prompt"]
     assert _reload(test_db, row).state == "started"
 
@@ -544,3 +564,45 @@ async def test_a_comment_is_quoted_with_its_author(
     assert f"--reply-to {comment.id}" in delivery["prompt"]
     # It already has the brief: the message goes in as it is.
     assert delivery["message_prompt"] == delivery["prompt"]
+
+
+async def test_the_spawn_request_carries_the_title(monkeypatch):
+    """`dispatch_automation` puts a title on the spawn-session params, which
+    the daemon hands to the session's registration (no model names it)."""
+    from servers.scheduler import dispatch
+
+    seen: dict[str, Any] = {}
+
+    async def fake_call(user_id, machine_id, method, params):
+        seen.update(method=method, **params)
+        return {"agent_instance_id": str(uuid4())}
+
+    monkeypatch.setattr(dispatch.rpc_router, "call", fake_call)
+    result = await dispatch.dispatch_automation(
+        user_id=uuid4(),
+        machine_id=uuid4(),
+        directory="/repo",
+        session_config={"agent": "claude"},
+        prompt="go",
+        title="  VIC-7: Fix the flaky login test ",
+    )
+    assert result.status == "fired"
+    assert (seen["method"], seen["title"]) == (
+        "spawn-session",
+        "VIC-7: Fix the flaky login test",
+    )
+
+
+def test_resolve_worktree_spawn_passes_on_suffix_if_taken():
+    from servers.scheduler.dispatch import resolve_worktree_spawn
+
+    spec = {"mode": "new", "name": "vic-7", "suffix_if_taken": True}
+    assert resolve_worktree_spawn("/repo", spec) == (
+        "/repo",
+        {"new": True, "name": "vic-7", "suffix_if_taken": True},
+    )
+    # A name the user picked stays exact.
+    assert resolve_worktree_spawn("/repo", {"mode": "new", "name": "mine"}) == (
+        "/repo",
+        {"new": True, "name": "mine"},
+    )
