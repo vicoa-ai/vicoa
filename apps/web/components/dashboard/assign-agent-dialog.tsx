@@ -197,9 +197,9 @@ export function AssignAgentDialog({
         : closed
           ? 'The task is closed, so nothing starts until it is reopened.'
           : waitsForBacklog
-            ? `The task is in Backlog: ${agentName} starts when you move it out.`
+            ? `The task is in Backlog: ${agentName} will work on it once you move it out.`
             : selected && !online
-              ? `${selected.name} is offline. ${agentName} starts when it comes back online.`
+              ? `${selected.name} is offline. ${agentName} will work on it once it comes back online.`
               : null;
   const statusIsWarning = !!loadError || !!submitError || !!problem;
 
@@ -261,7 +261,7 @@ export function AssignAgentDialog({
           <DialogDescription className="text-xs">
             {waitsForBacklog || closed
               ? `${agentName} becomes the assignee.`
-              : `${agentName} works on it in its own session and assigns it back to you when it needs you.`}
+              : `${agentName} will work on it and assign it back to you when it needs you.`}
           </DialogDescription>
         </DialogHeader>
 

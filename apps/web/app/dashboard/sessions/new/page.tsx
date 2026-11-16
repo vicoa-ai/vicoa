@@ -1765,6 +1765,9 @@ function NewSessionContent() {
           // The server resolves the profile's instructions from this id — they
           // are deliberately never sent in `metadata`.
           ...(selectedProfileId ? { agent_profile_id: selectedProfileId } : {}),
+          // A session for a task works on it like an assigned agent: the server
+          // adds the task's working rules to its instructions.
+          ...(linkTaskId ? { task_id: linkTaskId } : {}),
           ...(spawn.worktree ? { worktree: spawn.worktree } : {}),
         },
       );

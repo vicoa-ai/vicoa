@@ -1,19 +1,23 @@
-"""What a task dispatch tells the agent (plans/todos/task-assignment-agents.md).
+"""What a task dispatch tells the agent.
 
-The message is a pointer plus the rules of the turn, never the comment text:
-the agent reads the task and its thread itself, as they stand when its turn
-comes, so two triggers merged into one dispatch, an edited comment or a deleted
-one all come out right without special handling.
+Two layers, so a task session reads like a conversation rather than a manual:
 
-Two modes:
+* **The brief** (`TASK_BRIEF`): the standing rules for working on a Vicoa task
+  (write to the task, reply in threads, own the status when assigned, hand the
+  task to a person when stuck). It rides as the session's system prompt, after
+  the agent profile's own instructions, so it never shows in the transcript and
+  survives compaction. A session that was not started with it (one a person
+  opened and later filed under the task) gets it once, in front of its first
+  task message.
+* **The message**: what happened, in the user's terms: who assigned the task or
+  commented, the comment text itself, and the one command the turn hinges on
+  (`--reply-to`). It names the person and quotes them, so whoever watches the
+  session sees what the agent sees. The thread on the task stays the record; a
+  quoted comment is a snapshot of it.
 
-* **Ownership** — the task was assigned to the agent: it owns the status and
-  hands the task to a person (`--assignee me`) when it needs one.
-* **Reply** — a person's comment is for it: answer in that thread, and leave
-  assignee and status alone unless the task is its own and it did real work.
-
-Commands are the `vicoa task` CLI every Vicoa session already has; prose goes
-through a quoted heredoc, the one quoting that survives every shell.
+Two modes: **Ownership** (the task was assigned to the agent) and **Reply** (a
+person's comment is for it). Commands are the `vicoa task` CLI every Vicoa
+session already has.
 """
 
 from __future__ import annotations
@@ -22,23 +26,57 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
+# Longest comment quoted in a message; the rest is in the thread.
+QUOTE_LIMIT = 1500
+
+TASK_BRIEF = """\
+You also work on Vicoa tasks. A task is a piece of work with a comment thread; \
+people hand you one by assigning it to you or by commenting for you, and each \
+message about a task says what happened. The task and its thread are the record: \
+people follow the task, not this session.
+
+- Read the task and its thread before acting: `vicoa task get <ref>`, \
+`vicoa task comments <ref>`.
+- Write on the task: progress, results and questions are comments \
+(`vicoa task comment <ref> - <<'EOF'` … `EOF`). Answer a comment in its own \
+thread with `--reply-to <comment id>`, one reply per thread.
+- A task assigned to you is yours to move: `vicoa task update <ref> --status \
+in_progress` when you start. Once it is delivered (a PR link or the evidence in a \
+comment): `--status in_review` if someone still has to look at it (a PR to merge, \
+a change to check), `--status done` if nothing is left to do.
+- A task that is not assigned to you: answer what was asked, and leave the \
+assignee and the status alone.
+- Need a person (a decision, an answer, access)? Ask in one top-level comment, \
+options first with your recommendation, then hand the task over: \
+`vicoa task update <ref> --assignee me`. Their answer comes back to you here; \
+then take the task back with `--assignee self` and carry on.\
+"""
+
 CONTINUITY_NOTE = (
     "Your earlier session on this task could not be resumed, so you start fresh "
-    "here. The task and its comment thread are the whole record: read them before "
-    "doing anything."
+    "here. Read the task and its thread before doing anything."
 )
+
+
+@dataclass(frozen=True)
+class QuotedComment:
+    """A person's comment, as a message quotes it."""
+
+    id: UUID
+    # The thread it belongs to (its root): where a reply goes.
+    thread_id: UUID
+    author: str
+    body: str
 
 
 @dataclass(frozen=True)
 class SinceHandover:
     """What happened to a task while it was out of this agent's hands."""
 
-    # When the agent last handed the task over, in UTC ISO 8601.
+    # When the agent last handed the task over, for people: "2026-11-16 09:12 UTC".
     at: str
-    # Thread roots with a person's comment since then.
-    threads: Sequence[UUID] = ()
-    # Plain words for other edits since then: "description edited", "status
-    # changed to blocked" — one line each.
+    comments: Sequence[QuotedComment] = ()
+    # Plain words for other edits since then: "the description was edited".
     edits: Sequence[str] = ()
 
 
@@ -52,52 +90,57 @@ class EarlierSession:
     same_folder: bool = False
 
 
-def _comment_cmd(ref: str, reply_to: UUID | None = None) -> str:
-    flag = f" --reply-to {reply_to}" if reply_to is not None else ""
-    return f"`vicoa task comment {ref}{flag} - <<'EOF'` … `EOF`"
+def system_prompt_with_brief(profile_prompt: str | None) -> str:
+    """The agent profile's own instructions, then the task brief."""
+    own = (profile_prompt or "").strip()
+    return f"{own}\n\n{TASK_BRIEF}" if own else TASK_BRIEF
 
 
-def _threads_line(ref: str, threads: Sequence[UUID]) -> str:
-    if not threads:
-        return ""
-    listed = ", ".join(f"`{t}`" for t in threads)
+def with_brief(message: str) -> str:
+    """A message for a session that wasn't started with the brief."""
     return (
-        f"- New comments for you are waiting in thread(s) {listed}. Answer each in "
-        f"its own thread: {_comment_cmd(ref, threads[0])} (one reply per thread)."
+        "How to work on Vicoa tasks, from now on in this session:\n\n"
+        f"{TASK_BRIEF}\n\n---\n\n{message}"
     )
 
 
-def _since_lines(ref: str, since: SinceHandover) -> list[str]:
-    lines = [
-        "",
-        f"You had this task before and handed it over at {since.at}. Since then:",
-    ]
-    if since.threads:
-        listed = ", ".join(f"`{t}`" for t in since.threads)
-        lines.append(f"- people commented in thread(s) {listed};")
-    lines += [f"- {edit};" for edit in since.edits]
-    if not since.threads and not since.edits:
-        lines.append("- nothing was written on the task; the hand-back is the signal.")
-    lines.append(
-        "- the code may have moved too: bring your branch up to date with the default "
-        "branch before you continue, and say so in your first comment if that changed "
-        "the plan."
-    )
+def _quote(body: str) -> str:
+    text = body.strip()
+    if len(text) > QUOTE_LIMIT:
+        text = text[: QUOTE_LIMIT - 1].rstrip() + "… (the rest is in the thread)"
+    return "\n".join(f"> {line}" if line else ">" for line in text.splitlines())
+
+
+def _task_line(ref: str, title: str) -> str:
+    return f'{ref} "{title}"'
+
+
+def _comment_block(comments: Sequence[QuotedComment]) -> list[str]:
+    lines: list[str] = []
+    for comment in comments:
+        lines.append(f"{comment.author}, in thread `{comment.thread_id}`:")
+        lines += _quote(comment.body).splitlines()
+        lines.append("")
     return lines
 
 
-def _earlier_lines(earlier: EarlierSession) -> list[str]:
-    who = f" by {earlier.agent_name}" if earlier.agent_name else ""
-    where = (
-        " You are in the same folder, so its changes are already here."
-        if earlier.same_folder
-        else ""
+def _reply_line(ref: str, comments: Sequence[QuotedComment]) -> str:
+    threads = list(dict.fromkeys(c.thread_id for c in comments))
+    if len(threads) == 1:
+        return f"Reply in its thread: `vicoa task comment {ref} --reply-to {threads[0]} -`."
+    return (
+        f"Reply in each thread: `vicoa task comment {ref} --reply-to <thread id> -`, "
+        "one reply per thread."
     )
+
+
+def _earlier_lines(earlier: EarlierSession) -> list[str]:
+    who = earlier.agent_name or "You"
+    where = " (in this folder, so its changes are here)" if earlier.same_folder else ""
     return [
         "",
-        f"Earlier work on this task happened in session {earlier.session_id}{who}."
-        f"{where} Read it if you need its reasoning: `vicoa session get "
-        f"{earlier.session_id} --all`.",
+        f"{who} worked on it before, in session {earlier.session_id}{where}. Read it "
+        f"if you need its reasoning: `vicoa session get {earlier.session_id} --all`.",
     ]
 
 
@@ -105,82 +148,83 @@ def ownership_prompt(
     *,
     ref: str,
     title: str,
-    agent_name: str,
     assigned_by: str | None,
-    threads: Sequence[UUID] = (),
+    comments: Sequence[QuotedComment] = (),
     since: SinceHandover | None = None,
     earlier: EarlierSession | None = None,
     continuity: bool = False,
 ) -> str:
-    by = f" by {assigned_by}" if assigned_by else ""
-    again = " again" if since is not None else ""
-    lines = [
-        f'Task {ref} "{title}" was assigned to you ({agent_name}){again}{by}. '
-        "You own it until you hand it back.",
-        "",
-        f"- Read it and its whole thread first: `vicoa task get {ref}` and "
-        f"`vicoa task comments {ref}`.",
-        f"- When you start: `vicoa task update {ref} --status in_progress`.",
-        f"- Report progress and results as top-level comments: {_comment_cmd(ref)}.",
-        f"- Delivered (a PR link or the evidence in a comment): "
-        f"`vicoa task update {ref} --status in_review`.",
-        "- Need a person (a decision, an answer, access)? Ask in one top-level "
-        "comment, options first with your recommendation, then hand it over: "
-        f"`vicoa task update {ref} --assignee me`. Their reply comes back to you "
-        "here.",
-    ]
+    who = assigned_by or "Someone"
+    task = _task_line(ref, title)
     if since is None:
-        threads_line = _threads_line(ref, threads)
-        if threads_line:
-            lines.append(threads_line)
+        lines = [
+            f"{who} assigned {task} to you.",
+            f"Start with `vicoa task get {ref}` and `vicoa task comments {ref}`.",
+        ]
+        if comments:
+            lines += ["", "New comments on it:", ""] + _comment_block(comments)
+            lines.append(_reply_line(ref, comments))
     else:
-        lines += _since_lines(ref, since)
+        lines = [
+            f"{who} assigned {task} back to you.",
+            "",
+            f"Since you handed it over ({since.at}):",
+            "",
+        ]
+        lines += _comment_block(since.comments)
+        lines += [f"- {edit}" for edit in since.edits]
+        if not since.comments and not since.edits:
+            lines.append(
+                "- nothing was written on the task; the hand-back is the signal."
+            )
+        if since.edits or not since.comments:
+            lines.append("")
+        lines.append(
+            "The code may have moved too: bring your branch up to date before you continue."
+        )
+        if since.comments:
+            lines.append(_reply_line(ref, since.comments))
     if earlier is not None:
         lines += _earlier_lines(earlier)
     if continuity:
         lines += ["", CONTINUITY_NOTE]
-    return "\n".join(lines)
+    return "\n".join(lines).rstrip()
+
+
+# How a single comment reached the agent, for the message's first line.
+_VERBS = {
+    "mentioned": "mentioned you on",
+    "replied": "replied on",
+    "commented": "commented on",
+}
 
 
 def reply_prompt(
     *,
     ref: str,
     title: str,
-    agent_name: str,
-    threads: Sequence[UUID],
-    assigned_to_you: bool,
+    trigger: str,
+    comments: Sequence[QuotedComment],
     earlier: EarlierSession | None = None,
     continuity: bool = False,
 ) -> str:
-    first = threads[0] if threads else None
-    where = (
-        f"thread `{first}`"
-        if len(threads) == 1
-        else "threads " + ", ".join(f"`{t}`" for t in threads)
-        if threads
-        else "its comments"
-    )
-    lines = [
-        f'Someone commented on task {ref} "{title}" for you ({agent_name}), in {where}.',
-        "",
-        f"- Read the task and its thread: `vicoa task comments {ref}`.",
-        "- Do what they ask, then reply in that thread: "
-        f"{_comment_cmd(ref, first)}. One reply per thread.",
-    ]
-    if assigned_to_you:
-        lines.append(
-            "- The task is assigned to you: if this turn does real work on it, keep "
-            f"its status current (`vicoa task update {ref} --status …`). A purely "
-            "conversational turn leaves it alone."
-        )
+    task = _task_line(ref, title)
+    if len(comments) == 1:
+        comment = comments[0]
+        verb = _VERBS.get(trigger, "commented on")
+        lines = [f"{comment.author} {verb} {task}:", "", _quote(comment.body), ""]
+    elif comments:
+        lines = [f"New comments on {task}:", ""] + _comment_block(comments)
     else:
-        lines.append(
-            "- Leave the assignee and the status alone. If they answered a question "
-            "you asked when you handed the task to them, take it back first and "
-            f"carry on: `vicoa task update {ref} --assignee self`."
-        )
+        # Deleted before the turn came: the thread is all there is.
+        lines = [
+            f"There are new comments for you on {task}: `vicoa task comments {ref}`.",
+            "",
+        ]
+    if comments:
+        lines.append(_reply_line(ref, comments))
     if earlier is not None:
         lines += _earlier_lines(earlier)
     if continuity:
         lines += ["", CONTINUITY_NOTE]
-    return "\n".join(lines)
+    return "\n".join(lines).rstrip()

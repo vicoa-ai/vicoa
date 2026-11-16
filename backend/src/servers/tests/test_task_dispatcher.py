@@ -175,8 +175,12 @@ async def test_no_session_starts_one_where_the_project_lives(
         "name": "vic-7-fix-the-flaky-login-test",
     }
     assert spawn["session_config"]["model"] == "opus"
-    assert "VIC-7" in spawn["prompt"]
-    assert "--assignee me" in spawn["prompt"]
+    assert spawn["prompt"].startswith(
+        'Someone assigned VIC-7 "Fix the flaky login test" to you.'
+    )
+    # The standing rules ride in the system prompt, not in the message.
+    assert "--assignee me" in spawn["system_prompt"]
+    assert "--assignee me" not in spawn["prompt"]
     assert _reload(test_db, row).state == "started"
 
 
@@ -191,11 +195,19 @@ async def test_a_live_session_gets_a_message(
 
     [delivery] = recorder.deliveries
     assert delivery["instance_id"] == session.id
-    assert delivery["marker"] == ("task_id", str(task.id))
+    assert delivery["marker"] == ("task_dispatch_id", str(row.id))
     assert "VIC-7" in delivery["prompt"]
+    # Never given the brief: it comes in front of this first task message.
+    assert delivery["message_prompt"].startswith("How to work on Vicoa tasks")
+    assert delivery["message_prompt"].endswith(delivery["prompt"])
     assert recorder.spawns == []
     reloaded = _reload(test_db, row)
     assert (reloaded.state, reloaded.agent_instance_id) == ("delivered", session.id)
+    # ...and from now on the session counts as having it, resume included.
+    assert (
+        test_db.get(AgentInstance, session.id).instance_metadata["task_brief"] is True
+    )
+    assert task_dispatcher.brief_for_resume_blocking(user.id, session.id) is not None
 
 
 async def test_a_stopped_session_that_resumes(
@@ -329,8 +341,9 @@ async def test_the_spawned_session_is_linked_to_task_and_agent(
         profile_id=profile.id,
         session_id=None,
         prompt="",
+        message_prompt="",
         session_config={},
-        system_prompt=None,
+        system_prompt="",
         spawns=[],
         placement_problem=None,
     )
@@ -408,9 +421,12 @@ async def test_handed_back_tells_the_agent_what_changed(
 
     [delivery] = recorder.deliveries
     prompt = delivery["prompt"]
-    assert "assigned to you (Claude) again" in prompt
-    assert "handed it over at" in prompt
-    assert str(comment.id) in prompt
+    assert prompt.startswith(
+        'Someone assigned VIC-7 "Fix the flaky login test" back to you.'
+    )
+    assert "Since you handed it over" in prompt
+    assert f"in thread `{comment.id}`" in prompt
+    assert "> Use the staging bucket, not prod." in prompt
     assert "the status was changed to blocked" in prompt
     assert "bring your branch up to date" in prompt
 
@@ -444,8 +460,8 @@ async def test_another_agent_continues_in_the_tasks_worktree(
     assert spawn["directory"] == "/Users/me/worktrees/vic-7-flaky"
     assert spawn["worktree"] is None
     assert str(earlier.id) in spawn["prompt"]
-    assert "same folder" in spawn["prompt"]
-    assert "by Claude" in spawn["prompt"]
+    assert "Claude worked on it before" in spawn["prompt"]
+    assert "in this folder" in spawn["prompt"]
 
 
 async def test_unresumable_session_restarts_in_its_worktree_then_a_new_one(
@@ -478,3 +494,38 @@ async def test_unresumable_session_restarts_in_its_worktree_then_a_new_one(
     assert second["worktree"]["name"] != "vic-7-fix-the-flaky-login-test"
     assert "could not be resumed" in second["prompt"]
     assert _reload(test_db, row).state == "started"
+
+
+async def test_a_comment_is_quoted_with_its_author(
+    test_db, harness, user, machine, task, profile
+):
+    from shared.database import TaskComment
+
+    sockets, recorder = harness
+    session = _session(test_db, user, machine, task, profile)
+    session.instance_metadata = {"task_brief": True}
+    test_db.commit()
+    sockets.connected.add(str(session.id))
+    comment = TaskComment(
+        task_id=task.id,
+        project_id=task.project_id,
+        author_type="user",
+        author_id=user.id,
+        body="Can you also cover the retry path?",
+    )
+    test_db.add(comment)
+    test_db.commit()
+    row = _queue(test_db, task, profile, mode="reply", trigger="mentioned")
+    row.trigger_comment_id = comment.id
+    test_db.commit()
+    await task_dispatcher.TaskDispatcher().sweep_once()
+
+    [delivery] = recorder.deliveries
+    name = user.display_name or "Someone"
+    assert delivery["prompt"].startswith(
+        f'{name} mentioned you on VIC-7 "Fix the flaky login test":'
+    )
+    assert "> Can you also cover the retry path?" in delivery["prompt"]
+    assert f"--reply-to {comment.id}" in delivery["prompt"]
+    # It already has the brief: the message goes in as it is.
+    assert delivery["message_prompt"] == delivery["prompt"]

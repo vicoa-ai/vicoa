@@ -110,10 +110,10 @@ export function TaskPropertyRail({
       });
     } else if (task.status === 'backlog') {
       toast.success(`Assigned ${ref} to ${agent.name}`, {
-        description: 'It starts when the task leaves Backlog.',
+        description: `${agent.name} will work on it once it leaves Backlog.`,
       });
     } else {
-      toast.success(`Starting ${agent.name} on ${ref}`);
+      toast.success(`${agent.name} will work on ${ref}`);
     }
   };
 

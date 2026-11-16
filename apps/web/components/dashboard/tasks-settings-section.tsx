@@ -88,11 +88,9 @@ function AgentStartPreference() {
       className="mt-6 flex cursor-pointer items-start justify-between gap-4 rounded-lg border px-3 py-2.5 hover:bg-accent/40"
     >
       <span className="min-w-0">
-        <span className="block text-sm text-foreground">Confirm before starting an agent</span>
+        <span className="block text-sm text-foreground">Confirm when assigning to an agent</span>
         <span className="block text-xs text-muted-foreground">
-          Assigning a task to an agent starts it on one of your computers. When this is on, you
-          see where it will run first. When it is off, it starts right away on the agent&apos;s
-          default computer.
+          See where it will work before it starts.
         </span>
       </span>
       <Switch

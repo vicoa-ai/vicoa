@@ -28,8 +28,9 @@ from typing import Any
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, attributes
 
 from backend.db.task_timeline_queries import resolve_principals
 from shared.agent_profile_resolution import resolve_automation_config
@@ -55,10 +56,14 @@ from shared.task_dispatch import (
 )
 from shared.session_resume import expand_project_path
 from shared.task_dispatch_prompts import (
+    TASK_BRIEF,
     EarlierSession,
+    QuotedComment,
     SinceHandover,
     ownership_prompt,
     reply_prompt,
+    system_prompt_with_brief,
+    with_brief,
 )
 from shared.websocket.connection_manager import connection_manager
 from servers.profile_provenance import STAMP_DELAYS
@@ -78,6 +83,8 @@ STALE_DISPATCHING = timedelta(minutes=5)
 # row is created in the comment's own transaction, a moment after its insert.
 _SINCE_SLACK = timedelta(seconds=5)
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+# `instance_metadata` flag: this session has the task brief.
+TASK_BRIEF_KEY = "task_brief"
 
 
 def _utcnow() -> datetime:
@@ -102,11 +109,15 @@ class _Claim:
     user_id: UUID
     task_id: UUID
     profile_id: UUID
-    # The (agent, task) session a prompt goes into first, and that prompt.
+    # The (agent, task) session a prompt goes into first, and that prompt. A
+    # resume carries the brief in `system_prompt`; a message into a live
+    # session that never had it carries it in `message_prompt` instead.
     session_id: UUID | None
     prompt: str
+    message_prompt: str
     session_config: dict
-    system_prompt: str | None
+    # The profile's instructions plus the task brief: every start and resume.
+    system_prompt: str
     # How to start a new session when there is none or it can't be resumed,
     # tried in order: the task's own worktree first, then a new one.
     spawns: list[_SpawnPlan]
@@ -128,33 +139,40 @@ def _task_ref(db: Session, task: Task) -> str:
     return str(task.id)
 
 
-def _pending_threads(
+def _pending_comments(
     db: Session, task_id: UUID, since: datetime, trigger_comment_id: UUID | None
-) -> list[UUID]:
-    """Thread roots with a person's comment since the dispatch was queued."""
+) -> list[QuotedComment]:
+    """People's comments since `since`, oldest first, with who wrote them. A
+    trigger comment older than that (the dispatch was queued late) still counts."""
     rows = (
-        db.query(TaskComment.id, TaskComment.parent_comment_id, TaskComment.body)
+        db.query(TaskComment)
         .filter(
             TaskComment.task_id == task_id,
             TaskComment.author_type == "user",
             TaskComment.deleted_at.is_(None),
-            TaskComment.created_at >= since - _SINCE_SLACK,
+            or_(
+                TaskComment.created_at >= since - _SINCE_SLACK,
+                TaskComment.id == trigger_comment_id,
+            ),
         )
         .order_by(TaskComment.created_at.asc())
         .all()
     )
-    roots: list[UUID] = []
-    for comment_id, parent_id, body in rows:
-        if is_note(body):
-            continue
-        root = parent_id or comment_id
-        if root not in roots:
-            roots.append(root)
-    if trigger_comment_id is not None and not roots:
-        trigger = db.get(TaskComment, trigger_comment_id)
-        if trigger is not None:
-            roots.append(trigger.parent_comment_id or trigger.id)
-    return roots
+    kept = [c for c in rows if not is_note(c.body)]
+    refs = {("user", c.author_id) for c in kept}
+    names = resolve_principals(db, refs) if refs else {}
+    out: list[QuotedComment] = []
+    for comment in kept:
+        principal = names.get(("user", comment.author_id))
+        out.append(
+            QuotedComment(
+                id=comment.id,
+                thread_id=comment.parent_comment_id or comment.id,
+                author=(principal.name if principal and principal.name else "Someone"),
+                body=comment.body,
+            )
+        )
+    return out
 
 
 _EDIT_WORDS = {
@@ -181,7 +199,7 @@ def _since_handover(
     if row is None:
         return None
     at: datetime = row[0]
-    threads = _pending_threads(db, task.id, at + _SINCE_SLACK, None)
+    comments = _pending_comments(db, task.id, at + _SINCE_SLACK, None)
     edits: list[str] = []
     status_to: str | None = None
     for action, details in (
@@ -204,8 +222,8 @@ def _since_handover(
     if status_to:
         edits.append(f"the status was changed to {status_to}")
     return SinceHandover(
-        at=at.astimezone(timezone.utc).isoformat(timespec="minutes"),
-        threads=threads,
+        at=at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        comments=comments,
         edits=edits,
     )
 
@@ -248,23 +266,21 @@ def _plan(
 ) -> tuple[str, list[_SpawnPlan], str | None]:
     """(prompt for the existing session, ways to start a new one, why none)."""
     ref = _task_ref(db, task)
-    threads = _pending_threads(db, task.id, row.created_at, row.trigger_comment_id)
+    comments = _pending_comments(db, task.id, row.created_at, row.trigger_comment_id)
     since = _since_handover(db, task, profile) if row.mode == "ownership" else None
     assigned_by = None
     if row.requested_by_user_id is not None:
         ref_key = ("user", row.requested_by_user_id)
         principal = resolve_principals(db, {ref_key}).get(ref_key)
         assigned_by = principal.name if principal else None
-    assigned_to_you = task.assignee_type == "agent" and task.assignee_id == profile.id
 
     def build(*, continuity: bool, earlier: EarlierSession | None) -> str:
         if row.mode == "ownership":
             return ownership_prompt(
                 ref=ref,
                 title=task.title,
-                agent_name=profile.name,
                 assigned_by=assigned_by,
-                threads=threads,
+                comments=comments,
                 since=since,
                 earlier=earlier,
                 continuity=continuity,
@@ -272,9 +288,8 @@ def _plan(
         return reply_prompt(
             ref=ref,
             title=task.title,
-            agent_name=profile.name,
-            threads=threads,
-            assigned_to_you=assigned_to_you,
+            trigger=row.trigger,
+            comments=comments,
             earlier=earlier,
             continuity=continuity,
         )
@@ -417,6 +432,11 @@ def _claim_blocking() -> list[_Claim]:
                 session_config=None,
                 owner_id=profile.user_id,
             )
+            # A live session that was never given the brief gets it in front of
+            # its first task message (its system prompt can't change mid-run).
+            has_brief = session is not None and bool(
+                (session.instance_metadata or {}).get(TASK_BRIEF_KEY)
+            )
 
             row.state = "dispatching"
             row.attempts = (row.attempts or 0) + 1
@@ -429,8 +449,9 @@ def _claim_blocking() -> list[_Claim]:
                     profile_id=profile.id,
                     session_id=session.id if session is not None else None,
                     prompt=prompt,
+                    message_prompt=prompt if has_brief else with_brief(prompt),
                     session_config=resolved.session_config,
-                    system_prompt=resolved.system_prompt,
+                    system_prompt=system_prompt_with_brief(resolved.system_prompt),
                     spawns=spawns,
                     placement_problem=problem,
                 )
@@ -457,7 +478,83 @@ def _finish_blocking(
             row.agent_instance_id = instance_id
         if state in ("delivered", "resumed", "started"):
             row.delivered_at = now
+            if instance_id is not None:
+                _mark_brief(db, instance_id)
         db.commit()
+
+
+def _mark_brief(db: Session, instance_id: UUID) -> None:
+    """The session now has the task brief (system prompt, or its first task
+    message): a manual resume re-attaches it (`brief_for_resume_blocking`)."""
+    instance = db.get(AgentInstance, instance_id)
+    if instance is None:
+        return
+    meta = dict(instance.instance_metadata or {})
+    if meta.get(TASK_BRIEF_KEY):
+        return
+    meta[TASK_BRIEF_KEY] = True
+    instance.instance_metadata = meta
+    attributes.flag_modified(instance, "instance_metadata")
+
+
+def _mark_brief_blocking(user_id: UUID, instance_id: UUID) -> bool:
+    """Flag a registered session as carrying the brief; False while its row is
+    still missing (the daemon returns the id before the agent registers)."""
+    with SessionLocal() as db:
+        found = (
+            db.query(AgentInstance.id)
+            .filter(AgentInstance.id == instance_id, AgentInstance.user_id == user_id)
+            .first()
+        )
+        if found is None:
+            return False
+        _mark_brief(db, instance_id)
+        db.commit()
+        return True
+
+
+_brief_stamps: set[asyncio.Task] = set()
+
+
+async def _mark_brief_when_registered(user_id: UUID, instance_id: UUID) -> None:
+    for delay in STAMP_DELAYS:
+        try:
+            if await asyncio.to_thread(_mark_brief_blocking, user_id, instance_id):
+                return
+        except Exception:  # noqa: BLE001 — never break a spawn over a flag
+            logger.exception("failed to flag the task brief on %s", instance_id)
+            return
+        await asyncio.sleep(delay)
+
+
+def mark_brief_in_background(user_id: UUID, instance_id: UUID) -> None:
+    """A session started from a task (the task page's Start session) got the
+    brief in its system prompt: flag it once it registers, so a later task
+    message doesn't repeat the brief and a Resume brings it back."""
+    task = asyncio.create_task(_mark_brief_when_registered(user_id, instance_id))
+    _brief_stamps.add(task)
+    task.add_done_callback(_brief_stamps.discard)
+
+
+def task_visible_blocking(user_id: UUID, task_id: UUID) -> bool:
+    """Whether the person starting a session can see the task it is for."""
+    from backend.db.task_queries import get_task
+
+    with SessionLocal() as db:
+        return get_task(db, user_id, task_id, sharing=True) is not None
+
+
+def brief_for_resume_blocking(user_id: UUID, instance_id: UUID) -> str | None:
+    """The task brief, when the session being resumed carries one. Called by the
+    spawn path a person's Resume goes through, so a task session never comes
+    back without the rules it was started with."""
+    with SessionLocal() as db:
+        meta = (
+            db.query(AgentInstance.instance_metadata)
+            .filter(AgentInstance.id == instance_id, AgentInstance.user_id == user_id)
+            .scalar()
+        )
+    return TASK_BRIEF if isinstance(meta, dict) and meta.get(TASK_BRIEF_KEY) else None
 
 
 def _requeue_blocking(dispatch_id: UUID, *, detail: str, delay: timedelta) -> None:
@@ -518,6 +615,7 @@ def _stamp_task_session_blocking(
             return False
         instance.agent_profile_id = profile_id
         instance.task_id = task_id
+        _mark_brief(db, instance_id)
         row = db.get(TaskDispatch, dispatch_id)
         if row is not None:
             row.agent_instance_id = instance_id
@@ -587,8 +685,10 @@ class TaskDispatcher:
                 user_id=claim.user_id,
                 instance_id=claim.session_id,
                 prompt=claim.prompt,
-                marker=("task_id", str(claim.task_id)),
-                extra_metadata={"task_dispatch_id": str(claim.id)},
+                message_prompt=claim.message_prompt,
+                system_prompt=claim.system_prompt,
+                marker=("task_dispatch_id", str(claim.id)),
+                extra_metadata={"task_id": str(claim.task_id)},
             )
             if result.status == "fired":
                 await asyncio.to_thread(

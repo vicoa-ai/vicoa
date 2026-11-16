@@ -104,7 +104,7 @@ export function CommentComposer({
   secondaryAction?: CommentComposerSecondaryAction;
   /** The agents an `@` can mention (the viewer's own). Omitted: no picker. */
   agents?: AgentProfile[];
-  /** Where the box sits, for the "Sending will wake …" hint. Omitted: no hint. */
+  /** Where the box sits, for the "… will work on this" hint. Omitted: no hint. */
   wake?: WakeContext;
 }) {
   const [value, setValue] = useState('');
@@ -191,7 +191,7 @@ export function CommentComposer({
   );
   const isNote = isNoteComment(value);
 
-  // "Sending will wake …": the server's routing, predicted. With nothing typed
+  // "… will work on this": the server's routing, predicted. With nothing typed
   // yet it shows what a plain comment here would do.
   const wakeNames = useMemo(() => {
     if (!wake) return [];
@@ -271,10 +271,10 @@ export function CommentComposer({
   );
   const wakeHint =
     !focused || empty ? null : isNote ? (
-      <p className={hintClass}>A note stays on the task and wakes nobody.</p>
+      <p className={hintClass}>Just a note. No agent will act on it.</p>
     ) : wakeNames.length > 0 ? (
       <p className={hintClass}>
-        Wakes {formatNames(wakeNames)}. Start with /note to post without waking anyone.
+        {formatNames(wakeNames)} will work on this. Start with /note to just leave a note.
       </p>
     ) : null;
   const shownPlaceholder =

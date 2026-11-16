@@ -185,13 +185,20 @@ async def deliver_to_session(
     prompt: str,
     marker: tuple[str, str],
     extra_metadata: dict | None = None,
+    message_prompt: str | None = None,
+    system_prompt: str | None = None,
 ) -> DispatchResult:
     """Deliver `prompt` into an existing session, resuming it when stopped.
 
     `marker` is the (metadata key, value) the posted message carries; a message
     with the same marker still waiting in the queue means skip. `via` on the
     result says how it went in: ``message`` or ``resume``.
+
+    A resume relaunches the agent, so it carries `system_prompt` (the
+    instructions the session runs with); a message into a running agent can't
+    change those, so `message_prompt`, when given, is what gets posted instead.
     """
+    posted = message_prompt if message_prompt is not None else prompt
     target = await asyncio.to_thread(_load_target_blocking, user_id, instance_id)
     if target is None:
         return DispatchResult(status="failed", detail="session deleted", disable=True)
@@ -201,7 +208,7 @@ async def deliver_to_session(
             _post_prompt_blocking,
             user_id,
             instance_id,
-            prompt,
+            posted,
             marker,
             extra_metadata,
         )
@@ -220,7 +227,7 @@ async def deliver_to_session(
         "directory": target.directory,
         "agent": target.session_config["agent"],
         "resume": resume,
-        "metadata": to_spawn_metadata(target.session_config, prompt),
+        "metadata": to_spawn_metadata(target.session_config, prompt, system_prompt),
     }
     try:
         result = await rpc_router.call(
@@ -246,7 +253,7 @@ async def deliver_to_session(
             _post_prompt_blocking,
             user_id,
             instance_id,
-            prompt,
+            posted,
             marker,
             extra_metadata,
         )
