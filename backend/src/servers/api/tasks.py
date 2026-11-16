@@ -27,7 +27,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from sqlalchemy import func
+
 from shared.database.actor import Actor, set_session_actor
+from shared.database.agent_profile_models import AgentProfile
 from shared.database.models import AgentInstance
 from shared.database.session import get_db
 
@@ -36,11 +39,13 @@ from shared.database.session import get_db
 from backend.db import task_queries, task_timeline_queries
 from backend.db.task_serializers import serialize_task, serialize_tasks
 from backend.db.task_queries import (
+    AssigneeNotFoundError,
     LabelNotFoundError,
     ParentTaskError,
     ProjectNotFoundError,
 )
 from backend.models import (
+    TASK_RUN_FIELDS,
     CreateAgentTaskCommentRequest,
     CreateAgentTaskRequest,
     CreateTaskLabelRequest,
@@ -74,7 +79,9 @@ def _raise_task_ref_errors(exc: Exception) -> None:
     Mirrors ``backend/api/tasks.py`` so the CLI sees identical error codes
     whether it ever talked to the human-facing API or this one.
     """
-    if isinstance(exc, (ProjectNotFoundError, LabelNotFoundError)):
+    if isinstance(
+        exc, (ProjectNotFoundError, LabelNotFoundError, AssigneeNotFoundError)
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
@@ -97,28 +104,109 @@ def list_tasks_endpoint(
     task_priority: TaskPriorityLiteral | None = Query(default=None, alias="priority"),
     label_id: Annotated[list[UUID] | None, Query()] = None,
     created_in_instance_id: UUID | None = None,
+    assignee: str | None = Query(default=None, max_length=64),
     db: Session = Depends(get_db),
 ) -> list[TaskResponse]:
     """``unfiled`` selects No-project tasks (``vicoa task ls --project none``);
     it cannot be combined with ``project_id``. ``label_id`` may repeat — a task
     must carry every one given. ``created_in_instance_id`` keeps the tasks
-    created in that session."""
+    created in that session. ``assignee`` takes the same shorthand as
+    ``vicoa task update --assignee`` (``me``, ``none``, an agent's name or an
+    id); ``self`` is not accepted here (a listing names no session)."""
     if unfiled and project_id is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Pass either project_id or unfiled, not both",
         )
+    resolved = _user_uuid(user_id)
+    assignee_id: UUID | None = None
+    unassigned = False
+    if assignee is not None and assignee.strip():
+        kind, assignee_id = _resolve_assignee(db, resolved, None, assignee)
+        unassigned = kind is None
     tasks = task_queries.list_tasks(
         db,
-        _user_uuid(user_id),
+        resolved,
         project_id=project_id,
         status=task_status,
         priority=task_priority,
         unfiled=unfiled,
         label_ids=label_id,
         created_in_instance_id=created_in_instance_id,
+        assignee_id=assignee_id,
+        unassigned=unassigned,
     )
     return serialize_tasks(db, tasks)
+
+
+def _resolve_assignee(
+    db: Session,
+    user_id: UUID,
+    calling: "_CallingSession | None",
+    value: str,
+) -> tuple[str | None, UUID | None]:
+    """The CLI's ``--assignee`` shorthand → (assignee_type, assignee_id).
+
+    ``me`` is the key's user; ``self`` the calling session's agent profile;
+    ``none`` clears it; anything else is one of the user's own (personal,
+    unarchived) agent profiles by name, case-insensitively, or an id.
+    """
+    raw = value.strip()
+    lowered = raw.lower()
+    if lowered == "me":
+        return "user", user_id
+    if lowered in ("none", "nobody", ""):
+        return None, None
+    if lowered == "self":
+        if calling is None or calling.agent_profile_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="--assignee self needs a session started from an agent",
+            )
+        return "agent", calling.agent_profile_id
+    try:
+        as_id = UUID(raw)
+    except ValueError:
+        as_id = None
+    if as_id is not None and as_id == user_id:
+        return "user", user_id
+    query = db.query(AgentProfile.id).filter(
+        AgentProfile.user_id == user_id,
+        AgentProfile.team_id.is_(None),
+        AgentProfile.is_archived.is_(False),
+    )
+    if as_id is not None:
+        query = query.filter(AgentProfile.id == as_id)
+    else:
+        query = query.filter(func.lower(AgentProfile.name) == lowered)
+    row = query.first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No agent named {raw!r} (see `vicoa agent ls`)",
+        )
+    return "agent", row[0]
+
+
+def _assignee_fields(
+    db: Session,
+    user_id: UUID,
+    calling: "_CallingSession | None",
+    request: CreateAgentTaskRequest | UpdateAgentTaskRequest,
+) -> dict:
+    """The assignee pair to apply, from the shorthand or the explicit pair."""
+    if request.assignee is None:
+        return {}
+    if (
+        "assignee_type" in request.model_fields_set
+        or "assignee_id" in request.model_fields_set
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Pass assignee or assignee_type/assignee_id, not both",
+        )
+    kind, principal = _resolve_assignee(db, user_id, calling, request.assignee)
+    return {"assignee_type": kind, "assignee_id": principal}
 
 
 @task_router.post(
@@ -134,6 +222,10 @@ def create_task_endpoint(
     resolved = _user_uuid(user_id)
     calling = _calling_session(db, resolved, request.agent_instance_id)
     _attribute_to_session(db, resolved, calling)
+    assignee = _assignee_fields(db, resolved, calling, request) or {
+        "assignee_type": request.assignee_type,
+        "assignee_id": request.assignee_id,
+    }
     try:
         task = task_queries.create_task(
             db,
@@ -148,10 +240,18 @@ def create_task_endpoint(
             label_ids=request.label_ids,
             start_date=request.start_date,
             due_date=request.due_date,
+            assignee_type=assignee["assignee_type"],
+            assignee_id=assignee["assignee_id"],
             creator_type=_author(resolved, calling)[0],
             created_in_instance_id=calling.id if calling is not None else None,
+            run_options=request.run_options(),
         )
-    except (ProjectNotFoundError, LabelNotFoundError, ParentTaskError) as exc:
+    except (
+        ProjectNotFoundError,
+        LabelNotFoundError,
+        ParentTaskError,
+        AssigneeNotFoundError,
+    ) as exc:
         _raise_task_ref_errors(exc)
         raise  # unreachable; keeps the type checker satisfied
     return serialize_task(db, task)
@@ -173,15 +273,25 @@ def update_task_endpoint(
     user_id: Annotated[str, Depends(get_current_user_id)],
     db: Session = Depends(get_db),
 ) -> TaskResponse:
-    fields = request.model_dump(exclude_unset=True, exclude={"agent_instance_id"})
+    fields = request.model_dump(
+        exclude_unset=True,
+        exclude={"agent_instance_id", "assignee", *TASK_RUN_FIELDS},
+    )
     resolved = _user_uuid(user_id)
     existing = _require_task(db, resolved, task_id)
-    _attribute_to_session(
-        db, resolved, _calling_session(db, resolved, request.agent_instance_id)
-    )
+    calling = _calling_session(db, resolved, request.agent_instance_id)
+    _attribute_to_session(db, resolved, calling)
+    fields.update(_assignee_fields(db, resolved, calling, request))
     try:
-        task = task_queries.update_task(db, resolved, existing.id, fields)
-    except (ProjectNotFoundError, LabelNotFoundError, ParentTaskError) as exc:
+        task = task_queries.update_task(
+            db, resolved, existing.id, fields, run_options=request.run_options()
+        )
+    except (
+        ProjectNotFoundError,
+        LabelNotFoundError,
+        ParentTaskError,
+        AssigneeNotFoundError,
+    ) as exc:
         _raise_task_ref_errors(exc)
         raise  # unreachable; keeps the type checker satisfied
     if task is None:

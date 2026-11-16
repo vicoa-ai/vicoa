@@ -78,6 +78,8 @@ class DispatchResult:
     # The automation can never run again (its session is gone): pause it
     # rather than fail on every fire.
     disable: bool = False
+    # How a prompt reached an existing session: "message" or "resume".
+    via: str | None = None
 
 
 def resolve_worktree_spawn(
@@ -87,12 +89,16 @@ def resolve_worktree_spawn(
 
     - none / missing → run in `directory`, no worktree param
     - new            → run in `directory`, ask the daemon for a fresh worktree
+                       (named `name` when the spec carries one)
     - existing       → run directly in the worktree `path`
     Mirrors the web `resolveWorktreeSpawn`."""
     if not isinstance(worktree, dict):
         return directory, None
     mode = worktree.get("mode")
     if mode == "new":
+        name = worktree.get("name")
+        if isinstance(name, str) and name.strip():
+            return directory, {"new": True, "name": name.strip()}
         return directory, {"new": True}
     if mode == "existing":
         path = worktree.get("path")

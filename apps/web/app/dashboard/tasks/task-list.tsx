@@ -39,6 +39,7 @@ import {
   formatTaskDate,
   isPastDate,
 } from '@/components/dashboard/task-ui';
+import { TaskDispatchChip } from '@/components/dashboard/task-dispatch-chip';
 import { cn } from '@/lib/utils';
 import type { ChildProgressMap, TasksById } from './task-board';
 import { TaskViewProperties } from './task-views';
@@ -92,6 +93,7 @@ function TaskRow({
       <span className={cn('min-w-0 flex-1 truncate', isClosed && 'text-muted-foreground line-through')}>
         {task.title}
       </span>
+      <TaskDispatchChip dispatch={task.dispatch} className="shrink-0" />
       {display.parent && parent && (
         <span className="hidden sm:inline-flex">
           <ParentChip parent={parent} />

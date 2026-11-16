@@ -5,9 +5,14 @@
 // the key properties into one row of pills under its title instead
 // (task-detail-panel.tsx).
 
+import { useState } from 'react';
 import { Play, Plus } from 'lucide-react';
 
-import { TaskResponse } from '@/lib/backend-api';
+import { AgentProfile, refusalReason, TaskResponse } from '@/lib/backend-api';
+import { confirmAgentStart } from '@/lib/assign-agent-pref';
+import { toast } from '@/lib/toast';
+import { AssignAgentDialog } from '@/components/dashboard/assign-agent-dialog';
+import { TaskDispatchChip } from '@/components/dashboard/task-dispatch-chip';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -81,8 +86,36 @@ export function TaskPropertyRail({
     allTasks,
     relatedSessions,
     patchTask,
+    assignTo,
     createLabelAndAttach,
   } = model;
+  // The agent picked in the assignee picker, while its confirm dialog is open:
+  // assigning an agent starts it on one of your computers, so it asks first.
+  const [assigning, setAssigning] = useState<AgentProfile | null>(null);
+
+  // "Don't ask again" (Settings → Tasks): picking an agent assigns and starts it
+  // with the defaults, no dialog. The server places the run; a run it can't
+  // place shows its reason on the task's agent chip.
+  const assignAndStart = async (agent: AgentProfile) => {
+    const ref = task.identifier ?? 'this task';
+    try {
+      await assignTo({ type: 'agent', id: agent.id }, { start: true });
+    } catch (err) {
+      toast.error("Couldn't assign it", { description: refusalReason(err) });
+      return;
+    }
+    if (task.status === 'done' || task.status === 'cancelled') {
+      toast.success(`Assigned ${ref} to ${agent.name}`, {
+        description: 'The task is closed, so nothing starts until it is reopened.',
+      });
+    } else if (task.status === 'backlog') {
+      toast.success(`Assigned ${ref} to ${agent.name}`, {
+        description: 'It starts when the task leaves Backlog.',
+      });
+    } else {
+      toast.success(`Starting ${agent.name} on ${ref}`);
+    }
+  };
 
   // A property earns a slot when it has a value or the user asked for it.
   const isShown = (key: string) => revealed.has(key) || OPTIONAL_PROPERTIES.find((p) => p.key === key)?.isSet(task);
@@ -117,13 +150,25 @@ export function TaskPropertyRail({
               agentProfiles,
               projects.find((p) => p.id === task.project_id),
             )}
-            onSelect={(next) =>
+            onSelect={(next) => {
+              const agent =
+                next?.type === 'agent' ? agentProfiles.find((p) => p.id === next.id) : undefined;
+              if (agent && !(task.assignee_type === 'agent' && task.assignee_id === agent.id)) {
+                if (confirmAgentStart()) setAssigning(agent);
+                else void assignAndStart(agent);
+                return;
+              }
               void patchTask({
                 assignee_type: next?.type ?? null,
                 assignee_id: next?.id ?? null,
-              })
-            }
+              });
+            }}
           />
+          {task.dispatch && (
+            <div className="px-2">
+              <TaskDispatchChip dispatch={task.dispatch} onOpenSession={onOpenSession} />
+            </div>
+          )}
           {isShown('due_date') && (
             <DatePickerPill
               label="Due date"
@@ -235,6 +280,15 @@ export function TaskPropertyRail({
           !isOwner && <span className="px-2 text-sm text-muted-foreground">None yet</span>
         )}
       </RailGroup>
+
+      <AssignAgentDialog
+        task={task}
+        profile={assigning}
+        onClose={() => setAssigning(null)}
+        onConfirm={(run) =>
+          assigning ? assignTo({ type: 'agent', id: assigning.id }, run) : Promise.resolve()
+        }
+      />
     </div>
   );
 }

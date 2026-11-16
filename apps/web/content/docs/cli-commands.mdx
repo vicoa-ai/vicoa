@@ -481,6 +481,12 @@ vicoa task update VIC-20 VIC-21 VIC-22 --project VIC2       # move three tasks
 vicoa task update VIC-42 --add-label bug --remove-label growth
 vicoa task update VIC-42 --label a --label b               # set the labels to exactly these
 
+# Assign (an agent starts on the task unless --no-start)
+vicoa task ls --assignee me                                # what's waiting on you
+vicoa task update VIC-42 --assignee me
+vicoa task update VIC-42 --assignee reviewer --no-start    # record the owner only
+vicoa task update VIC-42 --assignee none
+
 # Comment
 vicoa task comment VIC-42 "Fixed — the flake was a missing await."
 vicoa task comment VIC-42 - < report.md                    # body from stdin
@@ -512,6 +518,8 @@ vicoa task delete VIC-42 -y
 | `--start <ISO8601>` | Start date, e.g. `2026-08-01` |
 | `--due <ISO8601>` | Due date, e.g. `2026-08-01T17:00:00Z` |
 | `--title <text>` | New title (`update` only; `create` takes the title as its argument) |
+| `--assignee <WHO>` | `me`, `self` (the agent of the session you run in), `none`, an agent's name (`vicoa agent ls`), or an id. Assigning an agent starts it on the task; also a filter on `ls` |
+| `--no-start` | With `--assignee <agent>`: record the assignee, start nothing |
 | `--json` | Raw JSON — a bare array from `ls`; `update` prints one object for one ref, a list for several |
 
 Columns of `task ls`: `KEY` (identifier), `STATUS`, `PRIO`, `PROJECT` (name), `TITLE`, `ID` (full UUID). `--json` rows carry `project_id` and `project_name`.

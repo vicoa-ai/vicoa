@@ -24,6 +24,7 @@
  */
 
 import { isReferenceHref } from '@/lib/reference-links';
+import { parseAgentMentionHref } from '@/lib/task-mentions';
 import { toAbsolutePath } from '@/lib/utils';
 
 /** A file inside the session's workspace, as the files panel wants it. */
@@ -44,6 +45,8 @@ export type MessageLink =
   | { kind: 'file'; file: WorkspaceFileLink }
   /** A local path, but not under the working directory — refuse to follow it. */
   | { kind: 'outside'; path: string }
+  /** An agent @mention in a task comment (lib/task-mentions). */
+  | { kind: 'agent'; profileId: string }
   /** Fragments, empty hrefs, unknown schemes: render as plain text. */
   | { kind: 'inert' };
 
@@ -81,6 +84,9 @@ const FILENAME_WITH_LINE = /^[a-z](?:[a-z0-9+.\-]|%[0-9a-f]{2})*:\d+(?::\d+)?$/i
  * upstream so relative paths survive.
  */
 export function messageUrlTransform(url: string): string {
+  // An agent mention is the one non-web scheme kept: it never navigates, it
+  // renders as a chip (parseMessageLink → 'agent').
+  if (parseAgentMentionHref(url) !== null) return url;
   const colon = url.indexOf(':');
   if (colon === -1) return url;
   const slash = url.indexOf('/');
@@ -226,6 +232,8 @@ export function parseMessageLink(
   if (raw.startsWith('//')) return { kind: 'inert' };
   // Before the path rules, which would read `/dashboard/…` as an absolute path.
   if (isReferenceHref(raw)) return { kind: 'app', href: raw };
+  const mentioned = parseAgentMentionHref(raw);
+  if (mentioned !== null) return { kind: 'agent', profileId: mentioned };
 
   let candidate = raw;
   let fromFileUrl = false;

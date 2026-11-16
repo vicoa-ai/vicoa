@@ -611,6 +611,17 @@ ENDPOINTS: list[Endpoint] = [
             f"/api/v1/tasks/{w.task.id}/sessions", params={"related": "true"}
         ),
     ),
+    # The assign dialog's preview: the same floor as the assignment itself. A
+    # profile that isn't the caller's answers with a `problem`, never a machine.
+    Endpoint(
+        "GET /tasks/{id}/run-target",
+        "tasks",
+        "editor",
+        lambda c, w: c.get(
+            f"/api/v1/tasks/{w.task.id}/run-target",
+            params={"agent_profile_id": str(uuid4())},
+        ),
+    ),
     Endpoint(
         "POST /tasks {project_id}",
         "tasks",
@@ -1070,6 +1081,7 @@ def test_every_dashboard_route_is_in_the_matrix_or_owner_only():
         "/projects/{project_id}/transfer": "/projects/{id}/transfer",
         "/tasks/{task_id}": "/tasks/{id}",
         "/tasks/{task_id}/sessions": "/tasks/{id}/sessions",
+        "/tasks/{task_id}/run-target": "/tasks/{id}/run-target",
         "/tasks/{task_id}/timeline": "/tasks/{id}/timeline",
         "/tasks/{task_id}/comments": "/tasks/{id}/comments",
         "/tasks/{task_id}/reactions": "/tasks/{id}/reactions",

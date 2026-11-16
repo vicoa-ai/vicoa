@@ -27,15 +27,40 @@
 // which posts the comment and then hands the task back. Enter keeps sending the
 // plain way; the second action is a deliberate click.
 //
+// Both variants take `agents` for an `@` picker. A pick writes plain `@Name`
+// into the box, drawn as a chip by a highlight layer behind the textarea, and
+// only becomes the mention link when the comment is sent (lib/task-mentions,
+// the same token/state split as `#` references). Deleting the name drops the
+// mention. `wake` says what sending would do: a one-line hint under the box
+// names the agents the comment would wake, mirroring the server's routing, so a
+// comment never starts a run by surprise. A comment starting with `/note`
+// wakes nobody; the box tints and the hint says so.
+//
 // `CommentEditor` at the foot of the file is the same textarea opened in place
 // over a comment you wrote, for editing it.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { PrincipalAvatar } from '@/components/ui/principal-avatar';
+import type { AgentProfile } from '@/lib/backend-api';
+import { detectTriggerToken, replaceTokenWith, type TriggerToken } from '@/lib/composer-references';
 import { isImeComposing } from '@/lib/ime';
+import {
+  activeMentions,
+  agentsToWake,
+  isNoteComment,
+  mentionRanges,
+  mentionToken,
+  serializeMentions,
+  type PickedMention,
+  type WakeContext,
+} from '@/lib/task-mentions';
+import { agentPrincipal } from '@/lib/use-agent-profiles';
 import { cn } from '@/lib/utils';
+
+const MENTION_LIMIT = 6;
 
 const MIN_HEIGHT = 36;
 // The inline reply row is one line tall at rest so a thread ends in a hint, not
@@ -63,6 +88,8 @@ export function CommentComposer({
   leading,
   className,
   secondaryAction,
+  agents,
+  wake,
 }: {
   onSubmit: (body: string) => Promise<void>;
   disabled?: boolean;
@@ -75,11 +102,23 @@ export function CommentComposer({
   className?: string;
   /** Default variant only: a second send button. */
   secondaryAction?: CommentComposerSecondaryAction;
+  /** The agents an `@` can mention (the viewer's own). Omitted: no picker. */
+  agents?: AgentProfile[];
+  /** Where the box sits, for the "Sending will wake …" hint. Omitted: no hint. */
+  wake?: WakeContext;
 }) {
   const [value, setValue] = useState('');
+  // Agents picked from the `@` list; each counts while its `@Name` is in the text.
+  const [picks, setPicks] = useState<PickedMention[]>([]);
+  // The `@` token the caret is in, while the agent picker is open.
+  const [mention, setMention] = useState<TriggerToken | null>(null);
+  const [highlight, setHighlight] = useState(0);
+  // The wake hint is for the person typing: shown only while the box has focus.
+  const [focused, setFocused] = useState(false);
   // Which button's send is in flight. Either one locks both.
   const [sending, setSending] = useState<false | 'primary' | 'secondary'>(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
 
   // Same rAF-coalesced auto-resize as the chat composer: reading scrollHeight
   // after writing height='auto' forces a synchronous layout, so collapse a
@@ -104,14 +143,99 @@ export function CommentComposer({
     [],
   );
 
+  // Only agents a comment can actually start: the viewer's own, live ones.
+  const mentionable = useMemo(
+    () => (agents ?? []).filter((a) => !a.is_archived && !a.team_id),
+    [agents],
+  );
+  const matches = useMemo(() => {
+    if (!mention) return [];
+    const q = mention.query.toLowerCase();
+    return mentionable.filter((a) => a.name.toLowerCase().includes(q)).slice(0, MENTION_LIMIT);
+  }, [mention, mentionable]);
+  const pickerOpen = mention !== null && matches.length > 0;
+
+  const trackMention = useCallback(
+    (text: string, cursor: number) => {
+      if (mentionable.length === 0) return;
+      const token = detectTriggerToken(text, cursor, '@');
+      setMention(token);
+      setHighlight(0);
+    },
+    [mentionable.length],
+  );
+
+  const chooseMention = useCallback(
+    (agent: AgentProfile) => {
+      if (!mention) return;
+      const next = replaceTokenWith(value, mention, mentionToken(agent.name));
+      setValue(next.text);
+      setPicks((prev) => [...prev.filter((p) => p.id !== agent.id), { id: agent.id, name: agent.name }]);
+      setMention(null);
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(next.cursor, next.cursor);
+      });
+      autoResize();
+    },
+    [mention, value, autoResize],
+  );
+
+  // The picks still in the text, and the body as it would be posted.
+  const livePicks = useMemo(() => activeMentions(picks, value), [picks, value]);
+  const outgoing = useCallback(
+    (text: string) => serializeMentions(text, livePicks),
+    [livePicks],
+  );
+  const isNote = isNoteComment(value);
+
+  // "Sending will wake …": the server's routing, predicted. With nothing typed
+  // yet it shows what a plain comment here would do.
+  const wakeNames = useMemo(() => {
+    if (!wake) return [];
+    const ids = agentsToWake(value.trim() ? outgoing(value) : '.', wake);
+    const byId = new Map(mentionable.map((a) => [a.id.toLowerCase(), a.name]));
+    return ids.map((id) => byId.get(id)).filter((name): name is string => !!name);
+  }, [wake, value, outgoing, mentionable]);
+
+  // The chip layer: the text with each live `@Name` marked, laid out exactly
+  // like the textarea above it. A trailing newline needs a character after it
+  // or the layer ends a line short.
+  const highlighted = useMemo(() => {
+    const ranges = mentionRanges(value, livePicks);
+    if (ranges.length === 0) return null;
+    const parts: React.ReactNode[] = [];
+    let cursor = 0;
+    ranges.forEach((range, index) => {
+      parts.push(value.slice(cursor, range.start));
+      // The posted chip's look (message-markdown): its padding is a ring, which
+      // takes no layout space, so every glyph stays over its textarea twin.
+      parts.push(
+        <mark
+          key={index}
+          className="rounded bg-primary/10 text-primary ring-[3px] ring-primary/10"
+        >
+          {value.slice(range.start, range.end)}
+        </mark>,
+      );
+      cursor = range.end;
+    });
+    parts.push(`${value.slice(cursor)}\u200b`);
+    return parts;
+  }, [value, livePicks]);
+
   const clear = useCallback(() => {
     setValue('');
+    setPicks([]);
+    setMention(null);
     const el = textareaRef.current;
     if (el) el.style.height = `${variant === 'inline' ? INLINE_HEIGHT : MIN_HEIGHT}px`;
   }, [variant]);
 
   const send = useCallback(async () => {
-    const body = value.trim();
+    const body = outgoing(value).trim();
     if (!body || sending || disabled) return;
     setSending('primary');
     try {
@@ -120,10 +244,10 @@ export function CommentComposer({
     } finally {
       setSending(false);
     }
-  }, [value, sending, disabled, onSubmit, clear]);
+  }, [value, outgoing, sending, disabled, onSubmit, clear]);
 
   const sendSecondary = useCallback(async () => {
-    const body = value.trim();
+    const body = outgoing(value).trim();
     if (!body || sending || disabled || !secondaryAction) return;
     setSending('secondary');
     try {
@@ -134,10 +258,29 @@ export function CommentComposer({
     } finally {
       setSending(false);
     }
-  }, [value, sending, disabled, secondaryAction, clear]);
+  }, [value, outgoing, sending, disabled, secondaryAction, clear]);
 
   const inline = variant === 'inline';
   const empty = value.trim().length === 0;
+  // Hint copy is secondary (apps/web/AGENTS.md → "Hint text"): dimmer than
+  // body text, only while typing here, whole sentences. An empty box says who
+  // it is for in its placeholder instead.
+  const hintClass = cn(
+    'font-sans text-[11px] text-muted-foreground/60',
+    inline ? 'pb-0.5' : 'mt-1 px-1',
+  );
+  const wakeHint =
+    !focused || empty ? null : isNote ? (
+      <p className={hintClass}>A note stays on the task and wakes nobody.</p>
+    ) : wakeNames.length > 0 ? (
+      <p className={hintClass}>
+        Wakes {formatNames(wakeNames)}. Start with /note to post without waking anyone.
+      </p>
+    ) : null;
+  const shownPlaceholder =
+    wake && wakeNames.length > 0
+      ? `${wake.inThread ? 'Reply to' : 'Comment for'} ${formatNames(wakeNames)}…`
+      : placeholder;
   const showSecondary = !inline && secondaryAction !== undefined;
 
   return (
@@ -148,7 +291,9 @@ export function CommentComposer({
         // surface, and a second border inside it reads as a nested object.
         inline
           ? 'flex items-center gap-2'
-          : 'rounded-xl border border-border/50 bg-composer px-3 py-2.5 shadow-sm',
+          : 'rounded-xl border border-border/50 bg-composer px-3 py-2.5 shadow-sm transition-colors',
+        // A note reads as an aside before it is even sent.
+        isNote && (inline ? 'rounded-md bg-muted/50 px-1' : 'border-dashed bg-muted/40'),
         className,
       )}
     >
@@ -156,18 +301,87 @@ export function CommentComposer({
           typing there, and their own face is not information — it was just an
           indent. Inside a thread it earns its place (see the header). */}
       {inline && leading}
+      {pickerOpen && (
+        <div
+          role="listbox"
+          aria-label="Mention an agent"
+          className="absolute bottom-full left-0 z-20 mb-1 w-56 overflow-hidden rounded-md border bg-popover p-1 font-sans shadow-md"
+        >
+          {matches.map((agent, index) => (
+            <button
+              key={agent.id}
+              type="button"
+              role="option"
+              aria-selected={index === highlight}
+              // mousedown, not click: the textarea's blur would close the list first.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                chooseMention(agent);
+              }}
+              onMouseEnter={() => setHighlight(index)}
+              className={cn(
+                'flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm',
+                index === highlight && 'bg-accent text-accent-foreground',
+              )}
+            >
+              <PrincipalAvatar principal={agentPrincipal(agent)} size="xs" />
+              <span className="truncate">{agent.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className={cn(inline ? 'min-w-0 flex-1' : 'flex items-start gap-2')}>
+        <div className="relative w-full min-w-0">
+        {highlighted && (
+          <div
+            ref={highlightRef}
+            aria-hidden
+            className={cn(
+              // Same box and type as the textarea so every glyph lands on top
+              // of its mark; only the marks are visible.
+              // The layer draws the text (the textarea's own is transparent
+              // while it shows) so a mention can be coloured like a chip.
+              'pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words text-sm leading-5 text-foreground',
+              inline ? 'py-1' : 'px-1 py-2',
+            )}
+          >
+            {highlighted}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
+          onScroll={(e) => {
+            if (highlightRef.current) highlightRef.current.scrollTop = e.currentTarget.scrollTop;
+          }}
           value={value}
           autoFocus={autoFocus}
           onChange={(e) => {
             setValue(e.target.value);
+            trackMention(e.target.value, e.target.selectionStart ?? e.target.value.length);
             autoResize();
           }}
           onKeyDown={(e) => {
             // An IME's Enter picks a candidate, it doesn't send.
             if (isImeComposing(e)) return;
+            if (pickerOpen) {
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                const step = e.key === 'ArrowDown' ? 1 : -1;
+                setHighlight((i) => (i + step + matches.length) % matches.length);
+                return;
+              }
+              if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault();
+                chooseMention(matches[Math.min(highlight, matches.length - 1)]);
+                return;
+              }
+              if (e.key === 'Escape') {
+                // Closes the picker only; a dialog around the box stays open.
+                e.preventDefault();
+                setMention(null);
+                return;
+              }
+            }
             // Enter sends, Shift+Enter breaks the line — the same contract the
             // session composer teaches.
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -179,7 +393,12 @@ export function CommentComposer({
               textareaRef.current?.blur();
             }
           }}
-          placeholder={placeholder}
+          onFocus={() => setFocused(true)}
+          onBlur={() => {
+            setFocused(false);
+            setMention(null);
+          }}
+          placeholder={shownPlaceholder}
           disabled={disabled}
           rows={1}
           style={{
@@ -195,10 +414,13 @@ export function CommentComposer({
             // items-center then centres the *wrapper* — dropping the avatar a
             // couple of pixels below the caret. (The default variant's wrapper
             // is a flex container, which blockifies its children already.)
-            'custom-scrollbar block w-full resize-none border-0 bg-transparent text-sm leading-5 placeholder:text-muted-foreground/50 focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50',
+            'custom-scrollbar relative block w-full resize-none border-0 bg-transparent text-sm leading-5 placeholder:text-muted-foreground/50 focus:outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50',
             inline ? 'py-1' : 'px-1 py-2',
+            highlighted && 'text-transparent caret-foreground',
           )}
         />
+        </div>
+        {inline && wakeHint}
       </div>
       <div
         className={cn(
@@ -240,8 +462,14 @@ export function CommentComposer({
           )}
         </Button>
       </div>
+      {!inline && wakeHint}
     </div>
   );
+}
+
+function formatNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
 /**

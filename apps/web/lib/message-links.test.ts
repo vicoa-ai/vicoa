@@ -334,3 +334,13 @@ describe("classifyWorkspacePath — a tool row's path, not a link", () => {
     expect(classifyWorkspacePath('src/foo.ts', { cwd: null, homeDir: null })).toEqual({ kind: 'inert' });
   });
 });
+
+describe('agent mentions', () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  test('survive the url transform and parse as an agent chip', () => {
+    expect(resolve(`vicoa://agent/${id}`)).toEqual({ kind: 'agent', profileId: id });
+  });
+  test('any other vicoa: link stays inert', () => {
+    expect(resolve('vicoa://agent/not-an-id')).toEqual({ kind: 'inert' });
+  });
+});

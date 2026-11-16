@@ -33,10 +33,12 @@ import {
   TaskSessionRef,
   TaskSessionResponse,
   TaskStatus,
+  TaskRunFields,
   TaskTimelineResponse,
   UpdateTaskRequest,
   UserProfile,
 } from '@/lib/backend-api';
+import type { WakeContext } from '@/lib/task-mentions';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { labelOwnerForProject } from '@/lib/project-vocabulary';
 import type { Principal } from '@/lib/principals';
@@ -218,6 +220,23 @@ export function useTaskDetail(
     [api, task, load],
   );
 
+  // Assigning an agent through the assign dialog: not optimistic, and it
+  // rejects, so the dialog can stay open with the reason. The run fields say
+  // whether and where it starts (TaskRunFields).
+  const assignTo = useCallback(
+    async (next: { type: 'user' | 'agent'; id: string } | null, run?: TaskRunFields) => {
+      if (!api || !task) throw new Error('Task not loaded');
+      const updated = await api.updateTask(task.id, {
+        assignee_type: next?.type ?? null,
+        assignee_id: next?.id ?? null,
+        ...run,
+      });
+      setTask(updated);
+      void load();
+    },
+    [api, task, load],
+  );
+
   // Tree context, all off the flat list: this task's children (in board
   // order), its parent and that parent's children for the "Sub-task of" link,
   // and each task's own child progress for sub-tasks that are parents too.
@@ -358,23 +377,38 @@ export function useTaskDetail(
     [api, task, applyTimeline],
   );
 
-  // The panel's "Reply and hand back": a new thread, then In Review. Not an
-  // optimistic patch like the pickers: the host moves on to the next task once
-  // this resolves, so it has to mean the server took both writes.
+  // The panel's "Reply and hand back". Not an optimistic patch like the
+  // pickers: the host moves on to the next task once this resolves, so it has
+  // to mean the server took both writes.
+  //
+  // A task an agent assigned to you is handed back to that agent: the reply
+  // goes into the thread of its question (so it reads as the answer), then the
+  // task is assigned back, which wakes the agent. Anything else posts a new
+  // thread and moves the task to In Review, as before.
+  const handBackTo = useMemo(() => handBackTarget(task, me?.id ?? null), [task, me]);
   const handBackPosted = useRef<string | null>(null);
   const replyAndHandBack = useCallback(
     async (body: string): Promise<TaskResponse> => {
       if (!api || !task) throw new Error('Task not loaded');
+      const target = handBackTarget(task, me?.id ?? null);
       const updated = await runHandBack(body, handBackPosted, {
-        postReply: (reply) => postComment(reply),
-        moveToReview: () => api.updateTask(task.id, { status: 'in_review' }),
+        postReply: (reply) =>
+          target ? postComment(reply, target.threadId ?? undefined) : postComment(reply),
+        handOver: () =>
+          target
+            ? api.updateTask(task.id, {
+                assignee_type: 'agent',
+                assignee_id: target.agentId,
+                start: true,
+              })
+            : api.updateTask(task.id, { status: 'in_review' }),
       });
       setTask(updated);
-      // The status change wrote an activity row.
+      // The status or assignee change wrote an activity row.
       void load();
       return updated;
     },
-    [api, task, postComment, load],
+    [api, task, me, postComment, load],
   );
 
   const viewer = useMemo<Principal | null>(
@@ -427,7 +461,42 @@ export function useTaskDetail(
     deleteComment,
     toggleReaction,
     replyAndHandBack,
+    handBackTo,
+    assignTo,
   };
 }
 
 export type TaskDetailModel = ReturnType<typeof useTaskDetail>;
+
+/** Where a task's bottom comment box sits, for its wake hint: a new thread. */
+export function composerWake(task: TaskResponse): WakeContext {
+  return {
+    inThread: false,
+    threadAgentId: null,
+    assigneeAgentId: task.assignee_type === 'agent' ? task.assignee_id : null,
+  };
+}
+
+/** Who "Reply and hand back" returns the task to: the agent that assigned it to
+ *  the viewer, with the thread of its question. Null = the In Review hand back. */
+export interface HandBackTarget {
+  agentId: string;
+  agentName: string;
+  /** The assigner's latest comment, whose thread the reply joins. */
+  threadId: string | null;
+}
+
+export function handBackTarget(
+  task: TaskResponse | null,
+  viewerId: string | null,
+): HandBackTarget | null {
+  if (!task || !viewerId) return null;
+  if (task.assignee_type !== 'user' || task.assignee_id !== viewerId) return null;
+  const by = task.assigned_by;
+  if (!by || by.type !== 'agent' || !by.id) return null;
+  return {
+    agentId: by.id,
+    agentName: by.name?.trim() || 'the agent',
+    threadId: task.assigner_comment_id ?? null,
+  };
+}

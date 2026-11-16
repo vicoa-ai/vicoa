@@ -427,6 +427,18 @@ const MARKDOWN_COMPONENTS: Components = {
         </a>
       );
     }
+    // An agent @mention in a task comment: a name chip, never a link (the
+    // mention woke the agent when the comment was posted; it navigates nowhere).
+    if (link.kind === 'agent') {
+      return (
+        <span
+          className="rounded bg-primary/10 px-1 py-px text-[0.95em] font-medium text-primary"
+          title="Agent mention"
+        >
+          {children}
+        </span>
+      );
+    }
     // A `#` reference to a task, session or automation: the same chip as in
     // the description editor, with the item's current title.
     const target = link.kind === 'app' ? parseReferenceHref(link.href) : null;

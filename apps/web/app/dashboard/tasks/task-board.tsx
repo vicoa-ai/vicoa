@@ -39,6 +39,7 @@ import {
   formatTaskDate,
   isPastDate,
 } from '@/components/dashboard/task-ui';
+import { TaskDispatchChip, dispatchChipState } from '@/components/dashboard/task-dispatch-chip';
 import { cn } from '@/lib/utils';
 import { TaskViewProperties } from './task-views';
 import { ColumnShowMore } from './column-show-more';
@@ -88,7 +89,9 @@ function TaskCard({
   const showDue = display.dueDate && !!due;
   const showProgress = display.childProgress && !!childProgress && childProgress.total > 0;
   const showChips = showParent || showProject || showLabels;
-  const showMeta = showStart || showDue || showProgress;
+  // What an agent is doing with it, while it is doing something.
+  const showDispatch = dispatchChipState(task.dispatch, '') !== null;
+  const showMeta = showStart || showDue || showProgress || showDispatch;
 
   return (
     <div
@@ -143,6 +146,9 @@ function TaskCard({
 
       {showMeta && (
         <div className="mt-2 flex items-center justify-end gap-2">
+          {showDispatch && (
+            <TaskDispatchChip dispatch={task.dispatch} className="mr-auto" />
+          )}
           {showStart && (
             <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
               <CalendarClock className="size-3" />

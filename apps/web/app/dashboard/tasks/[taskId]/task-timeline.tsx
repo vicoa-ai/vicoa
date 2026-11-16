@@ -48,6 +48,7 @@ import { SessionAgentIcon } from '@/components/dashboard/agent-type-icon';
 import { formatSidebarTime, getSessionTitle } from '@/components/dashboard/session-display';
 import {
   AgentInstanceResponse,
+  AgentProfile,
   TaskActivityResponse,
   TaskCommentResponse,
   TaskReactionSummary,
@@ -76,6 +77,7 @@ import {
   type Principal,
 } from '@/lib/principals';
 import { cn } from '@/lib/utils';
+import { isNoteComment, stripNotePrefix } from '@/lib/task-mentions';
 
 // See rule 1. Both values are used by the composer too, so the stream and the
 // box you type into share a left edge.
@@ -532,6 +534,10 @@ function CommentBody({
     comment.author.id === viewer.id;
   const canEdit = mine && !!onEdit;
   const canDelete = mine && !!onDelete;
+  // A `/note` comment (it woke nobody) reads as an aside: the prefix is the
+  // instruction, not the content, so it is replaced by a badge.
+  const note = body !== null && isNoteComment(body);
+  const shown = body !== null && note ? stripNotePrefix(body) : body;
   return (
     <div className="group/comment">
       <div className="flex items-center gap-2">
@@ -542,6 +548,14 @@ function CommentBody({
         {comment.author.type === 'agent' && (
           <span className="rounded bg-muted px-1 py-px text-[10px] text-muted-foreground">
             agent
+          </span>
+        )}
+        {note && (
+          <span
+            className="rounded border border-dashed border-border px-1 py-px text-[10px] text-muted-foreground"
+            title="A note: it woke nobody"
+          >
+            Note
           </span>
         )}
         {/* Holds its width like the activity line's time, so in a narrow
@@ -606,8 +620,13 @@ function CommentBody({
               }}
             />
           ) : (
-            <div className="mt-1.5 text-sm leading-relaxed [overflow-wrap:anywhere]">
-              <MessageMarkdown>{body}</MessageMarkdown>
+            <div
+              className={cn(
+                'mt-1.5 text-sm leading-relaxed [overflow-wrap:anywhere]',
+                note && 'text-muted-foreground',
+              )}
+            >
+              <MessageMarkdown>{shown ?? ''}</MessageMarkdown>
             </div>
           )}
           <ReactionRow
@@ -622,10 +641,21 @@ function CommentBody({
   );
 }
 
+/** The agent that wrote in the thread most recently: who a plain reply wakes. */
+function threadAgentId(thread: Thread): string | null {
+  const comments = [thread.root, ...thread.replies];
+  for (let i = comments.length - 1; i >= 0; i -= 1) {
+    const c = comments[i];
+    if (c.author.type === 'agent' && c.author.id && c.body !== null) return c.author.id;
+  }
+  return null;
+}
+
 function ThreadCard({
   thread,
   viewer,
   sessionRefs,
+  composerAgents,
   onToggleReaction,
   onReply,
   onEdit,
@@ -634,6 +664,7 @@ function ThreadCard({
   thread: Thread;
   viewer: Principal | null;
   sessionRefs: SessionRefs;
+  composerAgents?: AgentProfile[];
   onToggleReaction?: (commentId: string, emoji: string) => void;
   onReply?: (parentCommentId: string, body: string) => Promise<void>;
 } & CommentActions) {
@@ -677,6 +708,12 @@ function ThreadCard({
               />
             }
             onSubmit={(body) => onReply(thread.root.id, body)}
+            agents={composerAgents}
+            wake={
+              composerAgents
+                ? { inThread: true, threadAgentId: threadAgentId(thread), assigneeAgentId: null }
+                : undefined
+            }
           />
         </div>
       )}
@@ -835,6 +872,7 @@ export function TaskTimeline({
   onEditComment,
   onDeleteComment,
   onOpenSession,
+  composerAgents,
 }: {
   comments: TaskCommentResponse[];
   activity: TaskActivityResponse[];
@@ -853,6 +891,8 @@ export function TaskTimeline({
   /** Open a session from a "via" line or a session card in place (the peek
    *  panel). Omitted, those are plain links to the session page. */
   onOpenSession?: (sessionId: string) => void;
+  /** The viewer's agents, for the reply boxes' `@` picker and wake hint. */
+  composerAgents?: AgentProfile[];
 }) {
   const entries = useMemo(
     () => buildEntries(comments, activity, sessions),
@@ -874,6 +914,7 @@ export function TaskTimeline({
                 thread={entry.thread}
                 viewer={viewer}
                 sessionRefs={refs}
+                composerAgents={composerAgents}
                 onToggleReaction={onToggleCommentReaction}
                 onReply={onReply}
                 onEdit={onEditComment}

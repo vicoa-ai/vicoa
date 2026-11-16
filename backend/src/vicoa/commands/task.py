@@ -121,6 +121,12 @@ def _print_task_detail(t: dict) -> None:
         f"project:     {project}",
         f"parent:      {t.get('parent_task_id') or '—'}",
         f"labels:      {labels}",
+        f"assignee:    {_assignee_label(t)}",
+        *(
+            [f"agent run:   {_dispatch_label(t['dispatch'])}"]
+            if t.get("dispatch")
+            else []
+        ),
         f"start_date:  {t.get('start_date') or '—'}",
         f"due_date:    {t.get('due_date') or '—'}",
         f"created_at:  {t.get('created_at')}",
@@ -130,6 +136,45 @@ def _print_task_detail(t: dict) -> None:
     description = t.get("description")
     if description:
         print(f"\ndescription:\n{description}")
+
+
+def _assignee_label(t: dict) -> str:
+    principal = t.get("assignee")
+    if not principal:
+        return "—"
+    label = _principal_name(principal)
+    by = t.get("assigned_by")
+    if by and t.get("assigned_at"):
+        label += f", by {_principal_name(by)} at {t['assigned_at']}"
+    return label
+
+
+# How a task's latest agent run reads (`dispatch` on a task).
+_DISPATCH_WORDS = {
+    "queued": "queued",
+    "dispatching": "starting",
+    "delivered": "delivered",
+    "resumed": "resumed",
+    "started": "started",
+    "failed": "failed",
+    "cancelled": "cancelled",
+}
+
+
+def _dispatch_label(d: dict) -> str:
+    word = _DISPATCH_WORDS.get(str(d.get("state")), str(d.get("state")))
+    if d.get("session_status") == "ACTIVE" and d.get("state") in (
+        "delivered",
+        "resumed",
+        "started",
+    ):
+        word = "working"
+    label = f"{word} ({d.get('mode')}, {d.get('trigger')})"
+    if d.get("detail"):
+        label += f": {d['detail']}"
+    if d.get("agent_instance_id"):
+        label += f" — session {d['agent_instance_id']}"
+    return label
 
 
 def _principal_name(principal: Optional[dict]) -> str:
@@ -243,6 +288,8 @@ def _cmd_ls(args, api_key: str) -> int:
     single_ids = [group[0] for group in label_groups if len(group) == 1]
     if single_ids:
         params["label_id"] = single_ids
+    if getattr(args, "assignee", None):
+        params["assignee"] = args.assignee
     tasks = _request(args, api_key, "GET", "/api/v1/tasks", params=params or None)
     tasks = _apply_filters_locally(tasks or [], params.get("unfiled"), label_groups)
     if getattr(args, "json", False):
@@ -328,6 +375,7 @@ def _cmd_create(args, api_key: str) -> int:
         body["start_date"] = args.start
     if getattr(args, "due", None):
         body["due_date"] = args.due
+    body.update(_assignee_body(args))
     self_id = _calling_session()
     if self_id:
         body["agent_instance_id"] = self_id
@@ -338,6 +386,19 @@ def _cmd_create(args, api_key: str) -> int:
         ref = task.get("identifier") or task.get("id")
         print(f"Created task {ref}: {task.get('title')}")
     return 0
+
+
+def _assignee_body(args) -> dict[str, Any]:
+    """``--assignee`` (+ ``--no-start``), resolved server-side:
+    ``me``, ``self`` (this session's agent), ``none``, an agent's name or an id.
+    Assigning an agent starts it on the task unless ``--no-start``."""
+    assignee = getattr(args, "assignee", None)
+    if assignee is None:
+        return {}
+    body: dict[str, Any] = {"assignee": assignee}
+    if getattr(args, "no_start", False):
+        body["start"] = False
+    return body
 
 
 def _ref_of(task: dict, fallback: str) -> str:
@@ -389,10 +450,11 @@ def _cmd_update(args, api_key: str) -> int:
     remove_labels = set(ids[len(set_names) + len(add_names) :])
     if set_names:
         body["label_ids"] = set_labels
+    body.update(_assignee_body(args))
     if not body and not add_labels and not remove_labels:
         print(
             "Nothing to update — pass at least one field "
-            "(e.g. --status done, --title ..., --project VIC).",
+            "(e.g. --status done, --title ..., --project VIC, --assignee me).",
             file=sys.stderr,
         )
         return 2

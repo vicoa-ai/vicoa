@@ -61,11 +61,15 @@ import { isDesktopLocal } from '@/lib/runtime-config';
 import { projectRoleAtLeast } from '@/lib/backend-api';
 import { TaskDisplayMenu } from './task-display-menu';
 import { TaskLabelFilter } from './task-label-filter';
+import { TaskAssigneeFilter } from './task-assignee-filter';
+import { useAgentProfiles } from '@/lib/use-agent-profiles';
+import { useCurrentUserId } from '@/lib/hooks/use-current-user-id';
 import { TaskBoardSkeleton, TaskListSkeleton } from './task-skeleton';
 import { getTasksCache, setTasksCache } from './task-cache';
 import {
   NO_PROJECT_FILTER,
   TaskView,
+  activeAssigneeFilter,
   activeLabelFilter,
   cloneView,
   compareTasks,
@@ -76,6 +80,7 @@ import {
   loadViews,
   saveActiveViewId,
   saveViews,
+  taskMatchesAssignee,
   taskMatchesLabels,
 } from './task-views';
 
@@ -224,6 +229,21 @@ function TasksPageInner() {
   const labelFilter = useMemo(
     () => activeLabelFilter(activeView.labelFilter, labelOptions),
     [activeView.labelFilter, labelOptions],
+  );
+  // Assignee filter: Me, the user's own agents, Unassigned.
+  const viewerId = useCurrentUserId(api);
+  const { profiles: agentProfiles } = useAgentProfiles();
+  const assigneeAgents = useMemo(
+    () => agentProfiles.filter((profile) => !profile.is_archived && !profile.team_id),
+    [agentProfiles],
+  );
+  const assigneeFilter = useMemo(
+    () =>
+      activeAssigneeFilter(
+        activeView.assigneeFilter,
+        assigneeAgents.map((agent) => agent.id),
+      ),
+    [activeView.assigneeFilter, assigneeAgents],
   );
 
   // Mutate the active view and persist. Guards on a loaded view id so the
@@ -507,6 +527,7 @@ function TasksPageInner() {
         return false;
       }
       if (!taskMatchesLabels(t, labelFilter)) return false;
+      if (!taskMatchesAssignee(t, assigneeFilter, viewerId)) return false;
       // "Show sub-tasks" off → hide anything with a parent (parents only).
       if (!showSubTasks && t.parent_task_id) return false;
       return true;
@@ -515,7 +536,16 @@ function TasksPageInner() {
     // board) preserves this order as it buckets by status, so sorting the flat
     // list here drives both views.
     return [...filtered].sort((a, b) => compareTasks(a, b, sortBy, sortDirection));
-  }, [tasks, projectFilter, labelFilter, showSubTasks, sortBy, sortDirection]);
+  }, [
+    tasks,
+    projectFilter,
+    labelFilter,
+    assigneeFilter,
+    viewerId,
+    showSubTasks,
+    sortBy,
+    sortDirection,
+  ]);
 
   // task id -> task, for resolving a sub-task's parent chip. Built over ALL
   // tasks so a parent hidden by the current filter still resolves.
@@ -754,6 +784,12 @@ function TasksPageInner() {
           labels={labelOptions}
           selected={labelFilter}
           onChange={(ids) => updateActiveView({ labelFilter: ids })}
+        />
+
+        <TaskAssigneeFilter
+          agents={assigneeAgents}
+          selected={assigneeFilter}
+          onChange={(values) => updateActiveView({ assigneeFilter: values })}
         />
 
         {canShareBoard && filterProject && (

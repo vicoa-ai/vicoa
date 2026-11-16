@@ -7,5 +7,6 @@ daemons — is process-local to the `server` app.
 """
 
 from .loop import AutomationScheduler
+from .task_dispatcher import TaskDispatcher
 
-__all__ = ["AutomationScheduler"]
+__all__ = ["AutomationScheduler", "TaskDispatcher"]

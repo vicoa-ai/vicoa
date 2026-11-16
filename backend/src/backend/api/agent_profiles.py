@@ -85,6 +85,8 @@ class AgentProfileResponse(BaseModel):
     system_prompt: str | None
     default_machine_id: str | None
     default_project_id: str | None
+    # How many of its task sessions may be mid-turn at once (task dispatch).
+    max_concurrent_sessions: int = 2
     position: float
     is_archived: bool
     created_at: str
@@ -108,6 +110,7 @@ class AgentProfileCreate(BaseModel):
     system_prompt: str | None = None
     default_machine_id: UUID | None = None
     default_project_id: UUID | None = None
+    max_concurrent_sessions: int = Field(default=2, ge=1, le=5)
     # Create in a team's list instead of the caller's own (team owner/admin).
     team_id: UUID | None = None
 
@@ -138,6 +141,7 @@ class AgentProfileUpdate(BaseModel):
     system_prompt: str | None = None
     default_machine_id: UUID | None = None
     default_project_id: UUID | None = None
+    max_concurrent_sessions: int | None = Field(default=None, ge=1, le=5)
     position: float | None = None
     is_archived: bool | None = None
     # Move to a team's list (its owner/admin), or back to the caller's own
@@ -194,6 +198,7 @@ def to_response(
         default_project_id=(
             str(profile.default_project_id) if profile.default_project_id else None
         ),
+        max_concurrent_sessions=profile.max_concurrent_sessions,
         position=profile.position,
         is_archived=profile.is_archived,
         created_at=profile.created_at.isoformat(),
@@ -324,6 +329,7 @@ def create_agent(
             system_prompt=payload.system_prompt,
             default_machine_id=payload.default_machine_id,
             default_project_id=payload.default_project_id,
+            max_concurrent_sessions=payload.max_concurrent_sessions,
             position=queries.next_position(db, current_user.id, payload.team_id),
         )
     except IntegrityError as exc:
@@ -350,6 +356,9 @@ def update_agent(
 ) -> AgentProfileResponse:
     profile = _load_editable(db, current_user, profile_id)
     supplied = payload.model_dump(exclude_unset=True)
+    # Not nullable: an explicit null leaves the cap as it is.
+    if supplied.get("max_concurrent_sessions", 0) is None:
+        supplied.pop("max_concurrent_sessions")
 
     # Moving between the caller's own list and a team's. Into a team needs
     # its owner/admin; out of one makes the caller the owner. The list
