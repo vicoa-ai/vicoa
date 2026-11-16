@@ -5,6 +5,15 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.9.17
+17 November, 2026
+- Assign a task from the terminal: `vicoa task update VIC-42 --assignee me` hands it to you, and `--assignee <agent>` starts that agent on it. Add `--no-start` to only record the assignee. `vicoa task ls --assignee me` lists what is waiting on you, and `task create` takes `--assignee` too
+- A session started for a task is titled with the task's key and title, and its new worktree is named after the key (`vic-42`, or `vic-42-2` when that name is taken)
+- OpenCode, Cursor, Gemini, Copilot, Kimi, Hermes, Pi and omp sessions now start sooner as well: the daemon warms the agent up while you type the first message, as it already does for Claude and Codex. Antigravity still starts cold
+- Fix resuming an OpenCode session coming back on a blank conversation while the transcript still showed the old one
+- Fix `vicoa opencode --upgrade` saying "No cached plugin found" and leaving the old plugin in place on OpenCode 1.18 and later
+- Fix the session list failing with a timeout when one of your sessions has a very long history
+
 ### v1.9.16
 14 November, 2026
 - A new Claude or Codex session now starts sooner: the daemon warms the agent up while you type the first message and hands your prompt over when you send. New worktrees and resumed sessions still start cold, and `VICOA_PREWARM=0` turns it off
