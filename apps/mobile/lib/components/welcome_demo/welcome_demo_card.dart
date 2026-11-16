@@ -68,12 +68,12 @@ class WelcomeDemoCard extends StatelessWidget {
                 const EdgeInsets.symmetric(horizontal: 16.0, vertical: 14.0),
             child: Row(
               children: [
-                const SizedBox(
+                SizedBox(
                   width: 36.0,
                   height: 36.0,
                   child: Center(
                     child: AgentTypeIconWidget(
-                      agentTypeName: 'claude',
+                      agentTypeName: welcomeDemoIconKey(),
                       size: 16.0,
                       withBackground: true,
                     ),

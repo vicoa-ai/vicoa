@@ -33,6 +33,8 @@ const _agentLogos = [
   _AgentLogo(match: 'oh my pi', asset: 'assets/images/integrations/omp.svg', invertInDark: true),
   _AgentLogo(match: 'omp', asset: 'assets/images/integrations/omp.svg', invertInDark: true),
   _AgentLogo(match: 'pi', asset: 'assets/images/integrations/pi.svg', invertInDark: true),
+  // Vicoa's own mark (a PNG, not an SVG). Last, so no real agent name is shadowed.
+  _AgentLogo(match: 'vicoa', asset: 'assets/images/vicoa-logo-no-bg.png', invertInDark: false, raster: true),
 ];
 
 class _AgentLogo {
@@ -43,7 +45,9 @@ class _AgentLogo {
   // When true, in dark mode the (non-inverted) glyph is centered on a white
   // rounded square so a dark logo stays legible against the dark UI.
   final bool boxedWhiteInDark;
-  const _AgentLogo({required this.match, required this.asset, this.lightAsset, required this.invertInDark, this.boxedWhiteInDark = false});
+  // The asset is a bitmap with transparent padding, not an SVG.
+  final bool raster;
+  const _AgentLogo({required this.match, required this.asset, this.lightAsset, required this.invertInDark, this.boxedWhiteInDark = false, this.raster = false});
 }
 
 _AgentLogo? _getLogo(String? agentTypeName) {
@@ -184,19 +188,22 @@ class AgentTypeIconWidget extends StatelessWidget {
     // room from the rounded edges; otherwise the logo fills `size` as usual.
     final glyphSize = boxedWhite ? size * 0.82 : size;
 
-    final rawSvg = SvgPicture.asset(
-      resolvedAsset,
-      width: glyphSize,
-      height: glyphSize,
-      colorFilter: needsInvert
-          ? const ColorFilter.matrix([
-              -1, 0, 0, 0, 255,
-              0, -1, 0, 0, 255,
-              0, 0, -1, 0, 255,
-              0, 0, 0, 1, 0,
-            ])
-          : null,
-    );
+    // The bitmap mark carries ~1/3 transparent padding, so scale it up to fill `size`.
+    final Widget rawSvg = logo.raster
+        ? Transform.scale(scale: 1.45, child: Image.asset(resolvedAsset, width: glyphSize, height: glyphSize))
+        : SvgPicture.asset(
+            resolvedAsset,
+            width: glyphSize,
+            height: glyphSize,
+            colorFilter: needsInvert
+                ? const ColorFilter.matrix([
+                    -1, 0, 0, 0, 255,
+                    0, -1, 0, 0, 255,
+                    0, 0, -1, 0, 255,
+                    0, 0, 0, 1, 0,
+                  ])
+                : null,
+          );
 
     final baseSvg = boxedWhite
         ? Container(

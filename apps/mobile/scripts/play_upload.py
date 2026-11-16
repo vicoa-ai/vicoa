@@ -23,7 +23,7 @@ import argparse
 import os
 import sys
 
-DEFAULT_PACKAGE = "app.vicoa"
+DEFAULT_PACKAGE = "ai.vicoa"
 DEFAULT_AAB = "build/app/outputs/bundle/release/app-release.aab"
 SCOPE = "https://www.googleapis.com/auth/androidpublisher"
 

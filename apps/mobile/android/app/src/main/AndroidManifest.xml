@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="app.vicoa"
+    package="ai.vicoa"
     xmlns:tools="http://schemas.android.com/tools">
     <queries>
         <intent>

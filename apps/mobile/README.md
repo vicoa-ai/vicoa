@@ -32,6 +32,13 @@ Supabase project (see `SELF_HOSTING.md`):
 cp env.example.json env.json     # then fill in your URL + anon key
 ```
 
+Android also needs a Firebase config (push notifications, crash reporting). The
+real file is not in the repo: register your Android app in your own Firebase
+project, download its `google-services.json` into `android/app/`, and make
+`applicationId` in `android/app/build.gradle` match the package name you
+registered. `android/app/google-services.json.example` shows the shape. The
+file is gitignored.
+
 ## Running
 
 `flutter run` can't read dart-defines from a file on its own, so use the wrapper

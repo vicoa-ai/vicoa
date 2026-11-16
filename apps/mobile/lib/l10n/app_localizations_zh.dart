@@ -1211,7 +1211,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get impactWithRatingTestimonialSarah =>
-      '终于！在手机上用上 Claude Code 等模型。在上下班、出门路上，都能随时给 AI 布置任务。';
+      '终于！在手机上就能运行我的 AI 编程 Agent。在上下班、出门路上，都能随时给 AI 布置任务。';
 
   @override
   String get impactWithRatingTestimonialTom =>
@@ -1743,7 +1743,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get ratingTestimonialSarah =>
-      '终于！在手机上用上 Claude Code。我可以在通勤时编程，随时修复 bug。';
+      '终于！在手机上就能运行我的 AI 编程 Agent。我可以在通勤时编程，随时修复 bug。';
 
   @override
   String get ratingTestimonialTom => '对于随时移动办公的开发者来说太完美了。在手机上调试、重构、开发新功能——太棒了！';
