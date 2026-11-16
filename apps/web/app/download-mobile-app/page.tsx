@@ -5,7 +5,7 @@ import { Footer } from '@/components/footer';
 import { NavigationHeader } from '@/components/navigation-header';
 
 const IOS_APP_URL = 'http://apps.apple.com/sg/app/id6751626168';
-const ANDROID_APP_URL = 'https://play.google.com/store/apps/details?id=app.vicoa';
+const ANDROID_APP_URL = 'https://play.google.com/store/apps/details?id=ai.vicoa';
 const DESKTOP_URL = 'https://vicoa.ai';
 
 export default function DownloadMobileAppPage() {

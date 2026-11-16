@@ -15,7 +15,7 @@ Vicoa is a platform that allows you to run a team of coding agents (Claude Code,
 <div align="center">
   <a href="https://vicoa.ai">🌐 Website</a> |
   <a href="https://apps.apple.com/app/id6751626168">📱 iOS App</a> |
-  <a href="https://play.google.com/store/apps/details?id=app.vicoa">📱 Android App</a> |
+  <a href="https://play.google.com/store/apps/details?id=ai.vicoa">📱 Android App</a> |
   <a href="https://www.youtube.com/watch?v=iserdZx5yBs">🎥 Demo</a>
 </div>
 
@@ -59,7 +59,7 @@ pip install vicoa && vicoa
 
 - [📱 Download the iOS App](https://apps.apple.com/app/id6751626168)
 
-- [🤖 Download the Android App](https://play.google.com/store/apps/details?id=app.vicoa)
+- [🤖 Download the Android App](https://play.google.com/store/apps/details?id=ai.vicoa)
 
 - [🌐 Web Dashboard](https://vicoa.ai)
 

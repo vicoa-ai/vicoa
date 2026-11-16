@@ -97,7 +97,7 @@ vicoa                   # 在当前目录开一个会话 —— 或用 `vicoa da
 <p align="center">
   <a href="https://apps.apple.com/app/id6751626168"><img src="https://toolbox.marketingtools.apple.com/api/v2/badges/download-on-the-app-store/black/zh-cn" alt="在 App Store 下载" height="40" align="middle"></a>
   &nbsp;
-  <a href="https://play.google.com/store/apps/details?id=app.vicoa"><img src="https://play.google.com/intl/en_us/badges/static/images/badges/zh-cn_badge_web_generic.png" alt="在 Google Play 获取" height="59" align="middle"></a>
+  <a href="https://play.google.com/store/apps/details?id=ai.vicoa"><img src="https://play.google.com/intl/en_us/badges/static/images/badges/zh-cn_badge_web_generic.png" alt="在 Google Play 获取" height="59" align="middle"></a>
 </p>
 
 完整教程：[安装配置 Vicoa](https://vicoa.ai/docs/getting-started) ·

@@ -8,7 +8,7 @@
  */
 
 export const IOS_APP_URL = 'http://apps.apple.com/sg/app/id6751626168';
-export const ANDROID_APP_URL = 'https://play.google.com/store/apps/details?id=app.vicoa';
+export const ANDROID_APP_URL = 'https://play.google.com/store/apps/details?id=ai.vicoa';
 export const WEB_APP_URL = '/dashboard';
 export const CHANGELOG_URL = '/docs/changelog';
 export const RELEASES_URL = 'https://github.com/vicoa-ai/vicoa/releases/latest';

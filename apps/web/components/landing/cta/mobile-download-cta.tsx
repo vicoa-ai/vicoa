@@ -2,7 +2,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 
 const IOS_APP_URL = 'http://apps.apple.com/sg/app/id6751626168';
-const ANDROID_APP_URL = 'https://play.google.com/store/apps/details?id=app.vicoa';
+const ANDROID_APP_URL = 'https://play.google.com/store/apps/details?id=ai.vicoa';
 // Public canonical download link — must be identical on server and client. Do NOT
 // derive it from the server-only BASE_URL: that var is undefined in the client
 // bundle (only NEXT_PUBLIC_* survive), so BASE_URL=http://localhost:3000 on the

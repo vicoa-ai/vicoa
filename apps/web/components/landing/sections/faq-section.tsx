@@ -57,7 +57,7 @@ export function FAQSection() {
           </a>
           ), Android (
           <a
-            href="https://play.google.com/store/apps/details?id=app.vicoa"
+            href="https://play.google.com/store/apps/details?id=ai.vicoa"
             className="text-blue-600 hover:text-blue-700 underline"
             target="_blank"
             rel="noopener noreferrer"
