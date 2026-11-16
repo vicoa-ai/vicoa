@@ -9,7 +9,8 @@
  * `route_comment`) so the hint under the box says what sending will do:
  *
  * 1. a comment starting with `/note` wakes nobody;
- * 2. explicit mentions wake those agents, and nothing else;
+ * 2. explicit mentions wake those agents, and nothing else (on a Done or
+ *    Cancelled task, a mention is the only thing that wakes anyone);
  * 3. a reply in a thread an agent wrote in wakes that agent;
  * 4. a top-level comment on a task assigned to an agent wakes that agent.
  *
@@ -61,6 +62,8 @@ export interface WakeContext {
   threadAgentId: string | null;
   /** The task's assignee, when it is an agent. */
   assigneeAgentId: string | null;
+  /** The task is Done or Cancelled: only an explicit mention wakes an agent. */
+  taskClosed?: boolean;
 }
 
 /** The agent profile ids sending `body` would wake (see the module header). */
@@ -68,6 +71,7 @@ export function agentsToWake(body: string, ctx: WakeContext): string[] {
   if (!body.trim() || isNoteComment(body)) return [];
   const mentioned = mentionedAgentIds(body);
   if (mentioned.length > 0) return mentioned;
+  if (ctx.taskClosed) return [];
   if (ctx.inThread) return ctx.threadAgentId ? [ctx.threadAgentId.toLowerCase()] : [];
   return ctx.assigneeAgentId ? [ctx.assigneeAgentId.toLowerCase()] : [];
 }

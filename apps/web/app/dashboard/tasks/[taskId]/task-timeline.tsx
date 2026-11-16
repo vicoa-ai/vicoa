@@ -656,6 +656,7 @@ function ThreadCard({
   viewer,
   sessionRefs,
   composerAgents,
+  taskClosed,
   onToggleReaction,
   onReply,
   onEdit,
@@ -665,6 +666,7 @@ function ThreadCard({
   viewer: Principal | null;
   sessionRefs: SessionRefs;
   composerAgents?: AgentProfile[];
+  taskClosed?: boolean;
   onToggleReaction?: (commentId: string, emoji: string) => void;
   onReply?: (parentCommentId: string, body: string) => Promise<void>;
 } & CommentActions) {
@@ -711,7 +713,12 @@ function ThreadCard({
             agents={composerAgents}
             wake={
               composerAgents
-                ? { inThread: true, threadAgentId: threadAgentId(thread), assigneeAgentId: null }
+                ? {
+                    inThread: true,
+                    threadAgentId: threadAgentId(thread),
+                    assigneeAgentId: null,
+                    taskClosed,
+                  }
                 : undefined
             }
           />
@@ -873,6 +880,7 @@ export function TaskTimeline({
   onDeleteComment,
   onOpenSession,
   composerAgents,
+  taskClosed,
 }: {
   comments: TaskCommentResponse[];
   activity: TaskActivityResponse[];
@@ -893,6 +901,8 @@ export function TaskTimeline({
   onOpenSession?: (sessionId: string) => void;
   /** The viewer's agents, for the reply boxes' `@` picker and wake hint. */
   composerAgents?: AgentProfile[];
+  /** The task is Done or Cancelled, so only an `@` in a reply wakes an agent. */
+  taskClosed?: boolean;
 }) {
   const entries = useMemo(
     () => buildEntries(comments, activity, sessions),
@@ -915,6 +925,7 @@ export function TaskTimeline({
                 viewer={viewer}
                 sessionRefs={refs}
                 composerAgents={composerAgents}
+                taskClosed={taskClosed}
                 onToggleReaction={onToggleCommentReaction}
                 onReply={onReply}
                 onEdit={onEditComment}

@@ -63,6 +63,7 @@ import { TaskDisplayMenu } from './task-display-menu';
 import { TaskLabelFilter } from './task-label-filter';
 import { TaskAssigneeFilter } from './task-assignee-filter';
 import { useAgentProfiles } from '@/lib/use-agent-profiles';
+import { useTaskLiveRefresh } from '@/lib/use-task-live-refresh';
 import { useCurrentUserId } from '@/lib/hooks/use-current-user-id';
 import { TaskBoardSkeleton, TaskListSkeleton } from './task-skeleton';
 import { getTasksCache, setTasksCache } from './task-cache';
@@ -98,6 +99,9 @@ export default function TasksPage() {
     </Suspense>
   );
 }
+
+// The board watches its tasks' dispatches only, not every session filed under a task.
+const NO_SESSION_IDS: string[] = [];
 
 function TasksPageInner() {
   const router = useRouter();
@@ -153,6 +157,12 @@ function TasksPageInner() {
     setTasks(taskList);
     setLabels(labelList);
   }, [api]);
+
+  // The board's chips ("Queued", "<agent> working") follow their agents: a
+  // dispatch on its way is fetched again until it has a session, and a turn
+  // ending reloads the board (the agent may have moved the card).
+  const dispatches = useMemo(() => tasks.map((task) => task.dispatch), [tasks]);
+  useTaskLiveRefresh({ dispatches, sessionIds: NO_SESSION_IDS, reload: refresh });
 
   useEffect(() => {
     if (!api) return;

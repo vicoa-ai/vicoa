@@ -38,6 +38,7 @@ import { ParentTaskLink, SubTasksSection } from './sub-tasks';
 import { CreatedInSession, ReactionRow, TaskTimeline } from './task-timeline';
 import { TaskSessionList } from './task-sessions';
 import { composerWake, type TaskDetailModel } from './use-task-detail';
+import { isClosedStatus } from '../task-views';
 
 const HEADER_ACTION =
   'inline-flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground';
@@ -228,6 +229,7 @@ export function TaskDetailPanel({
       <div className="space-y-3 border-t pt-4">
         <TaskTimeline
           composerAgents={agentProfiles}
+          taskClosed={isClosedStatus(task.status)}
           comments={comments}
           activity={activity}
           sessions={sessions}

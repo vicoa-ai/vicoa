@@ -296,6 +296,25 @@ class TestComments:
         [row] = _queued(test_db, task)
         assert (row.agent_profile_id, row.trigger) == (other_profile.id, "mentioned")
 
+    def test_on_a_closed_task_only_a_mention_starts_anything(
+        self, test_db, test_user, task, profile
+    ):
+        _as_person(test_db, test_user)
+        _assign(test_db, test_user, task, profile, start=False)
+        question = self._agent_comment(test_db, test_user, task, profile, "Shipped.")
+        task_queries.update_task(test_db, test_user.id, task.id, {"status": "done"})
+        self._comment(test_db, test_user, task, "thanks")
+        self._comment(test_db, test_user, task, "nice", parent=question.id)
+        assert _queued(test_db, task) == []
+        self._comment(
+            test_db,
+            test_user,
+            task,
+            f"[@Claude](vicoa://agent/{profile.id}) why two spaces?",
+        )
+        [row] = _queued(test_db, task)
+        assert (row.mode, row.trigger) == ("reply", "mentioned")
+
     def test_a_note_wakes_nobody(self, test_db, test_user, task, profile):
         _as_person(test_db, test_user)
         _assign(test_db, test_user, task, profile, start=False)

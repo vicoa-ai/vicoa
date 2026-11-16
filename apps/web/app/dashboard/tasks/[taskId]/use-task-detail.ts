@@ -8,6 +8,7 @@
 // No WebSocket channel, by decision (§9). The timeline revalidates on window
 // focus and on a slow interval; polling hits the stateless backend app, while
 // the relay is pinned to workers=1 and already carries every daemon socket.
+// While an agent works on the task it reloads sooner (useTaskLiveRefresh).
 
 import {
   useCallback,
@@ -41,8 +42,10 @@ import {
 import type { WakeContext } from '@/lib/task-mentions';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { labelOwnerForProject } from '@/lib/project-vocabulary';
+import { useTaskLiveRefresh } from '@/lib/use-task-live-refresh';
 import type { Principal } from '@/lib/principals';
 import { projectMentionTarget } from '@/lib/project-mention-target';
+import { isClosedStatus } from '../task-views';
 import { runHandBack } from './hand-back';
 import { subTaskProgress } from './sub-tasks';
 
@@ -187,6 +190,13 @@ export function useTaskDetail(
       clearInterval(timer);
     };
   }, []);
+
+  // While an agent is on the task: follow its dispatch until it has a session,
+  // then reload whenever a session filed under the task starts or ends a turn,
+  // so the chip, the status and the session card move without a page refresh.
+  const sessionIds = useMemo(() => sessions.map((session) => session.id), [sessions]);
+  const dispatches = useMemo(() => [task?.dispatch], [task?.dispatch]);
+  useTaskLiveRefresh({ dispatches, sessionIds, reload: load });
 
   // The caller's standing on this task's board (collaboration §4), for
   // read-side role hiding. The backend enforces the same floors; this only
@@ -474,6 +484,7 @@ export function composerWake(task: TaskResponse): WakeContext {
     inThread: false,
     threadAgentId: null,
     assigneeAgentId: task.assignee_type === 'agent' ? task.assignee_id : null,
+    taskClosed: isClosedStatus(task.status),
   };
 }
 

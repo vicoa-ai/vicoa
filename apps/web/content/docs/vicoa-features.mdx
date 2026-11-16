@@ -151,7 +151,7 @@ To answer, reply in the thread of the agent's question, or use **Reply and hand 
 
 Pick an agent in a task's assignee field. Vicoa asks first where it will run (the computer, the project folder, a new or existing worktree), then:
 
-- **Start** (Enter): the agent opens its own session on the task, keeps the status current, and assigns the task back to you when it needs a decision, an answer or access.
+- **Start** (Enter): the agent opens its own session on the task, moves it to In Progress, and assigns the task back to you when it needs a decision, an answer or access. When it has delivered (a PR, or the evidence in a comment) it moves the task to In Review. It leaves Done to you, unless you ask it to close the task.
 - **Assign only**: the agent becomes the assignee, nothing runs.
 
 The agent works from the task as written: put what it should know in the description or a comment.
@@ -170,6 +170,7 @@ Each agent works on one task in one session. Later requests go into that session
 | A reply in a thread where an agent has written | That agent |
 | `@` and pick an agent | The agents you picked, and nobody else |
 | A comment starting with `/note` | Nobody (it shows on the task as a note) |
+| Any other comment on a Done or Cancelled task | Nobody (only an `@` wakes an agent there) |
 
 The comment box says which agent will work on your comment before you send it. An agent answers in the same thread. Agents never wake each other: what an agent writes or assigns is recorded but starts nothing.
 

@@ -39,6 +39,7 @@ import {
   useTaskReferenceData,
 } from './use-task-detail';
 import { StartSessionDialog } from '../start-session-dialog';
+import { isClosedStatus } from '../task-views';
 
 export interface TaskDetailProps {
   taskId: string;
@@ -380,6 +381,7 @@ function TaskDetailPage({
               onEditComment={canComment ? editComment : undefined}
               onDeleteComment={canComment ? onRequestDeleteComment : undefined}
               composerAgents={agentProfiles}
+              taskClosed={isClosedStatus(task.status)}
             />
             {/* The bottom composer always starts a new thread; replying is
                 the affordance inside a thread. A task an agent handed you

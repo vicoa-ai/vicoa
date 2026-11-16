@@ -57,6 +57,15 @@ describe('agentsToWake (mirrors the server routing)', () => {
     expect(agentsToWake('A', thread)).toEqual([B]);
     expect(agentsToWake('A', { ...thread, threadAgentId: null })).toEqual([]);
   });
+
+  it('on a Done or Cancelled task only a mention wakes anyone', () => {
+    const closed = { ...top, taskClosed: true };
+    expect(agentsToWake('also check mobile', closed)).toEqual([]);
+    expect(
+      agentsToWake('A', { inThread: true, threadAgentId: B, assigneeAgentId: null, taskClosed: true }),
+    ).toEqual([]);
+    expect(agentsToWake(`[@B](vicoa://agent/${B}) review?`, closed)).toEqual([B]);
+  });
 });
 
 describe('composer mentions', () => {

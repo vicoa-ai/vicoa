@@ -52,6 +52,7 @@ from shared.task_dispatch import (
     check_can_start,
     is_note,
     resolve_placement,
+    runs_on_closed_task,
     task_session,
 )
 from shared.session_resume import expand_project_path
@@ -385,7 +386,9 @@ def _claim_blocking() -> list[_Claim]:
             if task is None or profile is None:
                 row.state, row.detail = "cancelled", "task or agent deleted"
                 continue
-            if task.status in ("done", "cancelled"):
+            if task.status in ("done", "cancelled") and not runs_on_closed_task(
+                row.mode, row.trigger
+            ):
                 row.state, row.detail = "cancelled", f"task {task.status}"
                 continue
             check = check_can_start(db, profile.id, profile.user_id)

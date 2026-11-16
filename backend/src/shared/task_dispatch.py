@@ -59,6 +59,11 @@ _NO_START_STATUSES = frozenset({"backlog", "done", "cancelled"})
 _CLOSED_STATUSES = frozenset({"done", "cancelled"})
 
 
+def runs_on_closed_task(mode: str, trigger: str) -> bool:
+    """What may still run on a Done or Cancelled task: an @mention's reply."""
+    return mode == "reply" and trigger == "mentioned"
+
+
 _NOTE_RE = re.compile(r"/note(?:\s|:|$)", re.IGNORECASE)
 
 
@@ -598,13 +603,18 @@ def route_comment(
 
 
 def on_comment_created(db: Session, task: Task, comment: TaskComment) -> None:
-    """A person commented: queue a Reply-mode dispatch for each agent it is for."""
+    """A person commented: queue a Reply-mode dispatch for each agent it is for.
+
+    On a Done or Cancelled task only an explicit @mention starts anything: a
+    mention is a deliberate pick, while a comment or a reply there is usually
+    people talking about finished work."""
     if comment.author_type != "user" or is_note(comment.body):
         return
-    if task.status in _CLOSED_STATUSES:
-        return
     person = comment.author_id
-    for profile_id, trigger in route_comment(db, task, comment):
+    routes = route_comment(db, task, comment)
+    if task.status in _CLOSED_STATUSES:
+        routes = [route for route in routes if route[1] == "mentioned"]
+    for profile_id, trigger in routes:
         check = check_can_start(db, profile_id, person)
         if check.profile is None or check.reason is not None:
             # A mention the person can't run is still a mention: the comment

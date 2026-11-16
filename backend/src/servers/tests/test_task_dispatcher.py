@@ -309,6 +309,21 @@ async def test_a_closed_task_is_cancelled(test_db, harness, task, profile):
     assert _reload(test_db, row).state == "cancelled"
 
 
+async def test_a_mention_on_a_closed_task_is_still_answered(
+    test_db, harness, user, machine, task, profile
+):
+    sockets, recorder = harness
+    session = _session(test_db, user, machine, task, profile)
+    sockets.connected.add(str(session.id))
+    row = _queue(test_db, task, profile, mode="reply", trigger="mentioned")
+    task.status = "done"
+    test_db.commit()
+    await task_dispatcher.TaskDispatcher().sweep_once()
+    [delivery] = recorder.deliveries
+    assert delivery["instance_id"] == session.id
+    assert _reload(test_db, row).state == "delivered"
+
+
 async def test_the_spawned_session_is_linked_to_task_and_agent(
     test_db, harness, user, machine, task, profile, monkeypatch
 ):
