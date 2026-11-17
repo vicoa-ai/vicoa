@@ -412,11 +412,18 @@ async def create_cli_key(
 
 
 @router.delete("/me")
-async def delete_user_account(
+def delete_user_account(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Delete the current user's account and all associated data"""
+    """Delete the current user's account and all associated data.
+
+    A plain `def`, so FastAPI runs it in its threadpool: everything below
+    blocks (the delete transaction may run for minutes, see
+    `ACCOUNT_DELETE_STATEMENT_TIMEOUT_MS`, and the identity provider's delete
+    is an HTTP call), and inside an `async def` it would stall the event loop
+    for every other request on this worker.
+    """
     user_id = current_user.id
 
     # Delete from database (including Stripe cancellation)
