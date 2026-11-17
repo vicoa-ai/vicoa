@@ -1260,6 +1260,18 @@ def mark_instance_completed(
     return update_instance_status(db, instance_id, user_id, AgentStatus.COMPLETED)
 
 
+# Statement timeout for the account-delete transaction, which is rare and has
+# to run every ON DELETE action that points at the user. The slow one is
+# `messages.sender_user_id` (SET NULL): it has no index, so the final
+# `DELETE FROM users` scans the whole messages table, however little this user
+# wrote (their own sessions' messages are already gone by then). On a large
+# table that can outlast the connection's default (`shared/database/session.py`,
+# 30 s) and the user is left with an account they asked to delete. Raised for
+# this transaction only, and still bounded: a delete that runs past this is
+# stuck, not slow. The structural fix is an index on `messages.sender_user_id`.
+ACCOUNT_DELETE_STATEMENT_TIMEOUT_MS = 300_000
+
+
 def delete_user_account(db: Session, user_id: UUID) -> None:
     """Delete a user account and all associated data in the correct order"""
     logger = logging.getLogger(__name__)
@@ -1271,6 +1283,13 @@ def delete_user_account(db: Session, user_id: UUID) -> None:
         # the open-source build where the billing overlay is absent. See
         # plans/todos/oss-cut-manifest.md (A4 weld #4).
         run_user_delete_hooks(db, user_id)
+
+        # SET LOCAL ends with this transaction (the commit or rollback below), so
+        # the pooled connection goes back with its default. Set after the hooks:
+        # a hook may commit, which would end the transaction and the setting.
+        db.execute(
+            text(f"SET LOCAL statement_timeout = {ACCOUNT_DELETE_STATEMENT_TIMEOUT_MS}")
+        )
 
         # Delete in order of foreign key dependencies
         # Get all agent instances for this user to delete their related data
