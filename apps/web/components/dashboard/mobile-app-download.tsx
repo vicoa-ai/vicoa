@@ -2,7 +2,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 
 const IOS_APP_URL = 'http://apps.apple.com/sg/app/id6751626168';
-const ANDROID_APP_URL = 'https://play.google.com/store/apps/details?id=app.vicoa';
+const ANDROID_APP_URL = 'https://play.google.com/store/apps/details?id=ai.vicoa';
 
 type MobilePlatform = {
   name: string;

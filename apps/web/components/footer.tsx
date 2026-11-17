@@ -57,7 +57,7 @@ export function Footer() {
             <ul className="space-y-3 text-sm">
               <li><a href="/download" className="hover:text-blue-400 transition-colors">Download</a></li>
               <li><a href="http://apps.apple.com/sg/app/id6751626168" className="hover:text-blue-400 transition-colors">iOS App</a></li>
-              <li><a href="https://play.google.com/store/apps/details?id=app.vicoa" className="hover:text-blue-400 transition-colors">Android App</a></li>
+              <li><a href="https://play.google.com/store/apps/details?id=ai.vicoa" className="hover:text-blue-400 transition-colors">Android App</a></li>
               <li><a href="/dashboard" className="hover:text-blue-400 transition-colors">Web App</a></li>
             </ul>
           </div>

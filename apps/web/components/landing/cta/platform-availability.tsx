@@ -55,7 +55,7 @@ export function PlatformAvailability({
         </svg>
       </Link>
       <Link
-        href="https://play.google.com/store/apps/details?id=app.vicoa"
+        href="https://play.google.com/store/apps/details?id=ai.vicoa"
         target="_blank"
         rel="noopener noreferrer"
         aria-label="Open Vicoa on Google Play"
