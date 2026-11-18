@@ -104,6 +104,21 @@ describe('orderTranscriptMessages', () => {
     expect(ordered.map((m) => m.id)).toEqual(['k', 'a']);
   });
 
+  it('keeps a queued answer summary and decline, which nothing ever consumes', () => {
+    const summary =
+      'Q: Pick a color\nA: Red\n{"type":"control","action":"persist_only","kind":"ask_user_question_summary","value":"v1:e30"}';
+    const declined = 'Declined to answer\n{"type":"control","action":"persist_only"}';
+    const ordered = orderTranscriptMessages([
+      agent('ask', 'question'),
+      user('ans', summary, { queue: { status: 'queued' } }),
+      user('dec', declined, { queue: { status: 'steer' } }),
+      user('pend', 'later', { queue: { status: 'queued' } }),
+      user('gone', summary, { queue: { status: 'cancelled' } }),
+      agent('a', 'reply'),
+    ]);
+    expect(ordered.map((m) => m.id)).toEqual(['ask', 'ans', 'dec', 'a']);
+  });
+
   it('never hides agent rows on queue metadata', () => {
     const ordered = orderTranscriptMessages([agent('a', 'x', { queue: { status: 'queued' } })]);
     expect(ordered.map((m) => m.id)).toEqual(['a']);

@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { isControlEnvelope, isInterruptControlMessage, parseControlCommand } from './control-messages';
+import {
+  buildAskUserQuestionCancelPersistMessage,
+  buildAskUserQuestionControlMessage,
+  buildAskUserQuestionSummaryMessage,
+  type AskUserQuestionSubmitPayload,
+} from '@/components/dashboard/ask-user-question-panel';
+import {
+  isActionRecord,
+  isControlEnvelope,
+  isInterruptControlMessage,
+  isPersistOnlyMessage,
+  parseControlCommand,
+} from './control-messages';
 
 const INTERRUPT = 'Stop current task. {"type":"control","setting":"interrupt"}';
 
@@ -69,6 +81,52 @@ describe('isInterruptControlMessage', () => {
       isInterruptControlMessage('here is the token {"type":"control","setting":"interrupt"} and more text')
     ).toBe(false);
     expect(isInterruptControlMessage(PROSE_QUOTING_CONTROL)).toBe(false);
+  });
+});
+
+// Built the way the dashboard's question panel builds them.
+const ANSWER: AskUserQuestionSubmitPayload = {
+  message_id: 'prompt-message-id',
+  answers: [{ mode: 'option', option_index: 0, option_count: 2 }],
+  display_answers: [{ question: 'Pick a color', header: 'Color', label: 'Red' }],
+};
+const SUMMARY = buildAskUserQuestionSummaryMessage(ANSWER);
+const DECLINED = buildAskUserQuestionCancelPersistMessage();
+
+describe('isPersistOnlyMessage', () => {
+  it('matches the answer summary and the decline note', () => {
+    expect(SUMMARY.startsWith('Q: Pick a color\nA: Red\n')).toBe(true);
+    expect(isPersistOnlyMessage(SUMMARY)).toBe(true);
+    expect(isPersistOnlyMessage(DECLINED)).toBe(true);
+  });
+
+  it('does not match the answer directive or other controls', () => {
+    expect(isPersistOnlyMessage(buildAskUserQuestionControlMessage('submit', ANSWER))).toBe(false);
+    expect(isPersistOnlyMessage(INTERRUPT)).toBe(false);
+    expect(isPersistOnlyMessage('just chatting')).toBe(false);
+    expect(isPersistOnlyMessage('')).toBe(false);
+  });
+
+  it('does not match a persist_only token quoted in the middle of prose', () => {
+    expect(isPersistOnlyMessage(PROSE_QUOTING_CONTROL)).toBe(false);
+    expect(
+      isPersistOnlyMessage('what does {"type":"control","action":"persist_only"} mean here?')
+    ).toBe(false);
+  });
+});
+
+describe('isActionRecord', () => {
+  it('covers a Stop, an answer and a decline', () => {
+    expect(isActionRecord(INTERRUPT)).toBe(true);
+    expect(isActionRecord(SUMMARY)).toBe(true);
+    expect(isActionRecord(DECLINED)).toBe(true);
+  });
+
+  it('leaves ordinary messages and other controls out', () => {
+    expect(isActionRecord('keep going')).toBe(false);
+    expect(isActionRecord('Use gpt-5.5. {"type":"control","setting":"model","value":"gpt-5.5"}')).toBe(false);
+    expect(isActionRecord(buildAskUserQuestionControlMessage('submit', ANSWER))).toBe(false);
+    expect(isActionRecord(PROSE_QUOTING_CONTROL)).toBe(false);
   });
 });
 
