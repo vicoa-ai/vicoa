@@ -510,6 +510,39 @@ def test_git_status_detached_head_uses_short_sha_for_branch(committed_repo: Path
     assert result["branch"] == sha[:7]
 
 
+def test_git_status_names_the_branch_a_rebase_is_rewriting(committed_repo: Path):
+    """Git detaches HEAD during a rebase; `rebasing_branch` says which branch
+    the checkout is still on, while `branch` keeps the short SHA."""
+    from vicoa.rpc.git_ops import git_status
+
+    _git(committed_repo, "checkout", "-q", "-b", "feature")
+    (committed_repo / "seed.txt").write_text("from feature\n")
+    _git(committed_repo, "commit", "-q", "-am", "feature side")
+    _git(committed_repo, "checkout", "-q", "main")
+    (committed_repo / "seed.txt").write_text("from main\n")
+    _git(committed_repo, "commit", "-q", "-am", "main side")
+    _git(committed_repo, "checkout", "-q", "feature")
+    rebase = subprocess.run(
+        ["git", "-C", str(committed_repo), "rebase", "main"], capture_output=True
+    )
+    assert rebase.returncode != 0, "the rebase was meant to stop on a conflict"
+
+    result = git_status(cwd=str(committed_repo))
+    assert result["detached_head"] is True
+    assert result["rebasing_branch"] == "feature"
+    head = _git(committed_repo, "rev-parse", "HEAD").stdout.decode().strip()
+    assert result["branch"] == head[:7]
+
+
+def test_git_status_plain_detached_head_has_no_rebasing_branch(committed_repo: Path):
+    from vicoa.rpc.git_ops import git_status
+
+    _git(committed_repo, "checkout", "-q", "--detach")
+    result = git_status(cwd=str(committed_repo))
+    assert result["detached_head"] is True
+    assert "rebasing_branch" not in result
+
+
 def test_git_status_runs_hash_object_at_most_once_per_call(
     committed_repo: Path, monkeypatch: pytest.MonkeyPatch
 ):

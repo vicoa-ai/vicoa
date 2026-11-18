@@ -927,6 +927,61 @@ def test_list_worktrees_reports_the_main_checkouts_branch(
     assert list_worktrees(str(committed_repo))["main_branch"] == ""
 
 
+def _start_conflicting_rebase(repo: Path, checkout: Path) -> None:
+    """Leave `checkout` stopped mid-rebase of its branch onto `main`: both
+    sides rewrite seed.txt, so the first pick conflicts and git keeps HEAD
+    detached until the rebase is continued or aborted."""
+    (checkout / "seed.txt").write_text("from the branch\n")
+    _git(checkout, "commit", "-q", "-am", "branch side")
+    (repo / "seed.txt").write_text("from main\n")
+    _git(repo, "commit", "-q", "-am", "main side")
+    rebase = subprocess.run(
+        ["git", "-C", str(checkout), "rebase", "main"], capture_output=True
+    )
+    assert rebase.returncode != 0, "the rebase was meant to stop on a conflict"
+
+
+def test_list_worktrees_names_the_branch_a_detached_worktree_is_rebasing(
+    home: Path, committed_repo: Path
+):
+    """Mid-rebase, git reports the worktree detached (`branch` is empty), but
+    it is still on its branch to the user, so `rebasing_branch` names it."""
+    from vicoa.rpc.worktree_ops import create_worktree, list_worktrees
+
+    created = create_worktree(str(committed_repo))
+    _start_conflicting_rebase(committed_repo, Path(created["path"]))
+
+    listed = list_worktrees(str(committed_repo))["worktrees"]
+    match = next(
+        w
+        for w in listed
+        if Path(w["path"]).resolve() == Path(created["path"]).resolve()
+    )
+    assert match["branch"] == ""
+    assert match["rebasing_branch"] == created["branch"]
+
+
+def test_list_worktrees_reports_no_rebasing_branch_outside_a_rebase(
+    home: Path, committed_repo: Path
+):
+    """On a branch, or detached with no rebase running, `rebasing_branch` is
+    empty: a plain detached HEAD is not on any branch."""
+    from vicoa.rpc.worktree_ops import create_worktree, list_worktrees
+
+    on_branch = create_worktree(str(committed_repo))
+    detached = create_worktree(str(committed_repo))
+    _git(Path(detached["path"]), "checkout", "-q", "--detach")
+
+    by_path = {
+        str(Path(w["path"]).resolve()): w
+        for w in list_worktrees(str(committed_repo))["worktrees"]
+    }
+    assert by_path[str(Path(on_branch["path"]).resolve())]["rebasing_branch"] == ""
+    plain = by_path[str(Path(detached["path"]).resolve())]
+    assert plain["branch"] == ""
+    assert plain["rebasing_branch"] == ""
+
+
 def test_create_worktree_from_a_subfolder_forks_the_whole_repo(
     home: Path, committed_repo: Path
 ):

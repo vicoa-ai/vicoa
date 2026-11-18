@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/actions/rpc_git.dart';
 import '/custom_code/actions/rpc_github.dart' show PrInfo;
+import '/custom_code/utils/checkout_ref.dart';
 import '/custom_code/utils/machine_utils.dart' as mutils;
 import '/custom_code/utils/pr_status.dart';
 import '/custom_code/utils/worktree_selection.dart';
@@ -265,9 +266,14 @@ class _WorktreeCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = FlutterFlowTheme.of(context);
-    final branch = worktree.branch.isNotEmpty
-        ? worktree.branch
-        : AppLocalizations.of(context).worktreesDetached;
+    final l10n = AppLocalizations.of(context);
+    final branch = checkoutRefLabel(
+      l10n,
+      branch: worktree.branch,
+      head: worktree.head,
+      rebasingBranch: worktree.rebasingBranch,
+      unknownCommit: l10n.worktreesDetached,
+    );
     return Padding(
       padding: const EdgeInsetsDirectional.fromSTEB(16.0, 6.0, 16.0, 6.0),
       child: Material(

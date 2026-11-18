@@ -208,6 +208,9 @@ export interface WorktreeSessionGroup {
   /** Display label: the live branch when git reported one, else the branch
    *  the sessions were started on. Empty for a detached HEAD. */
   branch: string;
+  /** The branch a detached worktree is in the middle of rebasing, which is
+   *  still the branch it is on to the user. Only from a live git list. */
+  rebasingBranch?: string;
   /** Daemon-managed (under ~/vicoa/workspaces) → removable from the sidebar. */
   managed: boolean;
   /** Git no longer has a checkout at this folder (removed outside the app, or
@@ -236,6 +239,7 @@ export interface LiveWorktree {
   branch: string;
   upstream?: string;
   head?: string;
+  rebasing_branch?: string;
   managed: boolean;
   prunable?: boolean;
 }
@@ -348,7 +352,13 @@ export function splitProjectByWorktree(
       // Live branch wins (it may have changed since the session started); the
       // stored name is the label when git is unavailable or the folder is gone.
       branch: present ? liveInfo.branch : group[0]?.worktree_name ?? '',
-      ...(present ? { upstream: liveInfo.upstream, head: liveInfo.head } : {}),
+      ...(present
+        ? {
+            upstream: liveInfo.upstream,
+            head: liveInfo.head,
+            rebasingBranch: liveInfo.rebasing_branch,
+          }
+        : {}),
       managed: liveInfo ? liveInfo.managed : isManagedWorktreePath(path),
       missing:
         gitWorktrees !== null && !present && (judgeable === undefined || judgeable.has(path)),
@@ -363,6 +373,7 @@ export function splitProjectByWorktree(
         branch: w.branch,
         upstream: w.upstream,
         head: w.head,
+        rebasingBranch: w.rebasing_branch,
         managed: w.managed,
         missing: false,
         instances: [],

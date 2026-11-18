@@ -102,6 +102,9 @@ export interface GitStatusResult {
   behind: number;
   upstream?: string;
   detached_head?: boolean;
+  /** The branch a detached HEAD is in the middle of rebasing; absent when no
+   *  rebase runs, and from an older daemon. */
+  rebasing_branch?: string;
   staged: GitStatusEntry[];
   unstaged: GitStatusEntry[];
   untracked: GitStatusEntry[];
@@ -468,14 +471,16 @@ export async function rpcGitCommit(
  * `display_path` is the home-collapsed `~/…` form a session registers as its
  * `project`; `prunable` is git's verdict that the folder is gone while the
  * registration lingers; `upstream` is the remote branch `branch` pushes to
- * (`""` when none), which a pull request names as its head. All three are
- * absent from an older daemon. */
+ * (`""` when none), which a pull request names as its head;
+ * `rebasing_branch` is the branch a detached worktree is in the middle of
+ * rebasing (`""` otherwise). All four are absent from an older daemon. */
 export interface WorktreeInfo {
   path: string;
   display_path?: string;
   branch: string;
   upstream?: string;
   head: string;
+  rebasing_branch?: string;
   managed: boolean;
   prunable?: boolean;
 }

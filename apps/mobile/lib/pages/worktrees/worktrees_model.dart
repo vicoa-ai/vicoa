@@ -32,7 +32,7 @@ class WorktreesModel extends FlutterFlowModel<WorktreesWidget> {
   /// The pull request of [worktree]'s branch, or null.
   PrInfo? pullRequestFor(WorktreeInfo worktree) => prForCheckout(
         _prs,
-        branch: worktree.branch,
+        branch: worktree.currentBranch,
         upstream: worktree.upstream,
         head: worktree.head,
       );

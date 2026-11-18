@@ -817,7 +817,7 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
       directoryController.text = joinSubpath(listing.mainDisplayPath ?? main, subpath);
       worktreeMode = WorktreeMode.existing;
       selectedWorktreePath = wt.path;
-      selectedWorktreeBranch = wt.branch;
+      selectedWorktreeBranch = wt.currentBranch;
       _persistDirectory();
       persistWorktreeSelection();
       _reloadDirectoryDerivedState();

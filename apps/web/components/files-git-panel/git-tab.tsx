@@ -8,6 +8,7 @@ import {
   Folder,
   FolderOpen,
   GitBranch,
+  GitCommitHorizontal,
   Loader2,
   Minus,
   Plus,
@@ -17,6 +18,8 @@ import {
 } from 'lucide-react';
 import type { DiffEntry, SubmoduleEntry } from './use-git-tab';
 import type { GitStatusEntry, GitStatusResult } from './rpc';
+import { CheckoutRefTag } from '@/components/checkout-ref-tag';
+import { checkoutRefLabel, checkoutRefOfStatus, checkoutRefTag } from '@/lib/checkout-ref';
 import { buildChangesTree, type ChangesDirNode } from './changes-tree';
 import { diffKey, submoduleFileKey } from './concurrency';
 import { SCROLL_STYLE } from './styles';
@@ -282,12 +285,21 @@ function CommitBox({
 /** Inline branch summary (icon + branch + ahead/behind + upstream). Presentational;
  *  the panel renders it inside the Changes toolbar row. Null status → placeholder. */
 export function BranchInfo({ status }: { status: GitStatusResult | null }) {
+  const checkoutRef = status ? checkoutRefOfStatus(status) : null;
   return (
     <div className="flex min-w-0 items-center gap-2 text-xs font-mono text-muted-foreground">
-      <GitBranch className="h-3.5 w-3.5 flex-shrink-0" />
-      <span className="text-foreground truncate">
-        {status ? status.branch || '(detached HEAD)' : '…'}
+      {checkoutRef?.kind === 'detached' ? (
+        <GitCommitHorizontal className="h-3.5 w-3.5 flex-shrink-0" />
+      ) : (
+        <GitBranch className="h-3.5 w-3.5 flex-shrink-0" />
+      )}
+      <span
+        className="text-foreground truncate"
+        title={checkoutRef ? checkoutRefTag(checkoutRef)?.title : undefined}
+      >
+        {checkoutRef ? checkoutRefLabel(checkoutRef) : '…'}
       </span>
+      {checkoutRef && <CheckoutRefTag checkoutRef={checkoutRef} />}
       {status && (status.ahead > 0 || status.behind > 0) && (
         <>
           <span>·</span>
@@ -616,6 +628,7 @@ function SubmoduleBody({
   }
   const result = submodule.result;
   if (!result) return null;
+  const checkoutRef = checkoutRefOfStatus(result);
 
   const sections: Array<{ title: string; entries: GitStatusEntry[]; staged: boolean }> = [
     { title: 'Staged', entries: result.staged, staged: true },
@@ -642,8 +655,15 @@ function SubmoduleBody({
   return (
     <div>
       <div className="px-4 py-1.5 flex items-center gap-2 text-[10px] font-mono text-muted-foreground bg-muted/20">
-        <GitBranch className="h-3 w-3 flex-shrink-0" />
-        <span className="text-foreground truncate">{result.branch || '(detached HEAD)'}</span>
+        {checkoutRef.kind === 'detached' ? (
+          <GitCommitHorizontal className="h-3 w-3 flex-shrink-0" />
+        ) : (
+          <GitBranch className="h-3 w-3 flex-shrink-0" />
+        )}
+        <span className="text-foreground truncate" title={checkoutRefTag(checkoutRef)?.title}>
+          {checkoutRefLabel(checkoutRef)}
+        </span>
+        <CheckoutRefTag checkoutRef={checkoutRef} />
         <span>·</span>
         <span>{total} changed</span>
       </div>

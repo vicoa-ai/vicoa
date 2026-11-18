@@ -1820,12 +1820,6 @@ abstract class AppLocalizations {
   /// **'Couldn’t load status'**
   String get filesGitXCouldntLoadStatus;
 
-  /// No description provided for @filesGitXDetachedAt.
-  ///
-  /// In en, this message translates to:
-  /// **'(detached at {branch})'**
-  String filesGitXDetachedAt(Object branch);
-
   /// No description provided for @filesGitXDiffTruncated.
   ///
   /// In en, this message translates to:
@@ -5233,6 +5227,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'(detached)'**
   String get worktreesDetached;
+
+  /// A checkout on a detached HEAD, labelled by its short commit: a worktree row, the worktree picker, the Git tab's branch strip.
+  ///
+  /// In en, this message translates to:
+  /// **'{sha} (detached)'**
+  String worktreesDetachedAt(String sha);
+
+  /// A checkout in the middle of a rebase: git detaches HEAD, but it is still on this branch.
+  ///
+  /// In en, this message translates to:
+  /// **'{branch} (rebasing)'**
+  String worktreesRebasing(String branch);
 
   /// No description provided for @worktreesNoWorktreesSubtitle.
   ///
