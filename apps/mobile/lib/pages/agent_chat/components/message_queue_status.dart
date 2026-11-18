@@ -15,6 +15,8 @@
 // (renders like a normal message); `cancelled` means the user pulled it back
 // before the agent consumed it. Any other/missing value renders normally.
 
+import 'dart:convert';
+
 const String kQueueStatusQueued = 'queued';
 const String kQueueStatusSteer = 'steer';
 const String kQueueStatusConsumed = 'consumed';
@@ -59,6 +61,60 @@ bool isControlOrArtifactMessage(dynamic message) {
   final content = message['content']?.toString() ?? '';
   if (content.trim() == _waitingForInputPlaceholder) return true;
   return _controlCommandJsonRegex.hasMatch(content);
+}
+
+/// True for a persist-only artifact: a record of something the user already
+/// did, sent only to be stored. Today that is the AskUserQuestion "Q:/A:"
+/// answer summary and "Declined to answer". Its content is
+/// `<text>\n{"type":"control","action":"persist_only",...}` with the token
+/// trailing; prose that merely quotes such a token mid-body is real input and
+/// does not count (mirrors `is_persist_only_message` in the backend's
+/// `integrations/headless/auq.py`). Every runner acks one without marking it
+/// `consumed`.
+bool isPersistOnlyArtifact(dynamic message) {
+  if (message is! Map) return false;
+  final content = message['content']?.toString() ?? '';
+  final first = _controlCommandJsonRegex.firstMatch(content);
+  if (first == null) return false;
+  // From the first control token to the end there must be nothing but control
+  // tokens and whitespace.
+  final tail = content.substring(first.start);
+  if (tail.replaceAll(_controlCommandJsonRegex, '').trim().isNotEmpty) {
+    return false;
+  }
+  for (final match in _controlCommandJsonRegex.allMatches(tail)) {
+    try {
+      final parsed = jsonDecode(match.group(0)!);
+      if (parsed is Map &&
+          parsed['type'] == 'control' &&
+          parsed['action'] == 'persist_only') {
+        return true;
+      }
+    } on FormatException {
+      continue;
+    }
+  }
+  return false;
+}
+
+/// Whether the transcript leaves [message] out because of its send-queue
+/// status: a user message that is still pending (`queued`/`steer`, shown in
+/// the queue bar instead) or was cancelled before the agent took it.
+///
+/// A pending persist-only artifact is the exception and stays in the
+/// transcript. A server stamps it `queued` when it arrives while the session
+/// reads ACTIVE (which happens with a question open whenever the agent posts
+/// after the prompt), and nothing ever moves it on: hidden here and filtered
+/// out of the bar as a control message, the user's answer vanished although
+/// the agent had it.
+bool isHiddenByQueueStatus(dynamic message) {
+  if (message is! Map) return false;
+  final sender = message['sender_type']?.toString().toLowerCase() ?? '';
+  if (sender != 'user' && sender != 'human') return false;
+  final status = queueStatus(message);
+  if (status == kQueueStatusCancelled) return true;
+  if (!isPendingQueueStatus(status)) return false;
+  return !isPersistOnlyArtifact(message);
 }
 
 // ---------------------------------------------------------------------------

@@ -1139,9 +1139,6 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     // Send-queue status is only meaningful on USER messages (only they can be
     // queued behind a busy agent). `consumed`/absent renders like normal.
     final messageQueueStatus = isUser ? queueStatus(message) : null;
-    // `queued`, or `steer` (being delivered into the running turn) — either
-    // way still living in the queue bar.
-    final isQueuedMessage = isPendingQueueStatus(messageQueueStatus);
     final isCancelledMessage = messageQueueStatus == kQueueStatusCancelled;
     // Local send state (sending / failed) of an optimistic user message —
     // rendered as a mark beside the bubble, never inside it.
@@ -1151,7 +1148,9 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     // transcript — they're staged in the queue bar above the input until the
     // agent picks them up (backend flips them to `consumed`, at which point
     // they render here as a normal message). Cancelled ones just vanish.
-    if (isUser && (isQueuedMessage || isCancelledMessage)) {
+    // A queued AskUserQuestion answer summary is never consumed, so it stays
+    // (see isHiddenByQueueStatus).
+    if (isHiddenByQueueStatus(message)) {
       return const SizedBox.shrink();
     }
 
@@ -1823,12 +1822,7 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     final m = _model.messages[index];
     final sender = m['sender_type']?.toString().toLowerCase() ?? '';
     final isUser = sender == 'user' || sender == 'human';
-    if (isUser) {
-      final status = queueStatus(m);
-      if (isPendingQueueStatus(status) || status == kQueueStatusCancelled) {
-        return true;
-      }
-    }
+    if (isHiddenByQueueStatus(m)) return true;
     if (_model.sanitizeMessageContent(m['content']?.toString() ?? '').isNotEmpty) {
       return false;
     }

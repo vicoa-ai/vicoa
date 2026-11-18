@@ -58,6 +58,7 @@ from ..models import (
     InstanceShareUpdateRequest,
 )
 from servers.shared.db import update_session_title_if_needed
+from integrations.headless.auq import is_persist_only_message
 from shared.websocket import (
     after_commit,
     build_instance_update,
@@ -390,7 +391,17 @@ def create_user_message_endpoint(
                 user_id=user_id,
                 message=message,
             )
-        if prior_status == AgentStatus.ACTIVE:
+        # A persist-only artifact (the AskUserQuestion "Q:/A:" answer summary,
+        # "Declined to answer") is a record of something the user already did,
+        # not input waiting for the agent: every runner acks it without ever
+        # marking it consumed. Stamped `queued`, it would stay pending forever,
+        # and the clients keep pending user messages out of the transcript and
+        # control messages out of the queue bar, so the answer vanished. The
+        # session reads ACTIVE while a question is open whenever the agent
+        # posts anything after the prompt.
+        if prior_status == AgentStatus.ACTIVE and not is_persist_only_message(
+            request.content
+        ):
             md = dict(message.message_metadata or {})
             md["queue"] = {"status": "queued"}
             message.message_metadata = md
