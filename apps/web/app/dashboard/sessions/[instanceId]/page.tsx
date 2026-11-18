@@ -25,7 +25,7 @@ import { useDashboardNavigation } from '@/lib/contexts/dashboard-navigation-cont
 import { AgentInstanceDetail, MessageResponse, SessionInstanceMetadata } from '@/lib/backend-api';
 import { getInstanceDetail, postInstanceMessage } from '@/lib/agent-instance-api';
 import { getMessageStore } from '@/lib/message-store';
-import { useMessageStream } from '@/lib/hooks/use-ws-stream';
+import { useMessageStream, type MessageDelivery } from '@/lib/hooks/use-ws-stream';
 import { getWsClient, type InstanceBody, type UpdatePayload } from '@/lib/ws-client';
 import { extractMessageOptions, formatTaskNotifications } from '@/components/ui/message-markdown-utils';
 import { GitBranchBadge } from '@/components/dashboard/git-branch-badge';
@@ -476,13 +476,19 @@ function AgentInstanceContent() {
   );
   // `fetchInstanceDetail` is declared further down; read through a ref.
   const refetchDetailRef = useRef<(() => Promise<void>) | null>(null);
+  // Detail fetches still waiting on the server.
+  const detailFetchesInFlightRef = useRef(0);
+  // A catch-up handed us messages we hadn't seen, so the status we hold may be
+  // stale; `handleCatchUpComplete` re-reads it from the server.
+  const replayedUnseenRef = useRef(false);
 
   // Handle new messages from stream
-  const handleNewMessage = useCallback((newMessage: MessageResponse) => {
+  const handleNewMessage = useCallback((newMessage: MessageResponse, { replayed }: MessageDelivery) => {
     const store = getMessageStore();
     // Already known (REST hydrate and WS catch-up overlap by design): skip the
     // append AND the side effects, matching the old seenMessageIdsRef gate.
     if (store.hasMessage(instanceId, newMessage.id)) return;
+    if (replayed) replayedUnseenRef.current = true;
 
     const isAgentMessage = newMessage.sender_type !== 'user' && newMessage.sender_type !== 'human';
     const derivedMode = extractPermissionModeFromMessage(newMessage.content);
@@ -494,7 +500,12 @@ function AgentInstanceContent() {
     const derivedThinking = extractThinkingSettingFromMessage(newMessage.content);
     const derivedModel = extractControlSettingValue(newMessage.content, 'model');
     const derivedEffort = extractControlSettingValue(newMessage.content, 'effort');
-    const shouldAffectStatus = !derivedMode && !derivedRawPermission && !derivedAgentMode && derivedThinking === null && !derivedModel && !derivedEffort;
+    const isChatMessage = !derivedMode && !derivedRawPermission && !derivedAgentMode && derivedThinking === null && !derivedModel && !derivedEffort;
+    // Only a live message says what the session's status is now. A replayed
+    // one (missed while away, delivered by the catch-up) says what it was when
+    // posted: its `requires_user_input` would turn a session the user has
+    // since read back to unread, and stamp the sidebar row with "now".
+    const shouldAffectStatus = isChatMessage && !replayed;
 
     if (isAgentMessage) {
       setIsAgentThinking(false);
@@ -530,7 +541,7 @@ function AgentInstanceContent() {
       });
     }
 
-    if (shouldAffectStatus && isAgentMessage && !newMessage.requires_user_input) {
+    if (isChatMessage && isAgentMessage && !newMessage.requires_user_input) {
       // Agent is still working
       setIsAgentThinking(true);
     }
@@ -568,6 +579,18 @@ function AgentInstanceContent() {
     }
   }, [instanceId, updateInstanceStatus]);
   
+  // After a catch-up that brought messages we hadn't seen, re-read the status
+  // those messages were not allowed to set. Opening a cached session needs no
+  // extra fetch: its mount revalidate is already on the way. A reconnect has
+  // none, and the agent may have finished (or the session been read on
+  // another device) while the socket was down.
+  const handleCatchUpComplete = useCallback(() => {
+    if (!replayedUnseenRef.current) return;
+    replayedUnseenRef.current = false;
+    if (detailFetchesInFlightRef.current > 0) return;
+    void refetchDetailRef.current?.();
+  }, []);
+
   // Handle status updates from stream
   const handleStatusUpdate = useCallback((status: string) => {
     // Handle thinking state based on status
@@ -745,6 +768,7 @@ function AgentInstanceContent() {
     // revisiting a cached session fetches a delta rather than the full page.
     initialWatermark: storeEntry?.watermark ?? null,
     onMessage: handleNewMessage,
+    onCatchUpComplete: handleCatchUpComplete,
     onStatusUpdate: handleStatusUpdate,
     onInstanceMetadata: handleInstanceMetadata,
     onInstanceUpdate: handleInstanceUpdate,
@@ -915,6 +939,7 @@ function AgentInstanceContent() {
     // response landing after a session switch warms that session's cache
     // instead of bleeding into the one now on screen.
     const targetId = instanceId;
+    detailFetchesInFlightRef.current += 1;
     try {
       setError(null);
       const detail = await getInstanceDetail(targetId, {
@@ -942,6 +967,8 @@ function AgentInstanceContent() {
       }
       console.error('Failed to fetch instance:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch instance');
+    } finally {
+      detailFetchesInFlightRef.current -= 1;
     }
   }, [instanceId]);
   refetchDetailRef.current = fetchInstanceDetail;

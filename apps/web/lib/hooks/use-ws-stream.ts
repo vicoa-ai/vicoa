@@ -117,6 +117,10 @@ function detailToInstanceResponse(detail: AgentInstanceDetail): AgentInstanceRes
   };
 }
 
+export interface MessageDelivery {
+  replayed: boolean;
+}
+
 interface UseMessageStreamOptions {
   instanceId: string;
   enabled?: boolean;
@@ -128,7 +132,15 @@ interface UseMessageStreamOptions {
   watch?: boolean;
   /** `created_at` of the newest message already rendered (from the REST load). */
   initialWatermark?: string | null;
-  onMessage?: (message: MessageResponse) => void;
+  /**
+   * `replayed`: the message came from the (re)connect catch-up, not live. It
+   * is history the client missed, so the session's status may have moved on
+   * since it was posted (the user may have read it on another device):
+   * append it, but don't derive status from it.
+   */
+  onMessage?: (message: MessageResponse, delivery: MessageDelivery) => void;
+  /** A (re)connect catch-up has delivered everything it fetched. */
+  onCatchUpComplete?: () => void;
   onStatusUpdate?: (status: string) => void;
   /** Full `instance_metadata` from an instance-update — carries the usage blob. */
   onInstanceMetadata?: (metadata: Record<string, unknown> | null) => void;
@@ -150,6 +162,7 @@ export function useMessageStream({
   watch = false,
   initialWatermark = null,
   onMessage,
+  onCatchUpComplete,
   onStatusUpdate,
   onInstanceMetadata,
   onInstanceUpdate,
@@ -161,6 +174,7 @@ export function useMessageStream({
 
   const cb = useRef({
     onMessage,
+    onCatchUpComplete,
     onStatusUpdate,
     onInstanceMetadata,
     onInstanceUpdate,
@@ -169,6 +183,7 @@ export function useMessageStream({
   });
   cb.current = {
     onMessage,
+    onCatchUpComplete,
     onStatusUpdate,
     onInstanceMetadata,
     onInstanceUpdate,
@@ -195,9 +210,13 @@ export function useMessageStream({
     let cycle = 0;
     let watermark: string | null = initialWatermarkRef.current;
 
-    const deliver = (body: NewMessageBody) => {
+    const deliver = (body: NewMessageBody, replayed: boolean) => {
       watermark = latestTimestamp(watermark, [body], 'created_at');
-      cb.current.onMessage?.(bodyToMessage(body));
+      cb.current.onMessage?.(bodyToMessage(body), { replayed });
+    };
+    const deliverCatchUp = (rows: NewMessageBody[]) => {
+      for (const { row, replayed } of buffer.completeFetchTagged(rows)) deliver(row, replayed);
+      cb.current.onCatchUpComplete?.();
     };
 
     const runCatchUp = async () => {
@@ -225,9 +244,7 @@ export function useMessageStream({
           // happened, the next reconnect's beginCatchUp() wipes this state
           // cleanly anyway — partial delivery is strictly better than
           // permanent stick.
-          if (myCycle === cycle) {
-            for (const body of buffer.completeFetch(rows)) deliver(body);
-          }
+          if (myCycle === cycle) deliverCatchUp(rows);
           return;
         }
         if (myCycle !== cycle) return; // superseded by a newer connect
@@ -241,13 +258,13 @@ export function useMessageStream({
         if (!result.has_more || !last) break;
         after = { created_at: last.created_at ?? '', id: last.id };
       }
-      for (const body of buffer.completeFetch(rows)) deliver(body);
+      deliverCatchUp(rows);
     };
 
     const unsubscribeUpdates = client.subscribe((payload: UpdatePayload) => {
       const body = payload.body;
       if (body.t === 'new-message' && body.instance_id === instanceId) {
-        for (const ready of buffer.bufferLive(body)) deliver(ready);
+        for (const ready of buffer.bufferLive(body)) deliver(ready, false);
       } else if (body.t === 'message-update' && body.instance_id === instanceId) {
         // In-place metadata patch (queued/consumed/cancelled indicators) —
         // never appends, so it bypasses the append-ordering buffer above.

@@ -77,6 +77,39 @@ describe('CatchUpBuffer', () => {
   });
 });
 
+describe('CatchUpBuffer.completeFetchTagged', () => {
+  it('marks fetch-only rows replayed and buffered live rows not, in delivery order', () => {
+    const buffer = new CatchUpBuffer(createAppendTracker());
+    buffer.beginCatchUp();
+    buffer.bufferLive({ id: 'm3' });
+    expect(buffer.completeFetchTagged([{ id: 'm1' }, { id: 'm2' }])).toEqual([
+      { row: { id: 'm1' }, replayed: true },
+      { row: { id: 'm2' }, replayed: true },
+      { row: { id: 'm3' }, replayed: false },
+    ]);
+  });
+
+  it('counts a row both the fetch and the socket carried as live, delivered once', () => {
+    const buffer = new CatchUpBuffer(createAppendTracker());
+    buffer.beginCatchUp();
+    buffer.bufferLive({ id: 'm2' });
+    expect(buffer.completeFetchTagged([{ id: 'm1' }, { id: 'm2' }])).toEqual([
+      { row: { id: 'm1' }, replayed: true },
+      { row: { id: 'm2' }, replayed: false },
+    ]);
+  });
+
+  it('drops rows an earlier cycle already delivered', () => {
+    const buffer = new CatchUpBuffer(createAppendTracker());
+    buffer.beginCatchUp();
+    buffer.completeFetchTagged([{ id: 'm1' }]);
+    buffer.beginCatchUp();
+    expect(buffer.completeFetchTagged([{ id: 'm1' }, { id: 'm2' }])).toEqual([
+      { row: { id: 'm2' }, replayed: true },
+    ]);
+  });
+});
+
 describe('reconnectDelayMs', () => {
   it('jitters from the first attempt — attempt 0 can be below the base delay', () => {
     const samples = Array.from({ length: 200 }, () => reconnectDelayMs(0, 1000, 30000));

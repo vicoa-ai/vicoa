@@ -70,9 +70,21 @@ export class CatchUpBuffer<T extends EntityRow = EntityRow> {
 
   /** Catch-up response arrived: deliver its rows, then the buffered live rows. */
   completeFetch(rows: T[]): T[] {
-    const delivered = [...rows, ...this.buffered].filter((row) =>
-      this.tracker.accept(row),
-    );
+    return this.completeFetchTagged(rows).map((entry) => entry.row);
+  }
+
+  /**
+   * `completeFetch`, with each row marked `replayed` when only the fetch had
+   * it: history from before this connection, not something that just
+   * happened. A row the socket also pushed live during the fetch counts as
+   * live. Same rows, same order.
+   */
+  completeFetchTagged(rows: T[]): Array<{ row: T; replayed: boolean }> {
+    const liveIds = new Set(this.buffered.map((row) => row.id));
+    const delivered = [
+      ...rows.map((row) => ({ row, replayed: !liveIds.has(row.id) })),
+      ...this.buffered.map((row) => ({ row, replayed: false })),
+    ].filter((entry) => this.tracker.accept(entry.row));
     this.buffered = [];
     this.fetchComplete = true;
     return delivered;
