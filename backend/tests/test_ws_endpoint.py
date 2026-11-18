@@ -54,6 +54,16 @@ def client() -> Iterator[TestClient]:
         yield test_client
 
 
+@pytest.fixture(autouse=True)
+def _token_id_is_the_local_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A browser token's id is resolved against `users` at the handshake. These
+    tests have no database, so the token's own id stands; the resolution itself
+    is covered in test_ws_local_user_id."""
+    monkeypatch.setattr(
+        ws_handler, "_local_user_id", lambda principal: str(principal.user_id)
+    )
+
+
 def _supabase_returns(user_id: UUID):
     def _verify(token: str) -> TokenClaims:
         return TokenClaims(user_id=user_id)
@@ -122,6 +132,24 @@ def test_user_scoped_connection_receives_server_info(
 
     assert info["type"] == "server_info"
     assert info["body"]["user_id"] == str(user_id)
+
+
+def test_user_scoped_connection_is_keyed_by_the_resolved_user_id(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the token's id resolves to a different `users` row, the connection
+    takes the row's id: its rooms and RPC routing are keyed by it."""
+    token_id, row_id = uuid4(), uuid4()
+    monkeypatch.setattr(ws_handler, "verify_user_token", _supabase_returns(token_id))
+    monkeypatch.setattr(ws_handler, "_local_user_id", lambda principal: str(row_id))
+
+    with client.websocket_connect(
+        "/ws", subprotocols=["vicoa-ws", f"vicoa-supabase.{_FAKE_JWT}"]
+    ) as ws:
+        ws.send_json({"type": "hello", "scope": "user-scoped"})
+        info = ws.receive_json()
+
+    assert info["body"]["user_id"] == str(row_id)
 
 
 def test_connection_without_credentials_is_rejected(client: TestClient) -> None:
