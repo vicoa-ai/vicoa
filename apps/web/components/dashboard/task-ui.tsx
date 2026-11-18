@@ -76,13 +76,15 @@ import { pointerWithin, closestCenter, type CollisionDetection } from '@dnd-kit/
 // colors mapped onto vicoa's palette — no warning/success/info tokens here)
 // ---------------------------------------------------------------------------
 
+// Open states first, then the two closed ones, so Blocked sits with the work
+// still in flight instead of after Done.
 export const STATUS_ORDER: TaskStatus[] = [
   'backlog',
   'todo',
   'in_progress',
   'in_review',
-  'done',
   'blocked',
+  'done',
   'cancelled',
 ];
 
