@@ -2,7 +2,6 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from uuid import UUID
 
 # Add parent directory to path to import shared module
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -80,13 +79,6 @@ async def get_current_claims(
         return verify_user_token(token)
     except Exception as exc:
         raise AuthError(f"Could not validate credentials: {str(exc)}") from exc
-
-
-async def get_current_user_id(
-    claims: Principal = Depends(get_current_claims),
-) -> UUID:
-    """Extract user ID from the verified token claims."""
-    return claims.user_id
 
 
 async def _resolve_or_create_user(
