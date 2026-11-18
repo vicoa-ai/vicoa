@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -11,10 +12,19 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from shared.database.models import User
 from shared.database.actor import Actor, set_session_actor
 from shared.database.session import get_db
-from shared.database.users import backfill_display_name, ensure_local_user
+from shared.database.users import (
+    backfill_display_name,
+    ensure_local_user,
+    find_local_user,
+)
 from sqlalchemy.orm import Session
 
-from shared.auth import Principal, verify_user_token
+from shared.auth import (
+    AuthProviderError,
+    Principal,
+    get_auth_provider,
+    verify_user_token,
+)
 from shared.avatars import seed_user_avatar
 from shared.hooks import run_user_created_hooks
 
@@ -79,19 +89,62 @@ async def get_current_user_id(
     return claims.user_id
 
 
-def _resolve_or_create_user(claims: Principal, db: Session) -> tuple[User | None, bool]:
+async def _resolve_or_create_user(
+    claims: Principal, db: Session
+) -> tuple[User | None, bool]:
     """Resolve the local users row for these claims, JIT-creating if absent.
 
-    Delegates to the race-safe `ensure_local_user` primitive — concurrent first
-    requests for the same brand-new user no longer 500 on duplicate-key, and
-    exactly one of them gets created=True.
+    Creation goes through the race-safe `ensure_local_user` primitive, so
+    concurrent first requests of a brand-new user never 500 on duplicate-key
+    and exactly one of them gets created=True.
+
+    Before creating, the identity provider is asked whether the account still
+    exists. A session token is verified locally and stays valid until it
+    expires, so it outlives a deleted account: after `DELETE /me`, the
+    client's next request (a poller, a push-token refresh) used to land here,
+    find no row and create it again, re-running signup (welcome email,
+    marketing list) for someone who had just deleted their account. Only the
+    creation path pays the lookup, once per user; an existing row returns
+    before it.
     """
+    user = find_local_user(db, claims.user_id, claims.email)
+    if user is not None:
+        return user, False
+    if not claims.email:
+        # `users.email` is NOT NULL, so there is nothing to create; POST
+        # /auth/email is how such an account gets one.
+        return None, False
+    if not await _identity_exists(claims):
+        logger.info(
+            "Not recreating a users row for %s: the account no longer exists",
+            claims.user_id,
+        )
+        return None, False
     return ensure_local_user(
         db,
         user_id=claims.user_id,
         email=claims.email,
         display_name=claims.display_name,
     )
+
+
+async def _identity_exists(claims: Principal) -> bool:
+    """Whether the identity provider still has this token's account.
+
+    A provider failure is a 503 rather than a guess either way: creating the
+    row could revive a deleted account, and refusing would sign out a real new
+    user, while the client simply retries a 503.
+    """
+    try:
+        identity = await asyncio.to_thread(
+            get_auth_provider().fetch_user, claims.user_id
+        )
+    except AuthProviderError as exc:
+        logger.error("Auth provider lookup failed for %s: %s", claims.user_id, exc)
+        raise HTTPException(
+            status_code=503, detail="auth_provider_unavailable"
+        ) from exc
+    return identity is not None
 
 
 async def _run_user_created_hooks_bg(to_email: str, user_name: str) -> None:
@@ -177,7 +230,7 @@ async def get_current_user(
     db: Session = Depends(get_db),
 ) -> User:
     """Get current user, provisioning on first sign-in if needed."""
-    user, created = _resolve_or_create_user(claims, db)
+    user, created = await _resolve_or_create_user(claims, db)
     if user is None:
         raise AuthError("User not found")
     if created:
@@ -213,7 +266,7 @@ async def get_optional_current_user(
 
     try:
         claims = verify_user_token(token)
-        user, created = _resolve_or_create_user(claims, db)
+        user, created = await _resolve_or_create_user(claims, db)
     except Exception:
         return None
 
