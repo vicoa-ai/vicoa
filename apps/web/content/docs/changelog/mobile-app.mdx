@@ -5,6 +5,25 @@ description: Release notes for the Vicoa iOS and Android apps — new features, 
 
 # Mobile App
 
+### v1.7.18
+18 November, 2026
+- Home and Tasks open the way you left them. Home remembers the groups you folded (Project, Status and Pinned) and its agent and date filters, and Tasks remembers its folded status sections, project filter and display options
+- Branch icons on Home session cards and the Worktrees page take the color of the branch's pull request: open green, merged purple, closed red, draft grey. The worktree sheet shows the pull request with its checks and an "Open on GitHub" button
+- The Send button turns into a Stop button while the agent is working and the message box is empty. Typing, an attachment or an annotation brings Send back, so you can still queue a follow-up. The separate stop button next to the folder icon is gone
+- Send a message to a closed or stopped session to resume it: the box stays open and sending relaunches the session on its computer. Only the owner can resume, and the box stays locked when the computer is offline
+- A worktree on a detached HEAD shows its short commit with a "detached" tag, and a worktree in the middle of a rebase keeps its branch name with a "rebasing" tag
+- The answer to a Claude question stays in the transcript instead of disappearing when the session was active
+- A push for a task assigned to you, a question an agent asks you on a task, or an `@` mention of you on a task opens that task
+- Android: the welcome card shows Vicoa's own mark and name
+
+### v1.7.17
+14 November, 2026
+- Select text in an agent chat to get Add to chat and Continue in new session next to Copy, on message text, code blocks, diffs and terminal output. Add to chat keeps the passage as an annotation pill with an optional comment that goes out with your message; Continue in new session carries the selection to a new session, on the same machine, folder and agent when the session is yours
+- Show "Task created" after you create a task, unfold the status section it lands in if it was folded, and scroll the Tasks list to it
+- Sending a message no longer costs a credit, and the no-credit sheet no longer appears when you send
+- When your plan's automation limit is reached, creating an automation shows the reason from the server and opens the Upgrade dialog
+- Draw the iOS launch screen in the splash's dark color, so a cold start no longer flashes white in dark mode
+
 ### v1.7.16
 29 October, 2026
 - Ask an Apple sign-in with no email address for one before the app opens; some Apple IDs registered by phone number give none, and the app needs it to work
