@@ -1217,6 +1217,9 @@ async function bootstrap(): Promise<void> {
     envResolution: daemonEnvResolution,
     savedShellPathFile: savedShellPathFile(),
     envLog: logDaemonEnv,
+    // The same server the daemon would resolve from VICOA_API_URL; on its
+    // command line it tells a CLI daemon for another server this one isn't its.
+    baseUrl: daemonBaseUrl,
   });
   daemonManager.onState(onDaemonState);
 

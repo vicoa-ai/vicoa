@@ -93,6 +93,34 @@ assert.deepEqual(
   ['daemon', '--local-listener', '--local-port', '4123', '--local-only'],
   'local-only never gets --takeover',
 );
+assert.deepEqual(
+  buildDaemonArgs({
+    port: 4123,
+    localOnly: false,
+    takeover: true,
+    baseUrl: 'https://alpha.example',
+  }),
+  [
+    'daemon',
+    '--local-listener',
+    '--local-port',
+    '4123',
+    '--base-url',
+    'https://alpha.example',
+    '--takeover',
+  ],
+  'cloud mode names its server with --base-url',
+);
+assert.deepEqual(
+  buildDaemonArgs({ port: 4123, localOnly: true, baseUrl: 'https://alpha.example' }),
+  ['daemon', '--local-listener', '--local-port', '4123', '--local-only'],
+  'local-only never gets --base-url',
+);
+assert.deepEqual(
+  buildDaemonArgs({ port: 4123, localOnly: false, baseUrl: '' }),
+  ['daemon', '--local-listener', '--local-port', '4123'],
+  'an empty base URL adds no flag',
+);
 
 // --- parseCloudStatus ---------------------------------------------------------
 assert.equal(
