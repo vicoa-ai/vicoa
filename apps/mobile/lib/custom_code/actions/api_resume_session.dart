@@ -196,6 +196,43 @@ bool canResumeSession({
   return liveState == 'agent_stopped';
 }
 
+/// Whether sending a message should resume the session, rather than the
+/// composer refusing input.
+///
+/// Mirrors `shouldResumeOnSend` in vicoa-web's lib/session-resume.ts. A closed
+/// session, or one whose agent stopped, used to lock the composer until the
+/// user found Resume in the menu. When Resume would work the composer stays
+/// open instead: the message is posted first, then the session is resumed,
+/// and the relaunched agent picks the message up in its catch-up (every user
+/// message after its read cursor). Posting first keeps attachments, which a
+/// launch prompt can't carry, and leaves the message saved if the relaunch
+/// fails.
+///
+/// Owner only, since the relaunch runs on the owner's machine. False while a
+/// resume is still coming up (the send is then an ordinary one) and whenever
+/// Resume is blocked (computer offline, no machine or folder, deleted), so the
+/// composer stays locked in those cases as before.
+bool shouldResumeOnSend({
+  required String? status,
+  required String? machineId,
+  required String? project,
+  required String? liveState,
+  required bool isOwner,
+  required bool withinResumeGrace,
+}) {
+  if (!isOwner || withinResumeGrace) return false;
+  final upper = (status ?? '').toUpperCase();
+  final stopped = kClosedByDesignStatuses.contains(upper) || liveState == kLiveStateAgentStopped;
+  return stopped &&
+      resumeBlockedReason(
+            status: status,
+            machineId: machineId,
+            project: project,
+            liveState: liveState,
+          ) ==
+          null;
+}
+
 /// Liveness states the backend derives (shared/database/liveness.py).
 /// Derived at read time from the instance + machine heartbeats, never stored.
 const String kLiveStateLive = 'live';

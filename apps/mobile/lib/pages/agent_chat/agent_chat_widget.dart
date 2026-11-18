@@ -444,6 +444,8 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
           '[ChatPage] propagating WS status to widget+FFAppState: $status (instance=${widget.instanceId})');
       _setLocalSessionStatus(status);
     };
+    // A send to a stopped session resumed it: finish the way Resume does.
+    _model.onResumedAfterSend = _afterResume;
     
     logFirebaseEvent('screen_view', parameters: {'screen_name': 'AgentChat'});
     
@@ -2531,19 +2533,27 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     final machineId = _instanceField('machine_id') ?? '';
     final project = _instanceField('project') ?? '';
     final metadata = _instanceMap('instance_metadata');
-    final result = await actions.apiResumeSession(
-      machineId,
-      widget.instanceId ?? (_instanceField('id') ?? ''),
-      actions.resumeExpandProjectPath(project, _instanceField('home_dir')),
-      agent: actions.resumeAgentSlug(
-        _instanceField('agent_type_name'),
+    // A send to this session may be resuming it already.
+    if (_model.resumeInFlight) return;
+    _model.resumeInFlight = true;
+    final Map<String, dynamic> result;
+    try {
+      result = await actions.apiResumeSession(
+        machineId,
+        widget.instanceId ?? (_instanceField('id') ?? ''),
+        actions.resumeExpandProjectPath(project, _instanceField('home_dir')),
+        agent: actions.resumeAgentSlug(
+          _instanceField('agent_type_name'),
+          sessionConfig: _instanceMap('session_config'),
+        ),
+        agentSessionId: actions.resumeAgentSessionHandle(metadata),
+        // Carry the stored model / effort / permission mode through so the
+        // resumed session isn't reset to the daemon's defaults.
         sessionConfig: _instanceMap('session_config'),
-      ),
-      agentSessionId: actions.resumeAgentSessionHandle(metadata),
-      // Carry the stored model / effort / permission mode through so the
-      // resumed session isn't reset to the daemon's defaults.
-      sessionConfig: _instanceMap('session_config'),
-    );
+      );
+    } finally {
+      _model.resumeInFlight = false;
+    }
     if (!mounted) return;
     if (result['success'] != true) {
       _showSnackBarMessage(result['error']?.toString() ?? l10n.sessionResumeFailed, waitTime: SessionActions.errorSnackMs);
@@ -2555,6 +2565,13 @@ class _AgentChatWidgetState extends State<AgentChatWidget> with RouteAware, Tick
     // loadMessages refetch replaces wholesale) so the home card sees it too.
     final resumedId = widget.instanceId ?? (_instanceField('id') ?? '');
     actions.markResumed(resumedId);
+    await _afterResume();
+  }
+
+  /// After a successful resume, from the menu or from a send to a stopped
+  /// session (the model has already opened the resume grace for that one).
+  Future<void> _afterResume() async {
+    if (!mounted) return;
     // Reopen the cached status too, so the row doesn't read as archived in the
     // brief window before the refetch returns.
     _setLocalSessionStatus('AWAITING_INPUT', liveState: 'live');

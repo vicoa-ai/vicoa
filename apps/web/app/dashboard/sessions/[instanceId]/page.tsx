@@ -86,7 +86,9 @@ import {
   resumeBlockedMessage,
   resumeBlockedShortLabel,
   resumeBlockedReason,
+  resumeOnSendPlaceholder,
   resumeSession,
+  shouldResumeOnSend,
 } from '@/lib/session-resume';
 import { AskUserQuestionSubmitPayload, buildAskUserQuestionCancelPersistMessage, buildAskUserQuestionControlMessage, buildAskUserQuestionSummaryMessage, parseAskUserQuestionPayload } from '@/components/dashboard/ask-user-question-panel';
 import { isPendingQueueStatus, parseQueuePayload, type QueuedMessageItem } from '@/components/dashboard/queue-status';
@@ -278,6 +280,8 @@ function AgentInstanceContent() {
   // state: a cached session is never "loading", even before its revalidate.
   const isLoading = !instance && !error;
   const [isSending, setIsSending] = useState(false);
+  // A resume is in flight, from the menu or from a send to a stopped session.
+  const [isResuming, setIsResuming] = useState(false);
   const [streamEnabled, setStreamEnabled] = useState(true);
   const [isAgentThinking, setIsAgentThinking] = useState(false);
   // The vibing row's *visibility*, debounced. `isAgentThinking` gets toggled
@@ -355,6 +359,14 @@ function AgentInstanceContent() {
   // the callback and re-render the memoized composer on every status flip.
   const statusRef = useRef<string | null>(null);
   statusRef.current = instance?.status ?? null;
+  // The session a send should resume (see `shouldResumeOnSend`), or null when
+  // a send is an ordinary one. A ref for the same reason as `statusRef`;
+  // assigned every render once liveness is known, further down.
+  const resumeOnSendRef = useRef<AgentInstanceDetail | null>(null);
+  // Set while any resume is out (a send's or the menu's), so neither starts a
+  // second relaunch. A send in that window just posts: the agent coming up
+  // reads it in its catch-up.
+  const resumeInFlightRef = useRef(false);
   // The session currently on screen. Fetches capture `instanceId` and compare
   // against this before touching transient UI state, so a slow response for a
   // previously viewed session can still warm that session's cache entry
@@ -1074,8 +1086,35 @@ function AgentInstanceContent() {
     getMessageStore().removeMessage(instanceId, id);
   }, [instanceId]);
 
+  // Relaunch a stopped session after a message to it was posted. The order is
+  // what delivers it: the relaunched agent's catch-up reads every user message
+  // after its read cursor, so the message has to be committed before the agent
+  // comes up. A launch prompt would skip the POST, but it can't carry
+  // attachments and is lost if the agent fails to start.
+  const resumeAfterSend = useCallback(async (target: AgentInstanceDetail) => {
+    if (resumeInFlightRef.current) return;
+    resumeInFlightRef.current = true;
+    setIsResuming(true);
+    try {
+      await resumeSession(target);
+      await fetchInstanceDetail();
+    } catch (err) {
+      console.error('Failed to resume session after send:', err);
+      setIsAgentThinking(false);
+      const reason = err instanceof Error ? err.message.trim().replace(/\.$/, '') : '';
+      toast.error("Couldn't resume the session", {
+        description: `${reason ? `${reason}. ` : ''}Your message is saved. Resume the session from its menu to deliver it.`,
+      });
+    } finally {
+      resumeInFlightRef.current = false;
+      setIsResuming(false);
+    }
+  }, [fetchInstanceDetail]);
+
   const sendMessage = useCallback(async (messageContent: string, attachments: ChatUploadedAttachment[] = []) => {
     if ((!messageContent && attachments.length === 0) || isSending) return;
+    // Read before the POST: a send to a stopped session resumes it afterwards.
+    const resumeTarget = resumeOnSendRef.current;
 
     // Guess where the optimistic row goes for the instant render: the backend
     // stamps a user message `queued` iff the instance was ACTIVE when it arrived
@@ -1116,6 +1155,9 @@ function AgentInstanceContent() {
       // to land in the catch below and roll back a message that had in fact
       // been delivered.
       trackFirstMessageSent();
+      // Not awaited: the message is in, so the composer is free while the
+      // agent comes up. The Send button shows Stop until it answers.
+      if (resumeTarget) void resumeAfterSend(resumeTarget);
     } catch (err) {
       console.error('Failed to send message:', err);
       removeOptimisticMessage(optimisticId);
@@ -1124,7 +1166,7 @@ function AgentInstanceContent() {
     } finally {
       setIsSending(false);
     }
-  }, [isSending, instanceId, postMessageToInstance, addOptimisticUserMessage, removeOptimisticMessage, followOwnSend]);
+  }, [isSending, instanceId, postMessageToInstance, addOptimisticUserMessage, removeOptimisticMessage, followOwnSend, resumeAfterSend]);
 
   // Memoised like the other MessageItem callbacks: a fresh function here
   // defeated MessageItem's memo and re-rendered every row on every page render.
@@ -1348,7 +1390,6 @@ function AgentInstanceContent() {
   const chatSessionClosed = isClosedByDesign(instance?.status);
   const canResume = canResumeSession(instance, chatLiveState);
   const resumeBlocked = resumeBlockedReason(instance, chatLiveState);
-  const [isResuming, setIsResuming] = useState(false);
   // A resumed session has a stale heartbeat until its relaunched agent beats
   // (up to ~30s), and liveness would keep the composer locked for that whole
   // window. Read from the shared registry rather than local state: Resume is
@@ -1357,7 +1398,8 @@ function AgentInstanceContent() {
   const withinResumeGrace = isWithinResumeGrace(instanceId, livenessNow);
 
   const handleResumeSession = useCallback(async () => {
-    if (!instance || isResuming) return;
+    if (!instance || isResuming || resumeInFlightRef.current) return;
+    resumeInFlightRef.current = true;
     setIsResuming(true);
     try {
       await resumeSession(instance);
@@ -1367,6 +1409,7 @@ function AgentInstanceContent() {
         error instanceof Error ? error.message : 'Failed to resume session'
       );
     } finally {
+      resumeInFlightRef.current = false;
       setIsResuming(false);
     }
   }, [instance, isResuming, fetchInstanceDetail]);
@@ -1374,6 +1417,20 @@ function AgentInstanceContent() {
     chatSessionClosed || withinResumeGrace ? null : liveStateHint(chatLiveState);
   const livenessBlocksSending =
     !chatSessionClosed && !withinResumeGrace && blocksSending(chatLiveState);
+  // A closed or stopped session that Resume would bring back: the composer
+  // stays open, and a send resumes it (see `resumeAfterSend`).
+  const resumeOnSend = shouldResumeOnSend(instance, chatLiveState, {
+    isOwner,
+    withinResumeGrace,
+  });
+  resumeOnSendRef.current = resumeOnSend ? instance : null;
+  // Just resumed, from a send or the menu: the row can still read closed
+  // until the relaunched agent reopens it, so keep the composer open over
+  // that window instead of locking it again for a moment.
+  const openAfterResume = withinResumeGrace && isOwner;
+  // Archived, and nothing will bring it back from here: the composer is off.
+  const composerClosed =
+    instance?.status === 'COMPLETED' && !resumeOnSend && !openAfterResume;
 
   const { requiresUserAction, canSendMessage } = useMemo(() => {
     if (!instance) {
@@ -1385,17 +1442,19 @@ function AgentInstanceContent() {
 
     const lastMsg = instance.messages[instance.messages.length - 1];
     const requiresAction = lastMsg?.requires_user_input || false;
-    const canSend = (requiresAction || instance.status === 'ACTIVE' || instance.status === 'AWAITING_INPUT' || instance.status === 'REVIEWED')
+    const canSend = resumeOnSend || openAfterResume || (
+      (requiresAction || instance.status === 'ACTIVE' || instance.status === 'AWAITING_INPUT' || instance.status === 'REVIEWED')
       && !['COMPLETED', 'FAILED', 'KILLED', 'DELETED'].includes(instance.status)
       // Nothing is listening: refuse input the same way an archived session
       // does, rather than accepting a message that will never be read.
-      && !livenessBlocksSending;
+      && !livenessBlocksSending
+    );
 
     return {
       requiresUserAction: requiresAction,
       canSendMessage: canSend
     };
-  }, [instance, livenessBlocksSending]);
+  }, [instance, livenessBlocksSending, resumeOnSend, openAfterResume]);
 
   // Drives the composer's Send→Stop swap. `isAgentThinking` is the optimistic
   // local mirror — it flips true the instant a message is sent, so Stop shows
@@ -2390,7 +2449,7 @@ function AgentInstanceContent() {
 
   // Drag-drop is offered only while the composer can actually take input; a
   // closed session shows no overlay and ignores drops.
-  const dropEnabled = instance.status !== 'COMPLETED' && canSendMessage && canPrompt;
+  const dropEnabled = !composerClosed && canSendMessage && canPrompt;
   const isFileDrag = (e: React.DragEvent) =>
     Array.from(e.dataTransfer?.types ?? []).includes('Files');
   const handleDropDragEnter = (e: React.DragEvent) => {
@@ -2899,7 +2958,7 @@ function AgentInstanceContent() {
         {hasMessageItems && (
           <SelectionActionsMenu
             getContainer={getTranscriptScroller}
-            onAddToChat={canPrompt && instance.status !== 'COMPLETED' ? handleAddAnnotation : undefined}
+            onAddToChat={canPrompt && !composerClosed ? handleAddAnnotation : undefined}
             onCommentAnnotation={handleCommentAnnotation}
             onContinueInNewSession={handleContinueInNewSession}
           />
@@ -3009,7 +3068,7 @@ function AgentInstanceContent() {
       <div className="flex-shrink-0 bg-muted/10">
         <div className="p-4">
           <div className="max-w-4xl mx-auto">
-            {instance.status !== 'COMPLETED' && permissionModeError && (
+            {!composerClosed && permissionModeError && (
               <div
                 role="alert"
                 className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50/80 px-4 py-2 text-xs text-amber-900 shadow-sm"
@@ -3028,8 +3087,9 @@ function AgentInstanceContent() {
               </div>
             )}
             {/* Suppressed when liveness is the reason input is refused — the
-                composer placeholder already says so, more specifically. */}
-            {instance.status !== 'COMPLETED' && !canSendMessage && instance.status !== 'STARTING' && !livenessBlocksSending && (
+                composer placeholder already says so, more specifically. A
+                failed start keeps its reason up even while a send can retry. */}
+            {instance.status !== 'COMPLETED' && (!canSendMessage || instance.status === 'FAILED') && instance.status !== 'STARTING' && !livenessBlocksSending && (
               <div className={`mb-2 text-xs ${instance.status === 'FAILED' ? 'text-red-600' : 'text-yellow-600'}`}>
                 {instance.status === 'FAILED'
                   ? "This session failed to start. See the message above for the reason (most often the agent CLI isn't signed in on that machine)."
@@ -3038,7 +3098,7 @@ function AgentInstanceContent() {
                   : 'Agent not accepting input in current status'}
               </div>
             )}
-            {instance.status !== 'COMPLETED' && streamError && (
+            {!composerClosed && streamError && (
               <div className="mb-2 text-xs text-orange-600">
                 Streaming connection error - messages will refresh manually
               </div>
@@ -3056,8 +3116,10 @@ function AgentInstanceContent() {
                 sessionPermissionModes={gearPermissionModes}
                 showControlSettings={showGear}
                 // Someone else's session: what it runs shows, only the owner
-                // changes it.
-                controlSettingsReadOnly={!isOwner}
+                // changes it. A stopped one has no agent to apply a change
+                // until a send resumes it, and the resume relaunches with the
+                // stored config.
+                controlSettingsReadOnly={!isOwner || resumeOnSend}
                 thinkingEnabled={isOwner && isClaudeCodeAgent ? thinkingSettingEnabled : null}
                 onThinkingToggle={isOwner && isClaudeCodeAgent ? handleThinkingToggle : undefined}
                 onInterrupt={handleInterrupt}
@@ -3075,13 +3137,15 @@ function AgentInstanceContent() {
                 onOpencodeAgentModeChange={
                   isOwner && isOpencodeAgent ? handleOpencodeAgentModeSelect : undefined
                 }
-                disabled={instance.status === 'COMPLETED'}
+                disabled={composerClosed}
                 placeholder={
-                  instance.status === 'COMPLETED'
+                  composerClosed
                     ? 'Session closed. This chat is no longer available for new messages.'
-                    : !isOwner && livenessBlocksSending
-                      ? "This session's agent isn't running. Only its owner can resume it."
-                      : (chatLiveStateHint ?? undefined)
+                    : resumeOnSend
+                      ? resumeOnSendPlaceholder(instance.status)
+                      : !isOwner && livenessBlocksSending
+                        ? "This session's agent isn't running. Only its owner can resume it."
+                        : (chatLiveStateHint ?? undefined)
                 }
                 sessionModels={gearModels}
                 currentModel={gearCurrentModel}

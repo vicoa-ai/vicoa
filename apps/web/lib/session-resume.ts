@@ -145,6 +145,42 @@ export function canResumeSession(
 }
 
 /**
+ * Whether sending a message should resume the session, rather than the
+ * composer refusing input.
+ *
+ * A closed session, or one whose agent stopped, used to lock the composer
+ * until the user found Resume in the menu. When Resume would work, the
+ * composer stays open instead: the message is posted first, then the session
+ * is resumed, and the relaunched agent picks the message up in its catch-up
+ * (it reads every user message after its read cursor). Posting first is what
+ * keeps attachments, which a launch prompt can't carry, and it leaves the
+ * message saved even if the relaunch fails.
+ *
+ * Owner only: the relaunch runs on the owner's machine, so a collaborator
+ * keeps the locked composer and its "only its owner can resume it" hint. When
+ * Resume is blocked (computer offline, no machine or folder recorded, session
+ * deleted) this is false and the composer stays locked as before.
+ */
+export function shouldResumeOnSend(
+  instance: ResumableInstance | null | undefined,
+  liveState: LiveState,
+  options: { isOwner: boolean; withinResumeGrace: boolean }
+): boolean {
+  if (!instance || !options.isOwner) return false;
+  // Just resumed: the agent is coming up, so a send is an ordinary one.
+  if (options.withinResumeGrace) return false;
+  const stopped = isClosedByDesign(instance.status) || liveState === 'agent_stopped';
+  return stopped && resumeBlockedReason(instance, liveState) === null;
+}
+
+/** Composer placeholder while a send would resume the session. */
+export function resumeOnSendPlaceholder(status: string | null | undefined): string {
+  return status === 'COMPLETED'
+    ? 'Session closed. Send a message to resume it.'
+    : "This session's agent isn't running. Send a message to resume it.";
+}
+
+/**
  * Compact label for the menu item's second line.
  *
  * A disabled menu item can't fire a click, so it can't explain itself on

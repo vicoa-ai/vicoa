@@ -161,4 +161,64 @@ void main() {
       expect(isWithinResumeGrace(''), isFalse);
     });
   });
+  group('shouldResumeOnSend', () {
+    bool resumes({
+      String status = 'COMPLETED',
+      String? machine = machineId,
+      String? dir = project,
+      String? liveState = 'agent_stopped',
+      bool isOwner = true,
+      bool withinResumeGrace = false,
+    }) =>
+        shouldResumeOnSend(
+          status: status,
+          machineId: machine,
+          project: dir,
+          liveState: liveState,
+          isOwner: isOwner,
+          withinResumeGrace: withinResumeGrace,
+        );
+
+    for (final status in ['COMPLETED', 'FAILED', 'KILLED', 'DISCONNECTED']) {
+      test('keeps the composer open for a closed $status session', () {
+        expect(resumes(status: status), isTrue);
+      });
+    }
+
+    test('resumes an archived session whose agent is still shutting down', () {
+      expect(resumes(liveState: 'live'), isTrue);
+    });
+
+    test('resumes a session whose agent stopped while its status reads open', () {
+      expect(resumes(status: 'AWAITING_INPUT'), isTrue);
+    });
+
+    test('sends normally to a running session', () {
+      expect(resumes(status: 'AWAITING_INPUT', liveState: 'live'), isFalse);
+      expect(resumes(status: 'ACTIVE', liveState: 'reconnecting'), isFalse);
+      expect(resumes(status: 'ACTIVE', liveState: 'unknown'), isFalse);
+    });
+
+    test('keeps the composer locked when the computer is offline', () {
+      expect(resumes(liveState: 'machine_offline'), isFalse);
+      expect(resumes(status: 'AWAITING_INPUT', liveState: 'machine_offline'), isFalse);
+    });
+
+    test('keeps it locked with no machine or folder to resume on', () {
+      expect(resumes(machine: null), isFalse);
+      expect(resumes(dir: ''), isFalse);
+    });
+
+    test('keeps a deleted session locked', () {
+      expect(resumes(status: 'DELETED'), isFalse);
+    });
+
+    test("leaves a collaborator locked: the relaunch is the owner's", () {
+      expect(resumes(isOwner: false), isFalse);
+    });
+
+    test('does not resume again while a resume is still coming up', () {
+      expect(resumes(withinResumeGrace: true), isFalse);
+    });
+  });
 }

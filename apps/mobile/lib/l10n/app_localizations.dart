@@ -1202,6 +1202,18 @@ abstract class AppLocalizations {
   /// **'Session Config'**
   String get chatInputSessionConfig;
 
+  /// No description provided for @chatInputSendToResumeArchived.
+  ///
+  /// In en, this message translates to:
+  /// **'Session archived. Send a message to resume it.'**
+  String get chatInputSendToResumeArchived;
+
+  /// No description provided for @chatInputSendToResumeStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent stopped. Send a message to resume it.'**
+  String get chatInputSendToResumeStopped;
+
   /// No description provided for @chatInputSessionEnded.
   ///
   /// In en, this message translates to:
@@ -3691,6 +3703,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Your computer is offline. Bring it back online to resume.'**
   String get sessionResumeOffline;
+
+  /// No description provided for @sessionResumeAfterSendFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t resume the session. Your message is saved. Choose Resume from the top-right menu to deliver it.'**
+  String get sessionResumeAfterSendFailed;
 
   /// No description provided for @sessionResumeFailed.
   ///
