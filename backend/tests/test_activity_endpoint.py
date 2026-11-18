@@ -10,6 +10,7 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy.orm import Session
 
 from backend.api.activity import get_activity
 from shared.database.enums import AgentStatus, SenderType
@@ -37,6 +38,13 @@ def _add_message(
             created_at=when,  # naive UTC — matches the column
         )
     )
+
+
+def _user(db: Session, user_id: UUID) -> User:
+    """The signed-in row `get_current_user` would hand the route."""
+    user = db.get(User, user_id)
+    assert user is not None
+    return user
 
 
 @pytest.fixture
@@ -90,7 +98,7 @@ def test_activity_buckets_user_messages_by_day_and_totals(
 ) -> None:
     user_id = user_with_activity
     with SessionLocal() as db:
-        resp = get_activity(user_id=user_id, since=None, db=db)
+        resp = get_activity(current_user=_user(db, user_id), since=None, db=db)
 
     # daily + total_user_messages count only user-sent messages; the agent
     # message on 07-13 is excluded there but included in total_messages.
@@ -103,7 +111,7 @@ def test_activity_buckets_user_messages_by_day_and_totals(
 def test_activity_since_limits_daily_but_not_totals(user_with_activity: UUID) -> None:
     user_id = user_with_activity
     with SessionLocal() as db:
-        resp = get_activity(user_id=user_id, since="2026-07-12", db=db)
+        resp = get_activity(current_user=_user(db, user_id), since="2026-07-12", db=db)
 
     # 07-10 is before `since` -> dropped from daily; totals stay all-time.
     assert resp.daily == {"2026-07-13": 2}
@@ -118,7 +126,7 @@ def test_activity_rejects_a_malformed_since(user_with_activity: UUID) -> None:
     user_id = user_with_activity
     with SessionLocal() as db:
         with pytest.raises(HTTPException) as exc:
-            get_activity(user_id=user_id, since="07/12/2026", db=db)
+            get_activity(current_user=_user(db, user_id), since="07/12/2026", db=db)
     assert exc.value.status_code == 400
 
 
@@ -145,7 +153,9 @@ def test_activity_is_scoped_to_the_requesting_user(user_with_activity: UUID) -> 
         db.commit()
     try:
         with SessionLocal() as db:
-            resp = get_activity(user_id=user_with_activity, since=None, db=db)
+            resp = get_activity(
+                current_user=_user(db, user_with_activity), since=None, db=db
+            )
         assert resp.total_sessions == 1  # not 2
         assert resp.daily == {"2026-07-13": 2, "2026-07-10": 1}
     finally:
