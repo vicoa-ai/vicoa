@@ -133,13 +133,13 @@ command with no key stored yet triggers the same flow. Per-command,
 `--base-url` / `--auth-url` override the env. Put the exports in your shell
 profile so every agent session inherits them.
 
-> **One machine, one stored key.** `~/.vicoa/credentials.json` holds a single
-> `write_key` — it is *not* scoped per deployment. Signing in against a second
-> server replaces the key for the first, and the desktop app reads the very same
-> file, so a CLI login can silently repoint the desktop app too. If this machine
-> also uses hosted Vicoa (or another self-hosted instance), read
-> [Trying self-hosting on a machine that already uses another deployment](#trying-self-hosting-on-a-machine-that-already-uses-another-deployment)
-> before you run `vicoa --auth`.
+> **One key per server.** `~/.vicoa/credentials.json` keeps a key for each
+> server URL. Signing in to your server adds its key next to any key this
+> machine already has for hosted Vicoa, and the desktop app goes on reading the
+> key for its own server. If this machine also uses hosted Vicoa (or another
+> self-hosted instance), read
+> [Running a self-hosted server next to another deployment](#running-a-self-hosted-server-next-to-another-deployment)
+> before you start a second daemon.
 
 ### Step 4 — Verify it works
 
@@ -230,35 +230,41 @@ The published iOS/Android apps talk to Vicoa's backend only — a self-hosted
 server needs your own build of `apps/mobile` (a runtime server switch is
 planned). The web dashboard works fine in a mobile browser in the meantime.
 
-### Trying self-hosting on a machine that already uses another deployment
+### Running a self-hosted server next to another deployment
 
-Running two deployments from one machine — the common case being "I already use
-hosted Vicoa and want to trial a self-hosted stack" — needs care, because the
-stored credential is global. `vicoa --auth --base-url http://localhost:8080
---auth-url http://localhost:3000` overwrites `~/.vicoa/credentials.json` with a
-key minted by the *local* server. The daemon for the other deployment keeps
-running, keeps presenting the now-replaced key, gets a 401, and that machine
-drops offline in the dashboard it used to appear in.
+One machine can use two deployments at once, the common case being hosted Vicoa
+plus a self-hosted trial. Each server gets its own key in
+`~/.vicoa/credentials.json` and its own daemon, so sign in to the second one and
+start its daemon with `--base-url`:
 
-Two ways to avoid it:
+```bash
+vicoa --auth --base-url http://localhost:8080 --auth-url http://localhost:3000
+vicoa daemon --base-url http://localhost:8080
+```
 
-**Don't store the second key.** Mint an API key in the self-hosted dashboard and
-pass it explicitly, leaving `credentials.json` alone:
+Give the extra daemon `--base-url` rather than only exporting `VICOA_API_URL`.
+The flag puts the server on the daemon's command line, which is what `vicoa`
+reads to tell two daemons apart when `~/.vicoa/daemon_state.json` has no entry
+for one of them (a daemon started under another `HOME`, for example). On macOS
+one process can't read another's environment, so without the flag such a
+daemon is taken for the hosted one, and a `--takeover` for hosted Vicoa (the
+desktop app starts its daemon with one) would stop it.
+
+`vicoa stop daemon --base-url http://localhost:8080` stops only that daemon;
+`vicoa stop daemon` on its own offers to stop all of them.
+
+To keep the second key off disk, mint one in the self-hosted dashboard and pass
+it instead of signing in:
 
 ```bash
 vicoa daemon --base-url http://localhost:8080 --api-key <key>
 ```
 
-`--api-key` beats `VICOA_API_KEY`, which beats the stored credential, and no
-path writes the key back to disk. `vicoa --auth` is the only thing that
-replaces the stored key.
+`--api-key` beats `VICOA_API_KEY`, which beats the stored credential, and a key
+passed this way is never written to disk.
 
-**Or switch deliberately.** Run `vicoa --auth` (with the env/flags for the
-deployment you want) whenever you move between them, and expect the other
-deployment's daemon to disconnect until you switch back.
-
-Either way, `~/.vicoa/daemon_state.json` is the file to read when something
-looks wrong — it *is* keyed per base URL, one entry each:
+`~/.vicoa/daemon_state.json` is the file to read when something looks wrong.
+Like the credentials, it is keyed per base URL, one entry each:
 
 ```json
 {
@@ -277,9 +283,8 @@ looks wrong — it *is* keyed per base URL, one entry each:
 }
 ```
 
-`api_key_fingerprint` is the SHA-256 of the key that entry registered under, so
-comparing the two entries tells you which deployment the stored key currently
-belongs to. `auth_invalid_at` is stamped when that deployment answered 401; the
+`api_key_fingerprint` is the SHA-256 of the key that entry registered under.
+`auth_invalid_at` is stamped when that deployment answered 401; the
 daemon then exits rather than retry, and `vicoa` prints `Vicoa is disconnected
 (credential expired), run vicoa --auth`. A successful re-registration clears the
 stamp. Starting a daemon with a key whose fingerprint differs from the stored

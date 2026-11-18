@@ -79,6 +79,12 @@ export interface DaemonManagerOptions {
   log?: (line: string) => void;
   /** Where the env-resolution outcome goes; defaults to `log`. */
   envLog?: (line: string) => void;
+  /**
+   * The agent server the daemon talks to (`resolveDaemonBaseUrl` in config.ts),
+   * passed as `--base-url` in cloud mode. Absent → no flag, and the daemon
+   * resolves it from `VICOA_API_URL` as before.
+   */
+  baseUrl?: string;
 }
 
 const HEALTHZ_TIMEOUT_MS = 30_000;
@@ -159,15 +165,23 @@ export function daemonCommandAvailable(cmd: string, env: NodeJS.ProcessEnv): boo
  * non-interactively) is only meaningful for credentialed runs — local-only
  * daemons skip the cloud registration that collides — so callers pass
  * takeover only in cloud mode.
+ *
+ * `--base-url` (cloud mode only) names the server the daemon would resolve on
+ * its own anyway. On the command line, it is what `vicoa daemon` reads to tell
+ * which server another running daemon belongs to when the state file doesn't
+ * say, so a CLI daemon for another server never takes this one for its own.
  */
 export function buildDaemonArgs(options: {
   port: number;
   localOnly: boolean;
   takeover?: boolean;
+  baseUrl?: string;
 }): string[] {
   const args = ['daemon', '--local-listener', '--local-port', String(options.port)];
   if (options.localOnly) {
     args.push('--local-only');
+  } else if (options.baseUrl !== undefined && options.baseUrl !== '') {
+    args.push('--base-url', options.baseUrl);
   }
   if (options.takeover === true) {
     args.push('--takeover');
@@ -282,6 +296,7 @@ export class DaemonManager {
   private readonly origin: string;
   private readonly bundledDaemonPath: string | null;
   private readonly managedDaemonPath: string | null;
+  private readonly baseUrl: string | undefined;
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly savedShellPathFile: string | undefined;
   private readonly log: (line: string) => void;
@@ -313,6 +328,7 @@ export class DaemonManager {
     this.origin = options.origin;
     this.bundledDaemonPath = options.bundledDaemonPath ?? null;
     this.managedDaemonPath = options.managedDaemonPath ?? null;
+    this.baseUrl = options.baseUrl;
     this.envResolution = options.envResolution ?? null;
     this.savedShellPathFile = options.savedShellPathFile;
     this.baseEnv = options.env ?? process.env;
@@ -455,6 +471,7 @@ export class DaemonManager {
         // user-started daemon non-interactively. Local-only runs don't
         // register with the cloud, so there is nothing to take over.
         takeover: !this.localOnly,
+        baseUrl: this.baseUrl,
       }),
     ];
     this.log(`spawning: ${cmd} ${args.join(' ')} (local-only=${this.localOnly})`);

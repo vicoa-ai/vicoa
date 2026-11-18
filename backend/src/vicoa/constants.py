@@ -13,7 +13,12 @@ import os
 # hostname (websocket-migration §2.1). Serves both agent REST and `/ws` on
 # port 443. The legacy `api.vicoa.ai:8443` is kept reachable by the same app
 # for daemons already deployed in the wild and is not used for new installs.
-DEFAULT_API_URL = os.environ.get("VICOA_API_URL") or "https://agents.vicoa.ai"
+HOSTED_API_URL = "https://agents.vicoa.ai"
+
+# What this process uses when no ``--base-url`` is given. Read from *this*
+# process's environment at import, so it says nothing about which server
+# another running daemon uses (see ``machine_daemon._daemon_base_url``).
+DEFAULT_API_URL = os.environ.get("VICOA_API_URL") or HOSTED_API_URL
 
 # Default frontend URL for authentication
 DEFAULT_AUTH_URL = os.environ.get("VICOA_AUTH_URL") or "https://vicoa.ai"
