@@ -91,7 +91,7 @@ import {
   shouldResumeOnSend,
 } from '@/lib/session-resume';
 import { AskUserQuestionSubmitPayload, buildAskUserQuestionCancelPersistMessage, buildAskUserQuestionControlMessage, buildAskUserQuestionSummaryMessage, parseAskUserQuestionPayload } from '@/components/dashboard/ask-user-question-panel';
-import { isPendingQueueStatus, parseQueuePayload, type QueuedMessageItem } from '@/components/dashboard/queue-status';
+import { isPendingQueueStatus, parseQueuePayload, queueDrainedBefore, type QueuedMessageItem } from '@/components/dashboard/queue-status';
 import {
   isActionRecord,
   isControlEnvelope,
@@ -1491,21 +1491,17 @@ function AgentInstanceContent() {
   // `queued` when their consumed WS patch is dropped (a full refetch confirms
   // them, but the live `message-update` can be lost around a disconnect).
   //
-  // Only `consumed` counts. A `none` (unqueued) message is NOT proof of drain:
-  // when the agent pauses mid-turn on an AskUserQuestion it sits in
-  // AWAITING_INPUT, and messages sent then — including the answer itself — are
-  // unqueued while real queued messages still wait behind the paused turn.
-  // Counting `none` there would wrongly evict a still-pending queued message.
-  const queueProgressAt = useMemo(() => {
-    let max: string | null = null;
-    for (const m of allMessages) {
-      if (!USER_SENDER_TYPES.has(m.sender_type)) continue;
-      if (parseQueuePayload(m)?.status === 'consumed') {
-        if (m.created_at && (max === null || m.created_at > max)) max = m.created_at;
-      }
-    }
-    return max;
-  }, [allMessages]);
+  // Only an in-order `consumed` counts (`queueDrainedBefore`). A steered one is
+  // out of order: the messages queued ahead of it are still waiting. A `none`
+  // (unqueued) message is NOT proof of drain either: when the agent pauses
+  // mid-turn on an AskUserQuestion it sits in AWAITING_INPUT, and messages sent
+  // then — including the answer itself — are unqueued while real queued
+  // messages still wait behind the paused turn. Counting either would wrongly
+  // evict a still-pending queued message.
+  const queueProgressAt = useMemo(
+    () => queueDrainedBefore(allMessages, (m) => USER_SENDER_TYPES.has(m.sender_type)),
+    [allMessages],
+  );
 
   // True for a `queued` (or `steer`) message the agent has demonstrably moved
   // past — its live status is stale and it belongs in the transcript, not the

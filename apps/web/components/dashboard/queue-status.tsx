@@ -48,6 +48,32 @@ export function isPendingQueueStatus(status: QueueMessageStatus | undefined): bo
   return status === 'queued' || status === 'steer';
 }
 
+/**
+ * The newest `created_at` among user messages the agent took off the queue
+ * in order. The queue drains oldest first, so every message queued before
+ * this point was taken too, and one still showing `queued` there only lost
+ * its `consumed` patch (the session page's FIFO self-heal). Null when no
+ * message proves that yet.
+ *
+ * A steered message doesn't count. Steer takes one message out of turn, into
+ * the running turn, while the ones queued ahead of it keep waiting for the
+ * turn to end. Counting it would push those out of the queue bar into the
+ * transcript as if they had been sent.
+ */
+export function queueDrainedBefore(
+  messages: readonly MessageResponse[],
+  isUserMessage: (message: MessageResponse) => boolean,
+): string | null {
+  let newest: string | null = null;
+  for (const m of messages) {
+    if (!isUserMessage(m) || !m.created_at) continue;
+    const queue = parseQueuePayload(m);
+    if (queue?.status !== 'consumed' || queue.steered) continue;
+    if (newest === null || m.created_at > newest) newest = m.created_at;
+  }
+  return newest;
+}
+
 export interface QueuedMessageItem {
   id: string;
   text: string;
