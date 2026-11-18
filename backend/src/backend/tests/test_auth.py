@@ -6,10 +6,11 @@ from uuid import uuid4
 from unittest.mock import patch, Mock
 
 import pytest
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import delete, event, insert
 
 from backend.auth.dependencies import get_current_user
+from shared.auth import AuthProviderError, ProviderUser
 from shared.auth.tokens import TokenClaims
 from shared.database import users as users_module
 from shared.database.users import ensure_local_user
@@ -306,6 +307,85 @@ class TestAuthPathIsReadOnly:
         assert user.id == test_user.id
         assert writes == [], f"auth path must not write: {writes}"
         assert background_tasks.tasks == [], "existing user must not be welcomed again"
+
+
+class TestDeletedAccountIsNotRecreated:
+    """A session token is verified locally and outlives a deleted account, so
+    the first-sign-in path asks the identity provider before creating the row.
+    Otherwise a request the client makes right after `DELETE /me` brings the
+    account back and re-runs signup (welcome email, marketing list)."""
+
+    @pytest.fixture
+    def provider(self):
+        mock_provider = Mock()
+        with patch(
+            "backend.auth.dependencies.get_auth_provider", return_value=mock_provider
+        ):
+            yield mock_provider
+
+    async def _sign_in(self, test_db, claims: TokenClaims):
+        background_tasks = BackgroundTasks()
+        user = await get_current_user(
+            background_tasks=background_tasks, claims=claims, db=test_db
+        )
+        return user, background_tasks
+
+    async def test_a_deleted_account_gets_no_row(self, test_db, provider):
+        user_id = uuid4()
+        provider.fetch_user.return_value = None
+
+        with pytest.raises(HTTPException) as excinfo:
+            await self._sign_in(
+                test_db, TokenClaims(user_id=user_id, email=f"{user_id}@example.com")
+            )
+
+        assert excinfo.value.status_code == 401
+        assert test_db.get(User, user_id) is None
+
+    async def test_a_live_account_is_created_on_first_sign_in(self, test_db, provider):
+        user_id = uuid4()
+        provider.fetch_user.return_value = ProviderUser(
+            user_id=user_id, email=f"{user_id}@example.com"
+        )
+
+        user, background_tasks = await self._sign_in(
+            test_db, TokenClaims(user_id=user_id, email=f"{user_id}@example.com")
+        )
+
+        assert user.id == user_id
+        assert background_tasks.tasks, "a real first sign-in still runs signup"
+        provider.fetch_user.assert_called_once_with(user_id)
+
+    async def test_an_existing_row_never_asks_the_provider(
+        self, test_db, test_user, provider
+    ):
+        user, _ = await self._sign_in(
+            test_db, TokenClaims(user_id=test_user.id, email=test_user.email)
+        )
+
+        assert user.id == test_user.id
+        provider.fetch_user.assert_not_called()
+
+    async def test_an_account_without_an_email_never_asks_the_provider(
+        self, test_db, provider
+    ):
+        with pytest.raises(HTTPException) as excinfo:
+            await self._sign_in(test_db, TokenClaims(user_id=uuid4(), email=None))
+
+        assert excinfo.value.status_code == 401
+        provider.fetch_user.assert_not_called()
+
+    async def test_a_provider_failure_is_a_503(self, test_db, provider):
+        user_id = uuid4()
+        provider.fetch_user.side_effect = AuthProviderError("unavailable")
+
+        with pytest.raises(HTTPException) as excinfo:
+            await self._sign_in(
+                test_db, TokenClaims(user_id=user_id, email=f"{user_id}@example.com")
+            )
+
+        assert excinfo.value.status_code == 503
+        assert test_db.get(User, user_id) is None
 
 
 class TestEnsureLocalUser:

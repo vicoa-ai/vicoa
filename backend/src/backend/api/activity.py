@@ -12,14 +12,14 @@ backend.db.get_user_activity.
 
 from datetime import datetime, timezone
 from typing import Annotated
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from shared.database.models import User
 from shared.database.session import get_db
 
-from ..auth.dependencies import get_current_user_id
+from ..auth.dependencies import get_current_user
 from ..db import get_user_activity
 from ..models import ActivityResponse
 
@@ -28,7 +28,7 @@ router = APIRouter(tags=["activity"])
 
 @router.get("/activity", response_model=ActivityResponse)
 def get_activity(
-    user_id: Annotated[UUID, Depends(get_current_user_id)],
+    current_user: Annotated[User, Depends(get_current_user)],
     since: str | None = None,
     db: Session = Depends(get_db),
 ) -> ActivityResponse:
@@ -48,5 +48,5 @@ def get_activity(
                 detail="`since` must be a YYYY-MM-DD date",
             )
 
-    activity = get_user_activity(db, user_id, since_dt)
+    activity = get_user_activity(db, current_user.id, since_dt)
     return ActivityResponse(**activity, as_of=datetime.now(timezone.utc).isoformat())

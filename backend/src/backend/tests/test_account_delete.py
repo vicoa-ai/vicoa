@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from backend.auth import routes as auth_routes
 from backend.db.queries import ACCOUNT_DELETE_STATEMENT_TIMEOUT_MS, delete_user_account
+from shared.auth.tokens import TokenClaims
 from shared.database.enums import AgentStatus, SenderType
 from shared.database.models import (
     AgentInstance,
@@ -279,3 +280,25 @@ def test_delete_me_endpoint_deletes_the_account(
     provider.return_value.delete_user.assert_called_once_with(user_id)
     test_db.expire_all()
     assert test_db.query(User).filter(User.id == user_id).count() == 0
+
+
+@pytest.mark.usefixtures("no_close_user_bridge")
+def test_delete_me_also_deletes_a_recreated_login(
+    authenticated_client, test_db, test_user
+):
+    """The caller signed in with an identity re-created under the same email,
+    whose id is not the row's: both identities go, so the login does not
+    outlive the account."""
+    from backend.auth.dependencies import get_current_claims
+    from backend.main import app
+
+    row_id, login_id = test_user.id, uuid4()
+    app.dependency_overrides[get_current_claims] = lambda: TokenClaims(
+        user_id=login_id, email=test_user.email
+    )
+    with patch.object(auth_routes, "get_auth_provider") as provider:
+        response = authenticated_client.delete("/api/v1/auth/me")
+
+    assert response.status_code == 200
+    deleted = [c.args[0] for c in provider.return_value.delete_user.call_args_list]
+    assert deleted == [row_id, login_id]

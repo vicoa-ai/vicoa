@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from starlette.websockets import WebSocketState
 
 from shared.auth import (
+    Principal,
     TokenVerificationError,
     verify_agent_jwt,
     verify_user_token,
@@ -42,6 +43,7 @@ from shared.auth.ws import (
 from shared.config import settings
 from shared.database.models import AgentInstance, Machine, User
 from shared.database.session import SessionLocal
+from shared.database.users import find_local_user
 from shared.websocket.connection_manager import Connection, connection_manager
 from shared.websocket.envelope import build_access_changed_update
 from shared.websocket.protocol import (
@@ -169,11 +171,13 @@ def verify_ws_credentials(creds: WsCredentials) -> str:
     """
     if creds.token_type == "vicoa-supabase":
         try:
-            return str(verify_user_token(creds.raw_token).user_id)
+            principal = verify_user_token(creds.raw_token)
         except TokenVerificationError as exc:
             raise WsAuthError(f"user token rejected: {exc}") from exc
+        return _local_user_id(principal)
 
-    # vicoa-key: a Vicoa-issued agent API key (opaque or RS256 JWT).
+    # vicoa-key: a Vicoa-issued agent API key (opaque or RS256 JWT). Its user
+    # id needs no resolving: the dashboard API mints keys for the local row.
     try:
         return str(verify_agent_jwt(creds.raw_token).user_id)
     except TokenVerificationError as exc:
@@ -185,6 +189,29 @@ def verify_ws_credentials(creds: WsCredentials) -> str:
         # client just reconnects, and the REST heartbeat stays the authoritative
         # detector of a genuinely dead credential.
         raise WsAuthError(f"agent token could not be verified: {exc}") from exc
+
+
+def _local_user_id(principal: Principal) -> str:
+    """The `users.id` a browser token stands for, resolved as the dashboard
+    API resolves it (`find_local_user`).
+
+    Usually the token's own id. When the identity-provider account was
+    re-created with the same email it is the id of the older row instead: the
+    dashboard API keeps serving that row, so the user's machines and sessions,
+    and the API keys their daemons hold, all carry the old id. This
+    connection's rooms and RPC routing are keyed by the id returned here, so it
+    has to be the old one too. With the token's id, the dashboard would show
+    the user's machine online while every call to it failed with `no_handler`,
+    and no update about their sessions would reach the socket.
+
+    Read-only: a token with no row yet (a new account before its first
+    dashboard request) keeps its own id, and the dashboard creates the row.
+    Runs once per handshake, a primary-key lookup; the email lookup only runs
+    when that misses.
+    """
+    with SessionLocal() as db:
+        user = find_local_user(db, principal.user_id, principal.email)
+        return str(user.id if user is not None else principal.user_id)
 
 
 def is_owned(db: Session, resolved: ResolvedHello, user_id: str) -> bool:

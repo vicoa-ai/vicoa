@@ -18,6 +18,23 @@ from .session import SessionLocal
 logger = logging.getLogger(__name__)
 
 
+def find_local_user(db: Session, user_id: UUID, email: str | None) -> User | None:
+    """The local row for an identity-provider account, without creating one.
+
+    The row with `user_id`, else the row holding `email`. The two differ when
+    the provider's account was re-created with the same email (deleted, then
+    signed up again): the provider issues a new id, and the user keeps the row
+    under the old one. A path that turns a user's token into a `users.id` must
+    land on this row, as the dashboard API does through `ensure_local_user`;
+    one that used the token's id directly would look for the user's data under
+    an id that owns nothing.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None and email:
+        user = db.query(User).filter(User.email == email).first()
+    return user
+
+
 def ensure_local_user(
     db: Session,
     user_id: UUID,
@@ -41,15 +58,10 @@ def ensure_local_user(
     row appears between the email check and the INSERT too: the INSERT then
     does nothing and the row holding the email is returned with created=False.
     """
-    existing = db.query(User).filter(User.id == user_id).first()
+    existing = find_local_user(db, user_id, email)
     if existing:
         return existing, False
-
-    if email:
-        by_email = db.query(User).filter(User.email == email).first()
-        if by_email:
-            return by_email, False
-    else:
+    if not email:
         return None, False
 
     # No conflict target: DO NOTHING covers every unique constraint on users,
