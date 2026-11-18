@@ -5,6 +5,14 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.9.18
+18 November, 2026
+- Ask a person from a task without handing it over: `vicoa task comment VIC-42 --ask` posts the question and the agent waits for the reply, from whoever started the run or from `--to <person>`. Their answer wakes the agent in its own session with the reply quoted. `vicoa task ls --waiting-on me` lists the tasks waiting on you, and `task get` shows who a task waits on
+- A worktree in the middle of a rebase now keeps its branch name instead of reading as detached
+- Fix a daemon started for another server being mistaken for the hosted one, which `vicoa daemon --takeover` then stopped
+- Fix the answer to a Claude question disappearing from the transcript when the session was active at the time
+- Fix deleting an account failing with a timeout and leaving the account in place
+
 ### v1.9.17
 17 November, 2026
 - Assign a task from the terminal: `vicoa task update VIC-42 --assignee me` hands it to you, and `--assignee <agent>` starts that agent on it. Add `--no-start` to only record the assignee. `vicoa task ls --assignee me` lists what is waiting on you, and `task create` takes `--assignee` too
