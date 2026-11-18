@@ -6,14 +6,25 @@ import {
   NO_PROJECT_FILTER,
   activeAssigneeFilter,
   activeLabelFilter,
+  activeRelationFilter,
   capColumnIds,
+  cloneView,
   compareTasks,
   createProjectDefault,
   labelFilterOptions,
+  normalizeView,
   taskMatchesAssignee,
   taskMatchesLabels,
+  taskMatchesRelation,
+  type TaskView,
 } from './task-views';
-import type { TaskLabelResponse, TaskResponse, TaskStatus } from '@/lib/backend-api';
+import type {
+  PrincipalResponse,
+  TaskLabelResponse,
+  TaskQuestionResponse,
+  TaskResponse,
+  TaskStatus,
+} from '@/lib/backend-api';
 
 const label = (id: string, name: string): TaskLabelResponse => ({
   id,
@@ -85,9 +96,10 @@ describe('taskMatchesLabels', () => {
 });
 
 describe('activeAssigneeFilter', () => {
-  it('keeps me, unassigned and agents that still exist', () => {
+  it('keeps unassigned and agents that still exist, never me', () => {
+    // "Me" moved to the Relation to me dimension.
     const active = activeAssigneeFilter([ASSIGNEE_ME, ASSIGNEE_NONE, 'a1', 'gone'], ['a1']);
-    expect([...active].sort()).toEqual(['a1', ASSIGNEE_ME, ASSIGNEE_NONE].sort());
+    expect([...active].sort()).toEqual(['a1', ASSIGNEE_NONE].sort());
   });
 });
 
@@ -98,22 +110,135 @@ describe('taskMatchesAssignee', () => {
   });
 
   it('passes everything with no filter', () => {
-    expect(taskMatchesAssignee(assigned(null, null), new Set(), 'me-id')).toBe(true);
-  });
-
-  it('matches me by the viewer id, and nothing before it is known', () => {
-    const me = new Set([ASSIGNEE_ME]);
-    expect(taskMatchesAssignee(assigned('user', 'me-id'), me, 'me-id')).toBe(true);
-    expect(taskMatchesAssignee(assigned('user', 'other'), me, 'me-id')).toBe(false);
-    expect(taskMatchesAssignee(assigned('user', 'me-id'), me, null)).toBe(false);
+    expect(taskMatchesAssignee(assigned(null, null), new Set())).toBe(true);
+    expect(taskMatchesAssignee(assigned('user', 'me-id'), new Set())).toBe(true);
   });
 
   it('matches unassigned and agents, OR-ed', () => {
     const filter = new Set([ASSIGNEE_NONE, 'a1']);
-    expect(taskMatchesAssignee(assigned(null, null), filter, 'me-id')).toBe(true);
-    expect(taskMatchesAssignee(assigned('agent', 'a1'), filter, 'me-id')).toBe(true);
-    expect(taskMatchesAssignee(assigned('agent', 'a2'), filter, 'me-id')).toBe(false);
-    expect(taskMatchesAssignee(assigned('user', 'me-id'), filter, 'me-id')).toBe(false);
+    expect(taskMatchesAssignee(assigned(null, null), filter)).toBe(true);
+    expect(taskMatchesAssignee(assigned('agent', 'a1'), filter)).toBe(true);
+    expect(taskMatchesAssignee(assigned('agent', 'a2'), filter)).toBe(false);
+    expect(taskMatchesAssignee(assigned('user', 'me-id'), filter)).toBe(false);
+  });
+});
+
+describe('taskMatchesRelation', () => {
+  const principal = (type: 'user' | 'agent', id: string): PrincipalResponse => ({
+    type,
+    id,
+    name: id,
+    avatar_image_uri: null,
+    emoji: null,
+    updated_at: null,
+  });
+  const question = (addressee: string): TaskQuestionResponse => ({
+    comment_id: `q-${addressee}`,
+    addressee: principal('user', addressee),
+    asked_by: principal('agent', 'a1'),
+    asked_at: '2026-11-18T10:00:00Z',
+  });
+  const relTask = (
+    assignee: { type: 'user' | 'agent'; id: string } | null,
+    asks: string[] = [],
+  ): Pick<TaskResponse, 'assignee_type' | 'assignee_id' | 'open_questions'> => ({
+    assignee_type: assignee?.type ?? null,
+    assignee_id: assignee?.id ?? null,
+    open_questions: asks.map(question),
+  });
+  const mine = relTask({ type: 'user', id: 'me-id' });
+  const askingMe = relTask({ type: 'agent', id: 'a1' }, ['me-id']);
+  const askingAda = relTask({ type: 'agent', id: 'a1' }, ['ada']);
+
+  it('passes everything with no filter', () => {
+    expect(taskMatchesRelation(askingAda, new Set(), 'me-id')).toBe(true);
+  });
+
+  it('assigned to me is the viewer as assignee', () => {
+    const assigned = new Set(['assigned' as const]);
+    expect(taskMatchesRelation(mine, assigned, 'me-id')).toBe(true);
+    expect(taskMatchesRelation(relTask({ type: 'user', id: 'ada' }), assigned, 'me-id')).toBe(
+      false,
+    );
+    // An agent's id never equals the viewer's, but the type must say person.
+    expect(taskMatchesRelation(relTask({ type: 'agent', id: 'me-id' }), assigned, 'me-id')).toBe(
+      false,
+    );
+    expect(taskMatchesRelation(askingMe, assigned, 'me-id')).toBe(false);
+  });
+
+  it('waiting on me is an open question to the viewer', () => {
+    const waiting = new Set(['waiting' as const]);
+    expect(taskMatchesRelation(askingMe, waiting, 'me-id')).toBe(true);
+    expect(taskMatchesRelation(askingAda, waiting, 'me-id')).toBe(false);
+    expect(taskMatchesRelation(mine, waiting, 'me-id')).toBe(false);
+    // A backend older than questions sends no `open_questions` at all.
+    expect(
+      taskMatchesRelation({ assignee_type: null, assignee_id: null }, waiting, 'me-id'),
+    ).toBe(false);
+  });
+
+  it('or-s the two, so both together is everything that needs me', () => {
+    const both = new Set(['assigned' as const, 'waiting' as const]);
+    expect(taskMatchesRelation(mine, both, 'me-id')).toBe(true);
+    expect(taskMatchesRelation(askingMe, both, 'me-id')).toBe(true);
+    expect(taskMatchesRelation(askingAda, both, 'me-id')).toBe(false);
+  });
+
+  it('matches nothing before the viewer is known', () => {
+    const both = new Set(['assigned' as const, 'waiting' as const]);
+    expect(taskMatchesRelation(mine, both, null)).toBe(false);
+    expect(taskMatchesRelation(askingMe, both, null)).toBe(false);
+  });
+});
+
+describe('activeRelationFilter', () => {
+  it('drops values this build does not know', () => {
+    expect([...activeRelationFilter(['waiting', 'created', 'assigned'])]).toEqual([
+      'waiting',
+      'assigned',
+    ]);
+  });
+});
+
+describe('normalizeView', () => {
+  const saved = (patch: Record<string, unknown>) =>
+    normalizeView({ id: 'v1', name: 'Mine', ...patch } as Partial<TaskView>)!;
+
+  it('moves a saved "Me" assignee to Assigned to me', () => {
+    const view = saved({ assigneeFilter: [ASSIGNEE_ME] });
+    expect(view.assigneeFilter).toEqual([]);
+    expect(view.relationFilter).toEqual(['assigned']);
+  });
+
+  it('drops "Me" picked beside agents rather than AND it into nothing', () => {
+    const view = saved({ assigneeFilter: [ASSIGNEE_ME, 'a1', ASSIGNEE_NONE] });
+    expect(view.assigneeFilter).toEqual(['a1', ASSIGNEE_NONE]);
+    expect(view.relationFilter).toEqual([]);
+  });
+
+  it('keeps a relation filter, once, and adds none when "Me" was not picked', () => {
+    expect(saved({ assigneeFilter: ['a1'] }).relationFilter).toEqual([]);
+    expect(
+      saved({ assigneeFilter: [ASSIGNEE_ME], relationFilter: ['assigned', 'waiting'] })
+        .relationFilter,
+    ).toEqual(['assigned', 'waiting']);
+    expect(saved({ relationFilter: ['waiting', 'bogus', 7] }).relationFilter).toEqual([
+      'waiting',
+    ]);
+  });
+
+  it('fills in an empty relation filter for a view saved before it existed', () => {
+    const view = saved({});
+    expect(view.relationFilter).toEqual([]);
+    expect(view.assigneeFilter).toEqual([]);
+  });
+
+  it('copies the relation filter on duplicate', () => {
+    const source = saved({ relationFilter: ['waiting'] });
+    const copy = cloneView(source, 'Copy');
+    expect(copy.relationFilter).toEqual(['waiting']);
+    expect(copy.relationFilter).not.toBe(source.relationFilter);
   });
 });
 

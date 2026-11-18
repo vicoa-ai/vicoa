@@ -3,8 +3,8 @@
 Two layers, so a task session reads like a conversation rather than a manual:
 
 * **The brief** (`TASK_BRIEF`): the standing rules for working on a Vicoa task
-  (write to the task, reply in threads, own the status when assigned, hand the
-  task to a person when stuck). It rides as the session's system prompt, after
+  (write to the task, reply in threads, own the status when assigned, ask a
+  person with `--ask` when stuck, keeping the task). It rides as the session's system prompt, after
   the agent profile's own instructions, so it never shows in the transcript and
   survives compaction. A session that was not started with it (one a person
   opened and later filed under the task) gets it once, in front of its first
@@ -47,10 +47,13 @@ or the evidence in a comment). Don't set `done` or `cancelled` on your own: a \
 person closes the task after looking at what you delivered, or asks you to.
 - A task that is not assigned to you: answer what was asked, and leave the \
 assignee and the status alone.
-- Need a person (a decision, an answer, access)? Ask in one top-level comment, \
-options first with your recommendation, then hand the task over: \
-`vicoa task update <ref> --assignee me`. Their answer comes back to you here; \
-then take the task back with `--assignee self` and carry on.\
+- Need a person (a decision, an answer, access)? Ask in one top-level comment \
+with `vicoa task comment <ref> --ask`, options first with your recommendation. \
+That asks whoever handed you this work; add `--to <person>` to ask someone else. \
+If you can't go on without the answer, also set `--status blocked`. Leave the \
+assignee alone. A plain comment is not a question: nobody is told to answer it. \
+The answer comes back to you here. If `--ask` is not recognised, your CLI is out \
+of date: post the question as a plain top-level comment and set `blocked`.\
 """
 
 CONTINUITY_NOTE = (
@@ -197,6 +200,7 @@ _VERBS = {
     "mentioned": "mentioned you on",
     "replied": "replied on",
     "commented": "commented on",
+    "answered": "answered your question on",
 }
 
 

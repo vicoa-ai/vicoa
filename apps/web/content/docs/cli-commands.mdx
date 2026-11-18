@@ -482,10 +482,15 @@ vicoa task update VIC-42 --add-label bug --remove-label growth
 vicoa task update VIC-42 --label a --label b               # set the labels to exactly these
 
 # Assign (an agent starts on the task unless --no-start)
-vicoa task ls --assignee me                                # what's waiting on you
+vicoa task ls --assignee me                                # your own tasks
 vicoa task update VIC-42 --assignee me
 vicoa task update VIC-42 --assignee reviewer --no-start    # record the owner only
 vicoa task update VIC-42 --assignee none
+
+# Ask (from an agent's session: a question to one person, the task stays the agent's)
+vicoa task comment VIC-42 --ask "Stripe or Paddle? I recommend Stripe."
+vicoa task comment VIC-42 --ask --to ada@example.com "Is the banner image approved?"
+vicoa task ls --waiting-on me                              # what waits on your answer
 
 # Comment
 vicoa task comment VIC-42 "Fixed — the flake was a missing await."
@@ -520,6 +525,9 @@ vicoa task delete VIC-42 -y
 | `--title <text>` | New title (`update` only; `create` takes the title as its argument) |
 | `--assignee <WHO>` | `me`, `self` (the agent of the session you run in), `none`, an agent's name (`vicoa agent ls`), or an id. Assigning an agent starts it on the task; also a filter on `ls` |
 | `--no-start` | With `--assignee <agent>`: record the assignee, start nothing |
+| `--ask` | `comment` only, from a session started off an agent: the comment is a question to one person. They get a push, the task shows "Waiting on &lt;them&gt;", and their next comment on the task wakes the agent. Asks whoever started the run unless `--to` |
+| `--to <WHO>` | With `--ask`: whom to ask, `me`, an email, a user id, or their name. Must be someone who can see the task |
+| `--waiting-on <WHO>` | `ls` only: tasks with a question waiting on this person (`me`, an email, a user id, or a name) |
 | `--json` | Raw JSON — a bare array from `ls`; `update` prints one object for one ref, a list for several |
 
 Columns of `task ls`: `KEY` (identifier), `STATUS`, `PRIO`, `PROJECT` (name), `TITLE`, `ID` (full UUID). `--json` rows carry `project_id` and `project_name`.

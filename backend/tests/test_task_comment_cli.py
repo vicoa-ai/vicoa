@@ -209,3 +209,112 @@ class TestTaskTable:
 )
 def test_principal_name(principal, expected):
     assert T._principal_name(principal) == expected
+
+
+class TestAsking:
+    """``--ask [--to …]``: the comment is a question to one person
+    (plans/todos/task-questions-waiting-on.md)."""
+
+    def _asked(self, cid="q1", addressee="Ada"):
+        comment = _comment(cid, "A or B?", author={"type": "agent", "name": "Claude"})
+        comment["question"] = {
+            "addressee": {"type": "user", "name": addressee},
+            "closed_at": None,
+            "closed_reason": None,
+        }
+        return {"comments": [comment]}
+
+    def test_ask_without_to_lets_the_server_pick(self, monkeypatch, capsys):
+        sent = _capture_request(monkeypatch, self._asked(addressee="Nick"))
+        code = T._cmd_comment(_args(body="A or B?", reply_to=None, ask=True), "k")
+        assert code == 0
+        assert sent["json"]["ask"] == {}
+        assert "Asked Nick in comment q1" in capsys.readouterr().out
+
+    def test_to_names_the_person(self, monkeypatch):
+        sent = _capture_request(monkeypatch, self._asked())
+        T._cmd_comment(
+            _args(body="A or B?", reply_to=None, ask=True, to="ada@example.com"), "k"
+        )
+        assert sent["json"]["ask"] == {"to": "ada@example.com"}
+
+    def test_to_without_ask_is_refused(self, monkeypatch):
+        sent = _capture_request(monkeypatch)
+        code = T._cmd_comment(_args(body="hi", reply_to=None, to="Ada"), "k")
+        assert code == 2
+        assert sent == {}
+
+    def test_a_plain_comment_sends_no_ask(self, monkeypatch):
+        sent = _capture_request(monkeypatch, {"comments": [_comment("c1", "hi")]})
+        T._cmd_comment(_args(body="hi", reply_to=None), "k")
+        assert "ask" not in sent["json"]
+
+    def test_an_older_server_that_ignores_ask_says_so(self, monkeypatch, capsys):
+        _capture_request(monkeypatch, {"comments": [_comment("c1", "A or B?")]})
+        code = T._cmd_comment(_args(body="A or B?", reply_to=None, ask=True), "k")
+        assert code == 1
+        assert "did not record it as a question" in capsys.readouterr().err
+
+    def test_the_thread_shows_whom_a_question_waits_on(self, monkeypatch, capsys):
+        _capture_request(monkeypatch, {**self._asked(), "activity": []})
+        T._cmd_comments(_args(activity=False), "k")
+        assert "  question to Ada (waiting)" in capsys.readouterr().out.splitlines()
+
+
+class TestWaitingOn:
+    def test_ls_sends_waiting_on_and_keeps_only_waiting_tasks(
+        self, monkeypatch, capsys
+    ):
+        sent = {}
+        waiting = {
+            "id": "t1",
+            "title": "Pick a name",
+            "status": "blocked",
+            "priority": "none",
+            "labels": [],
+            "open_questions": [{"comment_id": "q1"}],
+        }
+        # An older server ignores the filter and returns the whole backlog.
+        unrelated = {**waiting, "id": "t2", "title": "Other", "open_questions": []}
+
+        def fake_request(args, api_key, method, endpoint, *, params=None, json=None):
+            sent.update(params=params)
+            return [waiting, unrelated]
+
+        monkeypatch.setattr(T, "_request", fake_request)
+        args = _args(
+            project=None,
+            status=None,
+            priority=None,
+            label=None,
+            assignee=None,
+            waiting_on="me",
+            json=True,
+        )
+        assert T._cmd_ls(args, "k") == 0
+        assert sent["params"] == {"waiting_on": "me"}
+        assert [t["id"] for t in json.loads(capsys.readouterr().out)] == ["t1"]
+
+    def test_get_prints_open_questions(self, capsys):
+        T._print_task_detail(
+            {
+                "id": "t1",
+                "title": "Pick a name",
+                "status": "blocked",
+                "priority": "none",
+                "labels": [],
+                "open_questions": [
+                    {
+                        "comment_id": "q1",
+                        "addressee": {"type": "user", "name": "Ada"},
+                        "asked_by": {"type": "agent", "name": "Claude"},
+                        "asked_at": "2026-11-18T10:00:00Z",
+                    }
+                ],
+            }
+        )
+        out = capsys.readouterr().out
+        assert (
+            "waiting on:  Ada, asked by Claude (agent) at 2026-11-18T10:00:00Z "
+            "(comment q1)" in out
+        )

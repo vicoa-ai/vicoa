@@ -42,8 +42,17 @@ from .models import Base
 TASK_DISPATCH_MODES = ("ownership", "reply")
 # What a person did. `assigned`: assigned the task to the agent (or handed it
 # back). `unblocked`: moved an agent-owned task out of backlog. The rest are
-# comment routes (plans/todos/task-assignment-agents.md, C1).
-TASK_DISPATCH_TRIGGERS = ("assigned", "unblocked", "mentioned", "replied", "commented")
+# comment routes (plans/todos/task-assignment-agents.md, C1); `answered` is a
+# comment by the person a question of the agent's asked
+# (plans/todos/task-questions-waiting-on.md).
+TASK_DISPATCH_TRIGGERS = (
+    "assigned",
+    "unblocked",
+    "mentioned",
+    "replied",
+    "commented",
+    "answered",
+)
 # queued → dispatching → delivered | resumed | started | failed; queued → cancelled.
 TASK_DISPATCH_STATES = (
     "queued",

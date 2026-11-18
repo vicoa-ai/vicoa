@@ -40,6 +40,10 @@ import {
   isPastDate,
 } from '@/components/dashboard/task-ui';
 import { TaskDispatchChip } from '@/components/dashboard/task-dispatch-chip';
+import { WaitingOnPill } from '@/components/dashboard/waiting-on-pill';
+import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
+import { useCurrentUserId } from '@/lib/hooks/use-current-user-id';
+import { waitingOnPeople } from '@/lib/task-questions';
 import { cn } from '@/lib/utils';
 import type { ChildProgressMap, TasksById } from './task-board';
 import { TaskViewProperties } from './task-views';
@@ -57,6 +61,8 @@ type RowProps = {
   onDelete: (task: TaskResponse) => void;
   onStartSession: (task: TaskResponse) => void;
   onCreateAutomation?: (task: TaskResponse) => void;
+  /** The signed-in user: "Waiting on you" vs "Waiting on Nick". */
+  viewerId?: string | null;
   /** A task on a board shared below editor: opens, but offers nothing to change. */
   readOnly?: boolean;
 };
@@ -72,6 +78,7 @@ function TaskRow({
   onDelete,
   onStartSession,
   onCreateAutomation,
+  viewerId = null,
   dragOverlay = false,
   readOnly = false,
 }: RowProps & { dragOverlay?: boolean }) {
@@ -93,6 +100,7 @@ function TaskRow({
       <span className={cn('min-w-0 flex-1 truncate', isClosed && 'text-muted-foreground line-through')}>
         {task.title}
       </span>
+      <WaitingOnPill people={waitingOnPeople(task)} viewerId={viewerId} className="shrink-0" />
       <TaskDispatchChip dispatch={task.dispatch} className="shrink-0" />
       {display.parent && parent && (
         <span className="hidden sm:inline-flex">
@@ -201,6 +209,7 @@ function ListSection({
   onStartSession,
   onCreateAutomation,
   canEdit,
+  viewerId,
 }: {
   status: TaskStatus;
   /** The ids this section renders (a closed section's are capped). */
@@ -224,6 +233,7 @@ function ListSection({
   onStartSession: (task: TaskResponse) => void;
   onCreateAutomation?: (task: TaskResponse) => void;
   canEdit?: (task: TaskResponse) => boolean;
+  viewerId: string | null;
 }) {
   // The whole section is droppable so a card dropped anywhere in it — including
   // on a collapsed header — lands in this status (appended to the end).
@@ -283,6 +293,7 @@ function ListSection({
                     onDelete={onDelete}
                     onStartSession={onStartSession}
                     onCreateAutomation={onCreateAutomation}
+                    viewerId={viewerId}
                     readOnly={canEdit ? !canEdit(task) : false}
                   />
                 );
@@ -351,6 +362,7 @@ export function TaskList({
     collisionDetection,
     dndHandlers,
   } = useStatusColumnsDnd(tasks, onPatch, manualOrder);
+  const viewerId = useCurrentUserId(useAgentDashboard().api);
 
   return (
     <DndContext sensors={sensors} collisionDetection={collisionDetection} {...dndHandlers}>
@@ -377,6 +389,7 @@ export function TaskList({
             onStartSession={onStartSession}
             onCreateAutomation={onCreateAutomation}
             canEdit={canEdit}
+            viewerId={viewerId}
           />
         ))}
       </div>
@@ -394,6 +407,7 @@ export function TaskList({
               onPatch={onPatch}
               onDelete={onDelete}
               onStartSession={onStartSession}
+              viewerId={viewerId}
               dragOverlay
             />
           </div>

@@ -60,8 +60,7 @@ import { ProjectPeopleStack } from '@/components/dashboard/project-people-stack'
 import { isDesktopLocal } from '@/lib/runtime-config';
 import { projectRoleAtLeast } from '@/lib/backend-api';
 import { TaskDisplayMenu } from './task-display-menu';
-import { TaskLabelFilter } from './task-label-filter';
-import { TaskAssigneeFilter } from './task-assignee-filter';
+import { TaskFilterMenu, hasActiveFilters, type TaskFilterState } from './task-filter-menu';
 import { useAgentProfiles } from '@/lib/use-agent-profiles';
 import { useTaskLiveRefresh } from '@/lib/use-task-live-refresh';
 import { useCurrentUserId } from '@/lib/hooks/use-current-user-id';
@@ -72,6 +71,7 @@ import {
   TaskView,
   activeAssigneeFilter,
   activeLabelFilter,
+  activeRelationFilter,
   cloneView,
   compareTasks,
   createProjectDefault,
@@ -83,6 +83,7 @@ import {
   saveViews,
   taskMatchesAssignee,
   taskMatchesLabels,
+  taskMatchesRelation,
 } from './task-views';
 
 /** ISO timestamp from a yyyy-mm-dd date input ('' → null). */
@@ -240,7 +241,8 @@ function TasksPageInner() {
     () => activeLabelFilter(activeView.labelFilter, labelOptions),
     [activeView.labelFilter, labelOptions],
   );
-  // Assignee filter: Me, the user's own agents, Unassigned.
+  // Assignee filter: the user's own agents, Unassigned. "Me" is the Relation
+  // to me filter below.
   const viewerId = useCurrentUserId(api);
   const { profiles: agentProfiles } = useAgentProfiles();
   const assigneeAgents = useMemo(
@@ -255,6 +257,11 @@ function TasksPageInner() {
       ),
     [activeView.assigneeFilter, assigneeAgents],
   );
+  // Relation to me: Assigned to me, Waiting on me.
+  const relationFilter = useMemo(
+    () => activeRelationFilter(activeView.relationFilter),
+    [activeView.relationFilter],
+  );
 
   // Mutate the active view and persist. Guards on a loaded view id so the
   // pre-load default isn't accidentally written back as a real view.
@@ -268,6 +275,33 @@ function TasksPageInner() {
       });
     },
     [activeViewId],
+  );
+
+  // What the Filter button and its chips read and write.
+  const filterState = useMemo<TaskFilterState>(
+    () => ({
+      agents: assigneeAgents,
+      labels: labelOptions,
+      assignee: assigneeFilter,
+      relation: relationFilter,
+      label: labelFilter,
+      onAssigneeChange: (values) => updateActiveView({ assigneeFilter: values }),
+      onRelationChange: (values) => updateActiveView({ relationFilter: values }),
+      onLabelChange: (ids) => updateActiveView({ labelFilter: ids }),
+    }),
+    [
+      assigneeAgents,
+      labelOptions,
+      assigneeFilter,
+      relationFilter,
+      labelFilter,
+      updateActiveView,
+    ],
+  );
+  const filtering = hasActiveFilters(filterState);
+  const clearFilters = useCallback(
+    () => updateActiveView({ assigneeFilter: [], relationFilter: [], labelFilter: [] }),
+    [updateActiveView],
   );
 
   // `?project={id}` opens the board filtered to one project — the way in from
@@ -537,7 +571,8 @@ function TasksPageInner() {
         return false;
       }
       if (!taskMatchesLabels(t, labelFilter)) return false;
-      if (!taskMatchesAssignee(t, assigneeFilter, viewerId)) return false;
+      if (!taskMatchesAssignee(t, assigneeFilter)) return false;
+      if (!taskMatchesRelation(t, relationFilter, viewerId)) return false;
       // "Show sub-tasks" off → hide anything with a parent (parents only).
       if (!showSubTasks && t.parent_task_id) return false;
       return true;
@@ -551,6 +586,7 @@ function TasksPageInner() {
     projectFilter,
     labelFilter,
     assigneeFilter,
+    relationFilter,
     viewerId,
     showSubTasks,
     sortBy,
@@ -692,7 +728,7 @@ function TasksPageInner() {
         </Button>
 
         {/* Saved view tabs */}
-        <div className="mx-1 min-w-0 flex-1">
+        <div className="mx-1 min-w-0">
           <TaskViewsBar
             views={views}
             activeViewId={activeViewId}
@@ -703,6 +739,13 @@ function TasksPageInner() {
             onDelete={deleteView}
           />
         </div>
+
+        {/* Assignee, Relation to me and Labels, each a submenu; the button
+            counts the ones in use. Beside the tabs, since it filters the view
+            they pick, and on the left so its submenus always open to the
+            right (at the right edge a wide one flips left). */}
+        <TaskFilterMenu state={filterState} onClear={clearFilters} />
+        <div className="min-w-0 flex-1" />
 
         {/* View mode (multica view dropdown). Leftmost: everything after it
             narrows or tunes what this view shows. */}
@@ -790,18 +833,6 @@ function TasksPageInner() {
           onSortDirectionChange={(value) => updateActiveView({ sortDirection: value })}
         />
 
-        <TaskLabelFilter
-          labels={labelOptions}
-          selected={labelFilter}
-          onChange={(ids) => updateActiveView({ labelFilter: ids })}
-        />
-
-        <TaskAssigneeFilter
-          agents={assigneeAgents}
-          selected={assigneeFilter}
-          onChange={(values) => updateActiveView({ assigneeFilter: values })}
-        />
-
         {canShareBoard && filterProject && (
           <ProjectPeopleStack
             api={api}
@@ -855,20 +886,20 @@ function TasksPageInner() {
         <div className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
           <ListTodo className="h-10 w-10 text-muted-foreground/40" />
           <p className="text-sm">
-            {labelFilter.size > 0
-              ? `No tasks with ${labelFilter.size === 1 ? 'this label' : 'these labels'}`
-              : projectFilter === 'all'
+            {!filtering
+              ? projectFilter === 'all'
                 ? 'No tasks yet'
-                : 'No tasks in this project'}
+                : 'No tasks in this project'
+              : assigneeFilter.size === 0 &&
+                  labelFilter.size === 0 &&
+                  relationFilter.size === 1 &&
+                  relationFilter.has('waiting')
+                ? 'Nothing is waiting on you'
+                : 'No tasks match these filters'}
           </p>
-          {labelFilter.size > 0 ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-2 text-xs"
-              onClick={() => updateActiveView({ labelFilter: [] })}
-            >
-              Clear label filter
+          {filtering ? (
+            <Button variant="outline" size="sm" className="mt-2 text-xs" onClick={clearFilters}>
+              Clear filters
             </Button>
           ) : canCreateHere && (
             <>

@@ -181,6 +181,8 @@ def public_tasks(
         row.assigned_by = None
         row.assigner_comment = None
         row.assigner_comment_id = None
+        # Who is being asked what is between the people on the board.
+        row.open_questions = []
         if row.assignee is None:
             continue
         shown = _public_principal(row.assignee, grant.link)
@@ -199,8 +201,12 @@ def public_timeline(
     dashboard's session pages, so naming them would only leak titles."""
     link = grant.link
     timeline.sessions = []
+    # Who can see the board, and who is being asked what, are not a link's
+    # to show.
+    timeline.people = []
     for comment in timeline.comments:
         comment.agent_instance_id = None
+        comment.question = None
         comment.author = _public_principal(comment.author, link)
         for reaction in comment.reactions:
             reaction.reactors = _public_reactors(reaction.reactors, link)

@@ -49,6 +49,7 @@ import { formatSidebarTime, getSessionTitle } from '@/components/dashboard/sessi
 import {
   AgentInstanceResponse,
   AgentProfile,
+  PrincipalResponse,
   TaskActivityResponse,
   TaskCommentResponse,
   TaskReactionSummary,
@@ -77,7 +78,9 @@ import {
   type Principal,
 } from '@/lib/principals';
 import { cn } from '@/lib/utils';
-import { isNoteComment, stripNotePrefix } from '@/lib/task-mentions';
+import { isNoteComment, stripNotePrefix, type WaitingAgent } from '@/lib/task-mentions';
+import { askersFromComments, openQuestion } from '@/lib/task-questions';
+import { WaitingOnPill } from '@/components/dashboard/waiting-on-pill';
 
 // See rule 1. Both values are used by the composer too, so the stream and the
 // box you type into share a left edge.
@@ -538,6 +541,8 @@ function CommentBody({
   // instruction, not the content, so it is replaced by a badge.
   const note = body !== null && isNoteComment(body);
   const shown = body !== null && note ? stripNotePrefix(body) : body;
+  // An agent's question that still waits: "Waiting on Nick" until it closes.
+  const question = openQuestion(comment);
   return (
     <div className="group/comment">
       <div className="flex items-center gap-2">
@@ -557,6 +562,13 @@ function CommentBody({
           >
             Note
           </span>
+        )}
+        {question && (
+          <WaitingOnPill
+            people={[question.addressee]}
+            viewerId={viewer?.id ?? null}
+            className="shrink-0"
+          />
         )}
         {/* Holds its width like the activity line's time, so in a narrow
             column (the peek panel) the "via" link truncates first instead of
@@ -656,6 +668,8 @@ function ThreadCard({
   viewer,
   sessionRefs,
   composerAgents,
+  composerPeople,
+  askers,
   taskClosed,
   onToggleReaction,
   onReply,
@@ -666,6 +680,8 @@ function ThreadCard({
   viewer: Principal | null;
   sessionRefs: SessionRefs;
   composerAgents?: AgentProfile[];
+  composerPeople?: PrincipalResponse[];
+  askers?: WaitingAgent[];
   taskClosed?: boolean;
   onToggleReaction?: (commentId: string, emoji: string) => void;
   onReply?: (parentCommentId: string, body: string) => Promise<void>;
@@ -711,6 +727,8 @@ function ThreadCard({
             }
             onSubmit={(body) => onReply(thread.root.id, body)}
             agents={composerAgents}
+            people={composerPeople}
+            viewerId={viewer?.id ?? null}
             wake={
               composerAgents
                 ? {
@@ -718,6 +736,7 @@ function ThreadCard({
                     threadAgentId: threadAgentId(thread),
                     assigneeAgentId: null,
                     taskClosed,
+                    askers,
                   }
                 : undefined
             }
@@ -880,6 +899,7 @@ export function TaskTimeline({
   onDeleteComment,
   onOpenSession,
   composerAgents,
+  composerPeople,
   taskClosed,
 }: {
   comments: TaskCommentResponse[];
@@ -901,6 +921,8 @@ export function TaskTimeline({
   onOpenSession?: (sessionId: string) => void;
   /** The viewer's agents, for the reply boxes' `@` picker and wake hint. */
   composerAgents?: AgentProfile[];
+  /** The people who can see the task, for the reply boxes' `@` picker. */
+  composerPeople?: PrincipalResponse[];
   /** The task is Done or Cancelled, so only an `@` in a reply wakes an agent. */
   taskClosed?: boolean;
 }) {
@@ -912,6 +934,9 @@ export function TaskTimeline({
     () => new Map(sessionRefs.map((ref) => [ref.id, ref])),
     [sessionRefs],
   );
+  // Agents waiting on the viewer: any reply of theirs answers them.
+  const viewerId = viewer?.id ?? null;
+  const askers = useMemo(() => askersFromComments(comments, viewerId), [comments, viewerId]);
 
   return (
     <OpenSessionContext.Provider value={onOpenSession}>
@@ -925,6 +950,8 @@ export function TaskTimeline({
                 viewer={viewer}
                 sessionRefs={refs}
                 composerAgents={composerAgents}
+                composerPeople={composerPeople}
+                askers={askers}
                 taskClosed={taskClosed}
                 onToggleReaction={onToggleCommentReaction}
                 onReply={onReply}

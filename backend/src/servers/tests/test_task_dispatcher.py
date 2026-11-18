@@ -181,8 +181,11 @@ async def test_no_session_starts_one_where_the_project_lives(
         'Someone assigned VIC-7 "Fix the flaky login test" to you.'
     )
     # The standing rules ride in the system prompt, not in the message.
-    assert "--assignee me" in spawn["system_prompt"]
-    assert "--assignee me" not in spawn["prompt"]
+    assert "vicoa task comment <ref> --ask" in spawn["system_prompt"]
+    assert "--ask" not in spawn["prompt"]
+    # Asking keeps the task: the brief no longer hands it over and back.
+    assert "--assignee me" not in spawn["system_prompt"]
+    assert "--assignee self" not in spawn["system_prompt"]
     # Titled after its task, so no model is asked to name it.
     assert spawn["title"] == "VIC-7: Fix the flaky login test"
     assert _reload(test_db, row).state == "started"

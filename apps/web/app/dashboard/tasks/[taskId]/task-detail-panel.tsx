@@ -9,9 +9,8 @@
 //   (status, priority, due date when set, labels) instead of the page's rail;
 // - the description and its reactions, sub-tasks only when there are some;
 // - the task's sessions (the page's rail list) only when there are some;
-// - the timeline, then the composer, whose second button is "Reply and hand
-//   back": post the reply and move the task to In Review in one step, so the
-//   host can go on to the next task.
+// - the timeline, then the composer. Answering an agent's question is a plain
+//   send: it wakes the agent that asked.
 //
 // A plain block that grows with its content: scrolling is the host's, so
 // there is no height or overflow here.
@@ -50,7 +49,6 @@ export function TaskDetailPanel({
   onStartSession,
   onOpenSession,
   onRequestDeleteComment,
-  onHandBack,
   children,
 }: {
   task: TaskResponse;
@@ -61,8 +59,6 @@ export function TaskDetailPanel({
   onOpenSession?: (sessionId: string) => void;
   /** Opens the delete confirmation (held by <TaskDetail>). */
   onRequestDeleteComment: (commentId: string) => void;
-  /** "Reply and hand back"; rejects (after its toast) to keep the draft. */
-  onHandBack: (body: string) => Promise<void>;
   /** The dialogs, mounted inside the column like the page mounts them. */
   children?: React.ReactNode;
 }) {
@@ -74,6 +70,7 @@ export function TaskDetailPanel({
     sessions,
     relatedSessions,
     sessionRefs,
+    people,
     taskReactions,
     viewer,
     canEdit,
@@ -93,7 +90,6 @@ export function TaskDetailPanel({
     addSubTask,
     setSubTaskStatus,
     agentProfiles,
-    handBackTo,
   } = model;
   const project = projects.find((p) => p.id === task.project_id);
 
@@ -229,6 +225,7 @@ export function TaskDetailPanel({
       <div className="space-y-3 border-t pt-4">
         <TaskTimeline
           composerAgents={agentProfiles}
+          composerPeople={people}
           taskClosed={isClosedStatus(task.status)}
           comments={comments}
           activity={activity}
@@ -251,18 +248,9 @@ export function TaskDetailPanel({
           <CommentComposer
             onSubmit={(body) => postComment(body)}
             agents={agentProfiles}
-            wake={composerWake(task)}
-            // Handing back moves the task's status or assignee, an editor's write.
-            secondaryAction={
-              canEdit
-                ? {
-                    label: handBackTo
-                      ? `Reply and hand back to ${handBackTo.agentName}`
-                      : 'Reply and hand back',
-                    onSubmit: onHandBack,
-                  }
-                : undefined
-            }
+            people={people}
+            viewerId={viewer?.id ?? null}
+            wake={composerWake(task, viewer?.id ?? null)}
           />
         ) : (
           <p className="text-xs text-muted-foreground">

@@ -23,6 +23,7 @@ import {
 import {
   AgentProfile,
   BackendApiError,
+  PrincipalResponse,
   ProjectResponse,
   ProjectRole,
   projectRoleAtLeast,
@@ -40,13 +41,13 @@ import {
   UserProfile,
 } from '@/lib/backend-api';
 import type { WakeContext } from '@/lib/task-mentions';
+import { askersFromTask } from '@/lib/task-questions';
 import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
 import { labelOwnerForProject } from '@/lib/project-vocabulary';
 import { useTaskLiveRefresh } from '@/lib/use-task-live-refresh';
 import type { Principal } from '@/lib/principals';
 import { projectMentionTarget } from '@/lib/project-mention-target';
 import { isClosedStatus } from '../task-views';
-import { runHandBack } from './hand-back';
 import { subTaskProgress } from './sub-tasks';
 
 // Slow on purpose: this is a single-player backlog, and the point of the poll
@@ -116,6 +117,8 @@ export function useTaskDetail(
   // The sessions the task and its rows name ("Created in", "via") that this
   // viewer may open. Arrives with the timeline.
   const [sessionRefs, setSessionRefs] = useState<TaskSessionRef[]>([]);
+  // Who can see the task: whom a comment can @mention. Arrives with the timeline.
+  const [people, setPeople] = useState<PrincipalResponse[]>([]);
   const [allTasks, setAllTasks] = useState<TaskResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
   // The failed load's HTTP status, so the panel can say "not found" briefly.
@@ -154,6 +157,7 @@ export function useTaskDetail(
       setComments(timeline.comments);
       setActivity(timeline.activity);
       setSessionRefs(timeline.sessions);
+      setPeople(timeline.people ?? []);
       setTaskReactions(timeline.reactions);
       setRelatedSessions(taskSessions);
       setProjects(projectRows);
@@ -338,6 +342,7 @@ export function useTaskDetail(
     setComments(timeline.comments);
     setActivity(timeline.activity);
     setSessionRefs(timeline.sessions);
+    setPeople(timeline.people ?? []);
     setTaskReactions(timeline.reactions);
   }, []);
 
@@ -387,39 +392,6 @@ export function useTaskDetail(
     [api, task, applyTimeline],
   );
 
-  // The panel's "Reply and hand back". Not an optimistic patch like the
-  // pickers: the host moves on to the next task once this resolves, so it has
-  // to mean the server took both writes.
-  //
-  // A task an agent assigned to you is handed back to that agent: the reply
-  // goes into the thread of its question (so it reads as the answer), then the
-  // task is assigned back, which wakes the agent. Anything else posts a new
-  // thread and moves the task to In Review, as before.
-  const handBackTo = useMemo(() => handBackTarget(task, me?.id ?? null), [task, me]);
-  const handBackPosted = useRef<string | null>(null);
-  const replyAndHandBack = useCallback(
-    async (body: string): Promise<TaskResponse> => {
-      if (!api || !task) throw new Error('Task not loaded');
-      const target = handBackTarget(task, me?.id ?? null);
-      const updated = await runHandBack(body, handBackPosted, {
-        postReply: (reply) =>
-          target ? postComment(reply, target.threadId ?? undefined) : postComment(reply),
-        handOver: () =>
-          target
-            ? api.updateTask(task.id, {
-                assignee_type: 'agent',
-                assignee_id: target.agentId,
-                start: true,
-              })
-            : api.updateTask(task.id, { status: 'in_review' }),
-      });
-      setTask(updated);
-      // The status or assignee change wrote an activity row.
-      void load();
-      return updated;
-    },
-    [api, task, me, postComment, load],
-  );
 
   const viewer = useMemo<Principal | null>(
     () =>
@@ -445,6 +417,7 @@ export function useTaskDetail(
     sessions,
     relatedSessions,
     sessionRefs,
+    people,
     labels,
     allTasks,
     agentProfiles,
@@ -470,44 +443,20 @@ export function useTaskDetail(
     editComment,
     deleteComment,
     toggleReaction,
-    replyAndHandBack,
-    handBackTo,
     assignTo,
   };
 }
 
 export type TaskDetailModel = ReturnType<typeof useTaskDetail>;
 
-/** Where a task's bottom comment box sits, for its wake hint: a new thread. */
-export function composerWake(task: TaskResponse): WakeContext {
+/** Where a task's bottom comment box sits, for its wake hint: a new thread.
+ *  An agent with an open question to the viewer hears whatever they write. */
+export function composerWake(task: TaskResponse, viewerId: string | null): WakeContext {
   return {
     inThread: false,
     threadAgentId: null,
     assigneeAgentId: task.assignee_type === 'agent' ? task.assignee_id : null,
     taskClosed: isClosedStatus(task.status),
-  };
-}
-
-/** Who "Reply and hand back" returns the task to: the agent that assigned it to
- *  the viewer, with the thread of its question. Null = the In Review hand back. */
-export interface HandBackTarget {
-  agentId: string;
-  agentName: string;
-  /** The assigner's latest comment, whose thread the reply joins. */
-  threadId: string | null;
-}
-
-export function handBackTarget(
-  task: TaskResponse | null,
-  viewerId: string | null,
-): HandBackTarget | null {
-  if (!task || !viewerId) return null;
-  if (task.assignee_type !== 'user' || task.assignee_id !== viewerId) return null;
-  const by = task.assigned_by;
-  if (!by || by.type !== 'agent' || !by.id) return null;
-  return {
-    agentId: by.id,
-    agentName: by.name?.trim() || 'the agent',
-    threadId: task.assigner_comment_id ?? null,
+    askers: askersFromTask(task, viewerId),
   };
 }

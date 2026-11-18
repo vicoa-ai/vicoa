@@ -275,24 +275,39 @@ vicoa task delete VIC-42 -y                    # -y skips the confirm prompt
 
 ### Assigning
 
-The assignee is **whose turn it is**: a person assigned a task has to act on it;
-an agent assigned a task works on it.
+The assignee is **who owns the work**: a person assigned a task does it; an
+agent assigned a task works on it. It doesn't change when an agent needs input:
+it asks instead (below).
 
 ```bash
-vicoa task ls --assignee me                    # what's waiting on the user
-vicoa task update VIC-42 --assignee me         # hand it to the user
+vicoa task ls --assignee me                    # the user's own tasks
 vicoa task update VIC-42 --assignee reviewer   # start that agent on it
 vicoa task update VIC-42 --assignee reviewer --no-start   # record only
-vicoa task update VIC-42 --assignee self       # take it back (inside an agent's session)
 vicoa task update VIC-42 --assignee none
 ```
 
 `--assignee` takes `me`, `self` (the agent profile of the session you run in),
 `none`, an agent's name (`vicoa agent ls`), or an id; `create` takes it too.
 
-- **Need the user?** Ask in one top-level comment, options first with your
-  recommendation, then `--assignee me`. They get a push, the task shows under
-  their Assignee filter, and their reply in that thread comes back to you.
+- **Need the user (a decision, an answer, access)?** Ask, and keep the task:
+
+  ```bash
+  vicoa task comment VIC-42 --ask - <<'EOF'
+  Stripe or Paddle? I recommend Stripe: ...
+  EOF
+  vicoa task comment VIC-42 --ask --to ada@example.com "Is the banner image approved?"
+  vicoa task update VIC-42 --status blocked       # only if you can't go on without it
+  vicoa task ls --waiting-on me                   # what waits on the user
+  ```
+
+  `--ask` makes the comment a question to one person: whoever started this run,
+  or `--to` (`me`, an email, a user id, or their name; someone who can see the
+  task). They get a push, the task shows "Waiting on <them>", and their next
+  comment anywhere on the task comes back to you here. The question stops
+  waiting on its own once they comment, the task leaves `blocked` or reaches
+  `in_review`, or it closes. A plain comment is not a question: nobody is told
+  to answer it. Only a session started from an agent profile can ask. An older
+  CLI rejects `--ask`: then post a plain top-level comment and set `blocked`.
 - **Assigning an agent starts it** (in its task session, on its default
   computer or wherever the task's project lives) unless the task is in
   `backlog` or you pass `--no-start`. Put what it should know in the task or a
@@ -303,8 +318,9 @@ vicoa task update VIC-42 --assignee none
   wakes it too; a comment starting with `/note` wakes nobody.
 - **An agent never starts another agent.** Assignments and comments made from a
   session started off an agent profile are recorded but start nothing.
-- `task get` shows the assignee, who assigned it and when, and the agent run's
-  state (`queued`, `working`, `failed: …`).
+- `task get` shows the assignee, who assigned it and when, the open questions
+  (who they wait on), and the agent run's state (`queued`, `working`,
+  `failed: …`).
 
 `create` defaults to `status=backlog`, `priority=none`, and **No project** unless
 `--project` is given. `update` changes only the flags you pass. Moving a task

@@ -61,6 +61,12 @@ from .task_dispatch_models import (
     TASK_DISPATCH_STATES,
     TASK_DISPATCH_TRIGGERS,
 )
+from .task_wakeup_models import (
+    TaskWakeup,
+    TASK_WAKEUP_END_REASONS,
+    TASK_WAKEUP_KINDS,
+    TASK_WAKEUP_STATES,
+)
 from .automation_models import (
     Automation,
     AutomationPosition,
@@ -134,6 +140,10 @@ __all__ = [
     "TASK_DISPATCH_MODES",
     "TASK_DISPATCH_STATES",
     "TASK_DISPATCH_TRIGGERS",
+    "TaskWakeup",
+    "TASK_WAKEUP_END_REASONS",
+    "TASK_WAKEUP_KINDS",
+    "TASK_WAKEUP_STATES",
     "Automation",
     "AutomationPosition",
     "AutomationRun",

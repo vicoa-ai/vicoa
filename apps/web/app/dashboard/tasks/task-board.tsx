@@ -40,6 +40,10 @@ import {
   isPastDate,
 } from '@/components/dashboard/task-ui';
 import { TaskDispatchChip, dispatchChipState } from '@/components/dashboard/task-dispatch-chip';
+import { WaitingOnPill } from '@/components/dashboard/waiting-on-pill';
+import { useAgentDashboard } from '@/lib/contexts/agent-dashboard-context';
+import { useCurrentUserId } from '@/lib/hooks/use-current-user-id';
+import { waitingOnPeople } from '@/lib/task-questions';
 import { cn } from '@/lib/utils';
 import { TaskViewProperties } from './task-views';
 import { ColumnShowMore } from './column-show-more';
@@ -61,6 +65,7 @@ function TaskCard({
   onDelete,
   onStartSession,
   onCreateAutomation,
+  viewerId = null,
   dragOverlay = false,
   readOnly = false,
 }: {
@@ -74,6 +79,8 @@ function TaskCard({
   onDelete: (task: TaskResponse) => void;
   onStartSession?: (task: TaskResponse) => void;
   onCreateAutomation?: (task: TaskResponse) => void;
+  /** The signed-in user: "Waiting on you" vs "Waiting on Nick". */
+  viewerId?: string | null;
   dragOverlay?: boolean;
   /** A task on a board shared below editor: opens, but offers nothing to change. */
   readOnly?: boolean;
@@ -91,7 +98,10 @@ function TaskCard({
   const showChips = showParent || showProject || showLabels;
   // What an agent is doing with it, while it is doing something.
   const showDispatch = dispatchChipState(task.dispatch, '') !== null;
-  const showMeta = showStart || showDue || showProgress || showDispatch;
+  // Whom an agent's open question waits on.
+  const waitingOn = waitingOnPeople(task);
+  const showWaiting = waitingOn.length > 0;
+  const showMeta = showStart || showDue || showProgress || showDispatch || showWaiting;
 
   return (
     <div
@@ -146,8 +156,11 @@ function TaskCard({
 
       {showMeta && (
         <div className="mt-2 flex items-center justify-end gap-2">
-          {showDispatch && (
-            <TaskDispatchChip dispatch={task.dispatch} className="mr-auto" />
+          {(showDispatch || showWaiting) && (
+            <span className="mr-auto flex min-w-0 flex-wrap items-center gap-1">
+              {showWaiting && <WaitingOnPill people={waitingOn} viewerId={viewerId} />}
+              {showDispatch && <TaskDispatchChip dispatch={task.dispatch} />}
+            </span>
           )}
           {showStart && (
             <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
@@ -186,6 +199,7 @@ function SortableTaskCard(props: {
   onDelete: (task: TaskResponse) => void;
   onStartSession?: (task: TaskResponse) => void;
   onCreateAutomation?: (task: TaskResponse) => void;
+  viewerId?: string | null;
   readOnly?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
@@ -241,6 +255,7 @@ function BoardColumn({
   onCreateAutomation,
   onCreate,
   canEdit,
+  viewerId,
 }: {
   status: TaskStatus;
   /** The ids this column renders (a closed column's are capped). */
@@ -262,6 +277,7 @@ function BoardColumn({
   onCreateAutomation?: (task: TaskResponse) => void;
   onCreate?: (status: TaskStatus) => void;
   canEdit?: (task: TaskResponse) => boolean;
+  viewerId: string | null;
 }) {
   // The column body is droppable so cards can be dropped on empty columns.
   const { setNodeRef, isOver } = useDroppable({ id: columnDroppableId(status) });
@@ -317,6 +333,7 @@ function BoardColumn({
                 onDelete={onDelete}
                 onStartSession={onStartSession}
                 onCreateAutomation={onCreateAutomation}
+                viewerId={viewerId}
                 readOnly={canEdit ? !canEdit(task) : false}
               />
             );
@@ -382,6 +399,7 @@ export function TaskBoard({
     collisionDetection,
     dndHandlers,
   } = useStatusColumnsDnd(tasks, onPatch, manualOrder);
+  const viewerId = useCurrentUserId(useAgentDashboard().api);
 
   return (
     <DndContext
@@ -410,6 +428,7 @@ export function TaskBoard({
             onCreateAutomation={onCreateAutomation}
             onCreate={onCreate}
             canEdit={canEdit}
+            viewerId={viewerId}
           />
         ))}
       </div>
@@ -423,6 +442,7 @@ export function TaskBoard({
               onEdit={onEdit}
               onPatch={onPatch}
               onDelete={onDelete}
+              viewerId={viewerId}
               dragOverlay
             />
           </div>

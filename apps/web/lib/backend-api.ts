@@ -824,10 +824,22 @@ export interface TaskResponse {
    *  assigned it (usually its question), trimmed, and that comment's id. */
   assigner_comment?: string | null;
   assigner_comment_id?: string | null;
+  /** Questions an agent asked on this task that still wait, oldest first:
+   *  "Waiting on Nick". Stored, never read from comment text. Empty on a
+   *  public share, and absent from a backend older than questions. */
+  open_questions?: TaskQuestionResponse[];
   /** The task's newest request for an agent to act on it. */
   dispatch?: TaskDispatchSummary | null;
   created_at: string;
   updated_at: string;
+}
+
+/** An open question on a task: who it asks, who asked, and its comment. */
+export interface TaskQuestionResponse {
+  comment_id: string;
+  addressee: PrincipalResponse;
+  asked_by: PrincipalResponse;
+  asked_at: string;
 }
 
 export type TaskDispatchState =
@@ -848,7 +860,7 @@ export interface TaskDispatchSummary {
   id: string;
   agent_profile_id: string;
   mode: 'ownership' | 'reply';
-  trigger: 'assigned' | 'unblocked' | 'mentioned' | 'replied' | 'commented';
+  trigger: 'assigned' | 'unblocked' | 'mentioned' | 'replied' | 'commented' | 'answered';
   state: TaskDispatchState;
   detail: string | null;
   agent_instance_id: string | null;
@@ -918,9 +930,25 @@ export interface TaskCommentResponse {
   body: string | null;
   kind: 'comment' | 'system';
   reactions: TaskReactionSummary[];
+  /** Set when the comment is a question an agent asked one person. */
+  question?: TaskCommentQuestion | null;
   created_at: string;
   edited_at: string | null;
   deleted_at: string | null;
+}
+
+export type TaskQuestionCloseReason =
+  | 'answered'
+  | 'unblocked'
+  | 'delivered'
+  | 'task_closed'
+  | 'deleted';
+
+/** The question a comment asks; open while `closed_at` is null. */
+export interface TaskCommentQuestion {
+  addressee: PrincipalResponse;
+  closed_at: string | null;
+  closed_reason: TaskQuestionCloseReason | null;
 }
 
 export interface TaskActivityResponse {
@@ -962,6 +990,9 @@ export interface TaskTimelineResponse {
    * session id with no entry here is one they can't: show no link or title.
    */
   sessions: TaskSessionRef[];
+  /** The people who can see the task, viewer first: whom a comment can
+   *  @mention. Empty on a public share; absent from an older backend. */
+  people?: PrincipalResponse[];
 }
 
 export interface CreateProjectRequest {
