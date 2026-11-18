@@ -173,11 +173,13 @@ class ChatInputArea extends StatelessWidget {
                 },
                 decoration: InputDecoration(
                   // A stopped agent gets its own copy — "session ended" would
-                  // be wrong for a session that can simply be resumed.
-                  hintText: canSend
-                      ? AppLocalizations.of(context).chatInputPlaceholder
-                      : (model.liveStateHint(AppLocalizations.of(context)) ??
-                          AppLocalizations.of(context).chatInputSessionEnded),
+                  // be wrong for a session that can simply be resumed. One
+                  // that a send resumes says so.
+                  hintText: model.resumeOnSendHint(AppLocalizations.of(context)) ??
+                      (canSend
+                          ? AppLocalizations.of(context).chatInputPlaceholder
+                          : (model.liveStateHint(AppLocalizations.of(context)) ??
+                              AppLocalizations.of(context).chatInputSessionEnded)),
                   hintStyle: FlutterFlowTheme.of(context).bodyMedium.override(
                         color: FlutterFlowTheme.of(context).secondaryText,
                         fontSize: 17.0,
@@ -520,7 +522,9 @@ class _AgentConfigPillState extends State<_AgentConfigPill> {
     // the running agent actually supports; no-ops back to the static list when
     // nothing was reported (older daemon / no discovery).
     catalog = _withLiveModels(catalog, agentId);
-    final canSend = widget.model.canSendMessages();
+    // A session a send would resume has no agent to apply a change to; the
+    // resume relaunches it with the stored config, so it stays read-only.
+    final canSend = widget.model.canSendMessages() && !widget.model.resumesOnSend;
     // Prefer the canonical spawn-time snapshot persisted on the row so the
     // sheet shows model + effort (which the live pill state doesn't track).
     // Falls back to live state for legacy sessions where the column is null.
@@ -598,7 +602,8 @@ class _AgentConfigPillState extends State<_AgentConfigPill> {
     final m = widget.model;
     final agentId = m.acpAgentId();
     if (agentId == null) return;
-    final canSend = m.canSendMessages();
+    // Read-only while a send would resume it, as in the model sheet above.
+    final canSend = m.canSendMessages() && !m.resumesOnSend;
     final modeEntries = m.acpAvailableModes;
     final modelEntries = m.acpAvailableModels;
 

@@ -15,8 +15,10 @@ import {
   resumeAgentSlug,
   resumeBlockedMessage,
   resumeBlockedReason,
+  resumeOnSendPlaceholder,
   resumeSession,
   resumeSpawnMetadata,
+  shouldResumeOnSend,
   type ResumableInstance,
 } from './session-resume';
 
@@ -320,5 +322,83 @@ describe('resumeSession with a prompt (automation run in a session)', () => {
     await resumeSession(inst({ session_config: { agent: 'claude', model: 'opus' } }));
 
     expect(callRpc.mock.calls[0][2].metadata.prompt).toBeUndefined();
+  });
+});
+
+describe('shouldResumeOnSend', () => {
+  const owner = { isOwner: true, withinResumeGrace: false };
+
+  it.each(['COMPLETED', 'FAILED', 'KILLED', 'DISCONNECTED'])(
+    'keeps the composer open for a closed %s session, so a send resumes it',
+    (status) => {
+      expect(shouldResumeOnSend(inst({ status }), 'agent_stopped', owner)).toBe(true);
+    }
+  );
+
+  it('resumes an archived session whose agent is still shutting down', () => {
+    // The heartbeat lingers after archiving. Resume is offered straight away,
+    // so a send resumes too; the daemon reports an agent still running and
+    // the message posted first reaches it over the live broadcast.
+    expect(shouldResumeOnSend(inst({ status: 'COMPLETED' }), 'live', owner)).toBe(true);
+  });
+
+  it('resumes a session whose agent stopped while its status still reads open', () => {
+    expect(
+      shouldResumeOnSend(inst({ status: 'AWAITING_INPUT' }), 'agent_stopped', owner)
+    ).toBe(true);
+  });
+
+  it('sends normally to a running session', () => {
+    expect(shouldResumeOnSend(inst({ status: 'AWAITING_INPUT' }), 'live', owner)).toBe(false);
+    expect(
+      shouldResumeOnSend(inst({ status: 'ACTIVE' }), 'reconnecting', owner)
+    ).toBe(false);
+    expect(shouldResumeOnSend(inst({ status: 'ACTIVE' }), 'unknown', owner)).toBe(false);
+  });
+
+  it('keeps the composer locked when the computer is offline', () => {
+    expect(
+      shouldResumeOnSend(inst({ status: 'COMPLETED' }), 'machine_offline', owner)
+    ).toBe(false);
+    expect(
+      shouldResumeOnSend(inst({ status: 'AWAITING_INPUT' }), 'machine_offline', owner)
+    ).toBe(false);
+  });
+
+  it('keeps it locked when there is no machine or folder to resume on', () => {
+    expect(shouldResumeOnSend(inst({ machine_id: null }), 'agent_stopped', owner)).toBe(false);
+    expect(shouldResumeOnSend(inst({ project: null }), 'agent_stopped', owner)).toBe(false);
+  });
+
+  it('keeps a deleted session locked', () => {
+    expect(shouldResumeOnSend(inst({ status: 'DELETED' }), 'agent_stopped', owner)).toBe(false);
+  });
+
+  it('leaves a collaborator on the locked composer: the relaunch is the owner\'s', () => {
+    expect(
+      shouldResumeOnSend(inst(), 'agent_stopped', { isOwner: false, withinResumeGrace: false })
+    ).toBe(false);
+  });
+
+  it('does not resume again while a resume is still coming up', () => {
+    expect(
+      shouldResumeOnSend(inst(), 'agent_stopped', { isOwner: true, withinResumeGrace: true })
+    ).toBe(false);
+  });
+
+  it('is false with no session loaded', () => {
+    expect(shouldResumeOnSend(null, 'agent_stopped', owner)).toBe(false);
+  });
+});
+
+describe('resumeOnSendPlaceholder', () => {
+  it('says a closed session resumes on send', () => {
+    expect(resumeOnSendPlaceholder('COMPLETED')).toBe(
+      'Session closed. Send a message to resume it.'
+    );
+  });
+
+  it('says a stopped agent resumes on send', () => {
+    expect(resumeOnSendPlaceholder('KILLED')).toMatch(/Send a message to resume it\.$/);
   });
 });

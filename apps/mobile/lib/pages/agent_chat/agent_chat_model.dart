@@ -128,6 +128,14 @@ String? latestWebPreviewUrl;
   // the new status into widget.instanceData and FFAppState's
   // cachedAgentInstances — locations the model itself can't reach.
   void Function(String status)? onStatusUpdate;
+  // Fires after a send relaunched a stopped session (see [resumesOnSend]), so
+  // the widget can do what the menu's Resume does next: reopen the cached
+  // status and restart the stream. The model can't reach either.
+  Future<void> Function()? onResumedAfterSend;
+  /// Set while any resume is out (a send's, or the menu's in the widget), so
+  /// neither starts a second relaunch. A send in that window just posts: the
+  /// agent coming up reads it in its catch-up.
+  bool resumeInFlight = false;
   StreamSubscription<dynamic>? _streamSubscription;
 
   // Realtime degradation indicator — `true` when the per-instance message
@@ -1389,6 +1397,8 @@ String? latestWebPreviewUrl;
     // same block the web sends; an option click is not composer text.
     final refs = isOptionClick ? const <ComposerReference>[] : liveReferences(content);
     final outgoing = composeOutgoingMessage(appendAnnotations(content, sentAnnotations), refs);
+    // Read before the POST: a send to a stopped session resumes it afterwards.
+    final resumeAfter = resumesOnSend;
 
     isSendingMessage = true;
     isWaitingForAgentResponse = true;
@@ -1447,6 +1457,61 @@ String? latestWebPreviewUrl;
     // Only while the screen is still there: the snack needs a live context.
     if (!delivered && context.mounted) {
       await _afterFailedSend(context, isOptionClick: isOptionClick);
+    }
+    if (delivered && resumeAfter) {
+      final resumed = await _resumeAfterSend();
+      if (!resumed && context.mounted) {
+        unawaited(SessionActions.showSnack(
+          context,
+          AppLocalizations.of(context).sessionResumeAfterSendFailed,
+          waitTime: SessionActions.errorSnackMs,
+        ));
+      }
+    }
+  }
+
+  /// Relaunch this session after a message to it was posted. The order is
+  /// what delivers it: the relaunched agent's catch-up reads every user
+  /// message after its read cursor, so the message has to be committed before
+  /// the agent comes up. Model-level, like the POST, so it still runs if the
+  /// user leaves the screen right after sending. Resolves to false only when
+  /// the relaunch failed; the message stays saved either way.
+  Future<bool> _resumeAfterSend() async {
+    final id = instanceId;
+    final data = instanceData;
+    if (id == null || data is! Map || resumeInFlight) return true;
+    resumeInFlight = true;
+    try {
+      String? field(String key) => data[key]?.toString();
+      Map<String, dynamic>? map(String key) {
+        final v = data[key];
+        return v is Map ? Map<String, dynamic>.from(v) : null;
+      }
+
+      final sessionConfig = map('session_config');
+      final result = await actions.apiResumeSession(
+        field('machine_id') ?? '',
+        id,
+        actions.resumeExpandProjectPath(field('project') ?? '', field('home_dir')),
+        agent: actions.resumeAgentSlug(field('agent_type_name'), sessionConfig: sessionConfig),
+        agentSessionId: actions.resumeAgentSessionHandle(map('instance_metadata')),
+        // Carry the stored model / effort / permission mode through so the
+        // resumed session isn't reset to the daemon's defaults.
+        sessionConfig: sessionConfig,
+      );
+      if (result['success'] != true) {
+        debugPrint('Resume after send failed: ${result['error']}');
+        isWaitingForAgentResponse = false;
+        onStateChanged?.call();
+        return false;
+      }
+      // The grace keeps the composer open while the row still reads closed
+      // and the relaunched agent hasn't heartbeated yet.
+      actions.markResumed(id);
+      await onResumedAfterSend?.call();
+      return true;
+    } finally {
+      resumeInFlight = false;
     }
   }
 
@@ -2434,6 +2499,10 @@ String? latestWebPreviewUrl;
     // resume, so it can't enable input on a session the user didn't resume.
     if (_withinResumeGrace) return true;
 
+    // Closed or stopped, but Resume would bring it back: stay open, and the
+    // send resumes it.
+    if (resumesOnSend) return true;
+
     if (functions.isSessionClosed(status)) return false;
 
     // A session whose agent is gone still reports a non-closed status --
@@ -2458,9 +2527,34 @@ String? latestWebPreviewUrl;
   // disagree about whether a session is reachable.
   bool get _withinResumeGrace => actions.isWithinResumeGrace(instanceId);
 
+  /// A closed session, or one whose agent stopped, that a send resumes. See
+  /// `shouldResumeOnSend` in api_resume_session.dart.
+  bool get resumesOnSend {
+    if (isWelcomeDemoInstance(instanceId)) return false;
+    final data = instanceData;
+    if (data is! Map) return false;
+    return actions.shouldResumeOnSend(
+      status: data['status']?.toString(),
+      machineId: data['machine_id']?.toString(),
+      project: data['project']?.toString(),
+      liveState: liveState,
+      isOwner: data['is_owner'] != false,
+      withinResumeGrace: _withinResumeGrace,
+    );
+  }
+
   /// Server-derived liveness for this session, or null when absent (older
   /// backend). See shared/database/liveness.py.
   String? get liveState => instanceData?['live_state']?.toString();
+
+  /// The composer placeholder while a send would resume the session, or null.
+  String? resumeOnSendHint(AppLocalizations l10n) {
+    if (!resumesOnSend) return null;
+    final status = instanceData?['status']?.toString().toUpperCase();
+    return status == 'COMPLETED'
+        ? l10n.chatInputSendToResumeArchived
+        : l10n.chatInputSendToResumeStopped;
+  }
 
   /// Why the composer is refusing input, or null when it isn't.
   String? liveStateHint(AppLocalizations l10n) {

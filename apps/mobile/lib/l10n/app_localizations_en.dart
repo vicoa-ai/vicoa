@@ -627,6 +627,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatInputSessionConfig => 'Session Config';
 
   @override
+  String get chatInputSendToResumeArchived =>
+      'Session archived. Send a message to resume it.';
+
+  @override
+  String get chatInputSendToResumeStopped =>
+      'Agent stopped. Send a message to resume it.';
+
+  @override
   String get chatInputSessionEnded =>
       'Session archived. Tap the menu in the top right and choose Resume.';
 
@@ -2019,6 +2027,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get sessionResumeOffline =>
       'Your computer is offline. Bring it back online to resume.';
+
+  @override
+  String get sessionResumeAfterSendFailed =>
+      'Couldn\'t resume the session. Your message is saved. Choose Resume from the top-right menu to deliver it.';
 
   @override
   String get sessionResumeFailed => 'Failed to resume session';

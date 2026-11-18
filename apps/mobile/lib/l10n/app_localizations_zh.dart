@@ -603,6 +603,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatInputSessionConfig => '设置';
 
   @override
+  String get chatInputSendToResumeArchived => '任务已结束。发送消息即可继续会话。';
+
+  @override
+  String get chatInputSendToResumeStopped => 'Agent 已停止。发送消息即可继续会话。';
+
+  @override
   String get chatInputSessionEnded => '任务已结束。点击右上角菜单，选择「继续会话」。';
 
   @override
@@ -1932,6 +1938,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get sessionResumeOffline => '你的电脑已离线。重新上线后才能继续。';
+
+  @override
+  String get sessionResumeAfterSendFailed => '继续会话失败。消息已保存，在右上角菜单选择「继续会话」即可送达。';
 
   @override
   String get sessionResumeFailed => '继续会话失败';
