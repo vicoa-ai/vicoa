@@ -75,7 +75,7 @@ export function isClosedStatus(status: TaskStatus): boolean {
  * every task is already loaded, so the cap is about attention, not paging).
  * 15 fills a tall screen's board column (10 left a large display half empty);
  * a board column scrolls on its own, so a longer one costs the other columns
- * nothing, and in the list it is 540px of rows between In review and Blocked.
+ * nothing, and in the list it is 540px of rows between Blocked and Cancelled.
  * Open columns are never capped: they get worked down.
  */
 export const CLOSED_COLUMN_LIMIT = 15;

@@ -9,14 +9,14 @@ import '/flutter_flow/flutter_flow_theme.dart';
 /// `TaskLabelResponse`.
 
 /// Status vocabulary, ordered as the list reads top-to-bottom. Mirrors the web
-/// dashboard's STATUS_ORDER: the main lifecycle first, the two side states last.
+/// dashboard's STATUS_ORDER: the open states first, the two closed ones last.
 const List<String> kTaskStatusOrder = [
   'backlog',
   'todo',
   'in_progress',
   'in_review',
-  'done',
   'blocked',
+  'done',
   'cancelled',
 ];
 
