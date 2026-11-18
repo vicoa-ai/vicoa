@@ -12,6 +12,7 @@ import '/pages/agent_chat/components/annotations_chip.dart';
 import '/pages/agent_chat/components/pending_attachment.dart';
 import '/pages/agent_chat/components/agent_config_panel.dart';
 import '/pages/agent_chat/components/chat_usage_indicator.dart';
+import '/pages/agent_chat/components/composer_primary_button.dart';
 import '/pages/agent_chat/components/voice_dictation_bar.dart';
 import '/pages/agent_chat/components/voice_dictation_button.dart';
 import '/pages/new_session/components/agent_config_sheet.dart';
@@ -317,32 +318,8 @@ class ChatInputArea extends StatelessWidget {
                 opacity: canSend ? 1.0 : 0.4,
                 child: Row(
                   children: [
-              Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20.0),
-                  onTap: () async {
-                    HapticFeedback.mediumImpact();
-                    await model.sendInterrupt();
-                  },
-                  child: Tooltip(
-                    message: AppLocalizations.of(context).chatInputStopTask,
-                    child: Container(
-                      width: 40.0,
-                      height: 40.0,
-                      alignment: Alignment.center,
-                      child: Icon(
-                        Icons.stop_circle_outlined,
-                        color: FlutterFlowTheme.of(context).secondaryText,
-                        size: 20.0,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              SizedBox(width: controlButtonGap),
-              // Context-window + rate-limit usage (Claude + Codex) sits to the
-              // right of the interrupt button. Ring only here; details open in
+              // Context-window + rate-limit usage (Claude + Codex) sits right
+              // after the folder button. Ring only here; details open in
               // a bottom sheet. Self-hides when the session reports no usage.
               // On Claude sessions, opening the sheet also refreshes the
               // Session/Weekly rate-limit windows from the machine's daemon
@@ -420,57 +397,32 @@ class ChatInputArea extends StatelessWidget {
     );
   }
 
+  /// Send, doubling as Stop while a turn runs and the composer is empty.
+  /// Listens to the text controller itself: plain typing doesn't rebuild the
+  /// composer, and the first character has to bring Send back.
   Widget _buildSendButton(BuildContext context) {
-    return Container(
-      width: 40.0,
-      height: 40.0,
-      decoration: BoxDecoration(
-        color:
-            FlutterFlowTheme.of(context).secondaryText.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(20.0),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20.0),
-          onTap: model.isSendingMessage
-              ? null
-              : () async {
-                  HapticFeedback.mediumImpact();
-                  final message = model.messageController.text;
-                  if (_canSubmit(message)) {
-                    FocusScope.of(context).unfocus();
-                    onRequestAutoScroll();
-                    model.isSendingMessage = true;
-                    await onSendMessage(message);
-                  }
-                },
-          child: Container(
-            width: 40.0,
-            height: 40.0,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20.0),
-            ),
-            child: model.isSendingMessage
-                ? Center(
-                    child: SizedBox(
-                      width: 20.0,
-                      height: 20.0,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.0,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          FlutterFlowTheme.of(context).secondaryText,
-                        ),
-                      ),
-                    ),
-                  )
-                : Icon(
-                    Icons.arrow_upward_rounded,
-                    color: FlutterFlowTheme.of(context).primaryText,
-                    size: 22.0,
-                  ),
-          ),
-        ),
+    return ListenableBuilder(
+      listenable: model.messageController,
+      builder: (context, _) => ComposerPrimaryButton(
+        isSending: model.isSendingMessage,
+        showStop: shouldShowComposerStop(
+            canSend: model.canSendMessages(),
+            agentWorking: model.isAgentWorking,
+            hasContent: model.messageController.text.trim().isNotEmpty || model.annotations.isNotEmpty || model.pendingAttachments.isNotEmpty),
+        onStop: () async {
+          HapticFeedback.mediumImpact();
+          await model.sendInterrupt();
+        },
+        onSend: () async {
+          HapticFeedback.mediumImpact();
+          final message = model.messageController.text;
+          if (_canSubmit(message)) {
+            FocusScope.of(context).unfocus();
+            onRequestAutoScroll();
+            model.isSendingMessage = true;
+            await onSendMessage(message);
+          }
+        },
       ),
     );
   }

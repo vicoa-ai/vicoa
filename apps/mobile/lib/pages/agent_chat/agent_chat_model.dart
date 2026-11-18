@@ -2444,6 +2444,15 @@ String? latestWebPreviewUrl;
     return !actions.liveStateBlocksSending(liveState);
   }
 
+  /// A turn is running, or about to: a sent message still awaiting its reply,
+  /// or the agent reports ACTIVE / STARTING. Same signal as the web's
+  /// `agentIsWorking`; it turns the composer's Send button into Stop.
+  bool get isAgentWorking {
+    if (isWaitingForAgentResponse) return true;
+    final status = instanceData?['status']?.toString().toUpperCase();
+    return status == 'ACTIVE' || status == 'STARTING';
+  }
+
   // Just-resumed grace, from the shared registry keyed by instance id — the
   // same one the home-list dot consults, so the composer and the dot never
   // disagree about whether a session is reachable.
