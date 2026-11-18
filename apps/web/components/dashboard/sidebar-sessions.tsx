@@ -1583,7 +1583,7 @@ export function SidebarSessions({
                   )}
                   {stopped && !done && (
                     <span
-                      className="absolute -right-0.5 -bottom-0.5 size-2 rounded-full bg-muted-foreground/50 ring-1 ring-background"
+                      className="absolute -right-0.5 -bottom-0.5 size-1.25 rounded-full bg-muted-foreground/50 ring-1 ring-background"
                       aria-label={liveStateLabel(liveState) ?? undefined}
                       title={liveStateHint(liveState) ?? undefined}
                     />
