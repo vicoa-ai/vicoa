@@ -302,10 +302,10 @@ def _extract_base_url_from_command(command: str) -> str | None:
     """Pull the ``--base-url`` value out of a daemon's command line, if any.
 
     ``build_daemon_command`` always emits the flag, so every daemon spawned by
-    this version is tagged. Returns ``None`` when argv omits it: legacy daemons,
-    and the one the desktop shell supervises (it passes no ``--base-url``, so
-    the daemon resolves its server from ``VICOA_API_URL``, see
-    ``_daemon_base_url``).
+    this version is tagged, and so is the desktop shell's. Returns ``None`` when
+    argv omits it: legacy daemons, desktop builds that passed no flag, and a
+    ``vicoa daemon`` run by hand with only ``VICOA_API_URL`` set. Those resolve
+    their server from ``VICOA_API_URL``, see ``_daemon_base_url``.
     """
     parts = command.split()
     for idx, part in enumerate(parts):
@@ -316,15 +316,15 @@ def _extract_base_url_from_command(command: str) -> str | None:
     return None
 
 
-def _read_process_env_var(
-    pid: int, name: str, proc_root: Path = Path("/proc")
-) -> str | None:
-    """Return ``name`` from another process's environment, or ``None``.
+def _read_process_environ(
+    pid: int, proc_root: Path = Path("/proc")
+) -> dict[str, str] | None:
+    """Return another process's environment, or ``None`` if it can't be read.
 
     Only Linux exposes it (``/proc/<pid>/environ``, readable by the same
     user). macOS (checked on 26) gives a non-root caller no environment for
-    another process (``ps -E`` shows none), so there this is ``None``. The value
-    is the environment the process started with, which is what
+    another process (``ps -E`` shows none), so there this is always ``None``.
+    The values are the ones the process started with, which is what
     ``DEFAULT_API_URL`` reads at import.
     """
     if pid <= 0 or not sys.platform.startswith("linux"):
@@ -333,36 +333,105 @@ def _read_process_env_var(
         raw = (proc_root / str(pid) / "environ").read_bytes()
     except OSError:
         return None
-    prefix = name.encode() + b"="
+    if not raw:
+        return None  # a zombie or kernel thread: nothing to go on
+    environ: dict[str, str] = {}
     for entry in raw.split(b"\0"):
-        if entry.startswith(prefix):
-            return entry[len(prefix) :].decode("utf-8", errors="ignore")
-    return None
+        name, sep, value = entry.partition(b"=")
+        if sep and name:
+            environ[name.decode("utf-8", errors="ignore")] = value.decode(
+                "utf-8", errors="ignore"
+            )
+    return environ
 
 
-def _daemon_base_url(pid: int, command: str) -> str:
-    """The normalized URL of the server a running daemon talks to.
+def _daemon_own_url(pid: int, command: str) -> str | None:
+    """The normalized URL of a running daemon's server, as its process says.
 
     ``--base-url`` on its command line wins. Without it, the daemon resolved
     ``DEFAULT_API_URL`` in its own process: its own ``VICOA_API_URL``, else the
-    hosted server. Never this process's ``VICOA_API_URL``: a caller pointed at
-    another server would take the hosted daemon for its own, and ``--takeover``
-    would stop it.
+    hosted server. ``None`` when there is no flag and its environment can't be
+    read (macOS), so the caller has to look elsewhere.
     """
     flag = _extract_base_url_from_command(command)
     if flag:
         return normalize_base_url(flag)
-    own_url = _read_process_env_var(pid, "VICOA_API_URL")
-    return normalize_base_url(own_url or HOSTED_API_URL)
+    environ = _read_process_environ(pid)
+    if environ is None:
+        return None
+    return normalize_base_url(environ.get("VICOA_API_URL") or HOSTED_API_URL)
 
 
-def _scan_process_list_for_daemons() -> dict[str, int]:
+def _recorded_urls_by_pid(state_path: Path) -> dict[int, str]:
+    """``{pid: normalized_base_url}`` from the state file's per-URL entries.
+
+    Every daemon stamps its own PID under its own URL as it starts
+    (``MachineDaemon.register_machine``), so this names the server of a daemon
+    whose process can't (no flag, unreadable environment). A PID recorded under
+    two URLs is left out, since one of them is a stale entry and there is no
+    telling which. A legacy flat state file gives nothing: its URL bucket was
+    picked by whichever CLI read it, not by the daemon.
+    """
+    daemons = read_state_file(state_path).get("daemons")
+    if not isinstance(daemons, dict):
+        return {}
+    by_pid: dict[int, str] = {}
+    ambiguous: set[int] = set()
+    for url, entry in daemons.items():
+        if not isinstance(url, str) or not isinstance(entry, dict):
+            continue
+        pid = entry.get("daemon_pid")
+        if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+            continue
+        key = normalize_base_url(url)
+        if by_pid.setdefault(pid, key) != key:
+            ambiguous.add(pid)
+    for pid in ambiguous:
+        del by_pid[pid]
+    return by_pid
+
+
+def _daemon_base_url(pid: int, command: str, recorded: dict[int, str]) -> str:
+    """The normalized URL of the server a running daemon talks to.
+
+    What its own process says (``_daemon_own_url``), else the URL it recorded
+    its PID under in the state file, else the hosted server. Never this
+    process's ``VICOA_API_URL``: a caller pointed at another server would take
+    the hosted daemon for its own, and ``--takeover`` would stop it.
+    """
+    own_url = _daemon_own_url(pid, command)
+    if own_url is not None:
+        return own_url
+    return recorded.get(pid) or normalize_base_url(HOSTED_API_URL)
+
+
+def _recorded_pid_is_live_daemon(base_url: str, pid: object) -> bool:
+    """Whether the PID the state file holds for ``base_url`` is that daemon.
+
+    It has to be alive and look like a vicoa daemon (a command we can't read
+    is trusted, as before). One whose own process names another server is a
+    stale entry whose PID now belongs to someone else's daemon.
+    """
+    if isinstance(pid, bool) or not isinstance(pid, int) or not _pid_exists(pid):
+        return False
+    command = _read_process_command(pid)
+    if command is None:
+        return True
+    if not _command_looks_like_vicoa_daemon(command):
+        return False
+    own_url = _daemon_own_url(pid, command)
+    return own_url is None or own_url == normalize_base_url(base_url)
+
+
+def _scan_process_list_for_daemons(
+    state_path: Path = STATE_PATH,
+) -> dict[str, int]:
     """Return ``{normalized_base_url: pid}`` for every running vicoa daemon.
 
-    Used as a fallback when the state file is stale or missing — e.g. the user
-    cleared ``~/.vicoa/`` while a daemon was running, or the caller uses
-    another ``HOME``. Each daemon is filed under the URL it uses itself
-    (``_daemon_base_url``).
+    Used as a fallback when the state file has no live entry for a URL: no
+    daemon was running for it yet, the user cleared ``~/.vicoa/`` while one
+    was, or it runs under another ``HOME``. Each daemon is filed under the URL
+    it uses itself (``_daemon_base_url``).
     """
     if os.name != "posix":
         return {}
@@ -377,6 +446,7 @@ def _scan_process_list_for_daemons() -> dict[str, int]:
     except Exception:
         return {}
 
+    recorded = _recorded_urls_by_pid(state_path)
     discovered: dict[str, int] = {}
     for line in result.stdout.splitlines():
         stripped = line.strip()
@@ -390,7 +460,7 @@ def _scan_process_list_for_daemons() -> dict[str, int]:
             continue
         if not _command_looks_like_vicoa_daemon(command):
             continue
-        key = _daemon_base_url(pid, command)
+        key = _daemon_base_url(pid, command, recorded)
         # First match wins — there should never be two daemons for the same
         # URL, but if there are, the older PID is the live one we care about.
         discovered.setdefault(key, pid)
@@ -464,12 +534,12 @@ def find_running_daemon_pid(base_url: str, state_path: Path = STATE_PATH) -> int
     """
     entry = read_daemon_entry(base_url, state_path)
     daemon_pid = entry.get("daemon_pid")
-    if isinstance(daemon_pid, int) and _pid_exists(daemon_pid):
-        command = _read_process_command(daemon_pid)
-        if command is None or _command_looks_like_vicoa_daemon(command):
-            return daemon_pid
+    if isinstance(daemon_pid, int) and _recorded_pid_is_live_daemon(
+        base_url, daemon_pid
+    ):
+        return daemon_pid
 
-    discovered = _scan_process_list_for_daemons()
+    discovered = _scan_process_list_for_daemons(state_path)
     pid = discovered.get(normalize_base_url(base_url))
     if pid is not None:
         try:
@@ -492,17 +562,16 @@ def list_running_daemons(
     result: dict[str, int] = {}
     for url, entry in list_daemon_entries(state_path).items():
         pid = entry.get("daemon_pid")
-        if not isinstance(pid, int) or pid <= 0:
-            continue
-        if not _pid_exists(pid):
-            continue
-        command = _read_process_command(pid)
-        if command is not None and not _command_looks_like_vicoa_daemon(command):
-            continue
-        result[url] = pid
+        if isinstance(pid, int) and _recorded_pid_is_live_daemon(url, pid):
+            result[url] = pid
 
-    for url, pid in _scan_process_list_for_daemons().items():
-        # Don't overwrite an entry the state file already validated.
+    validated = set(result.values())
+    for url, pid in _scan_process_list_for_daemons(state_path).items():
+        # A daemon the state file already validated keeps that URL: listing it
+        # a second time under the scan's URL would make `vicoa stop daemon`
+        # stop it once and then report the second stop as failed.
+        if pid in validated:
+            continue
         result.setdefault(url, pid)
 
     return sorted(result.items())

@@ -12,6 +12,17 @@ from vicoa import cli
 from vicoa import machine_daemon
 from vicoa.constants import HOSTED_API_URL
 
+# The real reader, kept before the autouse fixture below replaces it.
+_REAL_READ_PROCESS_ENVIRON = machine_daemon._read_process_environ
+
+
+@pytest.fixture(autouse=True)
+def _no_real_process_environ(monkeypatch):
+    """Never read a real process's environment. On Linux the reader opens
+    /proc/<pid>/environ, where a fake PID from a test can be a real process.
+    Tests that give a fake daemon an environment patch it again."""
+    monkeypatch.setattr(machine_daemon, "_read_process_environ", lambda *_a: None)
+
 
 def test_ensure_background_daemon_running_skips_when_existing(monkeypatch, tmp_path):
     state_path = tmp_path / "daemon_state.json"
@@ -498,7 +509,6 @@ def test_takeover_scan_skips_headless_session_whose_prompt_says_daemon(
 
     monkeypatch.setattr(machine_daemon.subprocess, "run", fake_run)
     monkeypatch.setattr(machine_daemon, "_pid_exists", lambda pid: pid != 111)
-    monkeypatch.setattr(machine_daemon, "_read_process_env_var", lambda *_a: None)
 
     pid = machine_daemon.find_running_daemon_pid(HOSTED_API_URL, state_path=state_path)
 
@@ -507,70 +517,136 @@ def test_takeover_scan_skips_headless_session_whose_prompt_says_daemon(
 
 # --- the scan files each daemon under the URL it uses itself ----------------
 #
-# A daemon whose argv has no --base-url (the desktop shell's) resolves its
+# A daemon whose argv has no --base-url (a `vicoa daemon` run with only
+# VICOA_API_URL set, or a desktop build that passed no flag) resolves its
 # server from its own VICOA_API_URL, else the hosted one. The caller's
 # VICOA_API_URL must not decide which bucket it lands in, or a `vicoa daemon
-# --takeover` pointed at another server would stop it.
+# --takeover` pointed at another server would stop it. Where the daemon's
+# environment can't be read (macOS), the URL it recorded its PID under in the
+# state file decides, then the hosted default.
 
 ALPHA_URL = "https://alpha.example"
 BETA_URL = "https://beta.example"
+GAMMA_URL = "https://gamma.example"
 
-SCAN_PS_OUTPUT = (
-    "  401 /usr/bin/python3 -m vicoa.cli daemon --api-key SECRET "
-    f"--base-url {BETA_URL}\n"
-    "  402 /Applications/Vicoa.app/Contents/Resources/daemon/vicoa daemon "
-    "--local-listener --local-port 61427 --takeover\n"
-    "  403 /opt/vicoa/bin/vicoa daemon --local-listener --local-port 4123\n"
-)
-# What each fake daemon's own environment says (402 has no VICOA_API_URL).
-SCAN_OWN_ENV = {401: None, 402: None, 403: ALPHA_URL}
+DAEMON_COMMANDS = {
+    401: f"/usr/bin/python3 -m vicoa.cli daemon --api-key SECRET --base-url {BETA_URL}",
+    402: "/Applications/Vicoa.app/Contents/Resources/daemon/vicoa daemon "
+    "--local-listener --local-port 61427 --takeover",
+    403: "/opt/vicoa/bin/vicoa daemon --local-listener --local-port 4123",
+}
+# Linux: what each fake daemon's own environment holds.
+LINUX_ENVIRON = {
+    401: {"HOME": "/home/alpha"},
+    402: {"HOME": "/home/alpha"},  # no VICOA_API_URL: the hosted default
+    403: {"HOME": "/home/alpha", "VICOA_API_URL": ALPHA_URL},
+}
 
 
-def _fake_scan(monkeypatch, own_env: dict[int, str | None]) -> None:
+def _fake_processes(
+    monkeypatch,
+    commands: dict[int, str],
+    environ: dict[int, dict[str, str]] | None = None,
+) -> None:
+    """Fake `ps`, per-PID command reads and liveness for ``commands``.
+
+    ``environ=None`` is macOS: no other process's environment is readable."""
+    ps_output = "".join(f"  {pid} {command}\n" for pid, command in commands.items())
+
     def fake_run(*_args: Any, **_kwargs: Any) -> Any:
-        return Namespace(stdout=SCAN_PS_OUTPUT, returncode=0)
+        return Namespace(stdout=ps_output, returncode=0)
 
     monkeypatch.setattr(machine_daemon.subprocess, "run", fake_run)
-    monkeypatch.setattr(
-        machine_daemon,
-        "_read_process_env_var",
-        lambda pid, name: own_env.get(pid) if name == "VICOA_API_URL" else None,
+    monkeypatch.setattr(machine_daemon, "_read_process_command", commands.get)
+    monkeypatch.setattr(machine_daemon, "_pid_exists", lambda pid: pid in commands)
+    if environ is not None:
+        monkeypatch.setattr(machine_daemon, "_read_process_environ", environ.get)
+
+
+def _state_file(tmp_path: Path, state: dict[str, Any]) -> Path:
+    state_path = tmp_path / "daemon_state.json"
+    state_path.write_text(json.dumps(state))
+    return state_path
+
+
+def _recorded(tmp_path: Path, pids: dict[str, int]) -> Path:
+    """A state file where each URL's daemon recorded ``pid``."""
+    return _state_file(
+        tmp_path,
+        {"daemons": {url: {"daemon_pid": pid} for url, pid in pids.items()}},
     )
 
 
-def test_scan_files_each_daemon_under_its_own_url(monkeypatch):
-    _fake_scan(monkeypatch, SCAN_OWN_ENV)
+def test_scan_files_each_daemon_under_its_own_url(monkeypatch, tmp_path):
+    _fake_processes(monkeypatch, DAEMON_COMMANDS, LINUX_ENVIRON)
 
-    assert machine_daemon._scan_process_list_for_daemons() == {
+    assert machine_daemon._scan_process_list_for_daemons(tmp_path / "none.json") == {
         BETA_URL: 401,  # --base-url on argv
-        HOSTED_API_URL: 402,  # no flag, no env: the hosted default
+        HOSTED_API_URL: 402,  # no flag, no VICOA_API_URL: the hosted default
         ALPHA_URL: 403,  # no flag, its own VICOA_API_URL
     }
 
 
-def test_scan_ignores_callers_vicoa_api_url(monkeypatch):
+def test_scan_ignores_callers_vicoa_api_url(monkeypatch, tmp_path):
     """The scanning process's own VICOA_API_URL (baked into DEFAULT_API_URL at
     import, which normalize_base_url(None) falls back to) changes nothing."""
-    _fake_scan(monkeypatch, SCAN_OWN_ENV)
-    monkeypatch.setattr("vicoa.machine_state.DEFAULT_API_URL", "https://gamma.example")
+    _fake_processes(monkeypatch, DAEMON_COMMANDS, LINUX_ENVIRON)
+    monkeypatch.setattr("vicoa.machine_state.DEFAULT_API_URL", GAMMA_URL)
 
-    assert machine_daemon._scan_process_list_for_daemons() == {
+    assert machine_daemon._scan_process_list_for_daemons(tmp_path / "none.json") == {
         BETA_URL: 401,
         HOSTED_API_URL: 402,
         ALPHA_URL: 403,
     }
 
 
-def test_scan_without_readable_env_uses_hosted_default(monkeypatch):
-    """macOS: no other process's environment is readable, so a flagless
-    daemon is filed under the hosted URL, not under the caller's."""
-    _fake_scan(monkeypatch, {})
+def test_scan_without_readable_env_uses_the_url_the_daemon_recorded(
+    monkeypatch, tmp_path
+):
+    """macOS: 403 has no flag and its environment can't be read, but it
+    stamped its PID under its own URL when it started."""
+    _fake_processes(monkeypatch, DAEMON_COMMANDS)
+    monkeypatch.setattr("vicoa.machine_state.DEFAULT_API_URL", GAMMA_URL)
+    state_path = _recorded(tmp_path, {ALPHA_URL: 403})
+
+    assert machine_daemon._scan_process_list_for_daemons(state_path) == {
+        BETA_URL: 401,
+        HOSTED_API_URL: 402,
+        ALPHA_URL: 403,
+    }
+
+
+def test_scan_without_readable_env_or_record_uses_hosted_default(monkeypatch, tmp_path):
+    """Nothing says otherwise (a daemon under another HOME on macOS): the
+    hosted URL, never the caller's."""
+    _fake_processes(monkeypatch, DAEMON_COMMANDS)
     monkeypatch.setattr("vicoa.machine_state.DEFAULT_API_URL", ALPHA_URL)
 
-    assert machine_daemon._scan_process_list_for_daemons() == {
+    assert machine_daemon._scan_process_list_for_daemons(tmp_path / "none.json") == {
         BETA_URL: 401,
         # 402 comes first, so it is the hosted bucket's pid; 403 is dropped.
         HOSTED_API_URL: 402,
+    }
+
+
+def test_scan_does_not_trust_a_pid_recorded_under_two_urls(monkeypatch, tmp_path):
+    _fake_processes(monkeypatch, {403: DAEMON_COMMANDS[403]})
+    state_path = _recorded(tmp_path, {ALPHA_URL: 403, GAMMA_URL: 403})
+
+    assert machine_daemon._scan_process_list_for_daemons(state_path) == {
+        HOSTED_API_URL: 403
+    }
+
+
+def test_scan_ignores_a_legacy_flat_state_file(monkeypatch, tmp_path):
+    """A legacy file's single entry reads back under the caller's
+    DEFAULT_API_URL, which is the guess this change removes."""
+    _fake_processes(monkeypatch, {403: DAEMON_COMMANDS[403]})
+    monkeypatch.setattr("vicoa.machine_state.DEFAULT_API_URL", ALPHA_URL)
+    state_path = _state_file(tmp_path, {"daemon_pid": 403, "machine_id": "m-1"})
+
+    assert machine_daemon._scan_process_list_for_daemons(state_path) == {
+        HOSTED_API_URL: 403
     }
 
 
@@ -579,18 +655,17 @@ def test_caller_on_another_server_does_not_find_or_stop_hosted_daemon(
 ):
     """The reported case: `VICOA_API_URL=<other> vicoa daemon --takeover`
     while the desktop's flagless daemon runs for the hosted server. The state
-    file has no entry for <other> (another HOME, or a cleared ~/.vicoa), so
-    lookup falls back to the scan, which must not hand back the hosted daemon."""
-    other_url = "https://gamma.example"
+    file has no live entry for <other> (no daemon ran for it yet), so lookup
+    falls back to the scan, which must not hand back the hosted daemon."""
+    _fake_processes(monkeypatch, {402: DAEMON_COMMANDS[402]})
+    monkeypatch.setattr("vicoa.machine_state.DEFAULT_API_URL", GAMMA_URL)
     state_path = tmp_path / "daemon_state.json"
-    _fake_scan(monkeypatch, {402: None})
-    monkeypatch.setattr("vicoa.machine_state.DEFAULT_API_URL", other_url)
     kills: list[int] = []
     monkeypatch.setattr(machine_daemon.os, "kill", lambda pid, sig: kills.append(pid))
 
-    assert machine_daemon.find_running_daemon_pid(other_url, state_path) is None
+    assert machine_daemon.find_running_daemon_pid(GAMMA_URL, state_path) is None
     stopped, _message = machine_daemon.stop_background_daemon(
-        base_url=other_url, state_path=state_path
+        base_url=GAMMA_URL, state_path=state_path
     )
 
     assert not stopped
@@ -599,33 +674,109 @@ def test_caller_on_another_server_does_not_find_or_stop_hosted_daemon(
     assert machine_daemon.find_running_daemon_pid(HOSTED_API_URL, state_path) == 402
 
 
-def test_read_process_env_var_reads_proc_environ(monkeypatch, tmp_path):
+def test_hosted_caller_does_not_take_a_self_hosted_daemon_it_cannot_read(
+    monkeypatch, tmp_path
+):
+    """The other direction, on macOS: the desktop's daemon restarts with
+    --takeover (its old PID is dead) while a `vicoa daemon` run with only
+    VICOA_API_URL=<alpha> is up. The flagless alpha daemon recorded its PID
+    under alpha, so the hosted lookup must not find it."""
+    _fake_processes(monkeypatch, {403: DAEMON_COMMANDS[403]})
+    state_path = _recorded(tmp_path, {HOSTED_API_URL: 999, ALPHA_URL: 403})
+    kills: list[int] = []
+    monkeypatch.setattr(machine_daemon.os, "kill", lambda pid, sig: kills.append(pid))
+
+    assert machine_daemon.find_running_daemon_pid(HOSTED_API_URL, state_path) is None
+    stopped, _message = machine_daemon.stop_background_daemon(
+        base_url=HOSTED_API_URL, state_path=state_path
+    )
+
+    assert not stopped
+    assert kills == []
+    assert machine_daemon.find_running_daemon_pid(ALPHA_URL, state_path) == 403
+
+
+def test_state_entry_whose_pid_runs_another_servers_daemon_is_stale(
+    monkeypatch, tmp_path
+):
+    """An entry left behind by a daemon that died, whose PID now belongs to a
+    daemon that names another server, is not that URL's daemon."""
+    _fake_processes(monkeypatch, {401: DAEMON_COMMANDS[401]})
+    state_path = _recorded(tmp_path, {ALPHA_URL: 401})
+
+    assert machine_daemon.find_running_daemon_pid(ALPHA_URL, state_path) is None
+    assert machine_daemon.find_running_daemon_pid(BETA_URL, state_path) == 401
+
+
+def test_state_entry_is_stale_when_the_daemons_environment_names_another_server(
+    monkeypatch, tmp_path
+):
+    _fake_processes(monkeypatch, {403: DAEMON_COMMANDS[403]}, LINUX_ENVIRON)
+    state_path = _recorded(tmp_path, {GAMMA_URL: 403})
+
+    assert machine_daemon.find_running_daemon_pid(GAMMA_URL, state_path) is None
+
+
+def test_list_running_daemons_lists_a_flagless_self_hosted_daemon_once(
+    monkeypatch, tmp_path
+):
+    """macOS, desktop app pointed at a self-hosted server (alpha): before, the
+    scan also filed its daemon under hosted, so `vicoa stop daemon` listed it
+    twice and reported the second stop as failed."""
+    _fake_processes(monkeypatch, {401: DAEMON_COMMANDS[401], 402: DAEMON_COMMANDS[402]})
+    state_path = _recorded(tmp_path, {ALPHA_URL: 402})
+
+    assert machine_daemon.list_running_daemons(state_path) == [
+        (ALPHA_URL, 402),
+        (BETA_URL, 401),
+    ]
+
+
+def test_list_running_daemons_never_adds_a_validated_pid_again(monkeypatch, tmp_path):
+    """A PID the state file validated stays under the URLs it validated: the
+    scan's guess for it (hosted, here, as the record is ambiguous) adds
+    nothing."""
+    _fake_processes(monkeypatch, {402: DAEMON_COMMANDS[402]})
+    state_path = _recorded(tmp_path, {ALPHA_URL: 402, GAMMA_URL: 402})
+
+    listed = machine_daemon.list_running_daemons(state_path)
+
+    assert (HOSTED_API_URL, 402) not in listed
+    assert listed == [(ALPHA_URL, 402), (GAMMA_URL, 402)]
+
+
+def test_read_process_environ_reads_proc_environ(monkeypatch, tmp_path):
     proc_dir = tmp_path / "77"
     proc_dir.mkdir()
     (proc_dir / "environ").write_bytes(
         b"HOME=/home/alpha\0VICOA_API_URL_OLD=nope\0VICOA_API_URL="
         + ALPHA_URL.encode()
-        + b"\0PATH=/usr/bin\0"
+        + b"\0EMPTY=\0PATH=/usr/bin\0"
     )
+    (tmp_path / "79").mkdir()
+    (tmp_path / "79" / "environ").write_bytes(b"")
     monkeypatch.setattr(machine_daemon.sys, "platform", "linux")
 
-    read = machine_daemon._read_process_env_var
-    assert read(77, "VICOA_API_URL", proc_root=tmp_path) == ALPHA_URL
-    assert read(77, "VICOA_AUTH_URL", proc_root=tmp_path) is None
-    assert read(78, "VICOA_API_URL", proc_root=tmp_path) is None  # no such pid
-    assert read(0, "VICOA_API_URL", proc_root=tmp_path) is None
+    read = _REAL_READ_PROCESS_ENVIRON
+    assert read(77, proc_root=tmp_path) == {
+        "HOME": "/home/alpha",
+        "VICOA_API_URL_OLD": "nope",
+        "VICOA_API_URL": ALPHA_URL,
+        "EMPTY": "",
+        "PATH": "/usr/bin",
+    }
+    assert read(78, proc_root=tmp_path) is None  # no such pid
+    assert read(79, proc_root=tmp_path) is None  # empty: nothing to go on
+    assert read(0, proc_root=tmp_path) is None
 
 
-def test_read_process_env_var_is_none_off_linux(monkeypatch, tmp_path):
+def test_read_process_environ_is_none_off_linux(monkeypatch, tmp_path):
     proc_dir = tmp_path / "77"
     proc_dir.mkdir()
     (proc_dir / "environ").write_bytes(b"VICOA_API_URL=" + ALPHA_URL.encode())
     monkeypatch.setattr(machine_daemon.sys, "platform", "darwin")
 
-    assert (
-        machine_daemon._read_process_env_var(77, "VICOA_API_URL", proc_root=tmp_path)
-        is None
-    )
+    assert _REAL_READ_PROCESS_ENVIRON(77, proc_root=tmp_path) is None
 
 
 # --- backward-compat tests for users upgrading from the single-daemon CLI ----
