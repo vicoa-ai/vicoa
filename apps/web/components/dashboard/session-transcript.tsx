@@ -25,7 +25,7 @@ import type { MessageResponse, PrincipalResponse } from '@/lib/backend-api';
 import { groupMessagesByDate, messageSortKey } from '@/lib/message-grouping';
 import { computeTurnEnds, type TurnMessageEntry } from '@/lib/agent-turns';
 import { shouldHideControlMessage } from '@/lib/session-control-messages';
-import { isInterruptControlMessage } from '@/lib/control-messages';
+import { isActionRecord } from '@/lib/control-messages';
 import { ToolUseGroup, isToolUseContent, parseToolUse } from '@/components/dashboard/tool-use-display';
 import { SubagentGroup } from '@/components/dashboard/subagent-group';
 import { groupSubagents } from '@/components/dashboard/subagent-grouping';
@@ -351,14 +351,16 @@ export function useExpandedTranscriptKeys(): [Set<string>, (key: string) => void
 /**
  * The transcript's own view of the message list: drop user rows still sitting
  * in the queue (pending ones live in the owner's queue bar, cancelled ones were
- * unsent) and order consumed-queued messages at their consumption point.
+ * unsent), but never a Stop or an answer whatever its pending stamp says
+ * (`isActionRecord`), and order consumed-queued messages at their consumption
+ * point.
  */
 export function orderTranscriptMessages(messages: MessageResponse[]): MessageResponse[] {
   const visible = messages.filter((m) => {
     if (!USER_SENDER_TYPES.has(m.sender_type)) return true;
     const status = parseQueuePayload(m)?.status;
     if (status === 'cancelled') return false;
-    if (isInterruptControlMessage(m.content || '')) return true;
+    if (isActionRecord(m.content || '')) return true;
     if (isPendingQueueStatus(status)) return false;
     return true;
   });

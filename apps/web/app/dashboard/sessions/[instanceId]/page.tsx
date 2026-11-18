@@ -91,8 +91,8 @@ import {
 import { AskUserQuestionSubmitPayload, buildAskUserQuestionCancelPersistMessage, buildAskUserQuestionControlMessage, buildAskUserQuestionSummaryMessage, parseAskUserQuestionPayload } from '@/components/dashboard/ask-user-question-panel';
 import { isPendingQueueStatus, parseQueuePayload, type QueuedMessageItem } from '@/components/dashboard/queue-status';
 import {
+  isActionRecord,
   isControlEnvelope,
-  isInterruptControlMessage,
 } from '@/lib/control-messages';
 import {
   shouldHideControlMessage,
@@ -1518,13 +1518,13 @@ function AgentInstanceContent() {
       if (!USER_SENDER_TYPES.has(m.sender_type)) return true;
       const status = parseQueuePayload(m)?.status;
       if (status === 'cancelled') return false;
-      // An interrupt is an action the user already took, not pending input.
-      // It's stamped `queued` purely because it lands mid-turn, but it is
-      // never surfaced in the queued-messages bar either (that drops every
-      // control token), so honouring the stamp here hid the Stop entirely —
-      // it only appeared once the *next* message drained the queue, reading
-      // as though it had been sent then.
-      if (isInterruptControlMessage(m.content || '')) return true;
+      // A Stop or an AskUserQuestion answer is an action the user already
+      // took, not pending input. It's stamped `queued` purely because it
+      // lands mid-turn, but it is never surfaced in the queued-messages bar
+      // either (that drops every control token), so honouring the stamp here
+      // hid it entirely until the *next* message drained the queue: the
+      // answer read as never given, the Stop as sent then (`isActionRecord`).
+      if (isActionRecord(m.content || '')) return true;
       if (isPendingQueueStatus(status)) return isDrainedQueued(m);
       return true;
     });

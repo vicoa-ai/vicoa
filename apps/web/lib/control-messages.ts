@@ -30,7 +30,9 @@ export function isControlEnvelope(content: string): boolean {
   return residue.trim() === '';
 }
 
-export function parseControlCommand(value: string): { setting?: string; value?: string } | null {
+export function parseControlCommand(
+  value: string
+): { setting?: string; value?: string; action?: string } | null {
   try {
     const parsed = JSON.parse(value);
     if (parsed?.type === 'control') {
@@ -53,4 +55,29 @@ export function isInterruptControlMessage(content: string): boolean {
   if (!isControlEnvelope(content)) return false;
   const matches = (content || '').match(CONTROL_COMMAND_JSON_REGEX) || [];
   return matches.some((match) => parseControlCommand(match)?.setting === 'interrupt');
+}
+
+/** True when the content is a persist-only record: the AskUserQuestion
+ * "Q:/A:" answer summary or the "Declined to answer" note, ending in an
+ * `action: "persist_only"` token. Mirrors `is_persist_only_message` in the
+ * backend's `integrations/headless/auq.py`: prose that quotes such a token
+ * mid-body is real input and does not count.
+ */
+export function isPersistOnlyMessage(content: string): boolean {
+  if (!isControlEnvelope(content)) return false;
+  const matches = (content || '').match(CONTROL_COMMAND_JSON_REGEX) || [];
+  return matches.some((match) => parseControlCommand(match)?.action === 'persist_only');
+}
+
+/** A user row that records an action the user already took, not input waiting
+ * for the agent: a Stop, or an AskUserQuestion answer or decline. A server
+ * stamps such a row `queued` when it arrives while the session reads ACTIVE,
+ * and nothing ever clears the stamp: the agent acts on a Stop or an answer
+ * without consuming the row, and the queue bar drops every control message.
+ * The transcript shows these rows whatever their pending stamp says, or they
+ * vanish from both places (an answer read as never given, a Stop as sent
+ * whenever a later message finally drained the queue).
+ */
+export function isActionRecord(content: string): boolean {
+  return isInterruptControlMessage(content) || isPersistOnlyMessage(content);
 }
