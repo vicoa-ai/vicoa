@@ -405,6 +405,48 @@ def task_role(db: Session, user_id: UUID, task: Task | UUID) -> Role | None:
     return project_role(db, user_id, task.project_id, grant_scope="tasks")
 
 
+def task_audience(db: Session, task: Task) -> set[UUID]:
+    """Every account that can see `task` on its board: who a question may ask
+    and whose @mention means something.
+
+    The owner (or every active member of the owning team), plus each grant on
+    the project that covers tasks, a team grant reaching that team's active
+    members. A pending email grant reaches nobody yet. An unfiled task has no
+    board to be shared through: its owner alone, as in `task_role`.
+    """
+    if task.project_id is None:
+        return {task.user_id}
+    project = db.get(Project, task.project_id)
+    if project is None:
+        return {task.user_id}
+    teams: set[UUID] = set()
+    people: set[UUID] = set()
+    if project.team_id is not None:
+        teams.add(project.team_id)
+    else:
+        people.add(project.user_id)
+    for principal_type, principal_id in db.execute(
+        select(ProjectGrant.principal_type, ProjectGrant.principal_id).where(
+            ProjectGrant.project_id == project.id,
+            ProjectGrant.principal_id.is_not(None),
+            ProjectGrant.scopes.contains(["tasks"]),
+        )
+    ).all():
+        (teams if principal_type == "team" else people).add(principal_id)
+    if teams:
+        people |= {
+            row[0]
+            for row in db.execute(
+                select(TeamMember.user_id).where(
+                    TeamMember.team_id.in_(teams),
+                    TeamMember.status == "active",
+                    TeamMember.user_id.is_not(None),
+                )
+            ).all()
+        }
+    return people
+
+
 # --- sessions (agent instances) -----------------------------------------------
 
 

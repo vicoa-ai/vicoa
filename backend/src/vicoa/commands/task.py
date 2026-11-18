@@ -122,6 +122,7 @@ def _print_task_detail(t: dict) -> None:
         f"parent:      {t.get('parent_task_id') or '—'}",
         f"labels:      {labels}",
         f"assignee:    {_assignee_label(t)}",
+        *_waiting_on_lines(t),
         *(
             [f"agent run:   {_dispatch_label(t['dispatch'])}"]
             if t.get("dispatch")
@@ -136,6 +137,19 @@ def _print_task_detail(t: dict) -> None:
     description = t.get("description")
     if description:
         print(f"\ndescription:\n{description}")
+
+
+def _waiting_on_lines(t: dict) -> list[str]:
+    """One line per open question: who it waits on, who asked, which comment."""
+    lines = []
+    for q in t.get("open_questions") or []:
+        label = (
+            f"{_principal_name(q.get('addressee'))}, asked by "
+            f"{_principal_name(q.get('asked_by'))} at {q.get('asked_at')} "
+            f"(comment {q.get('comment_id')})"
+        )
+        lines.append(f"{'waiting on:' if not lines else '':<13}{label}")
+    return lines
 
 
 def _assignee_label(t: dict) -> str:
@@ -192,6 +206,17 @@ def _print_comment(c: dict, indent: str = "") -> None:
         header += "  (edited)"
     print(header)
     print(f"{indent}  id: {c.get('id')}")
+    question = c.get("question")
+    if question:
+        state = (
+            "waiting"
+            if not question.get("closed_at")
+            else str(question.get("closed_reason") or "closed").replace("_", " ")
+        )
+        print(
+            f"{indent}  question to {_principal_name(question.get('addressee'))} "
+            f"({state})"
+        )
     body = c.get("body")
     if body is None:
         print(f"{indent}  (deleted)")
@@ -290,8 +315,15 @@ def _cmd_ls(args, api_key: str) -> int:
         params["label_id"] = single_ids
     if getattr(args, "assignee", None):
         params["assignee"] = args.assignee
+    waiting_on = getattr(args, "waiting_on", None)
+    if waiting_on:
+        params["waiting_on"] = waiting_on
     tasks = _request(args, api_key, "GET", "/api/v1/tasks", params=params or None)
     tasks = _apply_filters_locally(tasks or [], params.get("unfiled"), label_groups)
+    if waiting_on:
+        # A server older than `waiting_on` ignores it and returns everything;
+        # without `open_questions` on a task there is nothing it waits on.
+        tasks = [t for t in tasks if t.get("open_questions")]
     if getattr(args, "json", False):
         print(_json.dumps(tasks, indent=2))
     else:
@@ -544,6 +576,13 @@ def _cmd_comment(args, api_key: str) -> int:
     payload: dict[str, Any] = {"body": body}
     if getattr(args, "reply_to", None):
         payload["parent_comment_id"] = args.reply_to
+    ask = bool(getattr(args, "ask", False))
+    to = getattr(args, "to", None)
+    if to and not ask:
+        print("--to names whom a question asks: add --ask.", file=sys.stderr)
+        return 2
+    if ask:
+        payload["ask"] = {"to": to} if to else {}
     self_id = _calling_session()
     if self_id:
         payload["agent_instance_id"] = self_id
@@ -562,7 +601,20 @@ def _cmd_comment(args, api_key: str) -> int:
     # spliced under its root rather than appended at the end.
     comments = timeline.get("comments", [])
     posted = max(comments, key=lambda c: c.get("created_at") or "", default=None)
+    question = (posted or {}).get("question")
+    if ask and question:
+        who = _principal_name(question.get("addressee"))
+        print(f"Asked {who} in comment {posted.get('id') if posted else ''}".rstrip())
+        return 0
     print(f"Posted comment {posted.get('id')}" if posted else "Posted comment.")
+    if ask:
+        # The server is older than questions and posted a plain comment.
+        print(
+            "The server did not record it as a question: nobody is told to "
+            "answer it. Set --status blocked if you are waiting.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

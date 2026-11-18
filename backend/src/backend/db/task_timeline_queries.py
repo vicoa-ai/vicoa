@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import Session
 
-from shared import access, task_dispatch
+from shared import access, task_dispatch, task_wakeups
 from shared.database import (
     AgentInstance,
     AgentStatus,
@@ -28,6 +28,7 @@ from shared.database import (
     TaskComment,
     TaskReaction,
     TaskSubscriber,
+    TaskWakeup,
     User,
 )
 from shared.database.agent_profile_models import AgentProfile
@@ -37,6 +38,7 @@ from ..models import (
     MAX_NAMED_REACTORS,
     PrincipalResponse,
     TaskActivityResponse,
+    TaskCommentQuestion,
     TaskCommentResponse,
     TaskReactionSummary,
     TaskSessionRef,
@@ -257,6 +259,7 @@ def create_comment(
     parent_comment_id: UUID | None = None,
     author: PrincipalRef | None = None,
     agent_instance_id: UUID | None = None,
+    ask_user_id: UUID | None = None,
 ) -> TaskComment:
     """Post a comment as `user_id`, or as `author` when an agent wrote it.
 
@@ -265,8 +268,15 @@ def create_comment(
     ('agent', profile_id). `user_id` still governs *scope* — the comment lands on
     a task that user owns either way. `agent_instance_id` is the session it was
     posted from, already checked to be the caller's.
+
+    `ask_user_id` makes it a question to that person: the agent that wrote it
+    waits for their reply (a `reply` wakeup, plans/todos/task-questions-
+    waiting-on.md). The caller has already checked that an agent is asking and
+    that the person can see the task.
     """
     author_type, author_id = author or ("user", user_id)
+    if ask_user_id is not None and author_type != "agent":
+        raise ValueError("only an agent asks a question")
     root_id = (
         resolve_thread_root(db, task, parent_comment_id)
         if parent_comment_id is not None
@@ -289,9 +299,70 @@ def create_comment(
     # A person's comment may be for an agent: queue its reply
     # (plans/todos/task-assignment-agents.md, C1). Agent comments never are.
     db.flush()
-    task_dispatch.on_comment_created(db, task, comment)
+    queued = task_dispatch.on_comment_created(db, task, comment)
+    # After routing, which reads the wakeups this comment fires.
+    task_wakeups.on_comment_created(db, task, comment, queued)
+    if ask_user_id is not None:
+        task_wakeups.ask(
+            db,
+            task,
+            agent_profile_id=author_id,
+            person_id=ask_user_id,
+            comment=comment,
+            instance_id=agent_instance_id,
+        )
+    _notify_people(db, task, comment, asked=ask_user_id)
     db.commit()
     return comment
+
+
+def _notify_people(
+    db: Session, task: Task, comment: TaskComment, *, asked: UUID | None
+) -> None:
+    """Tell the person a question asks, and the people a comment @mentions.
+
+    A mention reaches only someone who can see the task, never the author, and
+    not the person this same comment asks (one push is enough). Both follow
+    the task from then on (`mentioned`)."""
+    mentioned = task_dispatch.mentioned_user_ids(comment.body)
+    if asked is None and not mentioned:
+        return
+    from servers.shared.task_notifications import (
+        notify_task_mentioned_after_commit,
+        notify_task_question_after_commit,
+    )
+
+    author_ref: PrincipalRef = (comment.author_type, comment.author_id)
+    author_name = resolve_principals(db, {author_ref})[author_ref].name or (
+        "An agent" if comment.author_type == "agent" else "Someone"
+    )
+    if asked is not None:
+        subscribe(db, task.id, asked, "mentioned")
+        notify_task_question_after_commit(
+            db,
+            task,
+            addressee_id=asked,
+            asker_name=author_name,
+            comment_id=comment.id,
+            body=comment.body,
+        )
+    if not mentioned:
+        return
+    skip = {asked}
+    if comment.author_type == "user":
+        skip.add(comment.author_id)
+    audience = access.task_audience(db, task)
+    people = [uid for uid in mentioned if uid in audience and uid not in skip]
+    for person in people:
+        subscribe(db, task.id, person, "mentioned")
+    notify_task_mentioned_after_commit(
+        db,
+        task,
+        user_ids=people,
+        author_name=author_name,
+        comment_id=comment.id,
+        body=comment.body,
+    )
 
 
 def _own_comment(db: Session, task: Task, comment_id: UUID, user_id: UUID):
@@ -324,6 +395,7 @@ def delete_comment(db: Session, task: Task, comment_id: UUID, user_id: UUID) -> 
     and cross-references don't dangle; the text stops being served."""
     comment = _own_comment(db, task, comment_id, user_id)
     comment.deleted_at = _utcnow()
+    task_wakeups.on_comment_deleted(db, comment)
     db.commit()
 
 
@@ -386,6 +458,22 @@ def _instance_id_of(details: dict | None) -> UUID | None:
         return None
 
 
+def _question(
+    wakeup: TaskWakeup | None, principals: dict[PrincipalRef, PrincipalResponse]
+) -> TaskCommentQuestion | None:
+    """A question comment's state, from the reply wakeup it registered. A
+    fired wakeup reads as answered; an ended one gives its reason."""
+    if wakeup is None or wakeup.wait_for_user_id is None:
+        return None
+    return TaskCommentQuestion(
+        addressee=principals[("user", wakeup.wait_for_user_id)],
+        closed_at=wakeup.ended_at,
+        closed_reason=(  # type: ignore[arg-type]
+            "answered" if wakeup.state == "fired" else wakeup.ended_reason
+        ),
+    )
+
+
 def build_timeline(db: Session, task: Task, user_id: UUID) -> TaskTimelineResponse:
     """Everything the task-detail timeline renders, in one round trip."""
     comments = thread_order(
@@ -401,7 +489,13 @@ def build_timeline(db: Session, task: Task, user_id: UUID) -> TaskTimelineRespon
         .all()
     )
 
+    people = sorted(access.task_audience(db, task), key=str)
     refs: set[PrincipalRef] = {(c.author_type, c.author_id) for c in comments}
+    questions = task_wakeups.questions_by_comment(db, [c.id for c in comments])
+    refs |= {
+        ("user", w.wait_for_user_id) for w in questions.values() if w.wait_for_user_id
+    }
+    refs |= {("user", person) for person in people}
     refs |= {
         (str(a.actor_type), a.actor_id)
         for a in activity
@@ -423,6 +517,14 @@ def build_timeline(db: Session, task: Task, user_id: UUID) -> TaskTimelineRespon
     return TaskTimelineResponse(
         reactions=reactions.get(("task", task.id), []),
         sessions=_session_refs(db, user_id, session_ids),
+        people=sorted(
+            (
+                principals[("user", person)]
+                for person in people
+                if principals[("user", person)].id is not None
+            ),
+            key=lambda p: (p.id != user_id, (p.name or "").lower()),
+        ),
         comments=[
             TaskCommentResponse(
                 id=c.id,
@@ -433,6 +535,7 @@ def build_timeline(db: Session, task: Task, user_id: UUID) -> TaskTimelineRespon
                 body=None if c.deleted_at else c.body,
                 kind="system" if c.kind == "system" else "comment",
                 reactions=reactions.get(("comment", c.id), []),
+                question=_question(questions.get(c.id), principals),
                 created_at=c.created_at,
                 edited_at=c.edited_at,
                 deleted_at=c.deleted_at,

@@ -342,5 +342,9 @@ describe('agent mentions', () => {
   });
   test('any other vicoa: link stays inert', () => {
     expect(resolve('vicoa://agent/not-an-id')).toEqual({ kind: 'inert' });
+    expect(resolve('vicoa://user/not-an-id')).toEqual({ kind: 'inert' });
+  });
+  test('a person mention parses as a person chip', () => {
+    expect(resolve(`vicoa://user/${id}`)).toEqual({ kind: 'person', userId: id });
   });
 });

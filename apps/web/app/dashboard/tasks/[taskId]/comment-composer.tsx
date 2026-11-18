@@ -22,19 +22,17 @@
 // above it and marks the box as part of that conversation rather than a control
 // floating under it.
 //
-// The default variant can carry a second, secondary way to send beside the
-// round button (`secondaryAction`): the peek panel's "Reply and hand back",
-// which posts the comment and then hands the task back. Enter keeps sending the
-// plain way; the second action is a deliberate click.
-//
-// Both variants take `agents` for an `@` picker. A pick writes plain `@Name`
-// into the box, drawn as a chip by a highlight layer behind the textarea, and
-// only becomes the mention link when the comment is sent (lib/task-mentions,
-// the same token/state split as `#` references). Deleting the name drops the
-// mention. `wake` says what sending would do: a one-line hint under the box
-// names the agents the comment would wake, mirroring the server's routing, so a
-// comment never starts a run by surprise. A comment starting with `/note`
-// wakes nobody; the box tints and the hint says so.
+// Both variants take `agents` (and `people`) for an `@` picker. A pick writes
+// plain `@Name` into the box, drawn as a chip by a highlight layer behind the
+// textarea, and only becomes the mention link when the comment is sent
+// (lib/task-mentions, the same token/state split as `#` references). Deleting
+// the name drops the mention. Mentioning an agent asks it to answer; mentioning
+// a person only tells them. `wake` says what sending would do: a one-line hint
+// under the box names the agents the comment would wake, mirroring the
+// server's routing, so a comment never starts a run by surprise. That includes
+// an agent waiting on the viewer's answer to its question (`wake.askers`). A
+// comment starting with `/note` wakes nobody; the box tints and the hint says
+// so.
 //
 // `CommentEditor` at the foot of the file is the same textarea opened in place
 // over a comment you wrote, for editing it.
@@ -44,7 +42,7 @@ import { ArrowUp, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
-import type { AgentProfile } from '@/lib/backend-api';
+import type { AgentProfile, PrincipalResponse } from '@/lib/backend-api';
 import { detectTriggerToken, replaceTokenWith, type TriggerToken } from '@/lib/composer-references';
 import { isImeComposing } from '@/lib/ime';
 import {
@@ -57,27 +55,25 @@ import {
   type PickedMention,
   type WakeContext,
 } from '@/lib/task-mentions';
+import { principalFromResponse, type Principal } from '@/lib/principals';
 import { agentPrincipal } from '@/lib/use-agent-profiles';
 import { cn } from '@/lib/utils';
 
 const MENTION_LIMIT = 6;
+
+/** One row of the `@` picker: an agent the viewer can start, or a person. */
+interface MentionCandidate {
+  kind: 'agent' | 'user';
+  id: string;
+  name: string;
+  principal: Principal;
+}
 
 const MIN_HEIGHT = 36;
 // The inline reply row is one line tall at rest so a thread ends in a hint, not
 // in a second composer competing with the page's own.
 const INLINE_HEIGHT = 28;
 const MAX_HEIGHT = 200;
-
-/** A second send button beside the round one; see the header comment. */
-export interface CommentComposerSecondaryAction {
-  label: string;
-  /**
-   * Resolve to clear the box; reject to keep the draft for a retry. The action
-   * reports its own failure (a toast), so the composer swallows the rejection
-   * rather than rethrowing it.
-   */
-  onSubmit: (body: string) => Promise<void>;
-}
 
 export function CommentComposer({
   onSubmit,
@@ -87,8 +83,9 @@ export function CommentComposer({
   variant = 'default',
   leading,
   className,
-  secondaryAction,
   agents,
+  people,
+  viewerId = null,
   wake,
 }: {
   onSubmit: (body: string) => Promise<void>;
@@ -100,10 +97,12 @@ export function CommentComposer({
   /** Rendered left of the textarea — the viewer's avatar, on `inline`. */
   leading?: React.ReactNode;
   className?: string;
-  /** Default variant only: a second send button. */
-  secondaryAction?: CommentComposerSecondaryAction;
   /** The agents an `@` can mention (the viewer's own). Omitted: no picker. */
   agents?: AgentProfile[];
+  /** The people an `@` can mention: who can see the task. The viewer is left out. */
+  people?: PrincipalResponse[];
+  /** The signed-in user, to leave them out of `people`. */
+  viewerId?: string | null;
   /** Where the box sits, for the "… will work on this" hint. Omitted: no hint. */
   wake?: WakeContext;
 }) {
@@ -115,8 +114,8 @@ export function CommentComposer({
   const [highlight, setHighlight] = useState(0);
   // The wake hint is for the person typing: shown only while the box has focus.
   const [focused, setFocused] = useState(false);
-  // Which button's send is in flight. Either one locks both.
-  const [sending, setSending] = useState<false | 'primary' | 'secondary'>(false);
+  // A send in flight locks the button.
+  const [sending, setSending] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
 
@@ -148,29 +147,48 @@ export function CommentComposer({
     () => (agents ?? []).filter((a) => !a.is_archived && !a.team_id),
     [agents],
   );
+  // Agents first (a mention there starts work), then the people on the board.
+  const candidates = useMemo<MentionCandidate[]>(() => {
+    const out: MentionCandidate[] = mentionable.map((a) => ({
+      kind: 'agent',
+      id: a.id,
+      name: a.name,
+      principal: agentPrincipal(a),
+    }));
+    for (const person of people ?? []) {
+      const name = person.name?.trim();
+      if (!person.id || !name || person.id === viewerId) continue;
+      const principal = principalFromResponse(person);
+      if (principal) out.push({ kind: 'user', id: person.id, name, principal });
+    }
+    return out;
+  }, [mentionable, people, viewerId]);
   const matches = useMemo(() => {
     if (!mention) return [];
     const q = mention.query.toLowerCase();
-    return mentionable.filter((a) => a.name.toLowerCase().includes(q)).slice(0, MENTION_LIMIT);
-  }, [mention, mentionable]);
+    return candidates.filter((c) => c.name.toLowerCase().includes(q)).slice(0, MENTION_LIMIT);
+  }, [mention, candidates]);
   const pickerOpen = mention !== null && matches.length > 0;
 
   const trackMention = useCallback(
     (text: string, cursor: number) => {
-      if (mentionable.length === 0) return;
+      if (candidates.length === 0) return;
       const token = detectTriggerToken(text, cursor, '@');
       setMention(token);
       setHighlight(0);
     },
-    [mentionable.length],
+    [candidates.length],
   );
 
   const chooseMention = useCallback(
-    (agent: AgentProfile) => {
+    (picked: MentionCandidate) => {
       if (!mention) return;
-      const next = replaceTokenWith(value, mention, mentionToken(agent.name));
+      const next = replaceTokenWith(value, mention, mentionToken(picked.name));
       setValue(next.text);
-      setPicks((prev) => [...prev.filter((p) => p.id !== agent.id), { id: agent.id, name: agent.name }]);
+      setPicks((prev) => [
+        ...prev.filter((p) => p.id !== picked.id),
+        { id: picked.id, name: picked.name, kind: picked.kind },
+      ]);
       setMention(null);
       requestAnimationFrame(() => {
         const el = textareaRef.current;
@@ -196,7 +214,11 @@ export function CommentComposer({
   const wakeNames = useMemo(() => {
     if (!wake) return [];
     const ids = agentsToWake(value.trim() ? outgoing(value) : '.', wake);
-    const byId = new Map(mentionable.map((a) => [a.id.toLowerCase(), a.name]));
+    // An agent asking the viewer may be someone else's (a teammate's agent).
+    const byId = new Map([
+      ...(wake.askers ?? []).map((a) => [a.id.toLowerCase(), a.name] as const),
+      ...mentionable.map((a) => [a.id.toLowerCase(), a.name] as const),
+    ]);
     return ids.map((id) => byId.get(id)).filter((name): name is string => !!name);
   }, [wake, value, outgoing, mentionable]);
 
@@ -237,7 +259,7 @@ export function CommentComposer({
   const send = useCallback(async () => {
     const body = outgoing(value).trim();
     if (!body || sending || disabled) return;
-    setSending('primary');
+    setSending(true);
     try {
       await onSubmit(body);
       clear();
@@ -245,20 +267,6 @@ export function CommentComposer({
       setSending(false);
     }
   }, [value, outgoing, sending, disabled, onSubmit, clear]);
-
-  const sendSecondary = useCallback(async () => {
-    const body = outgoing(value).trim();
-    if (!body || sending || disabled || !secondaryAction) return;
-    setSending('secondary');
-    try {
-      await secondaryAction.onSubmit(body);
-      clear();
-    } catch {
-      // Draft kept for a retry; the action already said what went wrong.
-    } finally {
-      setSending(false);
-    }
-  }, [value, outgoing, sending, disabled, secondaryAction, clear]);
 
   const inline = variant === 'inline';
   const empty = value.trim().length === 0;
@@ -277,11 +285,13 @@ export function CommentComposer({
         {formatNames(wakeNames)} will work on this. Start with /note to just leave a note.
       </p>
     ) : null;
+  // An agent waiting on the viewer's answer: the box is a reply to it, wherever
+  // it sits.
+  const answering = (wake?.askers ?? []).length > 0;
   const shownPlaceholder =
     wake && wakeNames.length > 0
-      ? `${wake.inThread ? 'Reply to' : 'Comment for'} ${formatNames(wakeNames)}…`
+      ? `${wake.inThread || answering ? 'Reply to' : 'Comment for'} ${formatNames(wakeNames)}…`
       : placeholder;
-  const showSecondary = !inline && secondaryAction !== undefined;
 
   return (
     <div
@@ -304,19 +314,19 @@ export function CommentComposer({
       {pickerOpen && (
         <div
           role="listbox"
-          aria-label="Mention an agent"
+          aria-label="Mention an agent or a person"
           className="absolute bottom-full left-0 z-20 mb-1 w-56 overflow-hidden rounded-md border bg-popover p-1 font-sans shadow-md"
         >
-          {matches.map((agent, index) => (
+          {matches.map((candidate, index) => (
             <button
-              key={agent.id}
+              key={`${candidate.kind}:${candidate.id}`}
               type="button"
               role="option"
               aria-selected={index === highlight}
               // mousedown, not click: the textarea's blur would close the list first.
               onMouseDown={(e) => {
                 e.preventDefault();
-                chooseMention(agent);
+                chooseMention(candidate);
               }}
               onMouseEnter={() => setHighlight(index)}
               className={cn(
@@ -324,8 +334,11 @@ export function CommentComposer({
                 index === highlight && 'bg-accent text-accent-foreground',
               )}
             >
-              <PrincipalAvatar principal={agentPrincipal(agent)} size="xs" />
-              <span className="truncate">{agent.name}</span>
+              <PrincipalAvatar principal={candidate.principal} size="xs" />
+              <span className="truncate">{candidate.name}</span>
+              {candidate.kind === 'agent' && (
+                <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">agent</span>
+              )}
             </button>
           ))}
         </div>
@@ -422,25 +435,7 @@ export function CommentComposer({
         </div>
         {inline && wakeHint}
       </div>
-      <div
-        className={cn(
-          'flex items-center justify-end',
-          !inline && 'mt-0',
-          showSecondary && 'gap-2',
-        )}
-      >
-        {showSecondary && (
-          <Button
-            onClick={() => void sendSecondary()}
-            disabled={disabled || !!sending || empty}
-            variant="outline"
-            size="sm"
-            className="h-7 rounded-full px-3 text-xs"
-          >
-            {sending === 'secondary' && <RefreshCw className="size-3 animate-spin" />}
-            {secondaryAction.label}
-          </Button>
-        )}
+      <div className={cn('flex items-center justify-end', !inline && 'mt-0')}>
         <Button
           onClick={() => void send()}
           aria-label={inline ? 'Post reply' : 'Post comment'}
@@ -455,7 +450,7 @@ export function CommentComposer({
             inline && empty && !sending && 'pointer-events-none opacity-30',
           )}
         >
-          {sending === 'primary' ? (
+          {sending ? (
             <RefreshCw className={cn('animate-spin', inline ? 'h-3 w-3' : 'h-3.5 w-3.5')} />
           ) : (
             <ArrowUp className={cn(inline ? 'h-3 w-3' : 'h-3.5 w-3.5')} />

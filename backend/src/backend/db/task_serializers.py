@@ -16,8 +16,14 @@ from sqlalchemy.orm import Session
 from shared.database import AgentInstance, Project, Task, TaskActivity, TaskComment
 from shared.database.task_identity import format_task_identifier
 from shared.task_dispatch import latest_dispatches
+from shared.task_wakeups import waiting_on_people
 
-from ..models import PrincipalResponse, TaskDispatchSummary, TaskResponse
+from ..models import (
+    PrincipalResponse,
+    TaskDispatchSummary,
+    TaskQuestionResponse,
+    TaskResponse,
+)
 from .task_timeline_queries import PrincipalRef, resolve_principals
 
 
@@ -147,6 +153,7 @@ def serialize_tasks(db: Session, tasks: list[Task]) -> list[TaskResponse]:
 
     assignments = _latest_assignments(db, tasks)
     assigner_comments = _assigner_comments(db, tasks, assignments)
+    questions = waiting_on_people(db, [t.id for t in tasks])
     dispatches = latest_dispatches(db, [t.id for t in tasks])
     session_ids = {
         d.agent_instance_id for d in dispatches.values() if d.agent_instance_id
@@ -168,6 +175,11 @@ def serialize_tasks(db: Session, tasks: list[Task]) -> list[TaskResponse]:
         if t.assignee_type is not None and t.assignee_id is not None
     }
     refs |= {ref for _, ref in assignments.values() if ref is not None}
+    for waiting in questions.values():
+        for w in waiting:
+            if w.wait_for_user_id is not None:
+                refs.add(("user", w.wait_for_user_id))
+            refs.add(("agent", w.agent_profile_id))
     principals: dict[PrincipalRef, PrincipalResponse] = (
         resolve_principals(db, refs) if refs else {}
     )
@@ -196,6 +208,17 @@ def serialize_tasks(db: Session, tasks: list[Task]) -> list[TaskResponse]:
             preview = assigner_comments.get(task.id)
             if preview is not None:
                 response.assigner_comment_id, response.assigner_comment = preview
+        # A reply wakeup still waiting is a question someone hasn't answered.
+        response.open_questions = [
+            TaskQuestionResponse(
+                comment_id=w.source_comment_id,
+                addressee=principals[("user", w.wait_for_user_id)],
+                asked_by=principals[("agent", w.agent_profile_id)],
+                asked_at=w.created_at,
+            )
+            for w in questions.get(task.id, ())
+            if w.wait_for_user_id is not None and w.source_comment_id is not None
+        ]
         dispatch = dispatches.get(task.id)
         if dispatch is not None:
             summary = TaskDispatchSummary.model_validate(dispatch)

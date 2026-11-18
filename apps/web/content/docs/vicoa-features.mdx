@@ -139,19 +139,23 @@ The setting is kept on the device you change it on, the browser or the desktop a
 
 ## Assigning Tasks to People and Agents
 
-The assignee is whose turn it is. Assign a task to a person and it is theirs to act on; assign it to an agent and the agent starts working on it.
+The assignee is who owns the work. Assign a task to a person and it is theirs; assign it to an agent and the agent starts working on it. When you assign someone a task, they get a push on their phone.
 
 ### What's Waiting on You
 
-On the Tasks page, filter **Assignee → Me** to see every task waiting on you, and save it as a view to keep it one click away. When an agent assigns you a task you get a push on your phone, and tapping it opens the task.
+When an agent needs a decision, an answer or access, it asks you in a comment and keeps the task. You get a push on your phone, and the task shows **Waiting on you** on its card, in the list and on the question itself.
 
-To answer, reply in the thread of the agent's question, or use **Reply and hand back to &lt;agent&gt;**, which replies and assigns the task back so the agent carries on.
+To answer, comment on the task, anywhere: in the question's thread or as a new comment. The agent that asked picks up your answer in its own session and carries on. A comment starting with `/note` doesn't count as an answer.
+
+A question stops waiting on its own once you comment, the task leaves Blocked or reaches In Review, or the task is closed. An agent can ask someone else on the project too; the task then shows **Waiting on &lt;them&gt;**.
+
+On the Tasks page, open **Filter → Relation to me** and tick **Waiting on me** for every task with a question waiting on you. Tick **Assigned to me** as well to see everything that needs you, and save it as a view to keep it one click away.
 
 ### Assigning an Agent
 
 Pick an agent in a task's assignee field. Vicoa asks first where it will run (the computer, the project folder, a new or existing worktree), then:
 
-- **Start** (Enter): the agent opens its own session on the task, moves it to In Progress, and assigns the task back to you when it needs a decision, an answer or access. When it has delivered (a PR, or the evidence in a comment) it moves the task to In Review. It leaves Done to you, unless you ask it to close the task.
+- **Start** (Enter): the agent opens its own session on the task, moves it to In Progress, and asks you when it needs a decision, an answer or access. When it has delivered (a PR, or the evidence in a comment) it moves the task to In Review. It leaves Done to you, unless you ask it to close the task.
 - **Assign only**: the agent becomes the assignee, nothing runs.
 
 The agent works from the task as written: put what it should know in the description or a comment.
@@ -168,11 +172,14 @@ Each agent works on one task in one session, named after the task ("VIC-42: Fix 
 | --- | --- |
 | A comment on a task assigned to an agent | That agent |
 | A reply in a thread where an agent has written | That agent |
+| Any comment, when an agent asked you a question on the task | The agent that asked |
 | `@` and pick an agent | The agents you picked, and nobody else |
 | A comment starting with `/note` | Nobody (it shows on the task as a note) |
 | Any other comment on a Done or Cancelled task | Nobody (only an `@` wakes an agent there) |
 
 The comment box says which agent will work on your comment before you send it. An agent answers in the same thread. Agents never wake each other: what an agent writes or assigns is recorded but starts nothing.
+
+Type `@` and pick a person to mention someone on the project. They get a push on their phone. Mentioning a person never starts an agent.
 
 ## Slash Commands
 

@@ -14,17 +14,15 @@
 // the dialogs (sub-task picker for Start session, comment delete) live here,
 // so the two variants differ only in layout.
 
-import { useCallback, useEffect, useRef, useState, type JSX } from 'react';
+import { useCallback, useState, type JSX } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 
-import { projectRoleAtLeast, refusalReason, TaskCommentResponse, TaskResponse } from '@/lib/backend-api';
+import { projectRoleAtLeast, TaskCommentResponse, TaskResponse } from '@/lib/backend-api';
 import { projectLabel } from '@/components/dashboard/task-ui';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { CommentComposer } from './comment-composer';
-import { HandBackError } from './hand-back';
 import { EditableDescription, EditableTitle } from './inline-fields';
 import { ParentTaskLink, SubTasksSection } from './sub-tasks';
 import { TaskDetailPanel } from './task-detail-panel';
@@ -44,8 +42,6 @@ import { isClosedStatus } from '../task-views';
 export interface TaskDetailProps {
   taskId: string;
   variant: 'page' | 'panel';
-  /** Panel only: called after "Reply and hand back" succeeded, so the host can move to the next item. */
-  onHandedBack?: (task: TaskResponse) => void;
   /** Open a session from any session link ("Created in", "via", a session card's Open); the panel host may show it in the panel instead of navigating. Default: the link navigates to /dashboard/sessions/<id>. Modifier and middle clicks always open the link the browser's way. */
   onOpenSession?: (sessionId: string) => void;
   /** Fired whenever the task (re)loads, e.g. so a host can show its title. */
@@ -67,7 +63,6 @@ export function TaskDetail(props: TaskDetailProps): JSX.Element {
 function TaskDetailBody({
   taskId,
   variant,
-  onHandedBack,
   onOpenSession,
   onLoaded,
   className,
@@ -114,41 +109,6 @@ function TaskDetailBody({
       router.push(`/dashboard/sessions/new?${params.toString()}`);
     },
     [router, sessionDialog],
-  );
-
-  // A hand back that resolves after the host has already moved on (it remounts
-  // this body for the next task) must not move it along a second time.
-  const aliveRef = useRef(true);
-  useEffect(() => {
-    aliveRef.current = true;
-    return () => {
-      aliveRef.current = false;
-    };
-  }, []);
-  const onHandedBackRef = useRef(onHandedBack);
-  onHandedBackRef.current = onHandedBack;
-  const { replyAndHandBack } = model;
-  const handBack = useCallback(
-    async (body: string) => {
-      try {
-        const updated = await replyAndHandBack(body);
-        if (aliveRef.current) onHandedBackRef.current?.(updated);
-      } catch (err) {
-        const posted = err instanceof HandBackError && err.replyPosted;
-        toast.error("Couldn't hand back", {
-          // Once the reply is up, the retry only moves the status, so say so
-          // rather than leave the kept draft looking unsent.
-          description: posted
-            ? model.handBackTo
-              ? `Your reply was posted. Try again to assign it back to ${model.handBackTo.agentName}.`
-              : 'Your reply was posted. Try again to move the task to In Review.'
-            : refusalReason(err instanceof HandBackError ? err.reason : err),
-        });
-        // Rejecting keeps the draft in the composer.
-        throw err;
-      }
-    },
-    [replyAndHandBack, model.handBackTo],
   );
 
   if (isLoading) return <TaskDetailSkeleton variant={variant} className={className} />;
@@ -220,7 +180,6 @@ function TaskDetailBody({
         onStartSession={startSession}
         onOpenSession={onOpenSession}
         onRequestDeleteComment={requestDeleteComment}
-        onHandBack={handBack}
       >
         {dialogs}
       </TaskDetailPanel>
@@ -236,7 +195,6 @@ function TaskDetailBody({
       onStartSession={startSession}
       onOpenSession={onOpenSession}
       onRequestDeleteComment={requestDeleteComment}
-      onHandBack={handBack}
     >
       {dialogs}
     </TaskDetailPage>
@@ -252,7 +210,6 @@ function TaskDetailPage({
   onStartSession,
   onOpenSession,
   onRequestDeleteComment,
-  onHandBack,
   children,
 }: {
   task: TaskResponse;
@@ -262,8 +219,6 @@ function TaskDetailPage({
   onStartSession: () => void;
   onOpenSession?: (sessionId: string) => void;
   onRequestDeleteComment: (commentId: string) => void;
-  /** "Reply and hand back to <agent>", offered when an agent assigned you the task. */
-  onHandBack?: (body: string) => Promise<void>;
   /** The dialogs. */
   children: React.ReactNode;
 }) {
@@ -274,6 +229,7 @@ function TaskDetailPage({
     activity,
     sessions,
     sessionRefs,
+    people,
     taskReactions,
     viewer,
     canEdit,
@@ -291,7 +247,6 @@ function TaskDetailPage({
     addSubTask,
     setSubTaskStatus,
     agentProfiles,
-    handBackTo,
   } = model;
 
   return (
@@ -381,21 +336,19 @@ function TaskDetailPage({
               onEditComment={canComment ? editComment : undefined}
               onDeleteComment={canComment ? onRequestDeleteComment : undefined}
               composerAgents={agentProfiles}
+          composerPeople={people}
               taskClosed={isClosedStatus(task.status)}
             />
             {/* The bottom composer always starts a new thread; replying is
-                the affordance inside a thread. A task an agent handed you
-                also offers handing it straight back. */}
+                the affordance inside a thread. An answer to an agent's
+                question goes through it too: sending wakes the agent. */}
             {canComment ? (
               <CommentComposer
                 onSubmit={(body) => postComment(body)}
                 agents={agentProfiles}
-                wake={composerWake(task)}
-                secondaryAction={
-                  canEdit && handBackTo && onHandBack
-                    ? { label: `Reply and hand back to ${handBackTo.agentName}`, onSubmit: onHandBack }
-                    : undefined
-                }
+                people={people}
+            viewerId={viewer?.id ?? null}
+            wake={composerWake(task, viewer?.id ?? null)}
               />
             ) : (
               <p className="text-xs text-muted-foreground">

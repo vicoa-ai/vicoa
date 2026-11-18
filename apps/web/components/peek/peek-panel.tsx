@@ -185,10 +185,6 @@ export function PeekLayout({
   const index = item ? item.siblings.indexOf(item.id) : -1;
   const count = item?.siblings.length ?? 0;
 
-  const handedBack = () => {
-    if (item && index >= 0 && index < count - 1) onStep(1);
-  };
-
   return (
     <div ref={containerRef} className="flex h-full min-w-0 flex-1 overflow-hidden">
       <div className="flex min-w-0 flex-1 flex-col">{children}</div>
@@ -237,7 +233,6 @@ export function PeekLayout({
                   taskId={item.id}
                   variant="panel"
                   className="px-5 py-4"
-                  onHandedBack={handedBack}
                   onOpenSession={(id) => onOpen('session', id)}
                   onLoaded={(t) => setTitle(t.identifier ?? null)}
                 />

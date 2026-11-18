@@ -27,12 +27,16 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from sqlalchemy import func
+from sqlalchemy import case, func
 
+from shared import access
 from shared.database.actor import Actor, set_session_actor
 from shared.database.agent_profile_models import AgentProfile
-from shared.database.models import AgentInstance
+from shared.database.models import AgentInstance, User
 from shared.database.session import get_db
+from shared.database.task_dispatch_models import TaskDispatch
+from shared.database.task_models import Task
+from shared.database.task_wakeup_models import TaskWakeup
 
 # Reused human-facing query layer + DTOs. See module docstring for why this
 # servers→backend import is deliberate rather than a duplicate implementation.
@@ -47,6 +51,7 @@ from backend.db.task_queries import (
 from backend.models import (
     TASK_RUN_FIELDS,
     CreateAgentTaskCommentRequest,
+    TaskAskRequest,
     CreateAgentTaskRequest,
     CreateTaskLabelRequest,
     TaskLabelResponse,
@@ -105,6 +110,7 @@ def list_tasks_endpoint(
     label_id: Annotated[list[UUID] | None, Query()] = None,
     created_in_instance_id: UUID | None = None,
     assignee: str | None = Query(default=None, max_length=64),
+    waiting_on: str | None = Query(default=None, max_length=320),
     db: Session = Depends(get_db),
 ) -> list[TaskResponse]:
     """``unfiled`` selects No-project tasks (``vicoa task ls --project none``);
@@ -112,7 +118,9 @@ def list_tasks_endpoint(
     must carry every one given. ``created_in_instance_id`` keeps the tasks
     created in that session. ``assignee`` takes the same shorthand as
     ``vicoa task update --assignee`` (``me``, ``none``, an agent's name or an
-    id); ``self`` is not accepted here (a listing names no session)."""
+    id); ``self`` is not accepted here (a listing names no session).
+    ``waiting_on`` keeps the tasks with an open question to a person: ``me``,
+    an email, a user id, or the display name of someone asked on your tasks."""
     if unfiled and project_id is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -124,6 +132,14 @@ def list_tasks_endpoint(
     if assignee is not None and assignee.strip():
         kind, assignee_id = _resolve_assignee(db, resolved, None, assignee)
         unassigned = kind is None
+    waiting_on_id: UUID | None = None
+    if waiting_on is not None and waiting_on.strip():
+        waiting_on_id = _waiting_on_user_id(db, resolved, waiting_on)
+        if waiting_on_id is None:
+            # Nobody by that name or address is asked anything here. An empty
+            # list, not a 404: whether an address has an account is not this
+            # listing's to say.
+            return []
     tasks = task_queries.list_tasks(
         db,
         resolved,
@@ -135,8 +151,45 @@ def list_tasks_endpoint(
         created_in_instance_id=created_in_instance_id,
         assignee_id=assignee_id,
         unassigned=unassigned,
+        waiting_on_user_id=waiting_on_id,
     )
     return serialize_tasks(db, tasks)
+
+
+def _user_by_email(db: Session, email: str) -> UUID | None:
+    return (
+        db.query(User.id)
+        .filter(func.lower(User.email) == email.strip().lower())
+        .scalar()
+    )
+
+
+def _waiting_on_user_id(db: Session, user_id: UUID, value: str) -> UUID | None:
+    """``task ls --waiting-on`` → a user id, or None when it names nobody."""
+    raw = value.strip()
+    if raw.lower() == "me":
+        return user_id
+    try:
+        return UUID(raw)
+    except ValueError:
+        pass
+    if "@" in raw:
+        return _user_by_email(db, raw)
+    # A name: only among the people asked something on the caller's own tasks,
+    # so a listing never resolves an arbitrary account by its display name.
+    return (
+        db.query(User.id)
+        .join(TaskWakeup, TaskWakeup.wait_for_user_id == User.id)
+        .join(Task, Task.id == TaskWakeup.task_id)
+        .filter(
+            task_queries.owned_task_filter(user_id),
+            TaskWakeup.kind == "reply",
+            TaskWakeup.state == "waiting",
+            func.lower(User.display_name) == raw.lower(),
+        )
+        .limit(1)
+        .scalar()
+    )
 
 
 def _resolve_assignee(
@@ -471,6 +524,11 @@ def create_task_comment_endpoint(
     resolved = _user_uuid(user_id)
     task = _require_task(db, resolved, task_id)
     calling = _calling_session(db, resolved, request.agent_instance_id)
+    ask_user_id = (
+        _addressee(db, resolved, task, calling, request.ask)
+        if request.ask is not None
+        else None
+    )
     try:
         task_timeline_queries.create_comment(
             db,
@@ -480,9 +538,96 @@ def create_task_comment_endpoint(
             parent_comment_id=request.parent_comment_id,
             author=_author(resolved, calling),
             agent_instance_id=calling.id if calling is not None else None,
+            ask_user_id=ask_user_id,
         )
     except task_timeline_queries.CommentNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
     return task_timeline_queries.build_timeline(db, task, resolved)
+
+
+def _requester_of_run(
+    db: Session, task: Task, calling: _CallingSession, audience: set[UUID]
+) -> UUID | None:
+    """The person whose action started the calling session's current run: the
+    requester of the newest dispatch delivered into it, one on this task first.
+    Only someone who can still see the task."""
+    rows = (
+        db.query(TaskDispatch.requested_by_user_id)
+        .filter(
+            TaskDispatch.agent_instance_id == calling.id,
+            TaskDispatch.requested_by_user_id.isnot(None),
+        )
+        .order_by(
+            case((TaskDispatch.task_id == task.id, 0), else_=1),
+            TaskDispatch.created_at.desc(),
+        )
+        .limit(5)
+        .all()
+    )
+    for (person,) in rows:
+        if person in audience:
+            return person
+    return None
+
+
+def _addressee(
+    db: Session,
+    user_id: UUID,
+    task: Task,
+    calling: _CallingSession | None,
+    ask: TaskAskRequest,
+) -> UUID:
+    """Whom `vicoa task comment --ask [--to …]` asks (task-questions plan, Q2-Q4).
+
+    Only an agent asks: the calling session must be one started from an agent
+    profile. ``to`` is ``me`` (the key's user), an email, a user id, or a display
+    name, and must be someone who can see the task; otherwise a 400 that lists
+    who can be asked, by name and id (never by address). Without ``to``: the
+    person whose action started this run, else the session's owner."""
+    if calling is None or calling.agent_profile_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="--ask needs a session started from an agent",
+        )
+    audience = access.task_audience(db, task)
+    if ask.to is None or not ask.to.strip():
+        return _requester_of_run(db, task, calling, audience) or user_id
+    raw = ask.to.strip()
+    person: UUID | None = None
+    if raw.lower() == "me":
+        person = user_id
+    else:
+        try:
+            person = UUID(raw)
+        except ValueError:
+            if "@" in raw:
+                person = _user_by_email(db, raw)
+            else:
+                named = [
+                    row[0]
+                    for row in db.query(User.id)
+                    .filter(
+                        User.id.in_(audience),
+                        func.lower(User.display_name) == raw.lower(),
+                    )
+                    .all()
+                ]
+                person = named[0] if len(named) == 1 else None
+    if person is not None and person in audience:
+        return person
+    names = [
+        f"{row[1] or 'Unnamed'} ({row[0]})"
+        for row in db.query(User.id, User.display_name)
+        .filter(User.id.in_(audience))
+        .order_by(func.lower(User.display_name))
+        .all()
+    ]
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=(
+            f"Can't ask {raw!r}: only someone who can see this task can be asked. "
+            f"Pass --to with one of: {', '.join(names)}"
+        ),
+    )

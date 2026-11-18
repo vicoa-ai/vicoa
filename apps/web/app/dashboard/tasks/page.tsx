@@ -257,7 +257,7 @@ function TasksPageInner() {
       ),
     [activeView.assigneeFilter, assigneeAgents],
   );
-  // Relation to me: Assigned to me.
+  // Relation to me: Assigned to me, Waiting on me.
   const relationFilter = useMemo(
     () => activeRelationFilter(activeView.relationFilter),
     [activeView.relationFilter],
@@ -890,7 +890,12 @@ function TasksPageInner() {
               ? projectFilter === 'all'
                 ? 'No tasks yet'
                 : 'No tasks in this project'
-              : 'No tasks match these filters'}
+              : assigneeFilter.size === 0 &&
+                  labelFilter.size === 0 &&
+                  relationFilter.size === 1 &&
+                  relationFilter.has('waiting')
+                ? 'Nothing is waiting on you'
+                : 'No tasks match these filters'}
           </p>
           {filtering ? (
             <Button variant="outline" size="sm" className="mt-2 text-xs" onClick={clearFilters}>

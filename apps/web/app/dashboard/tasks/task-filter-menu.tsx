@@ -7,12 +7,12 @@
 // row (the submenu names them), and the button says how many dimensions
 // filter ("2 filters"), so nothing else on the page has to repeat it.
 //
-// Values within a dimension are OR (this agent or that one); dimensions are
-// AND. All state lives on the active
+// Values within a dimension are OR ("Assigned to me" or "Waiting on me" is
+// everything that needs me); dimensions are AND. All state lives on the active
 // view (task-views.ts), like the project filter beside it.
 
 import { useState, type ReactNode } from 'react';
-import { CircleUserRound, ListFilter, Tag, UserRound } from 'lucide-react';
+import { CircleUserRound, Hourglass, ListFilter, Tag, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -149,7 +149,11 @@ function RelationSubmenu({ state }: { state: TaskFilterState }) {
             onSelect={keepOpen}
             className={ITEM_CLASS}
           >
-            <UserRound className="size-3.5 text-muted-foreground" />
+            {option.key === 'assigned' ? (
+              <UserRound className="size-3.5 text-muted-foreground" />
+            ) : (
+              <Hourglass className="size-3.5 text-muted-foreground" />
+            )}
             <span className="truncate">{option.label}</span>
           </DropdownMenuCheckboxItem>
         ))}

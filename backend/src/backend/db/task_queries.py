@@ -56,7 +56,7 @@ from shared.database import (
 from shared.database.agent_profile_models import AgentProfile
 from shared.database.enums import AgentStatus
 from shared.database.project_matching import backfill_project_id_for_directory
-from shared import task_dispatch
+from shared import task_dispatch, task_wakeups
 from shared.database.actor import session_actor
 from shared.database.task_identity import (
     allocate_task_number,
@@ -959,11 +959,14 @@ def list_tasks(
     created_in_instance_id: UUID | None = None,
     assignee_id: UUID | None = None,
     unassigned: bool = False,
+    waiting_on_user_id: UUID | None = None,
 ) -> list[Task]:
     """Visible tasks ordered by position (board/list order), then age.
 
     `assignee_id` keeps tasks assigned to that principal (a user or an agent
     profile — the ids never collide); `unassigned` keeps tasks with nobody.
+    `waiting_on_user_id` keeps tasks with a question waiting on that person
+    (a `reply` wakeup).
 
     `unfiled` keeps only No-project tasks — the one set no `project_id` value
     can select, since NULL is the filter's "any project" too. `label_ids` is a
@@ -993,6 +996,10 @@ def list_tasks(
         query = query.filter(Task.assignee_id.is_(None))
     elif assignee_id is not None:
         query = query.filter(Task.assignee_id == assignee_id)
+    if waiting_on_user_id is not None:
+        query = query.filter(
+            Task.id.in_(task_wakeups.waiting_on_task_ids(waiting_on_user_id))
+        )
     return query.order_by(Task.position.asc(), Task.created_at.asc()).all()
 
 
@@ -1308,6 +1315,7 @@ def update_task(
             setattr(task, key, fields[key])
     if task.status != old_status:
         task_dispatch.on_status_changed(db, task, old_status=old_status)
+        task_wakeups.on_status_changed(db, task, old_status=old_status)
     if (task.assignee_type, task.assignee_id) != old_assignee:
         _after_assignee_change(db, task, old_assignee[0], old_assignee[1], run_options)
     db.commit()

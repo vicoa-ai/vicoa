@@ -1001,6 +1001,10 @@ class TaskResponse(BaseModel):
     # list row, with its id so a client can reply in that thread.
     assigner_comment: str | None = None
     assigner_comment_id: UUID | None = None
+    # The questions an agent asked on this task that are still waiting, oldest
+    # first: "Waiting on Nick". Stored state (a `reply` row in `task_wakeups`),
+    # never read from comment text. Empty on a public share.
+    open_questions: list["TaskQuestionResponse"] = Field(default_factory=list)
     # The task's newest dispatch to an agent: its chip ("working", "queued",
     # "failed: …"). None when no agent was ever asked to act on it.
     dispatch: "TaskDispatchSummary | None" = None
@@ -1008,6 +1012,15 @@ class TaskResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TaskQuestionResponse(BaseModel):
+    """An open question on a task: who it asks, who asked, and its comment."""
+
+    comment_id: UUID
+    addressee: PrincipalResponse
+    asked_by: PrincipalResponse
+    asked_at: datetime
 
 
 TaskDispatchStateLiteral = Literal[
@@ -1023,7 +1036,9 @@ class TaskDispatchSummary(BaseModel):
     id: UUID
     agent_profile_id: UUID
     mode: Literal["ownership", "reply"]
-    trigger: Literal["assigned", "unblocked", "mentioned", "replied", "commented"]
+    trigger: Literal[
+        "assigned", "unblocked", "mentioned", "replied", "commented", "answered"
+    ]
     state: TaskDispatchStateLiteral
     detail: str | None = None
     agent_instance_id: UUID | None = None
@@ -1236,9 +1251,24 @@ class TaskCommentResponse(BaseModel):
     body: str | None = None
     kind: Literal["comment", "system"]
     reactions: list[TaskReactionSummary] = Field(default_factory=list)
+    # Set when the comment is a question an agent asked one person.
+    question: "TaskCommentQuestion | None" = None
     created_at: datetime
     edited_at: datetime | None = None
     deleted_at: datetime | None = None
+
+
+TaskQuestionCloseReasonLiteral = Literal[
+    "answered", "unblocked", "delivered", "task_closed", "deleted"
+]
+
+
+class TaskCommentQuestion(BaseModel):
+    """The question a comment asks. Open while `closed_at` is None."""
+
+    addressee: PrincipalResponse
+    closed_at: datetime | None = None
+    closed_reason: TaskQuestionCloseReasonLiteral | None = None
 
 
 class TaskActivityResponse(BaseModel):
@@ -1294,6 +1324,10 @@ class TaskTimelineResponse(BaseModel):
     # open. A session missing here is one they can't: render no link, and no
     # title — naming it would leak what a shared task's viewer can't see.
     sessions: list[TaskSessionRef] = Field(default_factory=list)
+    # The people who can see the task, viewer included: whom a comment can
+    # @mention (and an agent can ask). Display names only. Empty on a public
+    # share.
+    people: list[PrincipalResponse] = Field(default_factory=list)
 
 
 class CreateTaskCommentRequest(BaseModel):
@@ -1301,6 +1335,16 @@ class CreateTaskCommentRequest(BaseModel):
     # Reply to this comment. Threads are one level deep: passing a reply's id
     # attaches to that reply's root rather than nesting further.
     parent_comment_id: UUID | None = None
+
+
+class TaskAskRequest(BaseModel):
+    """`vicoa task comment --ask [--to <person>]`: the comment is a question.
+
+    `to` is `me`, an email, a user id, or a display name, and must be someone
+    who can see the task. Omitted: the person whose action started the calling
+    session's current run, else the session's owner."""
+
+    to: str | None = Field(default=None, max_length=320)
 
 
 class CreateAgentTaskCommentRequest(CreateTaskCommentRequest):
@@ -1314,9 +1358,13 @@ class CreateAgentTaskCommentRequest(CreateTaskCommentRequest):
     one belonging to another user, falls back to the user rather than failing:
     losing the byline is a better outcome than losing the comment. Either way
     the caller's own session is stored on the comment, for "via <session>".
+
+    `ask` makes the comment a question to one person. Only an agent asks: it
+    needs a calling session started from an agent profile.
     """
 
     agent_instance_id: UUID | None = None
+    ask: TaskAskRequest | None = None
 
 
 class UpdateTaskCommentRequest(BaseModel):

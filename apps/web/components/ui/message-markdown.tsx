@@ -427,13 +427,14 @@ const MARKDOWN_COMPONENTS: Components = {
         </a>
       );
     }
-    // An agent @mention in a task comment: a name chip, never a link (the
-    // mention woke the agent when the comment was posted; it navigates nowhere).
-    if (link.kind === 'agent') {
+    // An @mention in a task comment: a name chip, never a link (the mention
+    // woke the agent, or told the person, when the comment was posted; it
+    // navigates nowhere).
+    if (link.kind === 'agent' || link.kind === 'person') {
       return (
         <span
           className="rounded bg-primary/10 px-1 py-px text-[0.95em] font-medium text-primary"
-          title="Agent mention"
+          title={link.kind === 'agent' ? 'Agent mention' : 'Mention'}
         >
           {children}
         </span>

@@ -278,18 +278,19 @@ export function taskMatchesAssignee(
 
 /**
  * How a task relates to the signed-in user: `assigned` (they are its
- * assignee). Kept as words rather than an id so a saved view follows whoever
- * is signed in.
+ * assignee) or `waiting` (an agent's question on it waits on them). Kept as
+ * words rather than an id so a saved view follows whoever is signed in.
  */
-export type TaskRelation = 'assigned';
+export type TaskRelation = 'assigned' | 'waiting';
 
 /** Ordered entries for the Relation to me picker. */
 export const TASK_RELATION_OPTIONS: { key: TaskRelation; label: string }[] = [
   { key: 'assigned', label: 'Assigned to me' },
+  { key: 'waiting', label: 'Waiting on me' },
 ];
 
 function isTaskRelation(value: unknown): value is TaskRelation {
-  return value === 'assigned';
+  return value === 'assigned' || value === 'waiting';
 }
 
 /** The view's relation filter without values this build doesn't know. */
@@ -303,13 +304,23 @@ export function activeRelationFilter(relationFilter: readonly string[]): Set<Tas
  * nothing matches rather than everything.
  */
 export function taskMatchesRelation(
-  task: Pick<TaskResponse, 'assignee_type' | 'assignee_id'>,
+  task: Pick<TaskResponse, 'assignee_type' | 'assignee_id' | 'open_questions'>,
   active: Set<TaskRelation>,
   viewerId: string | null,
 ): boolean {
   if (active.size === 0) return true;
   if (viewerId === null) return false;
-  return active.has('assigned') && task.assignee_type === 'user' && task.assignee_id === viewerId;
+  if (
+    active.has('assigned') &&
+    task.assignee_type === 'user' &&
+    task.assignee_id === viewerId
+  ) {
+    return true;
+  }
+  return (
+    active.has('waiting') &&
+    (task.open_questions ?? []).some((question) => question.addressee.id === viewerId)
+  );
 }
 
 export interface TaskView {

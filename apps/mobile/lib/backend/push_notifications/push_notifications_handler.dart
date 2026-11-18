@@ -444,9 +444,12 @@ class PushNotificationsHandler with WidgetsBindingObserver {
         }
         break;
       case 'task_assigned':
-        // Someone (usually an agent) handed this person a task: land on the
-        // Tasks tab with its detail open. The Tasks tab opens the pending id
-        // once its list has loaded, so a cold start works the same.
+      case 'task_question':
+      case 'task_mentioned':
+        // Someone handed this person a task, an agent asked them a question
+        // on one, or someone @mentioned them: land on the Tasks tab with its
+        // detail open. The Tasks tab opens the pending id once its list has
+        // loaded, so a cold start works the same.
         final String? taskId = data['taskId'] ?? data['task_id'];
         context.go('/home');
         if (taskId != null && taskId.isNotEmpty) {

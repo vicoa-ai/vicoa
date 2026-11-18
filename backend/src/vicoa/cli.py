@@ -1907,6 +1907,15 @@ Examples:
         metavar="WHO",
         help="Only tasks assigned to `me`, `none`, an agent's name, or an id",
     )
+    task_ls.add_argument(
+        "--waiting-on",
+        dest="waiting_on",
+        metavar="WHO",
+        help=(
+            "Only tasks with an open question to this person: `me`, an email, "
+            "a user id, or their name"
+        ),
+    )
 
     task_get = task_sub.add_parser(
         "get", parents=[task_common], help="Show one task's full details"
@@ -2047,6 +2056,24 @@ Examples:
         help=(
             "Reply to this comment. Threads are one level deep — replying to a "
             "reply lands in the same thread."
+        ),
+    )
+    task_comment.add_argument(
+        "--ask",
+        action="store_true",
+        help=(
+            "Make the comment a question to one person: they are notified, and "
+            "the task waits on them until they comment (or it leaves blocked, "
+            "reaches in_review, or closes). Asks whoever started this run "
+            "unless --to. Only from a session started from an agent"
+        ),
+    )
+    task_comment.add_argument(
+        "--to",
+        metavar="WHO",
+        help=(
+            "With --ask: whom to ask, `me`, an email, a user id, or their name. "
+            "Must be someone who can see the task"
         ),
     )
 

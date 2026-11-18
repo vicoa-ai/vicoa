@@ -8,6 +8,7 @@ import {
   mentionRanges,
   mentionedAgentIds,
   parseAgentMentionHref,
+  parseUserMentionHref,
   serializeMentions,
   stripNotePrefix,
 } from './task-mentions';
@@ -102,5 +103,45 @@ describe('composer mentions', () => {
   it('strips the /note prefix for display', () => {
     expect(stripNotePrefix('/note remember the edge case')).toBe('remember the edge case');
     expect(stripNotePrefix('  /note: done')).toBe('done');
+  });
+});
+
+describe('questions and people', () => {
+  const C = '33333333-3333-4333-8333-333333333333';
+  const askers = [{ id: B, name: 'Codex' }];
+
+  it('an answer wakes the agent that asked, wherever it is written', () => {
+    expect(agentsToWake('B', { ...top, askers })).toEqual([B, A]);
+    expect(
+      agentsToWake('B', { inThread: true, threadAgentId: null, assigneeAgentId: null, askers }),
+    ).toEqual([B]);
+  });
+
+  it('alongside an explicit mention', () => {
+    expect(agentsToWake(`[@C](vicoa://agent/${C}) help`, { ...top, askers })).toEqual([B, C]);
+  });
+
+  it('a note answers nobody', () => {
+    expect(agentsToWake('/note later', { ...top, askers })).toEqual([]);
+  });
+
+  it('a person mention wakes no agent', () => {
+    const body = `[@Ada](vicoa://user/${C}) look`;
+    expect(mentionedAgentIds(body)).toEqual([]);
+    expect(agentsToWake(body, { inThread: false, threadAgentId: null, assigneeAgentId: null })).toEqual(
+      [],
+    );
+    expect(parseUserMentionHref(`vicoa://user/${C}`)).toBe(C);
+    expect(parseAgentMentionHref(`vicoa://user/${C}`)).toBeNull();
+  });
+
+  it('a picked person is sent as a user link', () => {
+    const picks = [
+      { id: C, name: 'Ada', kind: 'user' as const },
+      { id: A, name: 'bot', kind: 'agent' as const },
+    ];
+    expect(serializeMentions('@Ada and @bot', picks)).toBe(
+      `[@Ada](vicoa://user/${C}) and [@bot](vicoa://agent/${A})`,
+    );
   });
 });

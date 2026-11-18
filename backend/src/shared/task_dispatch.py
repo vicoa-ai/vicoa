@@ -8,7 +8,8 @@ commit, by the task query layer every surface already goes through:
   profile, or moving an agent's task out of backlog, asks it to take the task
   over (Ownership mode).
 * `on_comment_created` — a person's comment the agent should answer (Reply
-  mode), routed by `route_comment`.
+  mode), routed by `route_comment`. That includes the answer to a question the
+  agent asked them, which fires its wakeup (`shared/task_wakeups.py`).
 
 The server-side dispatcher (`servers/scheduler/task_dispatcher.py`) delivers
 the queue. This module only decides *whether* and *what*; it never talks to a
@@ -42,6 +43,7 @@ from shared.database.liveness import machine_is_online
 from shared.database.models import AgentInstance, Machine
 from shared.database.task_dispatch_models import TaskDispatch
 from shared.database.task_models import ProjectDirectory, Task, TaskComment
+from shared.task_wakeups import agents_waiting_on
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,12 @@ NOTE_PREFIX = "/note"
 # mention starts a run on someone's machine.
 _AGENT_MENTION_RE = re.compile(
     r"\(vicoa://agent/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)"
+)
+# A person, the same way: `[@Name](vicoa://user/<user id>)`. It tells them (a
+# push), and nothing else: it never wakes an agent and never makes a question.
+_USER_MENTION_RE = re.compile(
+    r"\(vicoa://user/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)"
 )
 # A task in these states is never started by an assignment.
@@ -72,14 +80,23 @@ def is_note(body: str | None) -> bool:
     return _NOTE_RE.match((body or "").lstrip()) is not None
 
 
+def _mentioned(pattern: re.Pattern[str], body: str | None) -> list[UUID]:
+    seen: list[UUID] = []
+    for match in pattern.finditer(body or ""):
+        principal_id = UUID(match.group(1))
+        if principal_id not in seen:
+            seen.append(principal_id)
+    return seen
+
+
 def mentioned_profile_ids(body: str | None) -> list[UUID]:
     """Agent profiles a comment @mentions, in order, each once."""
-    seen: list[UUID] = []
-    for match in _AGENT_MENTION_RE.finditer(body or ""):
-        profile_id = UUID(match.group(1))
-        if profile_id not in seen:
-            seen.append(profile_id)
-    return seen
+    return _mentioned(_AGENT_MENTION_RE, body)
+
+
+def mentioned_user_ids(body: str | None) -> list[UUID]:
+    """People a comment @mentions, in order, each once."""
+    return _mentioned(_USER_MENTION_RE, body)
 
 
 def is_person(actor: Actor | None) -> bool:
@@ -96,11 +113,16 @@ class StartCheck:
     reason: str | None = None
 
 
-def check_can_start(db: Session, profile_id: UUID, person_id: UUID) -> StartCheck:
+def check_can_start(
+    db: Session, profile_id: UUID, person_id: UUID, *, invited: bool = False
+) -> StartCheck:
     """Whether `person_id` may start `profile_id` on its owner's machine.
 
-    A personal profile: only its owner. A team's profile has no single machine
-    it belongs to yet, so v1 lets it be assigned but not started.
+    A personal profile: only its owner, unless the agent `invited` this
+    person's comment by asking them a question; then their answer may wake it,
+    since the agent (on its owner's behalf) is the one who asked. A team's
+    profile has no single machine it belongs to yet, so v1 lets it be assigned
+    but not started.
     """
     profile = db.get(AgentProfile, profile_id)
     if profile is None:
@@ -109,7 +131,7 @@ def check_can_start(db: Session, profile_id: UUID, person_id: UUID) -> StartChec
         return StartCheck(profile, "this agent is archived")
     if profile.team_id is not None:
         return StartCheck(profile, "team agents can't start runs yet")
-    if profile.user_id != person_id:
+    if profile.user_id != person_id and not invited:
         return StartCheck(profile, "only the agent's owner can start it")
     return StartCheck(profile)
 
@@ -574,11 +596,29 @@ def route_comment(
 ) -> list[tuple[UUID, str]]:
     """Which agent profiles a person's comment is for, and why.
 
-    1. It @mentions agents → those, and nothing else.
+    Always: the agents waiting for its author's reply on this task
+    (`answered`). Any comment of theirs fires those wakeups
+    (`task_wakeups.on_comment_created`), so each agent that asked hears it,
+    wherever on the task it was written. Then the first rule that applies:
+
+    1. It @mentions agents → those.
     2. It replies in a thread an agent has written in → the latest such agent.
        (A reply in a thread with no agent in it stays between people.)
     3. It is top level on a task assigned to an agent → that agent.
     """
+    routes: dict[UUID, str] = {
+        profile_id: "answered"
+        for profile_id in agents_waiting_on(db, task, comment.author_id)
+    }
+    for profile_id, trigger in _addressed_to(db, task, comment):
+        routes.setdefault(profile_id, trigger)
+    return list(routes.items())
+
+
+def _addressed_to(
+    db: Session, task: Task, comment: TaskComment
+) -> list[tuple[UUID, str]]:
+    """Rules 1-3 of `route_comment`."""
     mentioned = mentioned_profile_ids(comment.body)
     if mentioned:
         return [(profile_id, "mentioned") for profile_id in mentioned]
@@ -602,25 +642,29 @@ def route_comment(
     return []
 
 
-def on_comment_created(db: Session, task: Task, comment: TaskComment) -> None:
+def on_comment_created(
+    db: Session, task: Task, comment: TaskComment
+) -> dict[UUID, TaskDispatch]:
     """A person commented: queue a Reply-mode dispatch for each agent it is for.
+    Returns them by agent profile.
 
     On a Done or Cancelled task only an explicit @mention starts anything: a
     mention is a deliberate pick, while a comment or a reply there is usually
     people talking about finished work."""
+    queued: dict[UUID, TaskDispatch] = {}
     if comment.author_type != "user" or is_note(comment.body):
-        return
+        return queued
     person = comment.author_id
     routes = route_comment(db, task, comment)
     if task.status in _CLOSED_STATUSES:
         routes = [route for route in routes if route[1] == "mentioned"]
     for profile_id, trigger in routes:
-        check = check_can_start(db, profile_id, person)
+        check = check_can_start(db, profile_id, person, invited=trigger == "answered")
         if check.profile is None or check.reason is not None:
             # A mention the person can't run is still a mention: the comment
             # posts, nothing starts. The composer's hint already said so.
             continue
-        enqueue(
+        queued[profile_id] = enqueue(
             db,
             task=task,
             profile=check.profile,
@@ -629,6 +673,7 @@ def on_comment_created(db: Session, task: Task, comment: TaskComment) -> None:
             requested_by=person,
             comment_id=comment.id,
         )
+    return queued
 
 
 # --- What the task shows ------------------------------------------------------
