@@ -414,6 +414,7 @@ async def create_cli_key(
 @router.delete("/me")
 def delete_user_account(
     current_user: User = Depends(get_current_user),
+    claims: Principal = Depends(get_current_claims),
     db: Session = Depends(get_db),
 ):
     """Delete the current user's account and all associated data.
@@ -425,6 +426,12 @@ def delete_user_account(
     for every other request on this worker.
     """
     user_id = current_user.id
+    # The identities to delete: the row's, and the one the caller signed in
+    # with. They differ when the provider's account was re-created with the
+    # same email (the row keeps the old id, see `find_local_user`); deleting
+    # only the row's would leave the caller's login alive after the account
+    # is gone.
+    identity_ids = list(dict.fromkeys([user_id, claims.user_id]))
 
     # Delete from database (including Stripe cancellation)
     try:
@@ -433,14 +440,23 @@ def delete_user_account(
         logger.error(f"Failed to delete user {user_id} from database: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to delete user account")
 
-    # Delete the identity itself. The provider treats an already-absent user as
+    # Delete the identities. The provider treats an already-absent user as
     # success, so only a real failure lands in the except.
-    try:
-        get_auth_provider().delete_user(user_id)
-        logger.info(f"Successfully deleted user {user_id} from the auth provider")
-    except AuthProviderError as e:
-        # Log the error but don't fail - DB deletion already succeeded
-        logger.error(f"Failed to delete user {user_id} from the auth provider: {e}")
+    provider = get_auth_provider()
+    failed = False
+    for identity_id in identity_ids:
+        try:
+            provider.delete_user(identity_id)
+            logger.info(
+                f"Successfully deleted user {identity_id} from the auth provider"
+            )
+        except AuthProviderError as e:
+            # Log the error but don't fail - DB deletion already succeeded
+            logger.error(
+                f"Failed to delete user {identity_id} from the auth provider: {e}"
+            )
+            failed = True
+    if failed:
         # Return 207 Multi-Status to indicate partial success
         return {
             "message": "User account deleted from database but failed to delete from authentication provider",
