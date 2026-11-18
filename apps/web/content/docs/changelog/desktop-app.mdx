@@ -5,6 +5,17 @@ description: Release notes for the Vicoa desktop app (macOS, Windows) — new fe
 
 # Desktop App
 
+### v0.1.46
+18 November, 2026
+- Bundle Vicoa CLI daemon [v1.9.18](/docs/changelog/vicoa-cli#v1918)
+- Send a message to a closed or stopped session to resume it: the chat box stays open and sending relaunches the session on its machine, with your message waiting for the agent. The model, effort and mode controls are read-only while a send would resume, and the box stays locked when the computer is offline or the session was deleted. Only the owner can resume
+- An agent that needs a decision or access now asks you on the task instead of handing it over. The card, the list row and the question show "Waiting on you", you get a push, and any comment you write wakes the agent with your answer (a comment starting with `/note` does not). `@` lists the people on the project too, and mentioning a person sends them a push without waking an agent
+- Tasks has one Filter menu beside the view tabs, with Assignee, Relation to me (Assigned to me and Waiting on me) and Labels. Ticks stay while the menu is open, the button reads "N filters" and "Clear filters" sits at the foot
+- A worktree on a detached HEAD shows its short commit with a "detached" tag, and a worktree in the middle of a rebase keeps its branch name with a "rebasing" tag, in the sidebar, the worktree picker, the delete dialog and the Git panel
+- Re-opening a session you already read no longer marks it unread
+- The answer to a Claude question stays in the transcript, including in shared views and forked history
+- Fix the desktop app stopping a daemon you run for another server when its own daemon restarts
+
 ### v0.1.45
 17 November, 2026
 - Bundle Vicoa CLI daemon [v1.9.17](/docs/changelog/vicoa-cli#v1917)
