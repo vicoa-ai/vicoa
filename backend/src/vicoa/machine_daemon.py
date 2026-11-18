@@ -67,6 +67,7 @@ from vicoa.machine_identity import (
     api_key_fingerprint,
     decide_identity_action,
 )
+from vicoa.constants import HOSTED_API_URL
 from vicoa.machine_fingerprint import compute_stable_machine_id, hardware_id_hash
 from vicoa.sdk.exceptions import AuthenticationError, MachineLimitReached
 from vicoa.machine_state import (
@@ -301,8 +302,10 @@ def _extract_base_url_from_command(command: str) -> str | None:
     """Pull the ``--base-url`` value out of a daemon's command line, if any.
 
     ``build_daemon_command`` always emits the flag, so every daemon spawned by
-    this version is tagged. Returns ``None`` for legacy daemons whose argv
-    omitted the flag — the caller maps those to the default URL.
+    this version is tagged. Returns ``None`` when argv omits it: legacy daemons,
+    and the one the desktop shell supervises (it passes no ``--base-url``, so
+    the daemon resolves its server from ``VICOA_API_URL``, see
+    ``_daemon_base_url``).
     """
     parts = command.split()
     for idx, part in enumerate(parts):
@@ -313,12 +316,53 @@ def _extract_base_url_from_command(command: str) -> str | None:
     return None
 
 
+def _read_process_env_var(
+    pid: int, name: str, proc_root: Path = Path("/proc")
+) -> str | None:
+    """Return ``name`` from another process's environment, or ``None``.
+
+    Only Linux exposes it (``/proc/<pid>/environ``, readable by the same
+    user). macOS (checked on 26) gives a non-root caller no environment for
+    another process (``ps -E`` shows none), so there this is ``None``. The value
+    is the environment the process started with, which is what
+    ``DEFAULT_API_URL`` reads at import.
+    """
+    if pid <= 0 or not sys.platform.startswith("linux"):
+        return None
+    try:
+        raw = (proc_root / str(pid) / "environ").read_bytes()
+    except OSError:
+        return None
+    prefix = name.encode() + b"="
+    for entry in raw.split(b"\0"):
+        if entry.startswith(prefix):
+            return entry[len(prefix) :].decode("utf-8", errors="ignore")
+    return None
+
+
+def _daemon_base_url(pid: int, command: str) -> str:
+    """The normalized URL of the server a running daemon talks to.
+
+    ``--base-url`` on its command line wins. Without it, the daemon resolved
+    ``DEFAULT_API_URL`` in its own process: its own ``VICOA_API_URL``, else the
+    hosted server. Never this process's ``VICOA_API_URL``: a caller pointed at
+    another server would take the hosted daemon for its own, and ``--takeover``
+    would stop it.
+    """
+    flag = _extract_base_url_from_command(command)
+    if flag:
+        return normalize_base_url(flag)
+    own_url = _read_process_env_var(pid, "VICOA_API_URL")
+    return normalize_base_url(own_url or HOSTED_API_URL)
+
+
 def _scan_process_list_for_daemons() -> dict[str, int]:
     """Return ``{normalized_base_url: pid}`` for every running vicoa daemon.
 
     Used as a fallback when the state file is stale or missing — e.g. the user
-    cleared ``~/.vicoa/`` while a daemon was running. Daemons whose command
-    line omits ``--base-url`` are bucketed under the default URL.
+    cleared ``~/.vicoa/`` while a daemon was running, or the caller uses
+    another ``HOME``. Each daemon is filed under the URL it uses itself
+    (``_daemon_base_url``).
     """
     if os.name != "posix":
         return {}
@@ -346,8 +390,7 @@ def _scan_process_list_for_daemons() -> dict[str, int]:
             continue
         if not _command_looks_like_vicoa_daemon(command):
             continue
-        raw_url = _extract_base_url_from_command(command)
-        key = normalize_base_url(raw_url)
+        key = _daemon_base_url(pid, command)
         # First match wins — there should never be two daemons for the same
         # URL, but if there are, the older PID is the live one we care about.
         discovered.setdefault(key, pid)
