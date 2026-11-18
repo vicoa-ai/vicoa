@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GitBranch, Plus, Check, Loader2 } from "lucide-react";
+import { GitBranch, GitCommitHorizontal, Plus, Check, Loader2 } from "lucide-react";
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,13 @@ import {
   type WorktreeNameCheck,
 } from "@/components/files-git-panel/rpc";
 import { validateWorktreeName, type WorktreeMode } from "@/lib/worktree-selection";
+import { CheckoutRefTag } from "@/components/checkout-ref-tag";
+import {
+  checkoutRefBranch,
+  checkoutRefLabel,
+  checkoutRefOf,
+  checkoutRefTag,
+} from "@/lib/checkout-ref";
 
 /**
  * Popover-anchored worktree picker for the new-session page — the web
@@ -339,6 +346,11 @@ export function WorktreePickerPopover({
             <div className="space-y-1 max-h-56 overflow-y-auto custom-scrollbar pr-1">
               {worktrees.map((wt) => {
                 const isSelected = mode === "existing" && selectedPath === wt.path;
+                const checkoutRef = checkoutRefOf({
+                  branch: wt.branch,
+                  head: wt.head,
+                  rebasingBranch: wt.rebasing_branch,
+                });
                 return (
                   <div
                     key={wt.path}
@@ -346,14 +358,23 @@ export function WorktreePickerPopover({
                   >
                     <button
                       type="button"
-                      onClick={() => select("existing", wt.path, wt.branch)}
+                      onClick={() =>
+                        select("existing", wt.path, checkoutRefBranch(checkoutRef))
+                      }
                       className="flex min-w-0 flex-1 items-center gap-1.5 text-left cursor-pointer"
-                      title={wt.path}
+                      title={[wt.path, checkoutRefTag(checkoutRef)?.title]
+                        .filter(Boolean)
+                        .join("\n")}
                     >
-                      <GitBranch className="h-3 w-3 flex-shrink-0" />
+                      {checkoutRef.kind === "detached" ? (
+                        <GitCommitHorizontal className="h-3 w-3 flex-shrink-0" />
+                      ) : (
+                        <GitBranch className="h-3 w-3 flex-shrink-0" />
+                      )}
                       <span className="font-mono truncate">
-                        {wt.branch || "(detached)"}
+                        {checkoutRefLabel(checkoutRef)}
                       </span>
+                      <CheckoutRefTag checkoutRef={checkoutRef} />
                       {isSelected && <Check className="h-3 w-3 flex-shrink-0" />}
                     </button>
                     {!wt.managed && (

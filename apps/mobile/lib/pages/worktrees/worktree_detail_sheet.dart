@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '/custom_code/actions/rpc_git.dart';
 import '/custom_code/actions/rpc_github.dart' show PrInfo;
+import '/custom_code/utils/checkout_ref.dart';
 import '/custom_code/utils/pr_status.dart';
 import '/custom_code/utils/worktree_selection.dart';
 import '/flutter_flow/flutter_flow_icon_button.dart';
@@ -99,7 +100,13 @@ class _WorktreeDetailSheetState extends State<_WorktreeDetailSheet> {
   Widget build(BuildContext context) {
     final theme = FlutterFlowTheme.of(context);
     final l10n = AppLocalizations.of(context);
-    final branch = _wt.branch.isNotEmpty ? _wt.branch : l10n.worktreesDetached;
+    final branch = checkoutRefLabel(
+      l10n,
+      branch: _wt.branch,
+      head: _wt.head,
+      rebasingBranch: _wt.rebasingBranch,
+      unknownCommit: l10n.worktreesDetached,
+    );
     final inUse = _inUse;
 
     return Container(

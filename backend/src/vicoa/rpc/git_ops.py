@@ -70,6 +70,40 @@ def _is_git_repo(abs_dir: Path) -> bool:
     return proc.returncode == 0 and proc.stdout.strip() == b"true"
 
 
+# Where git records the branch a rebase in progress is rewriting: the merge
+# backend's state dir, then the apply backend's.
+_REBASE_HEAD_NAME_PATHS = ("rebase-merge/head-name", "rebase-apply/head-name")
+
+
+def rebasing_branch(abs_dir: Path) -> str:
+    """The branch a rebase in progress at `abs_dir` is rewriting, else `""`.
+
+    Git detaches HEAD for as long as a rebase runs, so `git status` and
+    `git worktree list` both call the checkout detached while it is, to the
+    user, still on its branch. Git keeps that branch in `head-name` under the
+    checkout's own git dir (`--git-path` resolves it per worktree). A rebase
+    started from a detached HEAD writes `detached HEAD` there, which names no
+    branch, so only a `refs/heads/` value counts. One `rev-parse`: call it for
+    a detached checkout only.
+    """
+    args = [arg for path in _REBASE_HEAD_NAME_PATHS for arg in ("--git-path", path)]
+    proc = _git(abs_dir, "rev-parse", *args)
+    if proc.returncode != 0:
+        return ""
+    for line in proc.stdout.decode("utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        # Relative to the directory git ran in, for the main checkout's `.git`.
+        head_name_file = abs_dir / line.strip()
+        try:
+            head_name = head_name_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if head_name.startswith("refs/heads/"):
+            return head_name.removeprefix("refs/heads/")
+    return ""
+
+
 def _split_porcelain_records(blob: bytes) -> list[bytes]:
     """Split `-z` porcelain output into one record per file/header.
 
@@ -481,6 +515,9 @@ def git_status(cwd: str) -> dict[str, Any]:
         result["upstream"] = branch_info["upstream"]
     if branch_info["detached_head"]:
         result["detached_head"] = True
+        rebasing = rebasing_branch(abs_dir)
+        if rebasing:
+            result["rebasing_branch"] = rebasing
     if did_hit_limit:
         result["did_hit_limit"] = True
         result["status_length"] = status_length

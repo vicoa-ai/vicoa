@@ -20,6 +20,7 @@ import weakref
 from pathlib import Path
 from typing import Any
 
+from vicoa.rpc.git_ops import rebasing_branch
 from vicoa.rpc.worktree_names import disambiguate, generate_unique_name
 from vicoa.utils import get_project_path
 from vicoa.rpc.worktree_paths import (
@@ -355,11 +356,21 @@ def _remote_branches(abs_dir: Path) -> dict[str, str]:
     return remote_branches
 
 
+def _rebasing_branch_of(rec: dict[str, Any]) -> str:
+    """`rebasing_branch` for one porcelain record. Only a detached checkout
+    can be mid-rebase, and a prunable one has no folder to ask, so every other
+    record skips the extra `rev-parse`."""
+    if not rec.get("detached") or rec.get("prunable"):
+        return ""
+    return rebasing_branch(Path(rec["path"]))
+
+
 def list_worktrees(cwd: str) -> dict[str, Any]:
     """List a repo's linked worktrees, plus where its main checkout is.
 
     Returns `{"main_path", "main_display_path", "main_branch", "worktrees":
-    [{path, display_path, branch, upstream, head, managed, prunable}]}` or
+    [{path, display_path, branch, upstream, head, rebasing_branch, managed,
+    prunable}]}` or
     `{"error":
     "not_a_repo"}`. `cwd` may be any directory of the repo — a subfolder or a
     linked worktree — which is what makes `main_path` useful: it lets a client
@@ -379,6 +390,9 @@ def list_worktrees(cwd: str) -> dict[str, Any]:
     the registration lingers — the app shows such a worktree as deleted.
     `upstream` is the remote branch the worktree's branch pushes to (`""` when
     it has none); see `_remote_branches` for why it can differ from `branch`.
+    `rebasing_branch` names the branch a detached worktree is in the middle of
+    rebasing (`""` otherwise): git detaches HEAD for a rebase, so `branch` is
+    empty then even though the worktree is still on that branch to the user.
     """
     abs_dir = Path(os.path.expanduser(cwd)).resolve()
     if not _is_git_repo(abs_dir):
@@ -408,6 +422,7 @@ def list_worktrees(cwd: str) -> dict[str, Any]:
             "branch": rec.get("branch", ""),
             "upstream": remote_branches.get(rec.get("branch", ""), ""),
             "head": rec.get("head", ""),
+            "rebasing_branch": _rebasing_branch_of(rec),
             "managed": _is_managed(rec["path"]),
             "prunable": bool(rec.get("prunable", False)),
         }

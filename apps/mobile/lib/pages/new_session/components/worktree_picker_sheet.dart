@@ -8,6 +8,7 @@ import '/flutter_flow/flutter_flow_theme.dart';
 import '/l10n/app_localizations.dart';
 import '/custom_code/actions/index.dart' as actions;
 import '/custom_code/actions/rpc_git.dart';
+import '/custom_code/utils/checkout_ref.dart';
 import '/custom_code/utils/worktree_selection.dart';
 import '/pages/common/worktree_actions.dart';
 
@@ -115,7 +116,7 @@ class _WorktreePickerSheetState extends State<_WorktreePickerSheet> {
       selected: widget.currentMode == WorktreeMode.existing &&
           widget.currentPath == wt.path,
       onTap: () =>
-          _pick((mode: WorktreeMode.existing, path: wt.path, branch: wt.branch)),
+          _pick((mode: WorktreeMode.existing, path: wt.path, branch: wt.currentBranch)),
     );
     if (!wt.managed) return row;
     return Dismissible(
@@ -352,9 +353,13 @@ class _WorktreeRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  info.branch.isNotEmpty
-                      ? info.branch
-                      : AppLocalizations.of(context).worktreePickerDetached,
+                  checkoutRefLabel(
+                    AppLocalizations.of(context),
+                    branch: info.branch,
+                    head: info.head,
+                    rebasingBranch: info.rebasingBranch,
+                    unknownCommit: AppLocalizations.of(context).worktreePickerDetached,
+                  ),
                   style: theme.bodyMedium.override(
                     font: GoogleFonts.firaCode(),
                     fontSize: 14.0,

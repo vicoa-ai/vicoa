@@ -430,14 +430,6 @@
     }
   },
   "filesGitXCouldntLoadStatus": "Couldn’t load status",
-  "filesGitXDetachedAt": "(detached at {branch})",
-  "@filesGitXDetachedAt": {
-    "placeholders": {
-      "branch": {
-        "type": "Object"
-      }
-    }
-  },
   "filesGitXDiffTruncated": "Diff truncated — open on desktop for the rest.",
   "filesGitXExpandAllTooltip": "Expand all",
   "filesGitXHideWhitespaceTooltip": "Hide whitespace",
@@ -1314,6 +1306,24 @@
   "worktreePickerWorktree": "Worktree",
   "worktreesCouldNotLoad": "Couldn't load worktrees",
   "worktreesDetached": "(detached)",
+  "worktreesDetachedAt": "{sha} (detached)",
+  "@worktreesDetachedAt": {
+    "description": "A checkout on a detached HEAD, labelled by its short commit: a worktree row, the worktree picker, the Git tab's branch strip.",
+    "placeholders": {
+      "sha": {
+        "type": "String"
+      }
+    }
+  },
+  "worktreesRebasing": "{branch} (rebasing)",
+  "@worktreesRebasing": {
+    "description": "A checkout in the middle of a rebase: git detaches HEAD, but it is still on this branch.",
+    "placeholders": {
+      "branch": {
+        "type": "String"
+      }
+    }
+  },
   "worktreesNoWorktreesSubtitle": "Start a session in a new worktree to create one. It'll show up here for you to manage.",
   "worktreesNoWorktreesYet": "No worktrees yet",
   "worktreesNotAGitRepo": "Not a git repository",

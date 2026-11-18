@@ -9,6 +9,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '/custom_code/actions/git_tab_model.dart';
 import '/custom_code/actions/rpc_git.dart';
+import '/custom_code/utils/checkout_ref.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/l10n/app_localizations.dart';
 
@@ -101,7 +102,13 @@ class GitStatusStrip extends StatelessWidget {
     final spans = <InlineSpan>[];
     spans.add(TextSpan(
       text: status.detachedHead
-          ? l10n.filesGitXDetachedAt(status.branch)
+          ? checkoutRefLabel(
+              l10n,
+              branch: '',
+              head: status.branch,
+              rebasingBranch: status.rebasingBranch,
+              unknownCommit: l10n.worktreesDetached,
+            )
           : status.branch,
       style: TextStyle(
         color: theme.primaryText,

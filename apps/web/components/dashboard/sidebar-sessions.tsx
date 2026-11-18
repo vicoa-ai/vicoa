@@ -135,6 +135,13 @@ import {
   type WorktreeInfo,
 } from '@/components/files-git-panel/rpc';
 import { prForCheckout, type PrInfo } from '@/components/dashboard/pr-status';
+import {
+  checkoutRefBranch,
+  checkoutRefLabel,
+  checkoutRefOf,
+  checkoutRefOfStatus,
+  type CheckoutRef,
+} from '@/lib/checkout-ref';
 
 // Selected-row highlight for session rows (filter-menu.tsx carries its own copy).
 const ITEM_SELECTED = 'bg-foreground/[0.08] dark:bg-foreground/10 text-foreground';
@@ -163,12 +170,13 @@ const GROUP_BY_OPTIONS: { value: GroupBy; label: string }[] = [
 ];
 
 /** Per-project git view backing worktree display: the live worktree list plus
-    the main checkout's current branch (the "main folder" header). `worktrees`
+    what the main checkout has checked out (the "main folder" header), null
+    while unknown. `worktrees`
     is null when the list could not be fetched (machine offline, old daemon,
     cwd gone) — "unknown", which must never read as "no worktrees": that is
     what would flag every session's worktree as deleted. */
 interface ProjectGitView {
-  branch: string | null;
+  mainRef: CheckoutRef | null;
   worktrees: WorktreeInfo[] | null;
   /** Session folders that existed when `worktrees` was fetched — the only ones
       the list can vouch for (see `splitProjectByWorktree`'s `judgeable`). */
@@ -186,6 +194,9 @@ interface ProjectGitView {
 interface RenderedSubGroup {
   key: string;
   label: string;
+  /** What the checkout has checked out, when known: tags the label when it is
+      not a plain branch (detached, or mid-rebase). */
+  checkoutRef?: CheckoutRef;
   instances: AgentInstanceResponse[];
   /** Target of this group's "+" — the project's folder (the repo's main
       checkout, never the worktree) — or null to hide it. */
@@ -197,7 +208,7 @@ interface RenderedSubGroup {
   missing: boolean;
   /** Right-click delete target, or null when not removable (main / unmanaged).
       `repoDir` is the main checkout every worktree RPC runs from. */
-  remove: { machineId: string; repoDir: string; path: string; branch: string } | null;
+  remove: { machineId: string; repoDir: string; path: string; checkoutRef: CheckoutRef } | null;
   /** This group's branch PR, when it has one — colors the branch icon. */
   pr: PrInfo | null;
 }
@@ -247,7 +258,7 @@ interface GitViewTarget {
 /** One project's git view as just fetched. `prs` is null on a transient
     failure. */
 interface FetchedGitView {
-  branch: string | null;
+  mainRef: CheckoutRef | null;
   worktrees: WorktreeInfo[] | null;
   judgeable: ReadonlySet<string>;
   prs: PrSnapshot | null;
@@ -269,21 +280,23 @@ async function fetchGitView(
   // The main checkout's branch comes with the list. `git status` (a full
   // working-tree scan, the slowest call of a refresh) only answers for a
   // daemon that predates `main_branch`, or a detached main checkout, which it
-  // labels by commit. A failed list means the machine can't answer either.
-  const branch =
+  // labels by commit (and, mid-rebase, by the branch being rebased). A failed
+  // list means the machine can't answer either.
+  const mainRef =
     !target.mainPath || !listing
       ? null
-      : listing.mainBranch ||
-        (await rpcGitStatus(machineId, target.mainPath)
-          .then((s) => s.branch)
-          .catch(() => null));
+      : listing.mainBranch
+        ? checkoutRefOf({ branch: listing.mainBranch })
+        : await rpcGitStatus(machineId, target.mainPath)
+            .then(checkoutRefOfStatus)
+            .catch(() => null);
   // Cached, unlike the local-git calls above: this one spends a GitHub API
   // request, and `focus` fires as often as the user alt-tabs. Not asked at all
   // for a project with no branch rows to decorate.
   const prs: PrSnapshot | null = hasWorktreeRows(worktrees, target.worktreePaths)
     ? await rpcGithubPrListCached(machineId, target.listPath, prMaxAgeMs).catch(() => null)
     : { prs: {}, fetchedAt: Date.now() };
-  return { branch, worktrees, judgeable, prs };
+  return { mainRef, worktrees, judgeable, prs };
 }
 
 /** Fold a fetch into the view on hand. The git half always replaces it; the
@@ -930,7 +943,7 @@ export function SidebarSessions({
     machineId: string;
     repoDir: string;
     path: string;
-    branch: string;
+    checkoutRef: CheckoutRef;
     /** The worktree's open sessions, with their tasks for Settings → Tasks. */
     sessions: { id: string; task_id: string | null }[];
     hasSession: boolean;
@@ -1018,11 +1031,11 @@ export function SidebarSessions({
       machineId: string;
       repoDir: string;
       path: string;
-      branch: string;
+      checkoutRef: CheckoutRef;
       missing: boolean;
       instances: AgentInstanceResponse[];
     }) => {
-      const { machineId, repoDir, path, branch, missing, instances } = target;
+      const { machineId, repoDir, path, checkoutRef, missing, instances } = target;
       const sessions = instances
         .filter((i) => !CLOSED_STATUSES.has(i.status))
         .map((i) => ({ id: i.id, task_id: i.task_id ?? null }));
@@ -1056,7 +1069,7 @@ export function SidebarSessions({
         machineId,
         repoDir,
         path,
-        branch,
+        checkoutRef,
         sessions,
         hasSession,
         isDirty,
@@ -1294,25 +1307,32 @@ export function SidebarSessions({
           null;
         const subs: RenderedSubGroup[] = [];
         const prs = view?.prs ?? {};
+        const mainRef = view?.mainRef ?? null;
         if (mainInstances.length > 0) {
           subs.push({
             key: `${key}::__main__`,
-            label: view?.branch ?? 'main',
+            label: mainRef ? checkoutRefLabel(mainRef) : 'main',
+            checkoutRef: mainRef ?? undefined,
             instances: mainInstances,
             directory: foreignProject ? null : mainDirectory,
             missing: false,
             remove: null,
             // The default branch rarely has a PR of its own; when it does
             // (a release branch checked out as main) it labels correctly.
-            pr: prForCheckout(prs, { branch: view?.branch ?? '' }),
+            pr: prForCheckout(prs, { branch: mainRef ? checkoutRefBranch(mainRef) : '' }),
           });
         }
         for (const w of worktrees) {
+          const checkoutRef = checkoutRefOf(w);
+          // The branch the user sees it on: a worktree mid-rebase is still on
+          // its branch, for the "+" preselect and the PR lookup alike.
+          const branch = checkoutRefBranch(checkoutRef);
           subs.push({
             // Keyed on the folder, like the group itself: a branch switch inside
             // the worktree relabels the row without resetting its collapse state.
             key: `${key}::wt::${w.path}`,
-            label: w.branch || '(detached)',
+            label: checkoutRefLabel(checkoutRef),
+            checkoutRef,
             instances: w.instances,
             // The "+" starts at the PROJECT's folder with this worktree
             // preselected; the new-session page derives the cwd. No "+" on a
@@ -1320,7 +1340,7 @@ export function SidebarSessions({
             // without a known main checkout to anchor the project chip on.
             directory: w.missing || foreignProject ? null : repoDirectory,
             worktreePath: w.missing ? undefined : w.path,
-            worktreeBranch: w.branch || undefined,
+            worktreeBranch: branch || undefined,
             missing: w.missing,
             // Any real linked worktree is removable (the daemon confines
             // removal to actual worktrees of the repo, not just managed ones);
@@ -1333,10 +1353,10 @@ export function SidebarSessions({
                   machineId: repoMachineId,
                   repoDir: repoDirectory ?? w.path,
                   path: w.path,
-                  branch: w.branch,
+                  checkoutRef,
                 }
               : null,
-            pr: prForCheckout(prs, w),
+            pr: prForCheckout(prs, { ...w, branch }),
           });
         }
         if (subs.length === 0) return notSplit;
@@ -2052,6 +2072,7 @@ export function SidebarSessions({
                                 <div key={rsub.key}>
                                   <WorktreeSubGroupHeader
                                     label={rsub.label}
+                                    checkoutRef={rsub.checkoutRef}
                                     collapsed={isSubCollapsed}
                                     onToggleCollapsed={() => toggleGroupCollapsed(rsub.key)}
                                     newSessionDirectory={rsub.directory}
@@ -2164,7 +2185,7 @@ export function SidebarSessions({
           onOpenChange={(open) => {
             if (!open) setWorktreeDelete(null);
           }}
-          branch={worktreeDelete?.branch ?? ''}
+          checkoutRef={worktreeDelete?.checkoutRef ?? null}
           hasSession={worktreeDelete?.hasSession ?? false}
           isDirty={worktreeDelete?.isDirty ?? false}
           error={worktreeDelete?.error ?? null}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { GitBranch, Loader2 } from 'lucide-react';
+import { GitBranch, GitCommitHorizontal, Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -11,6 +11,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { CheckoutRefTag } from '@/components/checkout-ref-tag';
+import { checkoutRefLabel, checkoutRefTag, type CheckoutRef } from '@/lib/checkout-ref';
 
 export function RenameSessionDialog({
   open,
@@ -135,12 +137,14 @@ export function DeleteSessionDialog({
  * Confirm removing a git worktree from the sidebar (feature #4). Shown when the
  * removal isn't clean — a live session and/or uncommitted changes. A running
  * session is archived before the folder is removed; the branch and its commits
- * are always kept, which the copy states so the user knows work survives.
+ * are always kept, which the copy states so the user knows work survives. A
+ * detached worktree has no branch to keep its commits, and one mid-rebase loses
+ * the rebase, so for those the copy says what is kept instead.
  */
 export function WorktreeDeleteDialog({
   open,
   onOpenChange,
-  branch,
+  checkoutRef,
   hasSession,
   isDirty,
   error,
@@ -148,7 +152,8 @@ export function WorktreeDeleteDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  branch: string;
+  /** What the worktree has checked out; null only while the dialog is closed. */
+  checkoutRef: CheckoutRef | null;
   hasSession: boolean;
   isDirty: boolean;
   error: string | null;
@@ -160,12 +165,26 @@ export function WorktreeDeleteDialog({
         <DialogHeader>
           <DialogTitle>Delete worktree</DialogTitle>
           <DialogDescription>
-            This removes the worktree&apos;s folder. Its branch and commits are kept.
+            {checkoutRef?.kind === 'detached'
+              ? "This removes the worktree's folder. It isn't on a branch, so commits that exist only in it are not kept."
+              : checkoutRef?.kind === 'rebasing'
+                ? "This removes the worktree's folder and drops the rebase in progress. Its branch keeps the commits it had before the rebase."
+                : "This removes the worktree's folder. Its branch and commits are kept."}
           </DialogDescription>
         </DialogHeader>
         <div className="p-3 border rounded-md bg-muted/50 flex items-center gap-2">
-          <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="font-medium text-sm truncate">{branch || '(detached)'}</span>
+          {checkoutRef?.kind === 'detached' ? (
+            <GitCommitHorizontal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <span
+            className="font-medium text-sm truncate"
+            title={checkoutRef ? checkoutRefTag(checkoutRef)?.title : undefined}
+          >
+            {checkoutRef ? checkoutRefLabel(checkoutRef) : ''}
+          </span>
+          {checkoutRef && <CheckoutRefTag checkoutRef={checkoutRef} />}
         </div>
         {(hasSession || isDirty) && (
           <ul className="text-xs text-muted-foreground list-disc pl-5 space-y-0.5">

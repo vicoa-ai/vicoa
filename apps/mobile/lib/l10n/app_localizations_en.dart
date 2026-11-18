@@ -964,11 +964,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get filesGitXCouldntLoadStatus => 'Couldn’t load status';
 
   @override
-  String filesGitXDetachedAt(Object branch) {
-    return '(detached at $branch)';
-  }
-
-  @override
   String get filesGitXDiffTruncated =>
       'Diff truncated — open on desktop for the rest.';
 
@@ -2900,6 +2895,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get worktreesDetached => '(detached)';
+
+  @override
+  String worktreesDetachedAt(String sha) {
+    return '$sha (detached)';
+  }
+
+  @override
+  String worktreesRebasing(String branch) {
+    return '$branch (rebasing)';
+  }
 
   @override
   String get worktreesNoWorktreesSubtitle =>

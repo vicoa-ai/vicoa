@@ -381,6 +381,25 @@ describe('splitProjectByWorktree (git-driven)', () => {
     expect(byBranch.empty).toMatchObject({ upstream: '', head: '789abc' });
   });
 
+  it('carries the branch a detached worktree is rebasing, with or without sessions', () => {
+    const live = make({ id: 'live', project: '~/wt/live', worktree_name: 'happy' });
+
+    const { worktrees } = splitProjectByWorktree(
+      [live],
+      [
+        wt('/home/u/wt/live', '', true, { display_path: '~/wt/live', head: 'abc123', rebasing_branch: 'happy' }),
+        wt('/home/u/wt/empty', '', true, { head: 'def456', rebasing_branch: 'calm' }),
+        wt('/home/u/wt/plain', '', true, { head: '789abc', rebasing_branch: '' }),
+      ],
+    );
+
+    const byPath = Object.fromEntries(worktrees.map((w) => [w.path, w]));
+    // Git reports all three detached; only the rebasing ones name a branch.
+    expect(byPath['~/wt/live']).toMatchObject({ branch: '', rebasingBranch: 'happy' });
+    expect(byPath['/home/u/wt/empty']).toMatchObject({ branch: '', rebasingBranch: 'calm' });
+    expect(byPath['/home/u/wt/plain']).toMatchObject({ branch: '', rebasingBranch: '', head: '789abc' });
+  });
+
   it('prefers the home-collapsed display_path for a session-less worktree', () => {
     const { worktrees } = splitProjectByWorktree(
       [],

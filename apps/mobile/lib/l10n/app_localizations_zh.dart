@@ -929,11 +929,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get filesGitXCouldntLoadStatus => '无法加载状态';
 
   @override
-  String filesGitXDetachedAt(Object branch) {
-    return '（分离于 $branch）';
-  }
-
-  @override
   String get filesGitXDiffTruncated => 'Diff 已截断 — 在桌面端查看剩余内容。';
 
   @override
@@ -2754,7 +2749,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get worktreePickerCurrentBranchSubtitle => '不使用工作树· 在该目录中运行';
 
   @override
-  String get worktreePickerDetached => '（游离）';
+  String get worktreePickerDetached => '（分离）';
 
   @override
   String get worktreePickerExistingWorktrees => '现有工作树';
@@ -2783,7 +2778,17 @@ class AppLocalizationsZh extends AppLocalizations {
   String get worktreesCouldNotLoad => '无法加载工作树';
 
   @override
-  String get worktreesDetached => '(detached)';
+  String get worktreesDetached => '（分离）';
+
+  @override
+  String worktreesDetachedAt(String sha) {
+    return '$sha（分离）';
+  }
+
+  @override
+  String worktreesRebasing(String branch) {
+    return '$branch（变基中）';
+  }
 
   @override
   String get worktreesNoWorktreesSubtitle => '在新工作树中开始任务即可创建一个，创建后会显示在这里供你管理。';

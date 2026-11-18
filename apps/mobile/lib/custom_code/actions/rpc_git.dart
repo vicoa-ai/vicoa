@@ -55,12 +55,17 @@ class GitStatusResult {
     required this.unstaged,
     required this.untracked,
     this.upstream,
+    this.rebasingBranch = '',
   });
   final String branch;
   final int ahead;
   final int behind;
   final String? upstream;
   final bool detachedHead;
+  /// The branch a detached HEAD is in the middle of rebasing (`''` when no
+  /// rebase runs, or on an older daemon). Git detaches HEAD for a rebase, so
+  /// [branch] holds the short commit then, while the user is still on this.
+  final String rebasingBranch;
   final List<GitFileEntry> staged;
   final List<GitFileEntry> unstaged;
   final List<GitFileEntry> untracked;
@@ -81,6 +86,7 @@ class GitStatusResult {
       behind: json['behind'] as int? ?? 0,
       upstream: json['upstream'] as String?,
       detachedHead: json['detached_head'] as bool? ?? false,
+      rebasingBranch: json['rebasing_branch'] as String? ?? '',
       staged: parseSection('staged'),
       unstaged: parseSection('unstaged'),
       untracked: parseSection('untracked'),
@@ -200,10 +206,19 @@ class WorktreeInfo {
     this.prunable = false,
     this.upstream = '',
     this.displayPath,
+    this.rebasingBranch = '',
   });
   final String path;
   final String branch;
   final String head;
+  /// The branch a detached worktree is in the middle of rebasing (`''`
+  /// otherwise, and on an older daemon): [branch] is empty during a rebase,
+  /// since git detaches HEAD for it, though the worktree is still on this.
+  final String rebasingBranch;
+
+  /// The branch the worktree is on for the user: [branch], else the one it
+  /// is rebasing. `''` for a plain detached HEAD.
+  String get currentBranch => branch.isNotEmpty ? branch : rebasingBranch;
   final bool managed;
   /// Git's own verdict that the checkout directory is gone while the
   /// registration lingers — such a worktree can't be started in.
@@ -225,6 +240,7 @@ class WorktreeInfo {
         prunable: json['prunable'] as bool? ?? false,
         upstream: json['upstream'] as String? ?? '',
         displayPath: json['display_path'] as String?,
+        rebasingBranch: json['rebasing_branch'] as String? ?? '',
       );
 }
 

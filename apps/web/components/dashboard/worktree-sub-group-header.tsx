@@ -1,6 +1,12 @@
 'use client';
 
-import { ChevronRight, MoreHorizontal, Trash2, type LucideIcon } from 'lucide-react';
+import {
+  ChevronRight,
+  GitCommitHorizontal,
+  MoreHorizontal,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -17,6 +23,8 @@ import { cn } from '@/lib/utils';
 import { NewSessionButton, newSessionHref } from '@/components/dashboard/new-session-button';
 import { PrHoverCard } from '@/components/dashboard/pr-hover-card';
 import { prPresentation, type PrInfo } from '@/components/dashboard/pr-status';
+import { CheckoutRefTag } from '@/components/checkout-ref-tag';
+import { checkoutRefTag, type CheckoutRef } from '@/lib/checkout-ref';
 
 interface WorktreeAction {
   key: string;
@@ -27,6 +35,9 @@ interface WorktreeAction {
 
 export interface WorktreeSubGroupHeaderProps {
   label: string;
+  /** What the checkout has checked out. A detached HEAD or a rebase in
+      progress gets a tag beside the label; absent or a branch, no tag. */
+  checkoutRef?: CheckoutRef;
   collapsed: boolean;
   onToggleCollapsed: () => void;
   /** Target of this group's "+" — the PROJECT's folder (the repo's main
@@ -65,6 +76,7 @@ export interface WorktreeSubGroupHeaderProps {
  */
 export function WorktreeSubGroupHeader({
   label,
+  checkoutRef,
   collapsed,
   onToggleCollapsed,
   newSessionDirectory,
@@ -80,7 +92,11 @@ export function WorktreeSubGroupHeader({
     ? [{ key: 'delete', icon: Trash2, label: 'Delete', onSelect: onRequestDelete }]
     : [];
 
-  const { icon: BranchIcon, className: branchIconClassName } = prPresentation(pr);
+  const { icon: prIcon, className: branchIconClassName } = prPresentation(pr);
+  // A detached checkout is on a commit, so it gets the commit glyph, unless a
+  // PR (found by its head commit) recolors the row.
+  const BranchIcon = !pr && checkoutRef?.kind === 'detached' ? GitCommitHorizontal : prIcon;
+  const refTitle = checkoutRef ? checkoutRefTag(checkoutRef)?.title : undefined;
   // One size for every state, PR or not. PR data lands a beat after the sidebar
   // first paints, so a size that depended on it would jog every branch row in
   // the list a second after load; only the glyph and colour may change.
@@ -106,6 +122,7 @@ export function WorktreeSubGroupHeader({
         >
           {branchIcon}
           <span
+            title={refTitle}
             className={cn(
               'truncate text-[11px] font-light text-muted-foreground/60',
               missing && 'line-through text-muted-foreground/40',
@@ -113,6 +130,7 @@ export function WorktreeSubGroupHeader({
           >
             {label}
           </span>
+          {checkoutRef && <CheckoutRefTag checkoutRef={checkoutRef} />}
           {missing && (
             <span
               title="This worktree's folder no longer exists"
