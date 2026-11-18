@@ -241,9 +241,11 @@ export function taskMatchesLabels(task: TaskResponse, active: Set<string>): bool
 }
 
 /**
- * Assignee filter values: `ASSIGNEE_ME` (whoever is signed in, so a saved
- * "Assigned to me" view follows the account rather than an id),
- * `ASSIGNEE_NONE` (unassigned), or an agent profile id.
+ * Assignee filter values: `ASSIGNEE_NONE` (unassigned) or an agent profile id.
+ * "Me" is not one of them any more: it lives in the Relation to me dimension
+ * ("Assigned to me"), so the filter bar offers "me" in one place only.
+ * `ASSIGNEE_ME` is the value views saved before that, migrated by
+ * `normalizeView`.
  */
 export const ASSIGNEE_ME = 'me';
 export const ASSIGNEE_NONE = 'none';
@@ -257,26 +259,57 @@ export function activeAssigneeFilter(
   assigneeFilter: string[],
   agentIds: readonly string[],
 ): Set<string> {
-  const known = new Set<string>([ASSIGNEE_ME, ASSIGNEE_NONE, ...agentIds]);
+  const known = new Set<string>([ASSIGNEE_NONE, ...agentIds]);
   return new Set(assigneeFilter.filter((value) => known.has(value)));
 }
 
 /**
  * A task passes when its assignee is any of the active values (none active =
- * all). `viewerId` is null until the signed-in user is known; "Me" matches
- * nothing until then rather than everything.
+ * all). A task assigned to a person passes only the Relation to me dimension.
  */
 export function taskMatchesAssignee(
   task: Pick<TaskResponse, 'assignee_type' | 'assignee_id'>,
   active: Set<string>,
-  viewerId: string | null,
 ): boolean {
   if (active.size === 0) return true;
   if (!task.assignee_id) return active.has(ASSIGNEE_NONE);
-  if (task.assignee_type === 'user') {
-    return active.has(ASSIGNEE_ME) && viewerId !== null && task.assignee_id === viewerId;
-  }
   return task.assignee_type === 'agent' && active.has(task.assignee_id);
+}
+
+/**
+ * How a task relates to the signed-in user: `assigned` (they are its
+ * assignee). Kept as words rather than an id so a saved view follows whoever
+ * is signed in.
+ */
+export type TaskRelation = 'assigned';
+
+/** Ordered entries for the Relation to me picker. */
+export const TASK_RELATION_OPTIONS: { key: TaskRelation; label: string }[] = [
+  { key: 'assigned', label: 'Assigned to me' },
+];
+
+function isTaskRelation(value: unknown): value is TaskRelation {
+  return value === 'assigned';
+}
+
+/** The view's relation filter without values this build doesn't know. */
+export function activeRelationFilter(relationFilter: readonly string[]): Set<TaskRelation> {
+  return new Set(relationFilter.filter(isTaskRelation));
+}
+
+/**
+ * A task passes when it relates to the viewer in any of the active ways (none
+ * active = all). `viewerId` is null until the signed-in user is known; then
+ * nothing matches rather than everything.
+ */
+export function taskMatchesRelation(
+  task: Pick<TaskResponse, 'assignee_type' | 'assignee_id'>,
+  active: Set<TaskRelation>,
+  viewerId: string | null,
+): boolean {
+  if (active.size === 0) return true;
+  if (viewerId === null) return false;
+  return active.has('assigned') && task.assignee_type === 'user' && task.assignee_id === viewerId;
 }
 
 export interface TaskView {
@@ -287,9 +320,12 @@ export interface TaskView {
   projectFilter: string;
   /** Label ids; a task shows when it has any of them. Empty = no label filter. */
   labelFilter: string[];
-  /** ASSIGNEE_ME / ASSIGNEE_NONE / agent profile ids; a task shows when its
-   *  assignee is any of them. Empty = no assignee filter. */
+  /** ASSIGNEE_NONE / agent profile ids; a task shows when its assignee is any
+   *  of them. Empty = no assignee filter. */
   assigneeFilter: string[];
+  /** How the task relates to the viewer; a task shows when it relates in any
+   *  of these ways. Empty = no relation filter. */
+  relationFilter: TaskRelation[];
   /** When false, sub-tasks (tasks with a parent) are hidden — parents only. */
   showSubTasks: boolean;
   /** Which optional properties render on rows/cards. */
@@ -324,6 +360,7 @@ export function defaultView(): TaskView {
     projectFilter: 'all',
     labelFilter: [],
     assigneeFilter: [],
+    relationFilter: [],
     showSubTasks: true,
     properties: { ...DEFAULT_TASK_PROPERTIES },
     sortBy: DEFAULT_TASK_SORT,
@@ -332,10 +369,27 @@ export function defaultView(): TaskView {
   };
 }
 
-/** Fill in any missing fields so a view saved by an older build stays usable. */
-function normalizeView(raw: Partial<TaskView> | null | undefined): TaskView | null {
+/**
+ * Fill in any missing fields so a view saved by an older build stays usable.
+ * A view saved while "Me" was an assignee value moves it to the Relation to me
+ * dimension, so a saved "Assigned to me" view keeps showing the same tasks.
+ */
+export function normalizeView(raw: Partial<TaskView> | null | undefined): TaskView | null {
   if (!raw || typeof raw !== 'object') return null;
   const base = defaultView();
+  const assignees = Array.isArray(raw.assigneeFilter)
+    ? raw.assigneeFilter.filter((id): id is string => typeof id === 'string')
+    : [];
+  const relations: TaskRelation[] = Array.isArray(raw.relationFilter)
+    ? raw.relationFilter.filter(isTaskRelation)
+    : [];
+  // Values in one dimension are OR, dimensions AND. "Me" alone moves across
+  // intact; "Me or haiku-bot" can't be said across two dimensions (it would
+  // AND into nothing), so there "Me" is dropped and the agents stay.
+  const onlyMe = assignees.length > 0 && assignees.every((id) => id === ASSIGNEE_ME);
+  if (onlyMe && !relations.includes('assigned')) {
+    relations.push('assigned');
+  }
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : base.id,
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name : base.name,
@@ -344,9 +398,8 @@ function normalizeView(raw: Partial<TaskView> | null | undefined): TaskView | nu
     labelFilter: Array.isArray(raw.labelFilter)
       ? raw.labelFilter.filter((id): id is string => typeof id === 'string')
       : [],
-    assigneeFilter: Array.isArray(raw.assigneeFilter)
-      ? raw.assigneeFilter.filter((id): id is string => typeof id === 'string')
-      : [],
+    assigneeFilter: assignees.filter((id) => id !== ASSIGNEE_ME),
+    relationFilter: [...new Set(relations)],
     showSubTasks: raw.showSubTasks !== false,
     // Merge over defaults so a property added in a newer build inherits `true`
     // for views saved before it existed.
@@ -388,6 +441,7 @@ export function cloneView(source: TaskView, name: string): TaskView {
     name,
     labelFilter: [...source.labelFilter],
     assigneeFilter: [...source.assigneeFilter],
+    relationFilter: [...source.relationFilter],
     properties: { ...source.properties },
     collapsed: [...source.collapsed],
   };
