@@ -138,6 +138,26 @@ describe('bridge host data', () => {
     expect(res.ok && (res.result as { id: string; labels: string[] }[]).map((t) => t.id)).toEqual(['1']);
   });
 
+  it('maps the open questions on a task, oldest first', async () => {
+    const who = { type: 'user' as const, id: 'u1', name: 'Nick', avatar_image_uri: null, emoji: null, updated_at: null };
+    const bot = { type: 'agent' as const, id: 'a1', name: 'vicoabot', avatar_image_uri: null, emoji: null, updated_at: null };
+    const listTasks = vi.fn(async () => [
+      task('1', {
+        open_questions: [
+          { comment_id: 'c2', addressee: who, asked_by: bot, asked_at: '2026-11-18T10:00:00Z' },
+          { comment_id: 'c1', addressee: who, asked_by: bot, asked_at: '2026-11-17T10:00:00Z' },
+        ],
+      }),
+      task('2'),
+    ]);
+    const { call } = setup({ permissions: ['tasks:read'] }, { listTasks });
+    const res = await call('tasks.list', {});
+    const tasks = (res.ok ? res.result : []) as { id: string; openQuestions: { commentId: string; addressee: { type: string; name: string } }[] }[];
+    expect(tasks.find((x) => x.id === '1')?.openQuestions.map((q) => q.commentId)).toEqual(['c1', 'c2']);
+    expect(tasks.find((x) => x.id === '1')?.openQuestions[0].addressee).toMatchObject({ type: 'user', name: 'Nick' });
+    expect(tasks.find((x) => x.id === '2')?.openQuestions).toEqual([]);
+  });
+
   it('pages sessions until it passes `since`', async () => {
     const row = (id: string, started: string) => ({
       id,

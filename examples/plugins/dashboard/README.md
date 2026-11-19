@@ -3,14 +3,21 @@
 A page in the Vicoa sidebar that answers, in this order: what needs you, what
 your agents did, and how each project is doing.
 
-- **Overview:** how many tasks need you (and how many you cleared today), a card
+**What needs you** is every open question an agent has asked a person on a task. The agent keeps the task (the
+assignee is who owns the work); the question waits until you comment on the task (any comment but a `/note`), the
+task leaves Blocked, reaches In Review or is closed, and your comment wakes the agent with your answer. Tasks
+assigned to you are your own work: they are listed apart, under Assigned to you. No label is needed. The count of
+what you cleared covers this visit only: the page remembers nothing between openings. It needs a desktop app whose
+plugin bridge reports `openQuestions` on tasks (added after v0.1.46); on an older one nothing shows under Needs you.
+
+- **Overview:** how many questions wait on you (and how many you cleared this visit), a card
   per project, the Needs you list, agent runs from the last 24 hours, what is
   scheduled next, and anything to watch (missed runs, flags from snapshots).
 - **Project page:** the project's numbers, its Needs you list, then two
   columns, Build and Growth, each with its own status and its latest runs; an
   ops line; and a Week tab that lays the runs out by day.
 - Click a task or a run and it opens in Vicoa's side panel, next to the page:
-  read the task, reply or reply and hand it back, start a session from it; read
+  read the task, comment on it, start a session from it; read
   a run's report and continue the session. J and K move through the list.
 
 Everything except the numbers comes from Vicoa itself: tasks, sessions,
@@ -38,7 +45,6 @@ Settings › Plugins › Dashboard, or from the page itself:
 
 | Setting | What it does |
 |---|---|
-| Needs-you label | Open tasks with this label (default `needs-human`) are listed under Needs you. Handing one back moves it to In Review, which takes it off the list. |
 | Projects | Which projects get a card, in order, by key (`APP`) or name. Empty: every project with open work, recent runs or a snapshot. |
 | Automation columns | Which column (Build, Growth or Ops) each automation's runs go in. Set it with the buttons under "Automation columns" on a project page, or let the project's `laneRules` (in its snapshot) sort them by title. A pick on the page wins over a rule. Runs of an automation with no column count under "not in a column". The list shows automations that are switched on, plus recurring ones that ran this week; spent one-off bookings are left out. |
 | Agent runs | Show only runs started by automations (default) or every session. Kept per device. |

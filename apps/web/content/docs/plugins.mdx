@@ -107,7 +107,7 @@ whose `code` is one of `permission_denied`, `not_found`, `not_allowed`,
 |---|---|---|
 | `context.get()` | `{ pluginId, pluginName, surfaceId, machineId, machineName, platform, theme, apiVersion, permissions }` | |
 | `projects.list()` | projects: `{ id, name, key, archived, directories: [{ machineId, path }] }` | `projects:read` |
-| `tasks.list({ projectId?, status?, label?, limit? })` | tasks: `{ id, identifier, projectId, title, description, status, priority, labels, dueDate, assignee, createdAt, updatedAt }` | `tasks:read` |
+| `tasks.list({ projectId?, status?, label?, limit? })` | tasks: `{ id, identifier, projectId, title, description, status, priority, labels, dueDate, assignee, openQuestions, createdAt, updatedAt }`; `assignee` owns the work, and `openQuestions` (`{ commentId, addressee, askedBy, askedAt }`, oldest first) are the questions an agent asked that wait on someone | `tasks:read` |
 | `tasks.get(id)`, `tasks.comments(id)` | a task; its comments `{ id, body, author, sessionId, createdAt }` | `tasks:read` |
 | `tasks.watch(filter, callback)` | calls back with the list now and whenever it changes; resolves to a stop function | `tasks:read` |
 | `tasks.comment(id, body)`, `tasks.update(id, patch)`, `tasks.create(data)` | | `tasks:write` |

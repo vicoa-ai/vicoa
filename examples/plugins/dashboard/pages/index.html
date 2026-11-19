@@ -124,19 +124,19 @@
 
 // ---------------------------------------------------------------------------
 // Data the page uses, all through window.vicoa (see plugin.json permissions):
-//   tasks with the "needs you" label, sessions from the last day, automations
+//   tasks with a question waiting on a person, tasks assigned to a person, sessions from the last day, automations
 //   and their runs, projects, and each project's optional snapshot file
 //   (<project folder>/.vicoa/dashboard.local.json, format in the README).
 // ---------------------------------------------------------------------------
 
-const OPEN = ['backlog', 'todo', 'in_progress', 'blocked'];
+const CLOSED = ['done', 'cancelled'];
 const SNAPSHOT = '.vicoa/dashboard.local.json';
 const DAY = 86400000;
 const STALE_DAYS = 3;        // a snapshot not written for longer shows under Watch (the file's staleAfterDays wins)
 const LANES = [['build', 'Build'], ['growth', 'Growth'], ['ops', 'Ops']];
 
 const S = {
-  ctx: null, settings: {}, projects: [], needs: [], handled: [], automations: [], sessions: [],
+  ctx: null, settings: {}, projects: [], needs: [], mine: [], cleared: new Map(), automations: [], sessions: [],
   runs: new Map(),          // automationId -> runs (newest first)
   runsState: new Map(),     // automationId -> 'loading' | 'done' (runs are fetched when a view needs them)
   bySession: new Map(),     // sessionId -> { automation, run }
@@ -155,6 +155,7 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&':
 const pad = (n) => String(n).padStart(2, '0');
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fmtTime = (iso) => { const d = new Date(iso); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+const ago = (ms) => { const m = Math.max(0, Math.floor((Date.now() - ms) / 60000)); return m < 60 ? m + ' min ago' : m < 1440 ? Math.floor(m / 60) + ' h ago' : Math.floor(m / 1440) + ' d ago'; };
 const fmtDay = (iso) => { const d = new Date(iso); return MONTHS[d.getMonth()] + ' ' + d.getDate(); };
 const fmtWhen = (iso) => fmtDay(iso) + ', ' + fmtTime(iso);
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s));
@@ -300,20 +301,38 @@ function projectOf(automation) {
   return null;
 }
 
-const DEFAULT_LABEL = 'needs-human';
+/**
+ * A task needs you while an agent has an open question to a person on it: the agent
+ * asked on the task and keeps it, and the question waits until you comment (any
+ * comment but a `/note`), the task leaves Blocked, reaches In Review or closes. The
+ * assignee is who owns the work, so a task assigned to you is your own work, listed
+ * apart ("Assigned to you") unless it also has a question waiting.
+ */
+const questionsFor = (t) => (t.openQuestions || []).filter((q) => q.addressee && q.addressee.type === 'user');
+const needsYou = (t) => !CLOSED.includes(t.status) && questionsFor(t).length > 0;
+const assignedToYou = (t) => !CLOSED.includes(t.status) && !!t.assignee && t.assignee.type === 'user' && !needsYou(t);
+const askedAt = (t) => Math.min(...questionsFor(t).map((q) => Date.parse(q.askedAt)));
 
 /**
- * Tasks with the needs-you label, and the last day's sessions. The bridge
- * fetches every task and filters here-by-label itself, so ask once for all
- * statuses and split the answer, instead of paying for that fetch twice.
+ * Tasks that need you, tasks assigned to you, and the last day's sessions. The
+ * bridge fetches every task and filters here itself, so ask once for all of them
+ * and pick here. A task that was on the Needs you list at the last load and is not
+ * now is counted as cleared (answered, closed or moved on); only this page
+ * remembers that, so the count starts again at zero each time the Dashboard is
+ * opened.
  */
-async function loadLive(label) {
+async function loadLive() {
   const [tasks, sessions] = await Promise.all([
-    call(() => vicoa.tasks.list({ label: label || S.settings.needsLabel || DEFAULT_LABEL, limit: 1000 })),
+    call(() => vicoa.tasks.list({ limit: 1000 })),
     call(() => vicoa.sessions.list({ since: new Date(Date.now() - DAY).toISOString(), limit: 300 })),
   ]);
-  S.needs = tasks.filter((t) => OPEN.includes(t.status));
-  S.handled = tasks.filter((t) => t.status === 'in_review' || t.status === 'done');
+  const needs = tasks.filter(needsYou).sort((x, y) => askedAt(x) - askedAt(y));
+  const now = Date.now();
+  const still = new Set(needs.map((t) => t.id));
+  for (const t of S.needs) if (!still.has(t.id) && !S.cleared.has(t.id)) S.cleared.set(t.id, now);
+  for (const id of still) S.cleared.delete(id);   // asked again
+  S.needs = needs;
+  S.mine = tasks.filter(assignedToYou);
   S.sessions = sessions;
 }
 
@@ -362,10 +381,8 @@ async function loadAll() {
   S.runsState = new Map();
   S.bySession = new Map();
   // Start everything the first paint needs at once; each request takes about
-  // a second, so doing them one after another is what made the page slow. The
-  // tasks start with the default label and are redone below if the settings
-  // say otherwise.
-  const live = loadLive(DEFAULT_LABEL);
+  // a second, so doing them one after another is what made the page slow.
+  const live = loadLive();
   live.catch(() => {});
   const [ctx, settings, projects, automations] = await Promise.all([
     vicoa.context.get(),
@@ -378,7 +395,6 @@ async function loadAll() {
   S.projects = projects.filter((p) => !p.archived);
   S.automations = automations;
   await Promise.all([live, loadSnapshots()]);
-  if ((S.settings.needsLabel || DEFAULT_LABEL) !== DEFAULT_LABEL) await loadLive();
   S.loaded = true;
 }
 
@@ -403,6 +419,7 @@ const cachedSession = (id) => S.sessions.find((s) => s.id === id) || S.sessionCa
 
 const projectById = (id) => S.projects.find((p) => p.id === id) || null;
 const needsFor = (pid) => S.needs.filter((t) => t.projectId === pid);
+const mineFor = (pid) => S.mine.filter((t) => t.projectId === pid);
 
 function visibleProjects() {
   const wanted = (S.settings.projects || []).map((x) => String(x).toLowerCase());
@@ -490,6 +507,7 @@ function taskRow(t, ids, showProject) {
   if (t.priority === 'urgent') chips.push('<span class="chip bad">Urgent</span>');
   else if (t.priority === 'high') chips.push('<span class="chip">High</span>');
   if (t.status === 'blocked') chips.push('<span class="chip warn">Blocked</span>');
+  else if (t.status === 'in_review') chips.push('<span class="chip">In review</span>');
   if (t.dueDate) {
     const due = Date.parse(t.dueDate);
     if (due < startOfDay(Date.now())) chips.push('<span class="chip bad">' + ICON.bad + ' Overdue ' + esc(fmtDay(t.dueDate)) + '</span>');
@@ -497,7 +515,9 @@ function taskRow(t, ids, showProject) {
     else chips.push('<span class="chip">Due ' + esc(fmtDay(t.dueDate)) + '</span>');
   }
   const p = projectById(t.projectId);
-  const first = (t.description || '').split('\n').map((l) => l.replace(/[#>*`_]/g, '').trim()).find(Boolean) || '';
+  const qs = questionsFor(t);
+  const first = qs.length ? 'asked by ' + (qs[0].askedBy && qs[0].askedBy.name || 'an agent') + ' ' + ago(askedAt(t))
+    : (t.description || '').split('\n').map((l) => l.replace(/[#>*`_]/g, '').trim()).find(Boolean) || '';
   const meta = [t.identifier, showProject && p ? p.name : null, first].filter(Boolean).map(esc).join(' · ');
   const on = S.open && S.open.kind === 'task' && S.open.id === t.id ? ' on' : '';
   return '<div class="item' + on + '" data-act="task" data-id="' + esc(t.id) + '" data-list="' + esc(ids) + '"><div class="body">' +
@@ -506,7 +526,7 @@ function taskRow(t, ids, showProject) {
 }
 
 function needsBox(tasks, showProject) {
-  if (!tasks.length) return '<div class="box"><div class="empty">Nothing needs you. Tasks labeled ' + esc(S.settings.needsLabel || 'needs-human') + ' show up here.</div></div>';
+  if (!tasks.length) return '<div class="box"><div class="empty">Nothing needs you. Questions agents ask you on a task show up here.</div></div>';
   const ids = tasks.map((t) => t.id).join(',');
   return '<div class="box">' + tasks.map((t) => taskRow(t, ids, showProject)).join('') + '</div>';
 }
@@ -596,13 +616,13 @@ function projectCard(p) {
 
 function renderOverview() {
   const needs = S.needs;
-  const doneToday = S.handled.filter((t) => Date.parse(t.updatedAt) >= startOfDay(Date.now())).length;
+  const doneToday = [...S.cleared.values()].filter((at) => at >= startOfDay(Date.now())).length;
   const total = needs.length + doneToday;
   const due = needs.filter((t) => t.dueDate).sort((a, b) => Date.parse(a.dueDate) - Date.parse(b.dueDate))[0];
-  const oldest = needs.slice().sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))[0];
+  const oldest = needs[0];
   let sub = '';
   if (due) sub = 'Next due: ' + esc(due.title) + ', ' + esc(fmtDay(due.dueDate)) + '.';
-  else if (oldest) { const days = Math.floor((Date.now() - Date.parse(oldest.createdAt)) / DAY); sub = days >= 1 ? 'The oldest has waited ' + days + (days === 1 ? ' day.' : ' days.') : 'All of them came in today.'; }
+  else if (oldest) { const days = Math.floor((Date.now() - askedAt(oldest)) / DAY); sub = days >= 1 ? 'The oldest has waited ' + days + (days === 1 ? ' day.' : ' days.') : 'All of them came in today.'; }
   const headline = needs.length === 0 ? 'Nothing needs you.' : needs.length === 1 ? '1 thing needs you.' : needs.length + ' things need you.';
 
   const runs = overviewRuns();
@@ -611,10 +631,11 @@ function renderOverview() {
   const projects = visibleProjects();
 
   return '<div class="hero"><div><h1>' + headline + '</h1>' + (sub ? '<p>' + sub + '</p>' : '') + '</div>' +
-    (total ? '<div class="today"><div class="bar good"><i style="width:' + (total ? (doneToday / total) * 100 : 0).toFixed(1) + '%"></i></div>' + doneToday + ' of ' + total + ' done today</div>' : '') + '</div>' +
+    (total ? '<div class="today"><div class="bar good"><i style="width:' + (total ? (doneToday / total) * 100 : 0).toFixed(1) + '%"></i></div>' + doneToday + ' of ' + total + ' cleared since you opened this</div>' : '') + '</div>' +
     (projects.length ? '<div class="sec">Projects</div><div class="cards">' + projects.map(projectCard).join('') + '</div>' : '') +
     '<div class="split"><div class="main">' +
       '<div class="sec">Needs you' + (needs.length ? ', ' + needs.length : '') + '</div>' + needsBox(needs, true) +
+      (S.mine.length ? '<div class="sec">Assigned to you, ' + S.mine.length + '</div>' + needsBox(S.mine, true) : '') +
       '<div class="sec">Agent runs, last 24 h<span class="grow"></span>' +
         '<button class="link" data-act="scope">' + (S.settings.runsScope === 'all' ? 'Automations only' : 'All sessions') + '</button>' + runList.more + '</div>' +
       (runs.length ? '<div class="box">' + runList.rows.map((x) => runRow(x.id, x.who, runIds, x.at, x.fallback)).join('') + '</div>'
@@ -699,6 +720,7 @@ function renderProjectOverview(p) {
   return (snap && snap.data ? metricsHtml(d) : '<div class="box"><div class="empty">' +
       (snap && snap.error ? 'This project’s snapshot couldn’t be read: ' + esc(snap.error) + '.' : 'No numbers yet. Write them to <code>' + SNAPSHOT + '</code> in this project’s folder with the plugin’s <code>snapshot.py</code> (see its README).') + '</div></div>') +
     '<div class="sec">Needs you' + (needs.length ? ', ' + needs.length : '') + '</div>' + needsBox(needs, false) +
+    (mineFor(p.id).length ? '<div class="sec">Assigned to you, ' + mineFor(p.id).length + '</div>' + needsBox(mineFor(p.id), false) : '') +
     '<div class="cols">' + laneHtml(p, 'build', 'Build', d.build) + laneHtml(p, 'growth', 'Growth', d.growth) + '</div>' +
     (opsItems.length ? '<div class="ops">' + opsItems.join('') + '</div>' : '') +
     '<div class="split" style="margin-top:4px"><div>' + columnsBox(p) + '</div><div class="side"><div class="sec">Coming up</div>' + comingUp(p.id) +

@@ -25,6 +25,16 @@ export interface PluginPrincipal {
   name: string | null;
 }
 
+/** An open question on a task: an agent asked someone, and the task waits on their comment. */
+export interface PluginQuestion {
+  /** The comment that asks. */
+  commentId: string;
+  /** Who the question waits on. */
+  addressee: PluginPrincipal;
+  askedBy: PluginPrincipal;
+  askedAt: string;
+}
+
 export interface PluginProject {
   id: string;
   name: string;
@@ -53,6 +63,8 @@ export interface PluginTask {
   startDate: string | null;
   parentId: string | null;
   assignee: PluginPrincipal | null;
+  /** Questions waiting on someone, oldest first. Empty when nothing waits, and on a backend older than questions. */
+  openQuestions: PluginQuestion[];
   /** The session the task was created in, when it was. */
   createdInSessionId: string | null;
   createdAt: string;
@@ -131,6 +143,7 @@ export interface PluginAutomationRun {
 
 const principal = (p: PrincipalResponse | null | undefined): PluginPrincipal | null =>
   p ? { type: p.type, id: p.id, name: p.name } : null;
+const principalOf = (p: PrincipalResponse): PluginPrincipal => ({ type: p.type, id: p.id, name: p.name });
 
 export function mapProject(p: ProjectResponse): PluginProject {
   return {
@@ -159,6 +172,9 @@ export function mapTask(t: TaskResponse): PluginTask {
     startDate: t.start_date,
     parentId: t.parent_task_id,
     assignee: principal(t.assignee),
+    openQuestions: (t.open_questions ?? [])
+      .map((q) => ({ commentId: q.comment_id, addressee: principalOf(q.addressee), askedBy: principalOf(q.asked_by), askedAt: q.asked_at }))
+      .sort((a, b) => Date.parse(a.askedAt) - Date.parse(b.askedAt)),
     createdInSessionId: t.created_in_instance_id,
     createdAt: t.created_at,
     updatedAt: t.updated_at,
