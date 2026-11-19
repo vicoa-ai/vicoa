@@ -5,6 +5,18 @@ description: Release notes for the Vicoa desktop app (macOS, Windows) — new fe
 
 # Desktop App
 
+### v0.2.0
+19 November, 2026
+- Bundle Vicoa CLI daemon [v1.10.0](/docs/changelog/vicoa-cli#v1100)
+- The daemon no longer carries a Codex build, so the macOS and Linux downloads are much smaller. Codex sessions started from New Session are unchanged: they keep running your own installed Codex CLI
+- Blocked now sits with the open states, before Done, on the board, in the list, in the status pickers and in shared views
+- Messages queued ahead of a steered message stay in the queue bar until the agent runs them, instead of leaving it and looking sent
+- A burst of queued messages that the agent runs as one turn shows in the order you queued them
+- The dot on a stopped session's row in the sidebar is smaller
+- Fix deleting a long session failing with a timeout
+- Fix a machine showing online but refusing to start sessions, and the profile activity page staying empty, for an account re-created with the same email
+- Fix a deleted account being created again by a sign-in that was still valid
+
 ### v0.1.46
 18 November, 2026
 - Bundle Vicoa CLI daemon [v1.9.18](/docs/changelog/vicoa-cli#v1918)
