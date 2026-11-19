@@ -94,11 +94,11 @@ async def test_wait_coalesces_ready_messages(make_runner):
 
     assert merged is not None
     assert merged.content == "first\n\nsecond\n\nthird"
-    # Primary id rides the merged message; run_conversation_turn stamps it.
+    # Primary id rides the merged message, the others ride along in queue
+    # order; run_conversation_turn stamps them all (primary first).
     assert merged.message_id == "m1"
-    # The extra ids' queued badges are cleared here (the primary's is cleared
-    # by run_conversation_turn).
-    assert fake.mark_consumed_calls == ["m2", "m3"]
+    assert merged.merged_message_ids == ("m2", "m3")
+    assert fake.mark_consumed_calls == []
     assert runner._user_message_queue.empty()
 
 
@@ -150,7 +150,9 @@ async def test_wait_coalesce_drops_cancelled_extras(make_runner):
     assert merged is not None
     assert merged.content == "keep\n\nalso-keep"
     assert "m2" not in runner._cancelled_message_ids  # discarded on drop
-    assert fake.mark_consumed_calls == ["m3"]
+    # The cancelled id rides nowhere, so the turn never stamps it consumed.
+    assert merged.merged_message_ids == ("m3",)
+    assert fake.mark_consumed_calls == []
 
 
 # ---------------------------------------------------------------------------

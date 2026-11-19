@@ -203,6 +203,11 @@ class InboundUserMessage:
     content: str
     attachments: tuple[AttachmentRef, ...] = ()
     message_id: Optional[str] = None
+    # The other queued messages merged into this one (a coalesced burst),
+    # oldest first. ``run_conversation_turn`` stamps them consumed right after
+    # ``message_id``, so their ``consumed_at`` keeps the order they were queued
+    # in, which is the order the transcript shows them in.
+    merged_message_ids: tuple[str, ...] = ()
 
 
 # Human-readable labels for the SDK's ``RateLimitType`` literal. Keys mirror
@@ -3060,9 +3065,9 @@ class HeadlessClaudeRunner:
                 accepted.append(extra)
         if len(accepted) == 1:
             return first
-        return await self._merge_inbound_messages(accepted)
+        return self._merge_inbound_messages(accepted)
 
-    async def _merge_inbound_messages(
+    def _merge_inbound_messages(
         self, messages: List[InboundUserMessage]
     ) -> InboundUserMessage:
         """Combine several user messages into one turn's input.
@@ -3070,23 +3075,23 @@ class HeadlessClaudeRunner:
         Texts join on a blank line; attachments concatenate in arrival order.
         The primary (first) id rides the merged message so
         ``run_conversation_turn`` marks it consumed and tracks it as usual; the
-        remaining ids are marked consumed here so their queued badges clear too.
+        remaining ids ride ``merged_message_ids`` and are marked consumed right
+        after it, in queue order. Stamping them here, before the primary, gave
+        the later messages the earlier ``consumed_at``, and the web transcript
+        (sorted by ``consumed_at``) showed the first message below the others.
         """
         primary = messages[0]
         content = "\n\n".join(m.content for m in messages if m.content)
         attachments: tuple[AttachmentRef, ...] = tuple(
             att for m in messages for att in m.attachments
         )
-        for extra in messages[1:]:
-            if extra.message_id and self.vicoa_client:
-                try:
-                    await self.vicoa_client.mark_message_consumed(extra.message_id)
-                except Exception as e:
-                    self.logger.warning(f"mark_message_consumed failed: {e}")
         return InboundUserMessage(
             content=content,
             attachments=attachments,
             message_id=primary.message_id,
+            merged_message_ids=tuple(
+                m.message_id for m in messages[1:] if m.message_id
+            ),
         )
 
     async def _handle_control_command(self, content: str) -> bool:
@@ -3562,9 +3567,14 @@ class HeadlessClaudeRunner:
         # d736c51d-… at 23:59:13.
         self.last_message_id = None
 
-        if user_input.message_id and self.vicoa_client:
+        # The primary first, then the rest of a coalesced burst in queue order
+        # (``_merge_inbound_messages``), so ``consumed_at`` follows the queue.
+        consumed_ids = (user_input.message_id, *user_input.merged_message_ids)
+        for consumed_id in consumed_ids:
+            if not consumed_id or not self.vicoa_client:
+                continue
             try:
-                await self.vicoa_client.mark_message_consumed(user_input.message_id)
+                await self.vicoa_client.mark_message_consumed(consumed_id)
             except Exception as e:
                 self.logger.warning(f"mark_message_consumed failed: {e}")
 
