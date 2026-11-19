@@ -1,3 +1,0 @@
-[submodule "backend/src/integrations/cli_wrappers/codex"]
-	path = backend/src/integrations/cli_wrappers/codex
-	url = https://github.com/vicoa-ai/codex.git

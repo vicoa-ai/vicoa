@@ -54,10 +54,10 @@ Absolutely. Vicoa works with any project that Claude Code, Codex, or OpenCode ca
 ## How do I connect Vicoa with Codex?
 
 1. Follow the [Getting Started guide](/docs/getting-started) to install Vicoa
-2. Ensure Codex tools are installed and configured
-3. Run `vicoa --agent codex` or `vicoa codex` to start a session with Codex
-4. To set Codex as default for future sessions: `vicoa --set-default codex`
-5. Switch back to Claude Code anytime with `vicoa --set-default claude`
+2. Ensure Codex is installed and signed in on the machine that will run your sessions
+3. Keep the Vicoa daemon running on that machine (`vicoa daemon`; the desktop app already includes it)
+4. Click **New Session** in the app and choose Codex, or run `vicoa session start --agent codex --dir .` in your project directory
+5. `vicoa codex` is no longer supported; learn more in the [Codex documentation](/docs/agents/codex)
 
 ## How do I connect Vicoa with OpenCode?
 
@@ -135,7 +135,7 @@ Both the web app and mobile apps provide the same core functionality: access to 
 Yes, Vicoa supports Claude Code, Codex, and OpenCode. You can start a session with any agent and switch between them freely:
 
 - `vicoa` for Claude Code (default)
-- `vicoa codex` for Codex
+- **New Session** in the app, or `vicoa session start --agent codex --dir .`, for Codex
 - `vicoa opencode` for OpenCode
 
 Set your preferred default with `vicoa --set-default <agent>`. Learn more in the [Agents documentation](/docs/agents).

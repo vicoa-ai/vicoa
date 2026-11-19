@@ -96,9 +96,9 @@ def _classify(command: str) -> tuple[Optional[str], Optional[str]]:
         return ("amp", "tui")
 
     # ── TUI codex/opencode/claude/amp (vicoa wrapper process) ───────────
-    # `vicoa codex ...` execs the codex binary as a child; the python
-    # parent is what we identify here. The child `codex` binary itself has
-    # no vicoa signature so we'd never spot it otherwise.
+    # `vicoa codex` no longer launches anything, but a session started by an
+    # older CLI can outlive an upgrade; its python parent (the codex child
+    # carries no vicoa signature) is still a codex TUI, not the default agent.
     if any("vicoa" in t for t in tokens):
         if _NON_TUI_VICOA_TOKENS & set(tokens):
             return (None, None)

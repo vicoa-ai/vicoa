@@ -7,6 +7,7 @@ on what counts as a control message or a tool use.
 """
 
 import json
+import os
 import re
 import types
 from datetime import datetime, timedelta, timezone
@@ -627,6 +628,39 @@ class TestSessionStart:
         # Only the machines GET runs — no spawn.
         assert all(c[0] == "GET" for c in calls)
         assert not any("spawn-requests" in c[1] for c in calls)
+
+    def test_relative_dir_resolves_against_cwd_on_this_machine(
+        self, monkeypatch, tmp_path
+    ):
+        # The daemon gets the path verbatim, so `--dir .` must be made
+        # absolute here or the session starts somewhere arbitrary.
+        calls = []
+        monkeypatch.setattr(I, "request", self._fake_request(calls))
+        monkeypatch.setattr(I, "_local_machine_id", lambda args: "mach-1234")
+        monkeypatch.chdir(tmp_path)
+        rc = I._cmd_start(self._args(machine=None, dir="."), "key")
+        assert rc == 0
+        post = [c for c in calls if c[0] == "POST"][0]
+        assert post[2]["directory"] == os.path.abspath(str(tmp_path))
+
+    def test_relative_dir_refused_for_another_machine(self, monkeypatch, capsys):
+        calls = []
+        monkeypatch.setattr(I, "request", self._fake_request(calls))
+        monkeypatch.setattr(I, "_local_machine_id", lambda args: "some-other-host")
+        rc = I._cmd_start(self._args(dir="proj"), "key")
+        assert rc == 2
+        assert not any(c[0] == "POST" for c in calls)
+        assert "relative path" in capsys.readouterr().err
+
+    def test_home_relative_dir_passes_through(self, monkeypatch):
+        # `~` means the target machine's home, so it is not expanded here.
+        calls = []
+        monkeypatch.setattr(I, "request", self._fake_request(calls))
+        monkeypatch.setattr(I, "_local_machine_id", lambda args: None)
+        rc = I._cmd_start(self._args(dir="~/proj"), "key")
+        assert rc == 0
+        post = [c for c in calls if c[0] == "POST"][0]
+        assert post[2]["directory"] == "~/proj"
 
     def test_wait_polls_until_not_starting(self, monkeypatch, capsys):
         calls = []

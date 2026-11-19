@@ -1175,6 +1175,25 @@ def _select_machine(args, api_key: str, ref: Optional[str]) -> dict:
     sys.exit(1)
 
 
+def _resolve_spawn_directory(
+    directory: str, machine_id: str, local_id: Optional[str]
+) -> Optional[str]:
+    """Make ``--dir`` absolute where we can, or return None if we can't.
+
+    The daemon receives the path verbatim and has no idea where the caller's
+    shell was, so a relative ``--dir .`` would start the session somewhere
+    arbitrary. When the session runs on this host, resolve it against our cwd
+    (that is what the caller meant). For another machine our cwd means
+    nothing, so the caller has to spell the path out. ``~`` paths pass through
+    unchanged, as before: they mean the target machine's home.
+    """
+    if os.path.isabs(directory) or directory.startswith("~"):
+        return directory
+    if local_id is not None and machine_id == local_id:
+        return os.path.abspath(directory)
+    return None
+
+
 def _print_models(catalog: dict, agent_filter: Optional[str]) -> int:
     agents = catalog.get("agents", [])
     if agent_filter:
@@ -1428,6 +1447,19 @@ def _cmd_start(args, api_key: str) -> int:
 
     machine = _select_machine(args, api_key, machine_ref)
     machine_id = str(machine["machine_id"])
+
+    resolved_dir = _resolve_spawn_directory(
+        directory, machine_id, _local_machine_id(args)
+    )
+    if resolved_dir is None:
+        print(
+            f"--dir {directory!r} is a relative path, but the session runs on "
+            f"{_machine_label(machine)}, not this machine. Pass the full path "
+            "on that machine.",
+            file=sys.stderr,
+        )
+        return 2
+    directory = resolved_dir
 
     # A spawn-request only runs when the machine's daemon claims it. If the
     # daemon looks offline the request would silently queue forever, so refuse

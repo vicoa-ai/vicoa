@@ -35,8 +35,8 @@ vicoa
 # Start Claude Code
 vicoa
 
-# Start Codex
-vicoa codex
+# Start Codex in this directory (runs on the daemon, continue it in the Vicoa app)
+vicoa session start --agent codex --dir .
 
 # Start OpenCode
 vicoa opencode

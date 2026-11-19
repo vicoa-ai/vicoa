@@ -80,18 +80,6 @@ def build_platform_package(
     if meta["binary"] != "vicoa.exe":
         exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-    # Ensure executable bit on embedded agent binaries (codex, opencode, etc.)
-    inner_bin_dir = bin_dir / "_internal" / "vicoa" / "_bin"
-    if inner_bin_dir.is_dir():
-        for inner_bin in inner_bin_dir.rglob("*"):
-            if inner_bin.is_file() and inner_bin.suffix == "":
-                inner_bin.chmod(
-                    inner_bin.stat().st_mode
-                    | stat.S_IXUSR
-                    | stat.S_IXGRP
-                    | stat.S_IXOTH
-                )
-
     package_json = {
         "name": "@vicoa/cli",
         "version": pkg_version,

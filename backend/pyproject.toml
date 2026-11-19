@@ -59,13 +59,6 @@ vicoa = "vicoa.cli:main"
 where = ["src"]
 include = ["vicoa*", "protocol*", "servers.mcp*", "servers.shared*", "integrations*"]
 
-[tool.setuptools.package-data]
-vicoa = ["_bin/**"]
-
-[tool.vicoa]
-codex_build_version = "0.134.0"
-
-
 [tool.pytest.ini_options]
 # Test discovery
 testpaths = [
@@ -105,8 +98,3 @@ omit = [
 [tool.coverage.report]
 skip_covered = true
 show_missing = true 
-
-[tool.ruff]
-exclude = [
-    "src/integrations/cli_wrappers/codex",
-]

@@ -17,6 +17,7 @@ import webbrowser
 import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import secrets
+import shlex
 import requests
 import time
 import threading
@@ -1160,16 +1161,6 @@ def update_machine_recent_directories_async(args, api_key: str) -> None:
     thread.start()
 
 
-def _macos_major_version() -> Optional[int]:
-    """Return the macOS major version (e.g. 14) or None if not on macOS / unparseable."""
-    if platform.system() != "Darwin":
-        return None
-    try:
-        return int(platform.mac_ver()[0].split(".")[0])
-    except (ValueError, IndexError):
-        return None
-
-
 def _windows_unsupported_message() -> str:
     return (
         "This is not supported on Windows yet.\n"
@@ -1183,37 +1174,36 @@ def _windows_unsupported_message() -> str:
     )
 
 
-def _old_macos_codex_unsupported_message(mac_version: str) -> str:
-    return (
-        f"'vicoa codex' isn't supported on macOS {mac_version} yet.\n"
-        "\n"
-        "Try one of these instead on this machine:\n"
-        "    vicoa            # Claude Code\n"
-        "    vicoa opencode   # OpenCode\n"
-        "\n"
-        "Or run the daemon and launch Codex remotely from the web or mobile app:\n"
-        "\n"
-        "    vicoa daemon\n"
-        "\n"
-        "The daemon connects this machine to your Vicoa account."
-    )
+def _codex_terminal_unsupported_message(from_default: bool) -> str:
+    """What `vicoa codex` prints now that the terminal Codex mode is gone.
+
+    Codex still runs from the app: the daemon drives the user's own `codex
+    app-server` (integrations.headless.codex_native). Only the terminal mode,
+    which needed a bundled fork of the Codex CLI, was removed.
+    """
+    lines = [
+        "`vicoa codex` is no longer supported.",
+        "Start Codex from the Vicoa app, or from this terminal:",
+        f"  vicoa session start --agent codex --dir {shlex.quote(os.getcwd())}",
+    ]
+    if from_default:
+        lines += [
+            "",
+            "Codex is set as your default agent. To change it:",
+            "  vicoa --set-default claude",
+        ]
+    return "\n".join(lines)
 
 
-def _check_agent_platform_support(agent: str) -> Optional[str]:
-    """Return a user-facing message if `agent` can't run on this platform, else None.
+def _check_agent_platform_support() -> Optional[str]:
+    """Return a user-facing message if no terminal agent can run here, else None.
 
     Rules:
     - Windows: no interactive agent is supported; user should run `vicoa daemon`.
-    - macOS < 14 (Sonoma): only `vicoa codex` is blocked (the bundled Codex binary
-      requires macOS 14+). Claude and OpenCode still work.
-    - macOS 14+ / Linux: everything supported.
+    - macOS / Linux: everything supported.
     """
     if platform.system() == "Windows":
         return _windows_unsupported_message()
-
-    major = _macos_major_version()
-    if major is not None and 0 < major < 14 and agent == "codex":
-        return _old_macos_codex_unsupported_message(platform.mac_ver()[0])
 
     return None
 
@@ -1222,7 +1212,18 @@ def run_agent_default(args, unknown_args):
     """Run the agent locally without the relay."""
     agent = getattr(args, "agent", "claude").lower()
 
-    unsupported_msg = _check_agent_platform_support(agent)
+    # Before auth, the daemon and the syncs below: `vicoa codex` has nothing
+    # to launch any more, so it must not prompt for a login first.
+    if agent == "codex":
+        print(
+            _codex_terminal_unsupported_message(
+                from_default=getattr(args, "agent_from_default", False)
+            ),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    unsupported_msg = _check_agent_platform_support()
     if unsupported_msg is not None:
         print()
         print(unsupported_msg)
@@ -1321,16 +1322,6 @@ def run_agent_default(args, unknown_args):
             file=sys.stderr,
         )
         sys.exit(1)
-
-    if agent == "codex":
-        from vicoa.agents.codex import run_codex
-
-        exit_code = run_codex(args, unknown_args, api_key)
-        if exit_code is None:
-            exit_code = 0
-        if exit_code != 0:
-            sys.exit(exit_code)
-        return
 
     if agent == "opencode":
         from vicoa.agents.opencode import run_opencode
@@ -1516,10 +1507,6 @@ Examples:
   vicoa
   vicoa --api-key YOUR_API_KEY
 
-  # Start Codex chat
-  vicoa codex
-  vicoa codex --api-key YOUR_API_KEY
-
   # Start OpenCode chat
   vicoa opencode
   vicoa opencode --api-key YOUR_API_KEY
@@ -1530,7 +1517,9 @@ Examples:
 
   # Resume a previous session
   vicoa --resume SESSION_ID
-  vicoa codex --resume SESSION_ID
+
+  # Start a Codex session on this machine (continue it in the Vicoa app)
+  vicoa session start --agent codex --dir .
 
   # Start headless Claude (controlled via web dashboard)
   vicoa headless
@@ -1552,9 +1541,9 @@ Examples:
   vicoa --version
 
   # Set default agent for future runs
-  vicoa --set-default codex
+  vicoa --set-default opencode
   # or equivalently
-  vicoa --agent codex --set-default
+  vicoa --agent opencode --set-default
         """,
     )
 
@@ -2250,7 +2239,11 @@ Examples:
     session_start.add_argument(
         "--dir",
         metavar="PATH",
-        help="Directory on the target machine to start the session in",
+        help=(
+            "Directory on the target machine to start the session in. A "
+            "relative path (e.g. `.`) resolves against the current directory "
+            "when the session runs on this machine"
+        ),
     )
     session_start.add_argument(
         "--allow-offline",
@@ -2642,10 +2635,11 @@ Examples:
     )
     add_runner_arguments(claude_parser)
 
-    # 'codex' subcommand
+    # 'codex' subcommand: kept only so `vicoa codex` explains where Codex went
+    # (run_agent_default prints the pointer to the app / `session start`).
     codex_parser = subparsers.add_parser(
         "codex",
-        help="Run Codex agent",
+        help="No longer supported; start Codex from the Vicoa app",
     )
     add_runner_arguments(codex_parser)
 
@@ -2721,6 +2715,7 @@ Examples:
         default_agent = cfg.get("default_agent")
         if isinstance(default_agent, str) and default_agent in AGENT_CHOICES:
             args.agent = default_agent
+            args.agent_from_default = True
 
     if args.command == "claude":
         args.agent = "claude"

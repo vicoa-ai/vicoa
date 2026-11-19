@@ -61,9 +61,9 @@ confirm intent before running them:
 - `automation create/update/delete` — an **enabled** automation *will fire on its
   schedule* and dispatch a real agent session. Create with `--disabled` if you
   only want to stage it.
-- `vicoa` / `vicoa codex` / `vicoa daemon` / `vicoa headless` / `vicoa session
-  start` — start real processes and register sessions. `session start` spends
-  tokens on a machine that may not be the one you are on.
+- `vicoa` / `vicoa daemon` / `vicoa headless` / `vicoa session start` — start
+  real processes and register sessions. `session start` spends tokens on a
+  machine that may not be the one you are on.
 - `vicoa stop [sessions|all|<id>]` — kills live agents; don't stop sessions you
   didn't start without confirming. **Never stop a session as automatic cleanup**
   — including sessions you started this turn (e.g. a headless smoke-test or a
@@ -167,13 +167,16 @@ Locally, in this terminal:
 
 ```bash
 vicoa                      # Claude Code (default agent)
-vicoa codex                # Codex
 vicoa opencode             # OpenCode
 vicoa --agent amp          # any other supported agent
 vicoa --name "Fix CI" --task <TASK_UUID>   # named, linked to a task
 vicoa --resume <SESSION_ID>                # resume a previous session
 vicoa daemon               # background daemon: accept remote/scheduled spawns
 ```
+
+Codex has no terminal mode: `vicoa codex` (and `vicoa --agent codex`) is no
+longer supported and only prints a pointer. Start Codex on a daemon instead,
+with `vicoa session start --agent codex --dir <path>` (below).
 
 Or on any machine running a daemon — the CLI equivalent of the dashboard's "New
 Session":

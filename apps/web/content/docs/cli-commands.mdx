@@ -16,7 +16,7 @@ The `vicoa` command is the terminal front door to your Vicoa account. From any m
 A machine can have two kinds of session running at once:
 
 - **Daemon sessions** — headless agents the `vicoa daemon` started in response to a remote "New Session" request from the mobile app or web dashboard.
-- **TUI sessions** — interactive agents you started yourself in a terminal with `vicoa`, `vicoa codex`, or `vicoa opencode`.
+- **TUI sessions** — interactive agents you started yourself in a terminal with `vicoa` or `vicoa opencode`.
 
 **Keep the CLI current.** Install or upgrade with npm, and check your version before using the newer `session`, `task`, and `automation` commands:
 
@@ -53,12 +53,13 @@ Running `vicoa` with no subcommand starts an interactive agent in your terminal 
 ```bash
 vicoa                # Claude Code (the default agent)
 vicoa claude         # Claude Code, explicitly
-vicoa codex          # Codex
 vicoa opencode       # OpenCode
 vicoa --agent amp    # Amp
 ```
 
-The `--agent` flag accepts `claude`, `amp`, `codex`, `opencode`, `cursor`, `gemini`, `copilot`, `kimi`, `hermes`, `pi`, `omp` (Oh My Pi), and `antigravity`.
+The `--agent` flag accepts `claude`, `amp`, `opencode`, `cursor`, `gemini`, `copilot`, `kimi`, `hermes`, `pi`, `omp` (Oh My Pi), and `antigravity`.
+
+Codex doesn't run in the terminal: `vicoa codex` (and `vicoa --agent codex`) is no longer supported. Start Codex from **New Session** in the app, or with [`vicoa session start --agent codex --dir .`](#vicoa-session-start), which starts it on this machine's daemon.
 
 ### Common launch flags
 
@@ -79,8 +80,8 @@ vicoa --name "Refactor auth" --task 5f2c9d1e-...-full-uuid
 # Resume where you left off
 vicoa --resume 3f9c1a2b-...-full-uuid
 
-# Make Codex your default agent for future bare `vicoa` runs
-vicoa --set-default codex
+# Make OpenCode your default agent for future bare `vicoa` runs
+vicoa --set-default opencode
 ```
 
 ### vicoa daemon

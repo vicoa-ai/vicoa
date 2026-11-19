@@ -101,7 +101,7 @@ const integrations: Integration[] = [
   {
     company: 'OpenAI',
     product: 'Codex',
-    description: 'Start Codex with the `vicoa codex` command, or make it the default agent.',
+    description: 'Start Codex from a new session in the web dashboard or app, or with `vicoa session start --agent codex`.',
     status: 'native',
     logoSrc: '/images/integrations/openai.svg',
     logoAlt: 'OpenAI logo',
@@ -266,14 +266,15 @@ const codingAgentsFaqs: FAQItem[] = [
     question: 'How do I start a session with Codex or OpenCode?',
     answer: (
       <span>
-        Launch a session from the CLI with{' '}
-        <code className="rounded bg-muted px-1 py-0.5 text-sm">vicoa codex</code> or{' '}
+        Start Codex from a new session in the web dashboard or app, or run{' '}
+        <code className="rounded bg-muted px-1 py-0.5 text-sm">vicoa session start --agent codex --dir .</code> in
+        your project directory. Start OpenCode from the CLI with{' '}
         <code className="rounded bg-muted px-1 py-0.5 text-sm">vicoa opencode</code>. You can also set a default agent in the
         app settings.
       </span>
     ),
     answerText:
-      'Launch a session from the CLI with vicoa codex or vicoa opencode. You can also set a default agent in the app settings.'
+      'Start Codex from a new session in the web dashboard or app, or run vicoa session start --agent codex --dir . in your project directory. Start OpenCode from the CLI with vicoa opencode. You can also set a default agent in the app settings.'
   },
   {
     question: 'Do I need my own API keys?',

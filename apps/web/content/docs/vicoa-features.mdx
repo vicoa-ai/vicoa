@@ -256,16 +256,15 @@ Vicoa supports Claude Code, Codex, and OpenCode, allowing you to switch between 
 # Set Claude Code as default
 vicoa --set-default claude
 
-# Set Codex as default
-vicoa --set-default codex
-
 # Set OpenCode as default
 vicoa --set-default opencode
 
 # Start with specific agent
-vicoa codex
 vicoa opencode
+vicoa session start --agent codex --dir .
 ```
+
+Codex runs through the Vicoa daemon: start it from **New Session** in the app or with `vicoa session start`. `vicoa codex` is no longer supported. See [Codex](/docs/agents/codex).
 
 ### Use Alternative Models
 

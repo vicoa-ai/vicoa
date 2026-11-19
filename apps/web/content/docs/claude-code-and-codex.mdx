@@ -6,33 +6,23 @@ description: Learn how Vicoa uses Claude Code by default, how to switch to Codex
 # Claude Code vs. Codex in Vicoa
 Learn how Vicoa uses Claude Code by default, how to switch to Codex, and the exact CLI commands to manage both agents.
 
-Vicoa supports both Claude Code and Codex. **Claude Code** is the default agent so the CLI feels familiar right out of the box. **Codex** is also integrated and can started with a single command.
+Vicoa supports both Claude Code and Codex. **Claude Code** is the default agent so the CLI feels familiar right out of the box. **Codex** is also integrated: start it from the Vicoa app or with `vicoa session start`.
 
 This guide answers the common questions we hear about swapping between Claude Code and Codex and highlights the commands you’ll use most.
 
 ## Default Agent Behaviour
 
-Out of the box, `vicoa` starts **Claude Code** so you can get productive immediately. If you ever changed the default in the past, Vicoa keeps that preference until you update it again.
+Out of the box, `vicoa` starts **Claude Code** so you can get productive immediately. If you ever changed the default in the past, Vicoa keeps that preference until you update it again. If you had made Codex the default, plain `vicoa` now prints how to start Codex instead; run `vicoa --set-default claude` to make it start Claude Code again.
 
-## Launch Codex for a Single Session
+## Start a Codex Session
 
-Launch Vicoa with Codex just for the current run by passing the `--agent` flag:
-
-```bash
-vicoa --agent codex
-```
-
-This keeps your default unchanged. The next time you run `vicoa` with no flags, the CLI will return to Claude Code.
-
-## Make Codex the Default Agent
-
-If you want `vicoa` to always start Codex, set the default agent once:
+Codex runs through the Vicoa daemon rather than in your terminal. Click **New Session** in the app and choose Codex, or start one from your project directory:
 
 ```bash
-vicoa --set-default codex
+vicoa session start --agent codex --dir .
 ```
 
-After running this command, `vicoa` will launch Codex automatically. Override the default for a single run with `vicoa --agent claude` (or any other available agent).
+The session shows up in the app, where you can carry on. Your default is unchanged, so `vicoa` with no flags still starts Claude Code. `vicoa codex` and `vicoa --agent codex` are no longer supported; see [Codex](/docs/agents/codex) for details.
 
 ## Restore Claude Code as the Default
 
@@ -46,14 +36,14 @@ vicoa --set-default claude
 
 ### Can I keep Claude Code and Codex available at the same time?
 
-Yes. Think of `--agent` as a temporary override. Set your preferred default once, then toggle to the other agent whenever the task demands it. For example:
+Yes. Keep Claude Code as your terminal default, then start Codex whenever the task demands it. For example:
 
 ```bash
 # default is Claude Code
 vicoa
 
-# jump into Codex for a targeted fix
-vicoa --agent codex
+# jump into Codex for a targeted fix (the session opens in the app)
+vicoa session start --agent codex --dir .
 
 # hop back to Claude Code without changing the default
 vicoa
@@ -73,7 +63,7 @@ No. Vicoa syncs both agents in similar way. We aim to provide the best experienc
 
 ## Tip: Keep Both Agents Handy
 
-Many developers and teams use both Claude Code and Codex at the same time. Use the `--agent` flag to swap between them on demand while keeping whichever default fits most of your workflow.
+Many developers and teams use both Claude Code and Codex at the same time. Start Codex from the app or with `vicoa session start --agent codex` on demand, while `vicoa` keeps starting Claude Code in your terminal.
 
 ## Related
 

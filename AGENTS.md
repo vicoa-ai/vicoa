@@ -38,10 +38,6 @@ vicoa/
 The OpenCode plugin lives in its own repo:
 [`vicoa-ai/opencode-vicoa`](https://github.com/vicoa-ai/opencode-vicoa).
 
-`backend/src/integrations/cli_wrappers/codex` is a fork of the Codex CLI used
-only by the backend's PyInstaller binary build; you do not need it for normal
-development or for running from source.
-
 ## Component commands
 
 ### backend (Python / FastAPI)

@@ -109,7 +109,7 @@ This happens when PyInstaller's `collect_submodules()` doesn't detect dynamicall
 2. Common culprits are CLI wrappers and headless modules
 3. Rebuild with `pyinstaller --clean vicoa.spec`
 
-**Example**: If `vicoa codex` fails, ensure `integrations.headless.codex_acp` is in `hidden_imports`.
+**Example**: If a daemon-started Codex session fails to launch, ensure `integrations.headless.codex_native` is in `hidden_imports`.
 
 ### Data Files Missing
 
