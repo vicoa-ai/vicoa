@@ -11,13 +11,6 @@ Public License, version 3.0 (AGPLv3); see the LICENSE file for the full text.
 -----------------------------------------------------------------------
 Third-party components
 
-This product bundles a fork of the OpenAI Codex CLI, located at
-backend/src/integrations/cli_wrappers/codex (a git submodule of
-https://github.com/vicoa-ai/codex) and used only for the backend's
-PyInstaller binary build. It is licensed under the Apache License,
-Version 2.0; see that component's own LICENSE (and NOTICE, if present)
-for the full text.
-
 The Pi / Oh My Pi integration at backend/src/integrations/headless/pi_family
 follows the design and code shape of the `pi` and `omp` agent providers in
 paseo (https://github.com/badlogic/paseo), Copyright (c) 2025-present

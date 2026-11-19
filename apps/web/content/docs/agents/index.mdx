@@ -13,14 +13,14 @@ AI coding agents supported in Vicoa:
 - [More coding agents](/docs/agents/more-coding-agents) — Gemini, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi, and Antigravity
 - [Custom agents](/docs/agents/custom-agents) — 30+ more agents supported via ACP (Cline, goose, Kiro, Qwen Code, TRAE, and others), or any other ACP agent with your own command
 
-You can switch between Claude Code, Codex, and OpenCode at any time with commands:
+You can switch between Claude Code, Codex, and OpenCode at any time, from **New Session** in the app or with commands:
 
 ```bash
 # Start with Claude Code (default)
 vicoa
 
-# Jump into Codex for a targeted fix
-vicoa codex
+# Jump into Codex for a targeted fix (the session opens in the app)
+vicoa session start --agent codex --dir .
 
 # Try OpenCode for mobile-first development
 vicoa opencode
@@ -28,5 +28,7 @@ vicoa opencode
 # Back to Claude Code
 vicoa
 ```
+
+Codex runs through the Vicoa daemon rather than in your terminal; `vicoa codex` is no longer supported. See [Codex](/docs/agents/codex).
 
 Gemini, Cursor, Copilot, Kimi, Hermes, Pi, Oh My Pi, and Antigravity are launched directly from a new session in the web dashboard or mobile app — see [more coding agents](/docs/agents/more-coding-agents).

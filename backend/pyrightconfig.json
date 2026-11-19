@@ -14,7 +14,6 @@
     "**/dist",
     "**/build",
     "**/*.egg-info",
-    "src/integrations/cli_wrappers/codex",
     "src/integrations/headless/tests"
   ],
   "reportMissingImports": true,

@@ -227,7 +227,9 @@ These run the agent in the current terminal (not part of the `session` group).
 ### Launch verbs
 
 - `vicoa` — default agent (Claude, or your `--set-default` choice)
-- `vicoa claude` / `vicoa codex` / `vicoa opencode` — pick the agent explicitly
+- `vicoa claude` / `vicoa opencode` — pick the agent explicitly
+- Codex has no terminal mode: `vicoa codex` is no longer supported. Start it
+  on a daemon with `vicoa session start --agent codex --dir <path>` (above)
 - `vicoa --agent <name>` — any supported agent; `vicoa --help` lists the current
   set
 - `vicoa headless [--agent ...] [--prompt "..."]` — background, driven from the

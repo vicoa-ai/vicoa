@@ -12,7 +12,7 @@ This directory contains all source code for the Vicoa project.
   - `shared/` - Shared server code
 - **`shared/`** - Shared database models and configurations
 - **`integrations/`** - Integration connectors (flat structure)
-  - `cli_wrappers/` - Claude Code, Codex CLI wrappers
+  - `cli_wrappers/` - Claude Code and Amp terminal wrappers
   - `headless/` - Background agent runners
   - `github/` - GitHub Actions YAML
   - `utils/` - Shared integration utilities

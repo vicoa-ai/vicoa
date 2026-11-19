@@ -467,7 +467,7 @@ vicoa
 
 ### Vicoa CLI hangs on startup
 
-**Problem**: Running `vicoa` (or `vicoa codex`, `vicoa opencode`, etc.) hangs at launch: the terminal appears to freeze before the agent ever starts. You may have last seen the CLI working on a previous machine or before changing your Vicoa account.
+**Problem**: Running `vicoa` (or `vicoa opencode`, etc.) hangs at launch: the terminal appears to freeze before the agent ever starts. You may have last seen the CLI working on a previous machine or before changing your Vicoa account.
 
 This is usually caused by stale credentials in `~/.vicoa/credentials.json`: the cached CLI key references an account or session that the backend no longer recognizes, so the startup sync calls never complete.
 

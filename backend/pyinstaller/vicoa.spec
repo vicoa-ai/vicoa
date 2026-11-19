@@ -43,20 +43,21 @@ hidden_imports = (
     ]
 )
 
-# Collect data files (binaries in _bin/, any config files)
+# Collect data files (config files, bundled assets)
 # copy_metadata('fastmcp') is required because fastmcp.__init__ calls
 # importlib.metadata.version("fastmcp") which needs the dist-info directory.
 datas = collect_data_files('vicoa') + collect_data_files('integrations') + copy_metadata('fastmcp')
 
-# The vendored Codex CLI Rust workspace (integrations/cli_wrappers/codex/
-# codex-rs) is dev-only source: the daemon never reads it at runtime, and
-# collect_data_files sweeps in whatever is on disk — including its target/
-# build directory, which reaches tens of GB after a cargo build and once
-# ballooned the desktop dmg from ~300 MB to 8 GB.
+# Vicoa no longer bundles a Codex CLI fork, but a checkout made before it was
+# removed can still hold its leftovers on disk, and collect_data_files sweeps
+# in whatever is there: the codex-rs workspace (its target/ dir reaches tens
+# of GB after a cargo build and once ballooned the desktop dmg from ~300 MB to
+# 8 GB) and the old ~250 MB binary under vicoa/_bin/. Keep both out.
 datas = [
     (src, dest)
     for src, dest in datas
     if 'codex-rs' not in str(src).replace('\\', '/')
+    and 'vicoa/_bin/' not in str(src).replace('\\', '/')
 ]
 
 a = Analysis(

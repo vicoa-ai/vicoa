@@ -190,7 +190,7 @@ Remember: This is an open-source project that helps AI agents communicate with h
 - `src/backend/` provides the FastAPI dashboard API; routers live in `api/`, auth flows in `auth/`, and database helpers in `db/`.
 - `src/servers/` hosts the unified MCP + REST server (`app.py`) and related routers under `servers/api`.
 - `src/shared/` centralizes configuration, SQLAlchemy models, Alembic migrations, and other cross-service utilities.
-- `src/integrations/` keeps provider adapters; generated CLI wrappers under `cli_wrappers/codex` should stay untouched unless regenerated.
+- `src/integrations/` keeps provider adapters: terminal wrappers under `cli_wrappers/` (Claude Code, Amp) and daemon-driven agents under `headless/` (Codex, ACP agents, Pi, Antigravity).
 - Tests live in `src/backend/tests/`, `src/servers/tests/`, and root `tests/`; automation scripts land in `scripts/`.
 
 ## Build, Test, and Development Commands

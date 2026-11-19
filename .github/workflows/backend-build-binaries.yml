@@ -6,10 +6,6 @@ on:
     types: [completed]
   workflow_dispatch:  # Allow manual triggers
     inputs:
-      release_run_id:
-        description: "Release workflow run ID to source wheel artifacts from"
-        required: false
-        default: ''
       version_tag:
         description: "Version tag to publish (e.g. v1.3.11) - required for npm publish on manual runs"
         required: false
@@ -21,7 +17,6 @@ env:
 permissions:
   contents: write
   id-token: write
-  actions: read  # needed to download artifacts from other workflow runs
 
 jobs:
   # Resolve the tag/version once; all jobs read outputs from this job.
@@ -89,46 +84,6 @@ jobs:
           pip install -e .
           pip install pyinstaller
 
-      - name: Resolve Release run ID
-        id: run_id
-        run: |
-          if [ -n "${{ inputs.release_run_id }}" ]; then
-            echo "id=${{ inputs.release_run_id }}" >> $GITHUB_OUTPUT
-          else
-            echo "id=${{ github.event.workflow_run.id }}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Download wheel artifact from Release run
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          run_id: ${{ steps.run_id.outputs.id }}
-          name: wheels-darwin-arm64
-          path: backend/wheels/darwin-arm64
-
-      - name: Extract Codex binary from wheel
-        run: |
-          python - <<'PY'
-          import zipfile, pathlib, stat, sys
-
-          wheels = list(pathlib.Path("wheels/darwin-arm64").glob("*cp312*.whl"))
-          if not wheels:
-              wheels = list(pathlib.Path("wheels/darwin-arm64").glob("*.whl"))
-          if not wheels:
-              print("No wheel found", file=sys.stderr)
-              sys.exit(1)
-
-          dest = pathlib.Path("src/vicoa/_bin/codex/darwin-arm64/codex")
-          dest.parent.mkdir(parents=True, exist_ok=True)
-
-          with zipfile.ZipFile(wheels[0]) as z:
-              with z.open("vicoa/_bin/codex/darwin-arm64/codex") as src:
-                  dest.write_bytes(src.read())
-
-          mode = dest.stat().st_mode
-          dest.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-          print(f"Extracted from {wheels[0]} -> {dest}")
-          PY
-
       - name: Build binary
         run: |
           cd pyinstaller
@@ -178,8 +133,6 @@ jobs:
     # x86_64 Python via conda's osx-64 subdir and drive pyinstaller through
     # `arch -x86_64`. The Rosetta layer makes the entire build chain (pip,
     # PyInstaller, link steps) execute as x86_64, emitting an x86_64 bundle.
-    # The codex binary inside comes from the darwin-x64 wheel built upstream
-    # in release.yml (cibuildwheel cross-arch on the same runner profile).
     runs-on: macos-15
     defaults:
       run:
@@ -225,47 +178,6 @@ jobs:
           arch -x86_64 "$PY" -m pip install 'cryptography<49'
           arch -x86_64 "$PY" -m pip install -e .
           arch -x86_64 "$PY" -m pip install pyinstaller
-
-      - name: Resolve Release run ID
-        id: run_id
-        run: |
-          if [ -n "${{ inputs.release_run_id }}" ]; then
-            echo "id=${{ inputs.release_run_id }}" >> $GITHUB_OUTPUT
-          else
-            echo "id=${{ github.event.workflow_run.id }}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Download wheel artifact from Release run
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          run_id: ${{ steps.run_id.outputs.id }}
-          name: wheels-darwin-x64
-          path: backend/wheels/darwin-x64
-
-      - name: Extract Codex binary from wheel
-        shell: bash -l {0}
-        run: |
-          "$CONDA/envs/dev312-x64/bin/python3" - <<'PY'
-          import zipfile, pathlib, stat, sys
-
-          wheels = list(pathlib.Path("wheels/darwin-x64").glob("*cp312*.whl"))
-          if not wheels:
-              wheels = list(pathlib.Path("wheels/darwin-x64").glob("*.whl"))
-          if not wheels:
-              print("No wheel found", file=sys.stderr)
-              sys.exit(1)
-
-          dest = pathlib.Path("src/vicoa/_bin/codex/darwin-x64/codex")
-          dest.parent.mkdir(parents=True, exist_ok=True)
-
-          with zipfile.ZipFile(wheels[0]) as z:
-              with z.open("vicoa/_bin/codex/darwin-x64/codex") as src:
-                  dest.write_bytes(src.read())
-
-          mode = dest.stat().st_mode
-          dest.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-          print(f"Extracted from {wheels[0]} -> {dest}")
-          PY
 
       - name: Build binary (PyInstaller under Rosetta)
         shell: bash -l {0}
@@ -353,60 +265,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
           pip install pyinstaller
-
-      - name: Resolve Release run ID
-        id: run_id
-        run: |
-          if [ -n "${{ inputs.release_run_id }}" ]; then
-            echo "id=${{ inputs.release_run_id }}" >> $GITHUB_OUTPUT
-          else
-            echo "id=${{ github.event.workflow_run.id }}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Download wheel artifact from Release run
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          run_id: ${{ steps.run_id.outputs.id }}
-          name: wheels-linux-x64
-          path: backend/wheels/linux-x64
-
-      - name: Extract Codex binary and bundled libs from wheel
-        run: |
-          python - <<'PY'
-          import zipfile, pathlib, stat, sys
-
-          wheels = list(pathlib.Path("wheels/linux-x64").glob("*cp312*.whl"))
-          if not wheels:
-              wheels = list(pathlib.Path("wheels/linux-x64").glob("*.whl"))
-          if not wheels:
-              print("No wheel found", file=sys.stderr)
-              sys.exit(1)
-
-          dest_dir = pathlib.Path("src/vicoa/_bin/codex/linux-x64")
-          dest_dir.mkdir(parents=True, exist_ok=True)
-
-          extracted = []
-          with zipfile.ZipFile(wheels[0]) as z:
-              for name in z.namelist():
-                  dest = None
-                  if name == "vicoa/_bin/codex/linux-x64/codex":
-                      dest = dest_dir / "codex"
-                  elif name.startswith("vicoa.libs/") and not name.endswith("/"):
-                      # auditwheel-bundled shared libs; flatten into the codex dir
-                      dest = dest_dir / pathlib.Path(name).name
-                  if dest is not None:
-                      with z.open(name) as src:
-                          dest.write_bytes(src.read())
-                      extracted.append(dest)
-
-          if not (dest_dir / "codex").exists():
-              print("codex binary not found in wheel", file=sys.stderr)
-              sys.exit(1)
-
-          for dest in extracted:
-              dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-              print(f"Extracted {dest}")
-          PY
 
       - name: Build binary
         run: |

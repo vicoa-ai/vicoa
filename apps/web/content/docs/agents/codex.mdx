@@ -11,45 +11,36 @@ Codex is OpenAI's coding agent that integrates seamlessly with vicoa.
 
 ### Installation
 
-Codex is available immediately after installing vicoa:
+Vicoa runs the Codex CLI installed on your machine, so install Codex and sign in to it on the machine that will run your sessions (see [Install a coding agent](/docs/getting-started#2-install-a-coding-agent-if-needed)). Then install vicoa:
 
 ```bash
 # Install vicoa CLI
 npm i -g @vicoa/cli
-
-# Start Codex
-vicoa codex  # or vicoa --agent codex
 ```
 
-### Making Codex Your Default Agent
+### Starting a Codex Session
 
-If you prefer Codex over Claude Code, set it as your default:
+Start Codex from the Vicoa app: click **New Session** in the desktop app, web dashboard, or mobile app, pick your machine, and choose Codex as the agent. The session runs on that machine through the Vicoa daemon (`vicoa daemon`, which the desktop app already includes).
+
+To start one from a terminal instead, run this in your project directory:
 
 ```bash
-vicoa --set-default codex
+vicoa session start --agent codex --dir .
 ```
 
-After this command, simply run `vicoa` to launch Codex automatically.
+This asks the daemon on this machine to start a Codex session in the current directory. It doesn't open Codex in your terminal; the session shows up in the app, where you can carry on. To follow it from the terminal, use `vicoa session get <id>` or send it a message with `vicoa session message <id> '...'`. The daemon must be running on the machine. See [`vicoa session start`](/docs/cli-commands#vicoa-session-start) for the other flags.
 
-### Using Codex for a Single Session
+### `vicoa codex` Is No Longer Supported
 
-Keep Claude Code as your default but use Codex temporarily:
+Earlier versions of Vicoa started Codex in your terminal with `vicoa codex` (or `vicoa --agent codex`, or plain `vicoa` with Codex set as the default agent). That terminal command has been removed. Running it now prints:
 
-```bash
-vicoa --agent codex
+```
+`vicoa codex` is no longer supported.
+Start Codex from the Vicoa app, or from this terminal:
+  vicoa session start --agent codex --dir /abs/path/of/current/dir
 ```
 
-This overrides your default agent for just this session.
-
-### Codex Subcommand
-
-You can also launch Codex using the dedicated subcommand:
-
-```bash
-vicoa codex
-```
-
-This is equivalent to `vicoa --agent codex`.
+Start Codex from the app or with `vicoa session start` instead. If you had made Codex your default agent, run `vicoa --set-default claude` so that plain `vicoa` starts Claude Code again.
 
 ## Related
 

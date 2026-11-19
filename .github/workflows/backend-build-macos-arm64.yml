@@ -8,9 +8,6 @@ permissions:
 
 jobs:
   build-macos-arm64:
-    # See release.yml: macos-14 (Xcode 15.4) fails the codex webrtc-sys
-    # build with a C++20 / libc++ pointer_traits incompat. macos-15
-    # (Xcode 16) handles it.
     runs-on: macos-15
     defaults:
       run:
@@ -19,48 +16,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: false
-
-      - name: Configure Git for submodules
-        run: git config --global url."https://x-access-token:${{ secrets.GH_SUBMODULE_PAT }}@github.com/".insteadOf "git@github.com:"
-
-      - name: Initialize submodules
-        # cwd is backend/, so the pathspec resolves to the codex
-        # submodule only (not the other root submodules).
-        run: git submodule update --init --recursive src/integrations/cli_wrappers/codex
-
-      - name: Detect Codex changes
-        id: detect
-        shell: bash
-        run: |
-          # --match 'v*' keeps this off the desktop-v* trigger tags; --exclude 'v0.*'
-          # keeps it off the bare v0.1.x tags the desktop GitHub releases hang on,
-          # which are usually nearer than the real CLI tag. See backend-release.yml.
-          LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' --exclude 'v0.*' HEAD^ 2>/dev/null || echo "")
-          if [ -n "$LAST_TAG" ]; then
-            if git diff --quiet "$LAST_TAG"..HEAD -- src/integrations/cli_wrappers/codex; then
-              echo "changed=false" >> $GITHUB_OUTPUT
-            else
-              echo "changed=true" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-          echo "last_tag=$LAST_TAG" >> $GITHUB_OUTPUT
-
-      - name: Determine Codex build version
-        id: codex_version
-        run: |
-          VERSION=$(python - <<'PY'
-          import pathlib, tomllib
-          data = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
-          tool = data.get("tool", {})
-          vicoa = tool.get("vicoa", {}) if isinstance(tool, dict) else {}
-          codex_version = vicoa.get("codex_build_version", "") if isinstance(vicoa, dict) else ""
-          print(str(codex_version).strip() if codex_version else data.get("project", {}).get("version", "").strip())
-          PY
-          )
-          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -72,13 +27,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -c src/shared/requirements.txt -e .
           pip install pyinstaller
-
-      - name: Populate Codex binary
-        env:
-          CODEX_CHANGED: ${{ steps.detect.outputs.changed }}
-          CODEX_PREV_TAG: ${{ steps.detect.outputs.last_tag }}
-          CODEX_BUILD_VERSION: ${{ steps.codex_version.outputs.value }}
-        run: bash scripts/cibw_before_build.sh
 
       - name: Build binary
         run: |
