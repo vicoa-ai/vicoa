@@ -5,6 +5,17 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.10.0
+19 November, 2026
+- `vicoa codex`, `vicoa --agent codex` and a Codex default agent are no longer supported. They print a pointer and exit before any login or daemon start. Start a Codex session with `vicoa session start --agent codex --dir <cwd>` or from New Session in the app, which keep running your own installed Codex CLI
+- The CLI no longer bundles a Codex build, so installs and updates are much smaller on macOS and Linux, and `pip install vicoa` is a single small download
+- `vicoa session start --dir .` now means the current directory when the session runs on this machine, and is refused for another machine
+- Bring sessions started outside Vicoa into it: `vicoa session ls --local` lists the Claude Code and Codex sessions on this computer, whether you started them in a terminal, a desktop app or an editor, and `vicoa session import <id>` imports one with its history. `vicoa --resume <id>` on a Claude Code session that is not in Vicoa yet offers to import it first
+- Fix a burst of queued messages that Claude Code runs as one turn showing in the wrong order in the transcript
+- Fix deleting a long session failing with a timeout
+- Fix a deleted account coming back, with its welcome and activation emails, when a sign-in that was still valid reached the server
+- Fix a machine showing online but refusing to start sessions, and the profile activity page staying empty, for an account re-created with the same email
+
 ### v1.9.18
 18 November, 2026
 - Ask a person from a task without handing it over: `vicoa task comment VIC-42 --ask` posts the question and the agent waits for the reply, from whoever started the run or from `--to <person>`. Their answer wakes the agent in its own session with the reply quoted. `vicoa task ls --waiting-on me` lists the tasks waiting on you, and `task get` shows who a task waits on
