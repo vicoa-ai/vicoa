@@ -20,7 +20,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Protocol
 
-from vicoa.utils import get_git_identity, get_worktree_name
+from vicoa.utils import get_git_identity, get_project_path, get_worktree_name
 
 from .types import (
     HistoryMessage,
@@ -202,9 +202,7 @@ def _trim(messages: list[HistoryMessage]) -> list[HistoryMessage]:
     return [note, *kept]
 
 
-def build_import_payload(
-    transcript: Transcript, *, machine_id: str, home_dir: str | None = None
-) -> dict[str, Any]:
+def build_import_payload(transcript: Transcript, *, machine_id: str) -> dict[str, Any]:
     """The ``POST /agent-instances/import`` body for one transcript."""
     session = transcript.session
     if not session.cwd:
@@ -216,8 +214,11 @@ def build_import_payload(
         "machine_id": machine_id,
         "agent": session.agent,
         "native_session_id": session.native_id,
-        "project": session.cwd,
-        "home_dir": home_dir or str(Path.home()),
+        # `~/…`, as every registration path stores it (`get_project_path`):
+        # the sidebar groups a project's sessions by this string, so an
+        # absolute path would split one worktree into two groups.
+        "project": get_project_path(session.cwd),
+        "home_dir": str(Path.home()),
         "name": session.title,
         "source": session.source,
         "source_label": session.source_label,

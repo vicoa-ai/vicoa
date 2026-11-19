@@ -476,9 +476,7 @@ def test_payload_trims_long_sessions_and_says_so(monkeypatch, tmp_path):
     transcript = Transcript(
         session=_session("claude", "c1", 1, cwd=str(tmp_path)), messages=messages
     )
-    payload = local_sessions.build_import_payload(
-        transcript, machine_id="machine-1", home_dir="/home"
-    )
+    payload = local_sessions.build_import_payload(transcript, machine_id="machine-1")
     contents = [m["content"] for m in payload["messages"]]
     assert contents == [
         "3 earlier messages from this session weren't imported.",
@@ -488,6 +486,21 @@ def test_payload_trims_long_sessions_and_says_so(monkeypatch, tmp_path):
     assert payload["machine_id"] == "machine-1"
     assert payload["project"] == str(tmp_path)
     assert payload["started_at"].startswith("1970-01-01T00:16:40")
+
+
+def test_payload_stores_the_folder_like_registration(monkeypatch, tmp_path):
+    # Registration stores `~/…` (get_project_path) and the sidebar groups a
+    # project's sessions by that string: an absolute path for the same folder
+    # showed the worktree twice.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    folder = tmp_path / "work" / "repo"
+    folder.mkdir(parents=True)
+    transcript = Transcript(
+        session=_session("claude", "c1", 1, cwd=str(folder)), messages=[]
+    )
+    payload = local_sessions.build_import_payload(transcript, machine_id="m")
+    assert payload["project"] == "~/work/repo"
+    assert payload["home_dir"] == str(tmp_path)
 
 
 def test_payload_carries_the_git_identity(tmp_path):
