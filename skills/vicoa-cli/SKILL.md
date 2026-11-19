@@ -148,9 +148,19 @@ still see everything.
 
 ### Moving a session to a worktree
 
-Vicoa files a session under the folder it started in. If the session creates or
-switches to a git worktree mid-flight, re-file it or the app keeps showing (and
-resuming) it under the original checkout:
+Vicoa files a session under the folder it started in. To start changing code in
+a worktree of its own, make it with one command: it creates the worktree (and
+runs the repo's setup when the repo is trusted), files this session under it,
+and prints the folder to work in on its last line. Inside a worktree already it
+makes nothing.
+
+```bash
+vicoa worktree new vic-42      # branch + folder vic-42 (vic-42-2 if taken)
+```
+
+A session that made or switched to a worktree some other way (`git worktree
+add`) re-files itself, or the app keeps showing (and resuming) it under the
+original checkout:
 
 ```bash
 vicoa session update "$VICOA_AGENT_INSTANCE_ID" --worktree <branch>
@@ -322,7 +332,9 @@ vicoa task update VIC-42 --assignee none
   `backlog` or you pass `--no-start`. Put what it should know in the task or a
   comment. Handed back to the same agent, it continues its own session and is
   told what changed meanwhile; a different agent continues in the task's
-  existing worktree. A person's comment on an agent's task, a
+  existing worktree. A task session starts in the project folder as it is: the
+  agent makes a worktree (`vicoa worktree new`) only once the work changes
+  code. A person's comment on an agent's task, a
   reply in a thread the agent wrote in, or an `@agent` mention from the web
   wakes it too; a comment starting with `/note` wakes nobody.
 - **An agent never starts another agent.** Assignments and comments made from a
@@ -450,6 +462,8 @@ Rarely what a question is about, but worth knowing they exist:
 - `vicoa provider` — add and check the ACP coding agents this machine can run.
 - `vicoa plugin` — install and manage local Vicoa plugins (themes, sidebar,
   composer).
+- `vicoa worktree new [name]` — make a worktree of this repo and move the
+  current session into it; prints the folder to work in.
 - `vicoa worktree setup [path]` — run a worktree's committed setup commands from
   `.vicoa/config.json` (`--dry-run` to see them first). Useful when a worktree's
   automatic setup failed or never ran.

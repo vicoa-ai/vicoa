@@ -656,6 +656,26 @@ Give it a session config with the convenience flags, or a full JSON blob:
 
 ## vicoa worktree
 
+### vicoa worktree new
+
+Make a worktree of the repository you are in (a separate checkout on a new branch) and move the current session into it. This is what an agent working on a task runs before it changes code: the task's session starts in the project folder, and the agent makes the worktree only when the work needs one.
+
+```bash
+vicoa worktree new vic-42            # branch and folder vic-42 (vic-42-2 if taken)
+vicoa worktree new                   # a random name
+vicoa worktree new vic-42 --no-setup
+```
+
+The worktree goes where Vicoa puts one for a new session (`~/vicoa/workspaces/<project>-worktrees/<name>/<project>`), off the current commit. The repository's [worktree setup](#vicoa-worktree-setup) runs in it when the repository is trusted on this machine; otherwise the command prints how to run it. Run inside a Vicoa session, it also files the session under the worktree, as [`vicoa session update --worktree`](#vicoa-session-update) does, so the app lists the session there and it resumes there. The last line it prints is the folder to work in: the same subfolder as you started from, for a session started in `repo/apps/web`. Inside a worktree already, it makes nothing and prints the folder you are in; outside a git repository it refuses. It exits 0 once the worktree exists, even when the setup fails (it says so).
+
+| Flag | Meaning |
+|---|---|
+| `--path <DIR>` | A directory inside the repository (default: the current directory) |
+| `--no-setup` | Don't run the repository's setup commands |
+| `--no-session` | Don't file the current session under the new worktree |
+
+### vicoa worktree setup
+
 A repository can declare **worktree setup commands** in a committed `.vicoa/config.json` (or root `vicoa.json`) — copy `.env` files, install dependencies, link a shared database — and the daemon runs them in the background every time it creates a worktree for a new session, whichever device you started it from. `vicoa worktree setup` is the same run, on demand, from a terminal:
 
 ```bash

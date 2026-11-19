@@ -151,7 +151,16 @@ class TestResolveWorktreeMove:
     def _wire(self, monkeypatch, detail: dict, listing: dict, local_machine=None):
         calls: list[tuple] = []
 
-        def fake_request(args, api_key, method, endpoint, *, params=None, json=None):
+        def fake_request(
+            args,
+            api_key,
+            method,
+            endpoint,
+            *,
+            params=None,
+            json=None,
+            raise_on_error=False,
+        ):
             calls.append((method, endpoint, json))
             return detail
 
@@ -227,7 +236,16 @@ class TestCmdUpdate:
     ):
         sent: list[tuple] = []
 
-        def fake_request(args, api_key, method, endpoint, *, params=None, json=None):
+        def fake_request(
+            args,
+            api_key,
+            method,
+            endpoint,
+            *,
+            params=None,
+            json=None,
+            raise_on_error=False,
+        ):
             sent.append((method, endpoint, json))
             if method == "GET":
                 return {"id": "s-1", "project": "~/src/app", "machine_id": "m-1"}
@@ -257,7 +275,16 @@ class TestCmdUpdate:
         """An older server drops unknown PATCH keys and answers 200 with the
         row as it was; the CLI must not call that a move."""
 
-        def fake_request(args, api_key, method, endpoint, *, params=None, json=None):
+        def fake_request(
+            args,
+            api_key,
+            method,
+            endpoint,
+            *,
+            params=None,
+            json=None,
+            raise_on_error=False,
+        ):
             if method == "GET":
                 return {"id": "s-1", "project": "~/src/app", "machine_id": "m-1"}
             return {"agent_instance_id": "s-1", "project": "~/src/app"}
@@ -279,7 +306,16 @@ class TestCmdUpdate:
     ):
         sent: list[str] = []
 
-        def fake_request(args, api_key, method, endpoint, *, params=None, json=None):
+        def fake_request(
+            args,
+            api_key,
+            method,
+            endpoint,
+            *,
+            params=None,
+            json=None,
+            raise_on_error=False,
+        ):
             sent.append(method)
             return {"id": "s-1", "project": "~/src/app", "machine_id": "m-1"}
 

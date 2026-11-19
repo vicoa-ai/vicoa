@@ -525,7 +525,7 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
             )
             if brief:
                 metadata["system_prompt"] = system_prompt_with_brief(
-                    metadata.get("system_prompt")
+                    metadata.get("system_prompt"), brief
                 )
         if metadata:
             params["metadata"] = metadata

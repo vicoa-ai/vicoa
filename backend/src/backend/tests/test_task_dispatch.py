@@ -95,7 +95,8 @@ class TestAssignment:
         assert row.agent_profile_id == profile.id
         assert row.user_id == test_user.id
         assert row.requested_by_user_id == test_user.id
-        assert row.worktree == {"mode": "new"}
+        # No worktree is asked for: the agent makes one if the work needs it.
+        assert row.worktree is None
 
     def test_assign_only_starts_nothing(self, test_db, test_user, task, profile):
         _as_person(test_db, test_user)
@@ -115,12 +116,11 @@ class TestAssignment:
             profile,
             machine_id=machine.id,
             directory="/src/vicoa",
-            worktree="none",
         )
         [row] = _queued(test_db, task)
         assert row.machine_id == machine.id
         assert row.directory == "/src/vicoa"
-        assert row.worktree == {"mode": "none"}
+        assert row.worktree is None
 
     def test_an_agent_assigning_an_agent_starts_nothing(
         self, test_db, test_user, task, profile, other_profile

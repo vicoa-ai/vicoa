@@ -19,6 +19,7 @@ from shared.database.agent_profile_models import AgentProfile
 from shared.database.enums import AgentStatus
 from shared.database.models import AgentInstance, AgentType, Machine, User
 from shared.database.task_models import ProjectDirectory
+from shared.task_dispatch_prompts import TASK_BRIEF, WORKTREE_RULE
 
 pytestmark = pytest.mark.committed_db
 
@@ -170,12 +171,8 @@ async def test_no_session_starts_one_where_the_project_lives(
     [spawn] = recorder.spawns
     assert spawn["machine_id"] == machine.id
     assert spawn["directory"] == "/src/vicoa"
-    # Named after the task alone; `vic-7-2`, … if the name is taken.
-    assert spawn["worktree"] == {
-        "mode": "new",
-        "name": "vic-7",
-        "suffix_if_taken": True,
-    }
+    # The folder as it is: no worktree unless the agent makes one.
+    assert spawn.get("worktree") is None
     assert spawn["session_config"]["model"] == "opus"
     assert spawn["prompt"].startswith(
         'Someone assigned VIC-7 "Fix the flaky login test" to you.'
@@ -183,6 +180,8 @@ async def test_no_session_starts_one_where_the_project_lives(
     # The standing rules ride in the system prompt, not in the message.
     assert "vicoa task comment <ref> --ask" in spawn["system_prompt"]
     assert "--ask" not in spawn["prompt"]
+    # A dispatch started it, so making a worktree for code is the agent's call.
+    assert spawn["system_prompt"].endswith(WORKTREE_RULE)
     # Asking keeps the task: the brief no longer hands it over and back.
     assert "--assignee me" not in spawn["system_prompt"]
     assert "--assignee self" not in spawn["system_prompt"]
@@ -366,6 +365,7 @@ async def test_the_spawned_session_is_linked_to_task_and_agent(
         message_prompt="",
         session_config={},
         system_prompt="",
+        spawn_system_prompt="",
         spawns=[],
         placement_problem=None,
         title="",
@@ -379,22 +379,25 @@ async def test_the_spawned_session_is_linked_to_task_and_agent(
     assert test_db.get(Task, task.id).status == "in_progress"
 
 
-async def test_a_task_outside_every_project_gets_the_default_worktree_name(
+async def test_an_older_rows_worktree_choice_is_ignored(
     test_db, harness, user, machine, profile
 ):
-    """No identifier to name it after: the spawn asks for a new worktree with
-    no name, so the usual naming (from the prompt, or a random one) applies."""
+    """A row queued by an older server still says {"mode": "new", ...}: the
+    session starts in its folder all the same. (A task outside every project,
+    too: titled after the task, with no identifier.)"""
     _, recorder = harness
     loose = Task(user_id=user.id, title="unfiled", status="todo")
     test_db.add(loose)
     test_db.commit()
     row = _queue(test_db, loose, profile)
     row.machine_id, row.directory = machine.id, "/src/scratch"
+    row.worktree = {"mode": "new", "name": "mine", "suffix_if_taken": True}
     test_db.commit()
     await task_dispatcher.TaskDispatcher().sweep_once()
 
     [spawn] = recorder.spawns
-    assert spawn["worktree"] == {"mode": "new"}
+    assert spawn["directory"] == "/src/scratch"
+    assert spawn.get("worktree") is None
     assert spawn["title"] == "unfiled"
 
 
@@ -494,13 +497,13 @@ async def test_another_agent_continues_in_the_tasks_worktree(
 
     [spawn] = recorder.spawns
     assert spawn["directory"] == "/Users/me/worktrees/vic-7-flaky"
-    assert spawn["worktree"] is None
+    assert spawn.get("worktree") is None
     assert str(earlier.id) in spawn["prompt"]
     assert "Claude worked on it before" in spawn["prompt"]
     assert "in this folder" in spawn["prompt"]
 
 
-async def test_unresumable_session_restarts_in_its_worktree_then_a_new_one(
+async def test_unresumable_session_restarts_in_its_worktree_then_the_project(
     test_db, monkeypatch, harness, user, machine, task, profile
 ):
     _, recorder = harness
@@ -522,16 +525,63 @@ async def test_unresumable_session_restarts_in_its_worktree_then_a_new_one(
 
     first, second = flaky.spawns
     assert first["directory"] == "/Users/me/worktrees/vic-7-flaky"
-    assert first["worktree"] is None
-    # The old worktree may still hold the name: the daemon suffixes it.
+    assert first.get("worktree") is None
+    # Its worktree is gone: the project's folder, as it is.
     assert second["directory"] == "/src/vicoa"
-    assert second["worktree"] == {
-        "mode": "new",
-        "name": "vic-7",
-        "suffix_if_taken": True,
-    }
+    assert second.get("worktree") is None
     assert "could not be resumed" in second["prompt"]
     assert _reload(test_db, row).state == "started"
+
+
+async def test_resuming_a_session_a_person_started_leaves_out_the_worktree_rule(
+    test_db, harness, user, machine, task, profile
+):
+    """Started from the task page, the session runs where the person chose:
+    resumed for a comment, it keeps the brief alone."""
+    _, recorder = harness
+    session = _session(
+        test_db, user, machine, task, profile, status=AgentStatus.COMPLETED
+    )
+    session.instance_metadata = {"task_brief": True}
+    test_db.commit()
+    _queue(test_db, task, profile, mode="reply", trigger="commented")
+    await task_dispatcher.TaskDispatcher().sweep_once()
+
+    [delivery] = recorder.deliveries
+    assert delivery["system_prompt"].endswith(TASK_BRIEF)
+    assert WORKTREE_RULE not in delivery["system_prompt"]
+    assert task_dispatcher.brief_for_resume_blocking(user.id, session.id) == TASK_BRIEF
+
+
+async def test_resuming_a_session_a_dispatch_started_keeps_the_worktree_rule(
+    test_db, harness, user, machine, task, profile
+):
+    _, recorder = harness
+    session = _session(
+        test_db, user, machine, task, profile, status=AgentStatus.COMPLETED
+    )
+    session.instance_metadata = {"task_brief": True}
+    test_db.add(
+        TaskDispatch(
+            user_id=user.id,
+            task_id=task.id,
+            agent_profile_id=profile.id,
+            mode="ownership",
+            trigger="assigned",
+            state="started",
+            agent_instance_id=session.id,
+            next_attempt_at=datetime.now(timezone.utc),
+        )
+    )
+    test_db.commit()
+    _queue(test_db, task, profile, mode="reply", trigger="commented")
+    await task_dispatcher.TaskDispatcher().sweep_once()
+
+    [delivery] = recorder.deliveries
+    assert delivery["system_prompt"].endswith(WORKTREE_RULE)
+    # A person's Resume brings the same brief back.
+    brief = task_dispatcher.brief_for_resume_blocking(user.id, session.id)
+    assert brief is not None and brief.endswith(WORKTREE_RULE)
 
 
 async def test_a_comment_is_quoted_with_its_author(

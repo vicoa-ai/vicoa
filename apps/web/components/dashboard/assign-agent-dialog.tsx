@@ -4,8 +4,10 @@
 // task's assignee picker and the agent starting work (plans/todos/task-
 // assignment-agents.md, B1). Assigning an agent hands it the task, and that
 // starts a session on one of your computers, so it says where first: the
-// new-session page's setup chips (computer · folder · worktree). Anything the
-// agent should know belongs in the task itself; the dialog only confirms.
+// new-session page's computer and folder chips. There is no worktree chip: the
+// session runs in the folder as it is, and the agent makes a worktree itself
+// when the work changes code. Anything the agent should know belongs in the
+// task itself; the dialog only confirms.
 //
 // Enter starts. "Assign only" records the agent as the assignee without
 // starting anything. When the server can't place the run (no computer, no
@@ -16,7 +18,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
-import { Check, Circle, CornerDownLeft, Folder, GitBranch, Monitor, RefreshCw } from 'lucide-react';
+import { Check, Circle, CornerDownLeft, Folder, Monitor, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -33,9 +35,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import { DirectoryPickerPopover } from '@/components/dashboard/directory-picker-popover';
-import { WorktreePickerPopover } from '@/components/dashboard/worktree-picker-popover';
 import { ProjectIcon } from '@/components/dashboard/task-ui';
-import { rpcGitStatus } from '@/components/files-git-panel/rpc';
 import {
   getBackendAPI,
   refusalReason,
@@ -49,11 +49,9 @@ import { setConfirmAgentStart } from '@/lib/assign-agent-pref';
 import { directoryChipLabel, projectsOnMachine, resolveProjectForDirectory } from '@/lib/project-paths';
 import { agentPrincipal } from '@/lib/use-agent-profiles';
 import { useProjects } from '@/lib/use-projects';
-import { machineSupportsWorktree, type WorktreeMode } from '@/lib/worktree-selection';
-import { RpcError } from '@/lib/ws-client';
 import { cn } from '@/lib/utils';
 
-/** The new-session page's setup chips (machine · directory · worktree). */
+/** The new-session page's setup chips (machine · directory). */
 const SETUP_CHIP_CLASS =
   'flex h-7 min-w-0 items-center gap-1.5 rounded-lg bg-background dark:bg-menu px-2.5 text-xs font-mono text-foreground/90 transition-colors hover:bg-menu-elevated disabled:cursor-not-allowed disabled:opacity-50';
 
@@ -75,9 +73,6 @@ export function AssignAgentDialog({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [machineId, setMachineId] = useState<string | null>(null);
   const [directory, setDirectory] = useState('');
-  const [worktreeMode, setWorktreeMode] = useState<WorktreeMode>('new');
-  const [worktreePath, setWorktreePath] = useState<string | null>(null);
-  const [worktreeBranch, setWorktreeBranch] = useState<string | null>(null);
   const [sending, setSending] = useState<false | 'start' | 'assign'>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [dontAskAgain, setDontAskAgain] = useState(false);
@@ -92,9 +87,6 @@ export function AssignAgentDialog({
     setLoadError(null);
     setSubmitError(null);
     setDontAskAgain(false);
-    setWorktreeMode('new');
-    setWorktreePath(null);
-    setWorktreeBranch(null);
     getBackendAPI(true)
       .getTaskRunTarget(task.id, profileId)
       .then((result) => {
@@ -111,8 +103,8 @@ export function AssignAgentDialog({
     };
   }, [task.id, profileId]);
 
-  // The full machine rows (capabilities, home dir) behind the candidates the
-  // server offered, for the worktree chip and the folder chip's label.
+  // The full machine rows behind the candidates the server offered, for the
+  // folder chip's label (the home dir).
   const { data: machineRows } = useSWR<MachineSummary[]>(
     open ? 'assign-agent-dialog:machines' : null,
     () => getBackendAPI(true).listMachines(),
@@ -138,40 +130,10 @@ export function AssignAgentDialog({
   );
   const directoryLabel = directoryChipLabel(directory, directoryProject);
 
-  // Worktrees only make sense in a git repo. `null` = unknown (offline, or a
-  // failed probe) keeps the chip, as on the new-session page; only the
-  // daemon's definitive `not_a_repo` hides it.
-  const [isGitRepo, setIsGitRepo] = useState<boolean | null>(null);
-  useEffect(() => {
-    const cwd = directory.trim();
-    if (!machineId || !cwd || !online) {
-      setIsGitRepo(null);
-      return;
-    }
-    let cancelled = false;
-    rpcGitStatus(machineId, cwd)
-      .then(() => {
-        if (!cancelled) setIsGitRepo(true);
-      })
-      .catch((e) => {
-        if (!cancelled) setIsGitRepo(e instanceof RpcError && e.code === 'not_a_repo' ? false : null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [machineId, directory, online]);
-  const showWorktree =
-    machines.length > 0 &&
-    (!selectedRow || machineSupportsWorktree(selectedRow)) &&
-    isGitRepo !== false;
-
   const pickMachine = (id: string) => {
     setMachineId(id);
     // The folder follows the computer: this project's folder there, if any.
     setDirectory(machines.find((m) => m.machine_id === id)?.directory ?? '');
-    setWorktreeMode('new');
-    setWorktreePath(null);
-    setWorktreeBranch(null);
   };
 
   // The server's `problem` describes its own pick; once there are computers to
@@ -224,18 +186,11 @@ export function AssignAgentDialog({
     setSending(start ? 'start' : 'assign');
     setSubmitError(null);
     try {
-      // An existing worktree is just a folder to run in.
-      const runDirectory =
-        worktreeMode === 'existing' && worktreePath ? worktreePath : directory.trim();
       await onConfirm(
         start
           ? {
               start: true,
-              run_target: {
-                machine_id: machineId,
-                directory: runDirectory || null,
-                worktree: worktreeMode === 'new' ? 'new' : 'none',
-              },
+              run_target: { machine_id: machineId, directory: directory.trim() || null },
             }
           : { start: false },
       );
@@ -272,7 +227,7 @@ export function AssignAgentDialog({
           </div>
         ) : (
           <div className="min-w-0">
-            {/* Setup chips: computer · folder · worktree, as on a new session. */}
+            {/* Setup chips: computer · folder, as on a new session. */}
             {machines.length > 0 && (
               <div className="mb-2 flex flex-wrap items-center gap-1.5">
                 <DropdownMenu>
@@ -325,12 +280,7 @@ export function AssignAgentDialog({
                 {/* Not gated on the computer being online: the run waits for it. */}
                 <DirectoryPickerPopover
                   value={directory}
-                  onChange={(next) => {
-                    setDirectory(next);
-                    setWorktreeMode('new');
-                    setWorktreePath(null);
-                    setWorktreeBranch(null);
-                  }}
+                  onChange={setDirectory}
                   projects={pickerProjects}
                   selectedProjectId={directoryProject?.project.id ?? null}
                   disabled={!selected}
@@ -352,38 +302,6 @@ export function AssignAgentDialog({
                   </button>
                 </DirectoryPickerPopover>
 
-                {showWorktree && machineId && (
-                  <WorktreePickerPopover
-                    machineId={machineId}
-                    cwd={directory}
-                    mode={worktreeMode}
-                    selectedPath={worktreePath}
-                    onSelect={(mode, path, branch) => {
-                      setWorktreeMode(mode);
-                      setWorktreePath(path);
-                      setWorktreeBranch(branch ?? null);
-                    }}
-                    disabled={!online || !directory.trim()}
-                  >
-                    <button
-                      type="button"
-                      title={online ? 'Worktree' : 'Worktree (pick one while the computer is online)'}
-                      disabled={!online || !directory.trim()}
-                      className={SETUP_CHIP_CLASS}
-                    >
-                      <GitBranch className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-                      <span className="max-w-36 truncate">
-                        {worktreeMode === 'none'
-                          ? 'Current branch'
-                          : worktreeMode === 'new'
-                            ? 'New worktree'
-                            : (worktreeBranch ??
-                              worktreePath?.split('/').filter(Boolean).pop() ??
-                              'Worktree')}
-                      </span>
-                    </button>
-                  </WorktreePickerPopover>
-                )}
               </div>
             )}
 

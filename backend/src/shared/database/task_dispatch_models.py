@@ -143,7 +143,9 @@ class TaskDispatch(Base):
         default=None,
     )
     directory: Mapped[str | None] = mapped_column(Text, default=None)
-    # {"mode": "new"} | {"mode": "none"} — the automation worktree spec.
+    # No longer written or read: task sessions start in the folder as it is
+    # and their agent makes a worktree. Older rows hold {"mode": "new"|"none"}.
+    # Drop it in a later migration, once no deployed server reads it.
     worktree: Mapped[dict | None] = mapped_column(JSONB, default=None)
 
     state: Mapped[str] = mapped_column(String(16), default="queued")
