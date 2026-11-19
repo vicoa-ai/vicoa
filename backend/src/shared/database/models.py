@@ -170,6 +170,17 @@ class AgentInstance(Base):
             "agent_profile_id",
             postgresql_where=text("agent_profile_id IS NOT NULL"),
         ),
+        # The ON DELETE SET NULL action on last_read_message_id runs
+        # `... WHERE last_read_message_id = $1` once per deleted message, so
+        # without this every message deleted (a session delete, an account
+        # delete) scanned the whole table. Partial: the action only ever looks
+        # for one non-NULL id, and `= $1` implies IS NOT NULL, so the planner
+        # can still use it.
+        Index(
+            "ix_agent_instances_last_read_message",
+            "last_read_message_id",
+            postgresql_where=text("last_read_message_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
