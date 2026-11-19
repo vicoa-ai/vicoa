@@ -1250,17 +1250,44 @@ def run_agent_default(args, unknown_args):
     if resume_session_id:
         try:
             from vicoa.sdk.client import VicoaClient
+            from vicoa.sdk.exceptions import APIError
 
             base_url = getattr(args, "base_url", DEFAULT_API_URL)
             client = VicoaClient(api_key=api_key, base_url=base_url)
-            # Update status to ACTIVE when resuming
-            client.update_agent_instance_status(resume_session_id, "ACTIVE")
+            resume_target = resume_session_id
+            try:
+                # Update status to ACTIVE when resuming
+                client.update_agent_instance_status(resume_session_id, "ACTIVE")
+            except (ValueError, APIError) as exc:
+                if isinstance(exc, APIError) and exc.status_code not in (404, 422):
+                    raise
+                # Not a Vicoa session id. It may be the agent's own id for a
+                # session on this computer: one already imported resolves to
+                # its Vicoa session, one that isn't is offered for import.
+                from vicoa.commands.local_import import resolve_resume_target
+
+                resolved = resolve_resume_target(
+                    args, api_key, resume_session_id, agent
+                )
+                if resolved is None:
+                    sys.exit(1)
+                resolved_agent, resume_target = resolved
+                if resolved_agent != "claude" or agent != "claude":
+                    # Only Claude's terminal wrapper resumes by session id.
+                    print(
+                        f"Session {resume_target} is in Vicoa. Continue it with "
+                        "Resume in the Vicoa app or the web dashboard."
+                    )
+                    sys.exit(0)
+                client.update_agent_instance_status(resume_target, "ACTIVE")
             # Set as agent_instance_id so it's used for the session
-            args.agent_instance_id = resume_session_id
+            args.agent_instance_id = resume_target
 
             # Add --resume flag to unknown_args so it's passed to the agent CLI
             unknown_args = list(unknown_args) if unknown_args else []
-            unknown_args.extend(["--resume", resume_session_id])
+            unknown_args.extend(["--resume", resume_target])
+        except SystemExit:
+            raise
         except Exception as e:
             print(f"Warning: Failed to update session status: {e}")
 
@@ -2346,6 +2373,55 @@ Examples:
         metavar="N",
         help="Skip the newest N sessions (page through with --limit; "
         "`--json` reports total/has_more)",
+    )
+    # Agents whose own sessions `--local` / `import` can read (a registry in
+    # vicoa.local_sessions; cheap to import, the readers load on first use).
+    from vicoa.local_sessions import SUPPORTED_AGENTS as local_session_agents
+
+    session_ls.add_argument(
+        "--local",
+        action="store_true",
+        help=(
+            "List the sessions agents keep on this computer instead, including "
+            "ones started outside Vicoa (a terminal, a desktop app, an editor)"
+        ),
+    )
+    session_ls.add_argument(
+        "--agent",
+        dest="local_agent",
+        choices=list(local_session_agents),
+        help="With --local: only this agent's sessions",
+    )
+    session_ls.add_argument(
+        "--dir",
+        metavar="PATH",
+        help="With --local: only sessions in this folder or below it",
+    )
+    session_ls.add_argument(
+        "--scripted",
+        action="store_true",
+        help="With --local: also list sessions run by scripts and SDKs",
+    )
+
+    session_import = session_sub.add_parser(
+        "import",
+        parents=[session_common],
+        help=(
+            "Bring sessions started outside Vicoa into Vicoa, with their history "
+            "(ids from `vicoa session ls --local`)"
+        ),
+    )
+    session_import.add_argument(
+        "native_ids",
+        nargs="+",
+        metavar="ID",
+        help="The agent's own session id (Claude session id, Codex thread id)",
+    )
+    session_import.add_argument(
+        "--agent",
+        dest="import_agent",
+        choices=list(local_session_agents),
+        help="Whose session it is (default: detected from the id)",
     )
 
     session_get = session_sub.add_parser(

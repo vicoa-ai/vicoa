@@ -144,6 +144,7 @@ Conventions for hand-written (non-FlutterFlow-generated) pages. See `lib/pages/m
 - Never run `flutter format` or `dart format`. Try to keep the code in one line instead of multiple lines.
 - Keep files modular — don't let a file grow too long or unwieldy. Split new things into new files: create dedicated files for new widgets, components, and logic rather than piling onto an existing large file.
 - A session shown as an item (a list or picker row, a chip or label naming it) uses `Icons.chat_bubble_outline_rounded`, the icon of the `#` reference panel (`custom_code/widgets/reference_suggestions.dart`). The web twin is lucide `MessageCircle`; the full rule is in `apps/web/AGENTS.md`.
+- An action label (button, menu item, sheet row) never ends in an ellipsis: `Import sessions`, not `Import sessions…` or `Import sessions...`. Progress text and input placeholders are not actions. The full rule is in `apps/web/AGENTS.md`.
 
 ## Key Integrations
 

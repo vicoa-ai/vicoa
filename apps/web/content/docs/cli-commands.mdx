@@ -66,7 +66,7 @@ The `--agent` flag accepts `claude`, `amp`, `codex`, `opencode`, `cursor`, `gemi
 |---|---|
 | `--name <text>` | Display name for the registered session |
 | `--task <TASK_UUID>` | Link the session to a task; a running session moves a task nobody has started to `in_progress` |
-| `--resume <SESSION_ID>` | Resume a previous session and mark it active |
+| `--resume <SESSION_ID>` | Resume a previous session and mark it active. Given the id of a Claude Code session that isn't in Vicoa yet, it offers to [import](#vicoa-session-import) it first |
 | `--agent <name>` | Which agent to run |
 | `--set-default [agent]` | Persist the default agent used by a bare `vicoa` run |
 | `--no-relay` | Run local-only — no live streaming to the dashboard |
@@ -242,6 +242,30 @@ vicoa session ls --json
 `WHEN` accepts a date (`2026-09-20`), a datetime (`2026-09-20T14:30`, optionally with `Z` or an offset like `+08:00`), `today` / `yesterday`, or an age counted back from now (`30m`, `24h`, `7d`, `2w`). Times without an offset are your local time, the same zone the `STARTED` column prints in. A bare date on `--until` includes that whole day, so `--since 2026-09-20 --until 2026-09-20` is exactly the 20th. The window filters on when each session **started**, and `total` in `--json` counts the window.
 
 Columns: `AGENT`, `MODEL`, `STATUS`, `NAME`, `PROJECT`, `MSGS`, `STARTED`, `ID` (the full session ID).
+
+#### Sessions on this computer: `--local`
+
+`vicoa session ls --local` lists the sessions your agents keep on this computer instead, including ones you started outside Vicoa: in a terminal, the Claude or Codex desktop app, or an editor. Claude Code and Codex are supported.
+
+```bash
+vicoa session ls --local                  # newest 50, every supported agent
+vicoa session ls --local --agent codex    # only Codex
+vicoa session ls --local --dir .          # only sessions in this folder or below it
+vicoa session ls --local --scripted       # also sessions run by scripts and SDKs (claude -p, codex exec)
+```
+
+Columns: `AGENT`, `SOURCE` (where it was started: Terminal, Claude desktop, Codex desktop, VS Code), `FOLDER`, `UPDATED`, `IN VICOA` (`yes` once it has been imported or was started in Vicoa), `ID` (the agent's own session id), `TITLE`. `--limit`, `--offset` and `--json` work as above.
+
+### vicoa session import
+
+Bring sessions started outside Vicoa into Vicoa, with their history. Pass the ids `vicoa session ls --local` prints:
+
+```bash
+vicoa session import 5e6f0c1a-...-full-uuid
+vicoa session import 0199a3b2-... 0198f7c4-... --agent codex
+```
+
+Each one becomes an ordinary Vicoa session on this computer: it shows up in the app and the dashboard, can be shared, and continues with **Resume**, which reopens the agent's own session, so you and the agent pick up where you left off. Importing a session again returns the session it already became. The agent is detected from the id; pass `--agent claude|codex` to say which. The computer must be connected to Vicoa (`vicoa daemon` has run on it once).
 
 ### vicoa session get
 

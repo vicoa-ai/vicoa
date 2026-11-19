@@ -2497,6 +2497,10 @@ class MachineDaemon:
             return self.spawn_session_rpc(frame)
         if method == "prewarm-session":
             return self.prewarm_session_rpc(frame)
+        if method == "list-local-sessions":
+            return self.list_local_sessions_rpc(frame.get("params") or {})
+        if method == "import-local-session":
+            return self.import_local_session_rpc(frame.get("params") or {})
         if method == "list-files":
             from vicoa.rpc import file_ops
 
@@ -2745,6 +2749,8 @@ class MachineDaemon:
         return [
             "spawn-session",
             "prewarm-session",
+            "list-local-sessions",
+            "import-local-session",
             "list-files",
             "read-file",
             "read-file-range",
@@ -3003,6 +3009,82 @@ class MachineDaemon:
             self._session_stderr_path(entry.session_id).unlink(missing_ok=True)
         except OSError:
             pass  # still open on Windows; harmless
+
+    # ------------------------------------------------------------------
+    # Sessions started outside Vicoa (issue #235)
+    # ------------------------------------------------------------------
+    def _import_client(self) -> Any:
+        from vicoa.sdk.client import VicoaClient
+
+        return VicoaClient(api_key=self.api_key, base_url=self.base_url)
+
+    def list_local_sessions_rpc(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle `list-local-sessions`: this machine's native agent sessions.
+
+        Newest first, one page at a time, each marked with the Vicoa session it
+        already is (`vicoa_instance_id`), if any. See `vicoa.local_sessions`.
+        """
+        from vicoa import local_sessions
+
+        agent = params.get("agent")
+        directory = params.get("directory")
+        try:
+            result = local_sessions.list_local_sessions(
+                agent=agent if isinstance(agent, str) and agent else None,
+                directory=directory
+                if isinstance(directory, str) and directory
+                else None,
+                limit=int(params.get("limit") or local_sessions.DEFAULT_LIMIT),
+                offset=int(params.get("offset") or 0),
+                include_scripted=bool(params.get("include_scripted")),
+            )
+        except (TypeError, ValueError) as exc:
+            return {"error": f"Invalid parameters: {exc}"}
+        except local_sessions.LocalSessionError as exc:
+            return {"error": str(exc)}
+        if self.machine_id and result["sessions"]:
+            client = self._import_client()
+            try:
+                local_sessions.mark_linked(client, self.machine_id, result["sessions"])
+            finally:
+                client.close()
+        return result
+
+    def import_local_session_rpc(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle `import-local-session`: turn one native session into a Vicoa
+        session with its history. Idempotent: importing it again returns the
+        session it already became (`created: false`)."""
+        from vicoa import local_sessions
+        from vicoa.sdk.exceptions import APIError, VicoaError
+
+        agent = params.get("agent")
+        native_id = params.get("native_id")
+        if not isinstance(native_id, str) or not native_id.strip():
+            return {"error": "native_id is required"}
+        if not self.machine_id:
+            return {"error": "This machine isn't registered with Vicoa yet"}
+        client = self._import_client()
+        try:
+            # No agent given: found from the id (`local_sessions.find_agent`).
+            result = local_sessions.import_local_session(
+                client,
+                machine_id=self.machine_id,
+                native_id=native_id.strip(),
+                agent=agent if isinstance(agent, str) and agent else None,
+            )
+        except local_sessions.LocalSessionError as exc:
+            return {"error": str(exc)}
+        except APIError as exc:
+            return {"error": f"Couldn't import the session: {exc.detail}"}
+        except VicoaError as exc:
+            return {"error": f"Couldn't import the session: {exc}"}
+        finally:
+            client.close()
+        print(
+            f"[daemon] imported {result.get('agent')} session {native_id} as "
+            f"{result.get('agent_instance_id')} ({result.get('message_count')} messages)"
+        )
+        return result
 
     def prewarm_session_rpc(self, frame: dict[str, Any]) -> dict[str, Any]:
         """Handle `prewarm-session`: start the session a spawn would start, early.

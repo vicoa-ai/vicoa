@@ -81,7 +81,7 @@ def _instance(test_db, user, instance_id) -> AgentInstance:
 async def _spawn(monkeypatch, conn: Connection, params: dict, instance_id) -> None:
     """Drive one spawn-session RPC with the daemon stubbed out."""
 
-    async def fake_call(user_id, machine_id, method, call_params):
+    async def fake_call(user_id, machine_id, method, call_params, **_kwargs):
         return {"agent_instance_id": str(instance_id)}
 
     monkeypatch.setattr(ws_handler.rpc_router, "call", fake_call)
@@ -241,7 +241,7 @@ async def test_spawn_files_the_repo_root_as_the_recent_directory(
     conn = _connection(user.id)
 
     async def spawn(result: dict, directory: str) -> None:
-        async def fake_call(user_id, machine_id, method, call_params):
+        async def fake_call(user_id, machine_id, method, call_params, **_kwargs):
             return result
 
         monkeypatch.setattr(ws_handler.rpc_router, "call", fake_call)
@@ -329,7 +329,7 @@ async def _prewarm(monkeypatch, conn: Connection, params: dict) -> list[str]:
     """Drive one prewarm-session RPC; returns the spawn-only side effects hit."""
     side_effects: list[str] = []
 
-    async def fake_call(user_id, machine_id, method, call_params):
+    async def fake_call(user_id, machine_id, method, call_params, **_kwargs):
         assert method == "prewarm-session"
         return {"status": "started"}
 
@@ -413,7 +413,7 @@ async def test_prewarm_is_not_relayed_when_switched_off_server_wide(
     without reaching a daemon, so sessions start cold as before."""
     relayed: list[str] = []
 
-    async def fake_call(user_id, machine_id, method, call_params):
+    async def fake_call(user_id, machine_id, method, call_params, **_kwargs):
         relayed.append(method)
         return {"status": "started"}
 

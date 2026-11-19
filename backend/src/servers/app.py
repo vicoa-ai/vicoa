@@ -39,6 +39,7 @@ from servers.api.automations import automation_router
 from servers.api.instances import instance_router
 from servers.api.projects import project_router
 from servers.api.routers import agent_router
+from servers.api.session_imports import import_router
 from servers.api.agent_profiles import agent_profile_router
 from servers.api.shares import share_router
 from servers.api.tasks import task_router
@@ -288,6 +289,8 @@ app.include_router(automation_router, prefix="/api/v1")
 # Read-only session list + transcript for CLI agents (agent-facing mirror of
 # the backend/api/agents.py instance reads).
 app.include_router(instance_router, prefix="/api/v1")
+# Bring sessions started outside Vicoa in (issue #235).
+app.include_router(import_router, prefix="/api/v1")
 # The WebSocket endpoint and its process-local ConnectionManager are mounted
 # only on the dedicated vicoa-server app (enable_websocket=true). The legacy
 # server process inside vicoa-backend stays SSE/REST-only (server-app-split.md).
