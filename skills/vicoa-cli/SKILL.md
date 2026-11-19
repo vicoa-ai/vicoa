@@ -81,6 +81,7 @@ rather than guessing. Pass `-y`/`--yes` only when the user has confirmed.
 | What agents are running **on this machine right now** | `vicoa ls` |
 | **All** the user's sessions (any machine, incl. finished) | `vicoa session ls` |
 | Read a session's **message transcript** | `vicoa session get <id>` |
+| Bring a session started **outside Vicoa** (terminal, desktop app, editor) in | `vicoa session ls --local`, `vicoa session import <id>` |
 | Start / resume / stop an agent session here | `vicoa`, `vicoa --resume`, `vicoa stop` |
 | Start a session **on another machine** | `vicoa session start --machine <id\|name>` |
 | Publish a transcript (e.g. to attach to a PR) | `vicoa session share` |
@@ -113,6 +114,11 @@ vicoa session get <SESSION_ID> --all # full transcript
 vicoa session get <SESSION_ID> --all --role user # only what the human asked for
 vicoa session get <SESSION_ID> --full # + timestamps, emails, control msgs, tool payloads
 vicoa session get <SESSION_ID> --json # {"instance": {...}, "messages": [...]}
+
+# Sessions the agents keep on THIS computer, incl. ones never started via Vicoa
+vicoa session ls --local                 # Claude Code + Codex, newest first; IN VICOA column
+vicoa session ls --local --dir . --agent claude
+vicoa session import <NATIVE_ID>         # with its history; then Resume continues it
 
 # Rename a session / link it to a task (running it starts an unstarted task)
 vicoa session update <SESSION_ID> --title "Refactor auth"

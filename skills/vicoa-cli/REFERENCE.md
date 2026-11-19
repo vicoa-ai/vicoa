@@ -77,6 +77,26 @@ automation-spawned session (the CLI sends `VICOA_AGENT_INSTANCE_ID` as
 auto-continue automation can't flag-and-continue its own runs; other
 automations' rate-limited sessions and a manual `session ls` are unaffected.
 
+### `vicoa session ls --local`
+
+Lists the sessions agents keep on **this computer** instead of the backend's,
+including ones started outside Vicoa (a terminal, the Claude/Codex desktop app,
+an editor). Claude Code and Codex. Flags: `--agent claude|codex`, `--dir PATH`
+(this folder or below), `--scripted` (also SDK / `claude -p` / `codex exec`
+runs, hidden by default), `--limit`, `--offset`, `--json`. Columns: `AGENT`,
+`SOURCE`, `FOLDER`, `UPDATED`, `IN VICOA` (`yes` = already a Vicoa session),
+`ID` (the agent's own id: Claude session id, Codex thread id), `TITLE`.
+
+### `vicoa session import <native_id> [<native_id> ...]`
+
+Turns native sessions (ids from `session ls --local`) into Vicoa sessions on
+this computer, history included. Idempotent: a second import prints
+`Already in Vicoa:` with the existing session id. `--agent claude|codex`
+overrides detection. Needs this computer registered (`vicoa daemon` ran once).
+The imported session is continued with Resume (app/dashboard); for Claude,
+`vicoa --resume <id>` also works and, for an id not yet imported, offers to
+import it (prints the `session import` command when stdin isn't a terminal).
+
 ### `vicoa session get <session_id>`
 
 `session_id` is the full UUID `session ls` prints; every `session` command

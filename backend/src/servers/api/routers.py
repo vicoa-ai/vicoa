@@ -60,6 +60,7 @@ from shared.websocket.envelope import (
 from shared.websocket.in_tx import after_commit
 from shared.websocket.protocol import watcher_room
 from shared.websocket.rpc import RpcError, rpc_router
+from shared.websocket.rpc import timeout_for as rpc_timeout_for
 from servers.api.media import attach_stream_url
 from servers.shared.db import (
     send_agent_message,
@@ -863,7 +864,11 @@ async def machine_rpc_endpoint(
         start_worktree_naming(user_id, machine_id, request.params)
     try:
         result = await rpc_router.call(
-            user_id, machine_id, request.method, request.params
+            user_id,
+            machine_id,
+            request.method,
+            request.params,
+            timeout=rpc_timeout_for(request.method),
         )
     except RpcError as exc:
         http_status = {

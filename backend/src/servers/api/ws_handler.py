@@ -53,6 +53,7 @@ from shared.websocket.protocol import (
     terminal_room,
 )
 from shared.websocket.rpc import RpcError, rpc_router
+from shared.websocket.rpc import timeout_for as rpc_timeout_for
 from shared.websocket.watchers import narrow_instance_body
 from servers.api.media import attach_stream_url
 from servers.presence import broadcast_session_connected, presence
@@ -532,7 +533,9 @@ async def handle_rpc_call(conn: Connection, frame: dict) -> None:
             start_worktree_naming(conn.user_id, machine_id, params)
 
     try:
-        result = await rpc_router.call(conn.user_id, machine_id, method, params)
+        result = await rpc_router.call(
+            conn.user_id, machine_id, method, params, timeout=rpc_timeout_for(method)
+        )
         if method == "read-file" and isinstance(result, dict):
             attach_stream_url(conn.user_id, machine_id, params, result)
         conn.enqueue({"type": "rpc-result", "request_id": request_id, "result": result})

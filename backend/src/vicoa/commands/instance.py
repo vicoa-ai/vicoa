@@ -405,6 +405,11 @@ def _parse_time_bound(
 
 
 def _cmd_ls(args, api_key: str) -> int:
+    if getattr(args, "local", False):
+        # Sessions agents keep on this computer, including ones never in Vicoa.
+        from vicoa.commands.local_import import cmd_ls_local
+
+        return cmd_ls_local(args, api_key)
     params: dict[str, Any] = {"limit": getattr(args, "limit", 50)}
     offset = getattr(args, "offset", 0) or 0
     if offset:
@@ -1507,9 +1512,16 @@ def _cmd_start(args, api_key: str) -> int:
     return 0
 
 
+def _cmd_import(args, api_key: str) -> int:
+    from vicoa.commands.local_import import cmd_import
+
+    return cmd_import(args, api_key)
+
+
 _HANDLERS = {
     "start": _cmd_start,
     "ls": _cmd_ls,
+    "import": _cmd_import,
     "get": _cmd_get,
     "update": _cmd_update,
     "message": _cmd_message,
@@ -1525,7 +1537,7 @@ def run_session_command(args) -> int:
     handler = _HANDLERS.get(sub) if sub else None
     if handler is None:
         print(
-            "usage: vicoa session {start,ls,get,update,message,continue,share,unshare} ...\n"
+            "usage: vicoa session {start,ls,import,get,update,message,continue,share,unshare} ...\n"
             "Run `vicoa session --help` for details.",
             file=sys.stderr,
         )

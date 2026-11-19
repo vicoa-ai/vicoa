@@ -17,6 +17,17 @@ from .connection_manager import Connection
 
 DEFAULT_TIMEOUT = 30.0
 
+#: Methods that legitimately run longer than the default. An import reads a
+#: whole transcript (Codex through a fresh app-server) and posts it, which for
+#: a session of thousands of messages can take more than 30 s.
+_METHOD_TIMEOUTS: dict[str, float] = {"import-local-session": 120.0}
+
+
+def timeout_for(method: str) -> float:
+    """How long a caller waits on the daemon for this RPC method."""
+    return _METHOD_TIMEOUTS.get(method, DEFAULT_TIMEOUT)
+
+
 # §2.8 no-handler grace window: a daemon may be momentarily offline (reconnecting
 # after a deploy or a network blip) when a call arrives. Wait this long for one
 # to register before failing the call with `no_handler`.

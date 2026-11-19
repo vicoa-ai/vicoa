@@ -815,6 +815,42 @@ class VicoaClient:
         response = self._make_request("POST", "/api/v1/files/sync", json=data)
         return response
 
+    def lookup_native_sessions(
+        self, *, machine_id: str, agent: str, native_session_ids: List[str]
+    ) -> Dict[str, str]:
+        """Which of these native sessions on this machine are already in Vicoa.
+
+        Returns native session id -> Vicoa instance id, only for the matches.
+        """
+        if not native_session_ids:
+            return {}
+        response = self._make_request(
+            "POST",
+            "/api/v1/agent-instances/native-lookup",
+            json={
+                "machine_id": machine_id,
+                "agent": agent,
+                "native_session_ids": native_session_ids,
+            },
+        )
+        matches = response.get("matches") or {}
+        return {str(native): str(instance) for native, instance in matches.items()}
+
+    def import_session(
+        self, payload: Dict[str, Any], timeout: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Create a Vicoa session, with its history, for one started outside Vicoa.
+
+        Idempotent per native session: importing it again returns the same
+        session with ``created`` false.
+        """
+        return self._make_request(
+            "POST",
+            "/api/v1/agent-instances/import",
+            json=payload,
+            timeout=timeout or 120,
+        )
+
     def close(self):
         """Close the session and clean up resources."""
         self.session.close()
