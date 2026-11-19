@@ -1156,12 +1156,12 @@ async def test_steering_a_middle_message_leaves_the_rest_queued_in_order(
 
     # When the open turn ends, the rest runs as the next turn, in the order it
     # was queued, without the steered one: the burst is coalesced into one
-    # turn under the first id, and the other id is stamped consumed with it.
+    # turn under the first id, with the other id riding along.
     runner._open_turns.clear()
     next_input = await runner._wait_for_user_input()
     assert next_input is not None
     assert (next_input.content, next_input.message_id) == ("first\n\nthird", "q-1")
-    assert fake.mark_consumed_calls == ["q-2", "q-3"]
+    assert next_input.merged_message_ids == ("q-3",)
     assert runner._user_message_queue.empty()
     assert runner._steer_in_flight == {}
 
@@ -1253,6 +1253,27 @@ async def test_run_conversation_turn_reports_consumption(make_runner):
 
     assert fake.mark_consumed_calls == ["m-42"]
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_run_conversation_turn_stamps_a_merged_burst_in_queue_order(
+    make_runner,
+):
+    # The web transcript sorts a consumed queued message by `consumed_at`, so
+    # the first message of a coalesced burst must be stamped first, then the
+    # others in the order they were queued.
+    fake = FakeAsyncVicoaClient()
+    runner = make_runner(vicoa_client=fake)
+
+    await runner.run_conversation_turn(
+        InboundUserMessage(
+            "first\n\nsecond\n\nthird",
+            message_id="m-1",
+            merged_message_ids=("m-2", "m-3"),
+        )
+    )
+
+    assert fake.mark_consumed_calls == ["m-1", "m-2", "m-3"]
 
 
 @pytest.mark.asyncio
