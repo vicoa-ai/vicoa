@@ -111,10 +111,18 @@ describe('questions and people', () => {
   const askers = [{ id: B, name: 'Codex' }];
 
   it('an answer wakes the agent that asked, wherever it is written', () => {
-    expect(agentsToWake('B', { ...top, askers })).toEqual([B, A]);
     expect(
       agentsToWake('B', { inThread: true, threadAgentId: null, assigneeAgentId: null, askers }),
     ).toEqual([B]);
+    expect(agentsToWake('B', { inThread: true, threadAgentId: A, assigneeAgentId: null, askers })).toEqual([
+      B,
+      A,
+    ]);
+  });
+
+  it('a top-level answer does not also wake the assignee', () => {
+    expect(agentsToWake('B', { ...top, askers })).toEqual([B]);
+    expect(agentsToWake(`B, [@A](vicoa://agent/${A}) too`, { ...top, askers })).toEqual([B, A]);
   });
 
   it('alongside an explicit mention', () => {

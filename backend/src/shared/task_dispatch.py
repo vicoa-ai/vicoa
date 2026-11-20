@@ -593,21 +593,25 @@ def route_comment(
     1. It @mentions agents → those.
     2. It replies in a thread an agent has written in → the latest such agent.
        (A reply in a thread with no agent in it stays between people.)
-    3. It is top level on a task assigned to an agent → that agent.
+    3. It is top level on a task assigned to an agent, and no agent is waiting
+       on its author → that agent. While one is, a top-level comment is that
+       agent's answer, so the assignee isn't started beside it: one comment,
+       one run. Mentioning the assignee brings it in (rule 1).
     """
     routes: dict[UUID, str] = {
         profile_id: "answered"
         for profile_id in agents_waiting_on(db, task, comment.author_id)
     }
-    for profile_id, trigger in _addressed_to(db, task, comment):
+    for profile_id, trigger in _addressed_to(db, task, comment, answering=bool(routes)):
         routes.setdefault(profile_id, trigger)
     return list(routes.items())
 
 
 def _addressed_to(
-    db: Session, task: Task, comment: TaskComment
+    db: Session, task: Task, comment: TaskComment, *, answering: bool
 ) -> list[tuple[UUID, str]]:
-    """Rules 1-3 of `route_comment`."""
+    """Rules 1-3 of `route_comment`. `answering`: an agent is waiting on the
+    comment's author, which turns rule 3 off."""
     mentioned = mentioned_profile_ids(comment.body)
     if mentioned:
         return [(profile_id, "mentioned") for profile_id in mentioned]
@@ -626,6 +630,8 @@ def _addressed_to(
             .first()
         )
         return [(agent_author[0], "replied")] if agent_author else []
+    if answering:
+        return []
     if task.assignee_type == "agent" and task.assignee_id is not None:
         return [(task.assignee_id, "commented")]
     return []

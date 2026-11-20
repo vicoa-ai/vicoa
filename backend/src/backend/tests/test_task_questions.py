@@ -401,6 +401,24 @@ class TestTheAnswerWakesTheAsker:
         triggers = {(r.agent_profile_id, r.trigger) for r in _queued(test_db, task)}
         assert triggers == {(profile.id, "answered"), (other.id, "mentioned")}
 
+    def test_a_top_level_answer_does_not_also_wake_the_assignee(
+        self, test_db, test_user, task, profile
+    ):
+        owner = AgentProfile(user_id=test_user.id, name="Ops", agent="claude")
+        test_db.add(owner)
+        test_db.commit()
+        task.assignee_type, task.assignee_id = "agent", owner.id
+        test_db.commit()
+        _ask_directly(test_db, test_user, task, profile, test_user)
+        _as_person(test_db, test_user)
+        task_timeline_queries.create_comment(test_db, task, test_user.id, "B")
+        [row] = _queued(test_db, task)
+        assert (row.agent_profile_id, row.trigger) == (profile.id, "answered")
+        # Answered, so nobody waits on him: his next top-level comment is the owner's.
+        task_timeline_queries.create_comment(test_db, task, test_user.id, "And C")
+        triggers = {(r.agent_profile_id, r.trigger) for r in _queued(test_db, task)}
+        assert triggers == {(profile.id, "answered"), (owner.id, "commented")}
+
     def test_a_teammates_mention_still_cant_start_the_agent(
         self, test_db, test_user, task, profile, ada
     ):

@@ -16,7 +16,9 @@
  * 3. explicit agent mentions wake those agents, and nothing else (on a Done or
  *    Cancelled task, a mention is the only thing that wakes anyone);
  * 4. a reply in a thread an agent wrote in wakes that agent;
- * 5. a top-level comment on a task assigned to an agent wakes that agent.
+ * 5. a top-level comment on a task assigned to an agent wakes that agent,
+ *    unless an agent is waiting on the person writing it: then the comment
+ *    is that agent's answer, and the assignee is not woken beside it.
  *
  * The server stays the authority: this only predicts it for the hint.
  */
@@ -110,6 +112,7 @@ export function agentsToWake(body: string, ctx: WakeContext): string[] {
   if (mentioned.length > 0) return add(mentioned);
   if (ctx.taskClosed) return out;
   if (ctx.inThread) return add(ctx.threadAgentId ? [ctx.threadAgentId.toLowerCase()] : []);
+  if (out.length > 0) return out;
   return add(ctx.assigneeAgentId ? [ctx.assigneeAgentId.toLowerCase()] : []);
 }
 
