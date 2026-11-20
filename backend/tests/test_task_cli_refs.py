@@ -61,6 +61,8 @@ class FakeServer:
             if t.get("identifier"):
                 self.tasks[t["identifier"]] = t
         self.sent: list[tuple[str, str, dict | None, dict | None]] = []
+        # label id → (status, detail) the write to it fails with
+        self.label_failures: dict[str, tuple[int, str]] = {}
 
     def __call__(
         self, args, api_key, method, endpoint, *, params=None, json=None, **kw
@@ -78,6 +80,14 @@ class FakeServer:
             if method == "POST":
                 return {"id": "new-label", **(json or {})}
             return LABELS
+        if endpoint.startswith("/api/v1/task-labels/"):
+            ref = endpoint.rsplit("/", 1)[1]
+            label = next((lbl for lbl in LABELS if lbl["id"] == ref), None)
+            if label is None or ref in self.label_failures:
+                raise RequestError(*self.label_failures.get(ref, (404, "Not found")))
+            if method == "PATCH":
+                return {**label, **(json or {})}
+            return None
         if endpoint == "/api/v1/tasks":
             if method == "POST":
                 return {"id": "new", "identifier": "VIC-9", **(json or {})}
@@ -212,6 +222,123 @@ class TestLabelRef:
         assert L._cmd_create(_args(name="Growth", color=None), "k") == 1
         assert not any(m == "POST" for m, *_ in server.sent)
         assert "already exists" in capsys.readouterr().err
+
+
+def _writes(server) -> list[tuple[str, str, dict | None]]:
+    return [(m, e, b) for m, e, _, b in server.sent if m != "GET"]
+
+
+class TestLabelUpdate:
+    def _args(self, label, new_name=None, color=None, **over):
+        return _args(label=label, new_name=new_name, color=color, **over)
+
+    def test_rename_by_name(self, server, capsys):
+        assert L._cmd_update(self._args("Growth", new_name="growth-2"), "k") == 0
+        assert _writes(server) == [
+            ("PATCH", f"/api/v1/task-labels/{LABELS[0]['id']}", {"name": "growth-2"})
+        ]
+        assert "Renamed label 'growth' to 'growth-2'" in capsys.readouterr().out
+
+    def test_recolour_by_id(self, server, capsys):
+        assert L._cmd_update(self._args(LABELS[1]["id"], color="#123456"), "k") == 0
+        assert _writes(server) == [
+            ("PATCH", f"/api/v1/task-labels/{LABELS[1]['id']}", {"color": "#123456"})
+        ]
+        assert "Updated label 'bug' (#123456)" in capsys.readouterr().out
+
+    def test_needs_a_field(self, server, capsys):
+        assert L._cmd_update(self._args("bug"), "k") == 2
+        assert server.sent == []
+        assert "--name and/or --color" in capsys.readouterr().err
+
+    def test_refuses_a_name_another_label_has(self, server, capsys):
+        assert L._cmd_update(self._args("bug", new_name="GROWTH"), "k") == 1
+        assert _writes(server) == []
+        assert "already exists" in capsys.readouterr().err
+
+    def test_a_case_only_rename_is_fine(self, server):
+        assert L._cmd_update(self._args("bug", new_name="Bug"), "k") == 0
+        assert _writes(server)[0][2] == {"name": "Bug"}
+
+    def test_unknown_label_exits_2_without_a_create_hint(self, server, capsys):
+        with pytest.raises(SystemExit) as exc:
+            L._cmd_update(self._args("nope", new_name="x"), "k")
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "no label named 'nope'" in err and "label create" not in err
+
+    def test_shared_name_lists_the_ids(self, server, monkeypatch, capsys):
+        twin = dict(LABELS[1], id="aaaaaaaa-0000-0000-0000-000000000003")
+        monkeypatch.setattr(L, "_list_labels", lambda *a, **k: LABELS + [twin])
+        with pytest.raises(SystemExit):
+            L._cmd_update(self._args("bug", color="#000000"), "k")
+        err = capsys.readouterr().err
+        assert LABELS[1]["id"] in err and twin["id"] in err
+        assert "pass the id" in err
+
+    def test_old_server_says_so(self, server, capsys):
+        server.label_failures[LABELS[1]["id"]] = (404, "Not Found")
+        assert L._cmd_update(self._args("bug", color="#000000"), "k") == 1
+        assert "Settings → Tasks" in capsys.readouterr().err
+
+
+class TestLabelDelete:
+    def _args(self, *labels, yes=True, **over):
+        return _args(labels=list(labels), yes=yes, **over)
+
+    def test_deletes_by_name_and_id(self, server, capsys):
+        assert L._cmd_delete(self._args("Growth", LABELS[1]["id"]), "k") == 0
+        assert _writes(server) == [
+            ("DELETE", f"/api/v1/task-labels/{LABELS[0]['id']}", None),
+            ("DELETE", f"/api/v1/task-labels/{LABELS[1]['id']}", None),
+        ]
+        out = capsys.readouterr().out
+        assert "Deleted label 'growth'." in out and "Deleted label 'bug'." in out
+
+    def test_one_label_named_twice_is_deleted_once(self, server):
+        assert L._cmd_delete(self._args("bug", "BUG"), "k") == 0
+        assert len(_writes(server)) == 1
+
+    def test_a_miss_deletes_nothing(self, server):
+        with pytest.raises(SystemExit) as exc:
+            L._cmd_delete(self._args("growth", "nope"), "k")
+        assert exc.value.code == 2
+        assert _writes(server) == []
+
+    def test_no_terminal_and_no_yes_refuses(self, server, monkeypatch, capsys):
+        monkeypatch.setattr("sys.stdin", io.StringIO(""))
+        assert L._cmd_delete(self._args("bug", yes=False), "k") == 1
+        assert _writes(server) == []
+        assert "--yes" in capsys.readouterr().err
+
+    def test_answering_no_keeps_it(self, server, monkeypatch, capsys):
+        monkeypatch.setattr("sys.stdin", io.StringIO("n\n"))
+        assert L._cmd_delete(self._args("bug", yes=False), "k") == 0
+        assert _writes(server) == []
+        assert "Delete label 'bug'?" in capsys.readouterr().out
+
+    def test_answering_yes_deletes(self, server, monkeypatch):
+        monkeypatch.setattr("sys.stdin", io.StringIO("y\n"))
+        assert L._cmd_delete(self._args("bug", "growth", yes=False), "k") == 0
+        assert len(_writes(server)) == 2
+
+    def test_a_failure_is_reported_and_the_rest_still_go(self, server, capsys):
+        server.label_failures[LABELS[0]["id"]] = (500, "boom")
+        assert L._cmd_delete(self._args("growth", "bug", json=True), "k") == 1
+        captured = capsys.readouterr()
+        assert "'growth'" in captured.err and "boom" in captured.err
+        assert json.loads(captured.out) == [LABELS[1]]
+
+    def test_json_is_one_object_for_one_ref(self, server, capsys):
+        assert L._cmd_delete(self._args("bug", json=True), "k") == 0
+        assert json.loads(capsys.readouterr().out) == LABELS[1]
+
+    def test_old_server_stops_at_the_first(self, server, capsys):
+        for lbl in LABELS:
+            server.label_failures[lbl["id"]] = (404, "Not Found")
+        assert L._cmd_delete(self._args("growth", "bug"), "k") == 1
+        assert len(_writes(server)) == 1
+        assert "Settings → Tasks" in capsys.readouterr().err
 
 
 class TestTaskLs:

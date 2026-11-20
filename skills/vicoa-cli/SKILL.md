@@ -368,6 +368,8 @@ vicoa project get VIC
 
 vicoa label ls                    # the names --label accepts
 vicoa label create regression --color '#ef4444'
+vicoa label update regression --name regressions --color '#f97316'
+vicoa label delete regressions --yes   # comes off every task; --yes for agents
 ```
 
 `--project` takes a key (`VIC`), a name, an id, or `none` for No project.
@@ -479,6 +481,8 @@ Rarely what a question is about, but worth knowing they exist:
 | `Daemon on <machine> looks offline` (session start) | Start `vicoa daemon` there, or pass `--allow-offline` to queue the request until it reconnects. |
 | `no project with key or name '…'` / `N projects are named '…'` | `--project` matches a key, name, or id exactly — check `vicoa project ls`; pass the key or id when two projects share a name. |
 | `no label named '…'` | `--label` takes an existing name — `vicoa label ls`, or `vicoa label create <name>`. |
+| `N labels are named '…'` | Two labels share the name. `label update` / `delete` take the id instead; for `--label`, rename one with `vicoa label update <id> --name <new>`. |
+| `Aborted (pass --yes to delete non-interactively)` | `label delete` and `task delete` ask first and you have no terminal to answer — re-run with `--yes` once you mean it. |
 | `no session given and VICOA_AGENT_INSTANCE_ID is not set` | `session share`/`unshare` default to the session they run inside; outside one, pass the session id. |
 | `'<ref>' is not a session id` | Pass the full session id from `vicoa session ls`; short prefixes are not accepted. |
 | `404` on `task get/update/delete` | Use the `VIC-42` identifier or the **full UUID** from the `ID` column. |

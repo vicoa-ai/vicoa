@@ -390,7 +390,7 @@ class TestListFilters:
 
 
 class TestLabels:
-    """`vicoa label ls` / `label create`: the caller's own vocabulary."""
+    """`vicoa label ...`: the caller's own vocabulary."""
 
     def test_create_and_list(self, client):
         resp = client.post(
@@ -414,6 +414,89 @@ class TestLabels:
         client.post("/api/v1/task-labels", json={"name": "mine", "color": "#000000"})
         stranger = _make_client(test_db, uuid4())
         assert stranger.get("/api/v1/task-labels").json() == []
+
+    def test_rename_and_recolour(self, client):
+        label = client.post(
+            "/api/v1/task-labels", json={"name": "bug", "color": "#000000"}
+        ).json()
+        renamed = client.patch(
+            f"/api/v1/task-labels/{label['id']}", json={"name": "defect"}
+        )
+        assert renamed.status_code == 200, renamed.text
+        assert renamed.json() == {**label, "name": "defect"}  # colour kept
+        recoloured = client.patch(
+            f"/api/v1/task-labels/{label['id']}", json={"color": "EF4444"}
+        ).json()
+        assert (recoloured["name"], recoloured["color"]) == ("defect", "#ef4444")
+
+    def test_bad_colour_is_422(self, client):
+        label = client.post(
+            "/api/v1/task-labels", json={"name": "bug", "color": "#000000"}
+        ).json()
+        resp = client.patch(
+            f"/api/v1/task-labels/{label['id']}", json={"color": "red-ish"}
+        )
+        assert resp.status_code == 422
+
+    def test_delete_takes_it_off_every_task(self, client):
+        bug = client.post(
+            "/api/v1/task-labels", json={"name": "bug", "color": "#000000"}
+        ).json()
+        docs = client.post(
+            "/api/v1/task-labels", json={"name": "docs", "color": "#111111"}
+        ).json()
+        task = client.post(
+            "/api/v1/tasks", json={"title": "T", "label_ids": [bug["id"], docs["id"]]}
+        ).json()
+
+        resp = client.delete(f"/api/v1/task-labels/{bug['id']}")
+        assert resp.status_code == 204, resp.text
+        assert [lbl["name"] for lbl in client.get("/api/v1/task-labels").json()] == [
+            "docs"
+        ]
+        after = client.get(f"/api/v1/tasks/{task['id']}").json()
+        assert [lbl["name"] for lbl in after["labels"]] == ["docs"]
+        assert client.delete(f"/api/v1/task-labels/{bug['id']}").status_code == 404
+
+    def test_other_users_labels_cannot_be_changed(self, test_db, client):
+        label = client.post(
+            "/api/v1/task-labels", json={"name": "mine", "color": "#000000"}
+        ).json()
+        stranger = _make_client(test_db, uuid4())
+        url = f"/api/v1/task-labels/{label['id']}"
+        assert stranger.patch(url, json={"name": "theirs"}).status_code == 404
+        assert stranger.delete(url).status_code == 404
+        assert client.get("/api/v1/task-labels").json()[0]["name"] == "mine"
+
+    def test_team_labels_stay_on_the_dashboard(self, test_db, test_user, client):
+        """Owner-only lens: a team label the caller could edit on the
+        dashboard is not there to change on the agent-facing API."""
+        from shared.database.collab_models import Team, TeamMember
+        from shared.database.task_models import TaskLabel
+
+        team = Team(name="Crew", slug=f"crew-{uuid4().hex[:8]}")
+        test_db.add(team)
+        test_db.flush()
+        test_db.add(
+            TeamMember(
+                team_id=team.id,
+                user_id=test_user.id,
+                invited_email=test_user.email,
+                role="admin",
+                status="active",
+            )
+        )
+        label = TaskLabel(
+            user_id=test_user.id, team_id=team.id, name="crew", color="#000000"
+        )
+        test_db.add(label)
+        test_db.commit()
+
+        url = f"/api/v1/task-labels/{label.id}"
+        assert client.patch(url, json={"name": "x"}).status_code == 404
+        assert client.delete(url).status_code == 404
+        test_db.refresh(label)
+        assert label.name == "crew"
 
 
 class TestSessionProvenance:

@@ -2140,7 +2140,7 @@ Examples:
     # 'label' subcommand — the user's task-label vocabulary (commands/label.py).
     label_parser = subparsers.add_parser(
         "label",
-        help="List and create task labels (the names `--label` takes)",
+        help="List, create, rename, and delete task labels (the names `--label` takes)",
     )
     label_sub = label_parser.add_subparsers(dest="label_command")
     label_common = argparse.ArgumentParser(add_help=False)
@@ -2167,6 +2167,28 @@ Examples:
         "--color",
         metavar="#RRGGBB",
         help="Chip colour (default: the colour the web would pick for this name)",
+    )
+    label_update = label_sub.add_parser(
+        "update", parents=[label_common], help="Rename or recolour a label"
+    )
+    label_update.add_argument("label", help="Label name (case-insensitive) or id")
+    label_update.add_argument(
+        "--name",
+        dest="new_name",
+        metavar="NEW_NAME",
+        help="New name (must not clash with another label)",
+    )
+    label_update.add_argument("--color", metavar="#RRGGBB", help="New chip colour")
+    label_delete = label_sub.add_parser(
+        "delete",
+        parents=[label_common],
+        help="Delete labels (they come off every task that carries them)",
+    )
+    label_delete.add_argument(
+        "labels", nargs="+", metavar="label", help="Label name or id (one or more)"
+    )
+    label_delete.add_argument(
+        "-y", "--yes", action="store_true", help="Skip the confirmation prompt"
     )
 
     # 'automation' subcommand — registered from its command module so cli.py
