@@ -33,12 +33,18 @@
 //    costs a click to discover that it exists, and this page is also a phone
 //    browser, where hover does not exist at all.
 //
+// Selecting text in a thread opens the chat transcript's selection menu, with
+// "Add to reply": the passage becomes an annotation in that thread's reply
+// box, the comment typed on it is optional, and ⌘⏎ posts the reply at once.
+// The menu is scoped to the one card, so a selection running across two
+// threads (which no single reply could answer) offers nothing.
+//
 // Your own comments carry a ⋯ menu (Edit, Delete) at the end of their byline.
 // Unlike the reply box it IS hover-revealed: it is a rare action on your own
 // words, and a ⋯ on every one of your comments is a column of noise. On a touch
 // screen, where nothing hovers, it simply stays visible.
 
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ExternalLink, MoreHorizontal, Pencil, SmilePlus, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -56,7 +62,8 @@ import {
   TaskSessionRef,
 } from '@/lib/backend-api';
 import { EmojiPicker } from '@/components/ui/emoji-picker';
-import { CommentComposer, CommentEditor } from './comment-composer';
+import { SelectionActionsMenu } from '@/components/dashboard/selection-actions-menu';
+import { CommentComposer, CommentEditor, type CommentComposerHandle } from './comment-composer';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -686,8 +693,18 @@ function ThreadCard({
   onToggleReaction?: (commentId: string, emoji: string) => void;
   onReply?: (parentCommentId: string, body: string) => Promise<void>;
 } & CommentActions) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<CommentComposerHandle>(null);
+  const getCard = useCallback(() => cardRef.current, []);
+  const addAnnotation = useCallback(
+    (quote: string) => composerRef.current?.addAnnotation(quote) ?? null,
+    [],
+  );
+  const commentAnnotation = useCallback((id: string, comment: string, send: boolean) => {
+    composerRef.current?.commentAnnotation(id, comment, { send });
+  }, []);
   return (
-    <div className={cn(CARD_ROW, 'px-0')}>
+    <div ref={cardRef} className={cn(CARD_ROW, 'px-0')}>
       <div className="px-3 py-2.5">
         <CommentBody
           comment={thread.root}
@@ -715,8 +732,17 @@ function ThreadCard({
         </div>
       ))}
       {onReply && (
+        <SelectionActionsMenu
+          getContainer={getCard}
+          addLabel="Add to reply"
+          onAddToChat={addAnnotation}
+          onCommentAnnotation={commentAnnotation}
+        />
+      )}
+      {onReply && (
         <div className="border-t px-3 py-1.5">
           <CommentComposer
+            ref={composerRef}
             variant="inline"
             placeholder="Leave a reply…"
             leading={

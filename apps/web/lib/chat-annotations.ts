@@ -8,7 +8,12 @@
  * Nothing is stored server-side, so the agent, the transcript and the mobile
  * app all read the same plain text.
  *
- * Two surfaces hold them. The chat composer keeps a list per session in
+ * A task comment can be annotated the same way: "Add to reply" on a selection
+ * in a thread puts the passage in that thread's reply box, which keeps its
+ * list in memory like its draft (app/dashboard/tasks/[taskId]/comment-composer.tsx)
+ * and sends it in the `markdown` format, since a comment is rendered.
+ *
+ * Two surfaces hold them in the chat. The composer keeps a list per session in
  * sessionStorage, so switching sessions and coming back keeps them, like the
  * draft. "Continue in new session" hands one quote to the new-session page
  * through a sessionStorage handoff, the way a fork hands over its history
@@ -56,11 +61,19 @@ export function createAnnotation(quote: string, comment = ''): ChatAnnotation {
 }
 
 /**
+ * How the sent text is displayed. `plain`: the chat's user bubble, which shows
+ * the text as typed. `markdown`: a task comment, which is rendered, and where a
+ * comment line straight under its quote would be read as part of the quote
+ * (a lazy continuation line), so a blank line separates the two.
+ */
+export type AnnotationFormat = 'plain' | 'markdown';
+
+/**
  * One list item: the quote as `>` lines, then the comment. The continuation
  * lines are indented under the number so the block reads as a list both raw
- * (the user bubble renders plain text) and to an agent parsing markdown.
+ * and to an agent parsing markdown.
  */
-function formatAnnotation(annotation: ChatAnnotation, index: number): string {
+function formatAnnotation(annotation: ChatAnnotation, index: number, format: AnnotationFormat): string {
   const marker = `${index + 1}. `;
   const indent = ' '.repeat(marker.length);
   const quoteLines = annotation.quote
@@ -71,23 +84,28 @@ function formatAnnotation(annotation: ChatAnnotation, index: number): string {
   const commentLines = comment
     .split('\n')
     .map((line, i) => `${indent}${i === 0 ? 'Comment: ' : ''}${line}`);
-  return [...quoteLines, ...commentLines].join('\n');
+  const gap = format === 'markdown' ? [''] : [];
+  return [...quoteLines, ...gap, ...commentLines].join('\n');
 }
 
 /**
  * The numbered quotes, with no header line: the block is read by the agent,
  * and the `>` quotes already say what they are.
  */
-export function buildAnnotationBlock(annotations: ChatAnnotation[]): string {
+export function buildAnnotationBlock(annotations: ChatAnnotation[], format: AnnotationFormat = 'plain'): string {
   return annotations
     .filter((a) => a.quote.trim())
-    .map(formatAnnotation)
+    .map((a, i) => formatAnnotation(a, i, format))
     .join('\n\n');
 }
 
 /** Typed text first, then the annotations under a rule, as `#` references do. */
-export function appendAnnotations(body: string, annotations: ChatAnnotation[]): string {
-  const block = buildAnnotationBlock(annotations);
+export function appendAnnotations(
+  body: string,
+  annotations: ChatAnnotation[],
+  format: AnnotationFormat = 'plain',
+): string {
+  const block = buildAnnotationBlock(annotations, format);
   if (!block) return body;
   return body ? `${body}\n\n---\n${block}` : block;
 }

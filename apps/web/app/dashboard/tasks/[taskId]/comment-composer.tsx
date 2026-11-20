@@ -34,15 +34,23 @@
 // comment starting with `/note` wakes nobody; the box tints and the hint says
 // so.
 //
+// Passages selected in the thread above ("Add to reply" in its selection menu,
+// lib/chat-annotations.ts) wait in the box as the chat composer's annotation
+// pill, and go out under the typed text when the comment is sent. Like the
+// draft they live in memory: a reload drops them. The parent reaches the box
+// through the `ref` handle (`CommentComposerHandle`).
+//
 // `CommentEditor` at the foot of the file is the same textarea opened in place
 // over a comment you wrote, for editing it.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { ArrowUp, RefreshCw } from 'lucide-react';
 
+import { AnnotationsChip } from '@/components/dashboard/annotations-chip';
 import { Button } from '@/components/ui/button';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import type { AgentProfile, PrincipalResponse } from '@/lib/backend-api';
+import { appendAnnotations, createAnnotation, type ChatAnnotation } from '@/lib/chat-annotations';
 import { detectTriggerToken, replaceTokenWith, type TriggerToken } from '@/lib/composer-references';
 import { isImeComposing } from '@/lib/ime';
 import {
@@ -69,6 +77,14 @@ interface MentionCandidate {
   principal: Principal;
 }
 
+/** What a thread's selection menu drives the reply box with. */
+export interface CommentComposerHandle {
+  /** Add a passage as an annotation; returns its id. */
+  addAnnotation: (quote: string) => string;
+  /** Set the comment on an annotation added above; with `send`, post the comment too. */
+  commentAnnotation: (id: string, comment: string, options?: { send?: boolean }) => void;
+}
+
 const MIN_HEIGHT = 36;
 // The inline reply row is one line tall at rest so a thread ends in a hint, not
 // in a second composer competing with the page's own.
@@ -76,6 +92,7 @@ const INLINE_HEIGHT = 28;
 const MAX_HEIGHT = 200;
 
 export function CommentComposer({
+  ref,
   onSubmit,
   disabled = false,
   placeholder = 'Leave a comment…',
@@ -88,6 +105,8 @@ export function CommentComposer({
   viewerId = null,
   wake,
 }: {
+  /** Annotations from the thread's selection menu come in through this. */
+  ref?: React.Ref<CommentComposerHandle>;
   onSubmit: (body: string) => Promise<void>;
   disabled?: boolean;
   placeholder?: string;
@@ -116,6 +135,10 @@ export function CommentComposer({
   const [focused, setFocused] = useState(false);
   // A send in flight locks the button.
   const [sending, setSending] = useState(false);
+  // Passages picked with "Add to reply", sent under the typed text.
+  const [annotations, setAnnotations] = useState<ChatAnnotation[]>([]);
+  const annotationsRef = useRef(annotations);
+  annotationsRef.current = annotations;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
 
@@ -252,24 +275,55 @@ export function CommentComposer({
     setValue('');
     setPicks([]);
     setMention(null);
+    setAnnotations([]);
     const el = textareaRef.current;
     if (el) el.style.height = `${variant === 'inline' ? INLINE_HEIGHT : MIN_HEIGHT}px`;
   }, [variant]);
 
-  const send = useCallback(async () => {
-    const body = outgoing(value).trim();
-    if (!body || sending || disabled) return;
-    setSending(true);
-    try {
-      await onSubmit(body);
-      clear();
-    } finally {
-      setSending(false);
-    }
-  }, [value, outgoing, sending, disabled, onSubmit, clear]);
+  // `pending` is passed in by the selection menu's ⌘⏎, so a comment set in the
+  // same tick as the send is in the posted text.
+  const send = useCallback(
+    async (pending: ChatAnnotation[] = annotationsRef.current) => {
+      // A comment is rendered, so the quotes go out in the markdown format.
+      const body = appendAnnotations(outgoing(value).trim(), pending, 'markdown');
+      if (!body || sending || disabled) return;
+      setSending(true);
+      try {
+        await onSubmit(body);
+        clear();
+      } finally {
+        setSending(false);
+      }
+    },
+    [value, outgoing, sending, disabled, onSubmit, clear],
+  );
+
+  const updateAnnotationComment = useCallback((id: string, comment: string) => {
+    setAnnotations((items) => items.map((a) => (a.id === id ? { ...a, comment: comment.trim() } : a)));
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      addAnnotation: (quote: string) => {
+        const annotation = createAnnotation(quote);
+        setAnnotations((items) => [...items, annotation]);
+        return annotation.id;
+      },
+      commentAnnotation: (id: string, comment: string, options?: { send?: boolean }) => {
+        const trimmed = comment.trim();
+        if (trimmed) updateAnnotationComment(id, trimmed);
+        if (!options?.send) return;
+        void send(annotationsRef.current.map((a) => (a.id === id ? { ...a, comment: trimmed } : a)));
+      },
+    }),
+    [updateAnnotationComment, send],
+  );
 
   const inline = variant === 'inline';
-  const empty = value.trim().length === 0;
+  const hasAnnotations = annotations.length > 0;
+  // Nothing to send: no text, and no annotation to send on its own.
+  const empty = value.trim().length === 0 && !hasAnnotations;
   // Hint copy is secondary (apps/web/AGENTS.md → "Hint text"): dimmer than
   // body text, only while typing here, whole sentences. An empty box says who
   // it is for in its placeholder instead.
@@ -299,14 +353,28 @@ export function CommentComposer({
         'relative w-full font-mono',
         // The inline row has no edge of its own: the thread card is already a
         // surface, and a second border inside it reads as a nested object.
+        // The inline row wraps only to put the annotation pill on a line of
+        // its own above the avatar, the text and the button.
         inline
-          ? 'flex items-center gap-2'
+          ? 'flex flex-wrap items-center gap-x-2 gap-y-1'
           : 'rounded-xl border border-border/50 bg-composer px-3 py-2.5 shadow-sm transition-colors',
         // A note reads as an aside before it is even sent.
         isNote && (inline ? 'rounded-md bg-muted/50 px-1' : 'border-dashed bg-muted/40'),
         className,
       )}
     >
+      {hasAnnotations && (
+        // Over the text column: past the avatar (16px + the row's 8px gap) on
+        // the inline row, and on the textarea's 4px inset in the box.
+        <div className={cn('flex', inline ? cn('basis-full pt-1', leading && 'pl-6') : 'mb-1.5 px-1')}>
+          <AnnotationsChip
+            annotations={annotations}
+            onUpdateComment={updateAnnotationComment}
+            onRemove={(id) => setAnnotations((items) => items.filter((a) => a.id !== id))}
+            onClear={() => setAnnotations([])}
+          />
+        </div>
+      )}
       {/* The page-bottom variant carries no avatar: only one person can be
           typing there, and their own face is not information — it was just an
           indent. Inside a thread it earns its place (see the header). */}
