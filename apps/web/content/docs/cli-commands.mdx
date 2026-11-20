@@ -550,7 +550,7 @@ vicoa task delete VIC-42 -y
 | `--title <text>` | New title (`update` only; `create` takes the title as its argument) |
 | `--assignee <WHO>` | `me`, `self` (the agent of the session you run in), `none`, an agent's name (`vicoa agent ls`), or an id. Assigning an agent starts it on the task; also a filter on `ls` |
 | `--no-start` | With `--assignee <agent>`: record the assignee, start nothing |
-| `--ask` | `comment` only, from a session started off an agent: the comment is a question to one person. They get a push, the task shows "Waiting on &lt;them&gt;", and their next comment on the task wakes the agent. Asks whoever started the run unless `--to` |
+| `--ask` | `comment` only, from a session started off an agent: the comment is a question to one person. They get a push, the task shows "Waiting on &lt;them&gt;", and their answer (a top-level comment, a reply in the question's thread, or an `@` of the agent) wakes it. Asks whoever started the run unless `--to` |
 | `--to <WHO>` | With `--ask`: whom to ask, `me`, an email, a user id, or their name. Must be someone who can see the task |
 | `--waiting-on <WHO>` | `ls` only: tasks with a question waiting on this person (`me`, an email, a user id, or a name) |
 | `--json` | Raw JSON — a bare array from `ls`; `update` prints one object for one ref, a list for several |

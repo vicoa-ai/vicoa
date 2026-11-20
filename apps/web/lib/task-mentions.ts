@@ -8,17 +8,19 @@
  * to be a deliberate pick. A person mention only tells them; it wakes no agent.
  *
  * `agentsToWake` mirrors the server's routing (`shared/task_dispatch.py`,
- * `route_comment`) so the hint under the box says what sending will do:
+ * `route_comment`) so the hint under the box says what sending will do. The
+ * first rule that applies decides, and only that one:
  *
  * 1. a comment starting with `/note` wakes nobody;
- * 2. any other comment wakes the agents with an open question to the person
- *    writing it (their comment answers it), wherever on the task it is;
- * 3. explicit agent mentions wake those agents, and nothing else (on a Done or
- *    Cancelled task, a mention is the only thing that wakes anyone);
- * 4. a reply in a thread an agent wrote in wakes that agent;
- * 5. a top-level comment on a task assigned to an agent wakes that agent,
- *    unless an agent is waiting on the person writing it: then the comment
- *    is that agent's answer, and the assignee is not woken beside it.
+ * 2. explicit agent mentions wake those agents (on a Done or Cancelled task, a
+ *    mention is the only thing that wakes anyone);
+ * 3. a reply in a thread an agent wrote in wakes that agent;
+ * 4. a top-level comment wakes the agents with an open question to the person
+ *    writing it (it answers them), if any;
+ * 5. else a top-level comment on a task assigned to an agent wakes that agent.
+ *
+ * An asker reached by any rule (mentioned, or the agent of the thread) is
+ * answered too; one the comment doesn't reach keeps waiting.
  *
  * The server stays the authority: this only predicts it for the hint.
  */
@@ -95,25 +97,22 @@ export interface WakeContext {
   assigneeAgentId: string | null;
   /** The task is Done or Cancelled: only an explicit mention wakes an agent. */
   taskClosed?: boolean;
-  /** Agents with an open question to the viewer on this task: whatever the
-   *  viewer writes next (but a `/note`) answers them. */
+  /** Agents with an open question to the viewer on this task: a top-level
+   *  comment from the viewer is their answer, and goes to them instead of the
+   *  assignee. */
   askers?: WaitingAgent[];
 }
 
 /** The agent profile ids sending `body` would wake (see the module header). */
 export function agentsToWake(body: string, ctx: WakeContext): string[] {
   if (!body.trim() || isNoteComment(body)) return [];
-  const out = (ctx.askers ?? []).map((a) => a.id.toLowerCase());
-  const add = (ids: string[]) => {
-    for (const id of ids) if (!out.includes(id)) out.push(id);
-    return out;
-  };
   const mentioned = mentionedAgentIds(body);
-  if (mentioned.length > 0) return add(mentioned);
-  if (ctx.taskClosed) return out;
-  if (ctx.inThread) return add(ctx.threadAgentId ? [ctx.threadAgentId.toLowerCase()] : []);
-  if (out.length > 0) return out;
-  return add(ctx.assigneeAgentId ? [ctx.assigneeAgentId.toLowerCase()] : []);
+  if (mentioned.length > 0) return mentioned;
+  if (ctx.taskClosed) return [];
+  if (ctx.inThread) return ctx.threadAgentId ? [ctx.threadAgentId.toLowerCase()] : [];
+  const askers = [...new Set((ctx.askers ?? []).map((a) => a.id.toLowerCase()))];
+  if (askers.length > 0) return askers;
+  return ctx.assigneeAgentId ? [ctx.assigneeAgentId.toLowerCase()] : [];
 }
 
 // --- The composer's side: `@Name` text plus the picks behind it -----------------

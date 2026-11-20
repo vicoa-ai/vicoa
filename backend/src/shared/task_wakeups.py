@@ -4,13 +4,16 @@ plans/todos/task-questions-waiting-on.md; the table is `task_wakeups`
 (`shared/database/task_wakeup_models.py`). v1 has one kind, `reply`: an agent
 asked a person a question (`vicoa task comment --ask`) and waits for them to
 comment. While it waits, the task is "waiting on" that person: their board
-shows it, their phone was told, and their next comment wakes the agent.
+shows it, their phone was told, and their answer wakes the agent.
 
 Nobody ends a wakeup by hand, and having seen the question never counts. A
-reply wakeup **fires** when the person it waits for comments anywhere on the
-task (a top-level answer, one in another thread, a reply after talking in the
-session: all count), except a `/note`, which is between people. It **ends**
-without firing when the agent no longer needs the answer or can't get it:
+reply wakeup **fires** when a comment from the person it waits for reaches the
+agent (`task_dispatch.route_comment`): a top-level comment, a reply in a thread
+the agent wrote in last, or one that @mentions it. A comment that goes
+elsewhere (a mention of another agent, a reply in another agent's thread or in
+one between people, a `/note`) leaves it waiting, since the agent hasn't heard
+an answer. It **ends** without firing when the agent no longer needs the answer
+or can't get it:
 
 * the task leaves `blocked` (`unblocked`) or enters `in_review` (`delivered`):
   the agent has what it needed, wherever it got it;
@@ -141,7 +144,7 @@ def _waiting_for(db: Session, task: Task, person_id: UUID) -> list[TaskWakeup]:
 
 def agents_waiting_on(db: Session, task: Task, person_id: UUID) -> list[UUID]:
     """The agent profiles waiting for `person_id`'s comment on `task`, oldest
-    wakeup first, each once: whom that person's next comment is for."""
+    wakeup first, each once: whom that person's next top-level comment is for."""
     return list(
         dict.fromkeys(w.agent_profile_id for w in _waiting_for(db, task, person_id))
     )
@@ -151,21 +154,22 @@ def on_comment_created(
     db: Session,
     task: Task,
     comment: TaskComment,
-    dispatches: Mapping[UUID, TaskDispatch],
+    reached: Mapping[UUID, TaskDispatch | None],
 ) -> None:
-    """A person commented: fire the reply wakeups waiting for them.
+    """A person commented: fire the reply wakeups of the agents it reached.
 
     Called after the comment was routed (`task_dispatch.on_comment_created`,
-    which read these wakeups to know whom the comment is for), with the
-    dispatches it queued by agent profile, so each wakeup records the run it
-    started."""
-    from shared.task_dispatch import is_note
-
-    if comment.author_type != "user" or is_note(comment.body):
+    which read these wakeups to know whom the comment is for), with every
+    agent it reached by profile and the dispatch each got (None: the person
+    can't start that agent), so each wakeup records the run it started. The
+    wakeups of agents it didn't reach keep waiting."""
+    if not reached:
         return
     now = _now()
     for wakeup in _waiting_for(db, task, comment.author_id):
-        dispatch = dispatches.get(wakeup.agent_profile_id)
+        if wakeup.agent_profile_id not in reached:
+            continue
+        dispatch = reached[wakeup.agent_profile_id]
         wakeup.state = "fired"
         wakeup.ended_at = now
         wakeup.fired_by_comment_id = comment.id

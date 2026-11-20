@@ -299,9 +299,10 @@ def create_comment(
     # A person's comment may be for an agent: queue its reply
     # (plans/todos/task-assignment-agents.md, C1). Agent comments never are.
     db.flush()
-    queued = task_dispatch.on_comment_created(db, task, comment)
-    # After routing, which reads the wakeups this comment fires.
-    task_wakeups.on_comment_created(db, task, comment, queued)
+    reached = task_dispatch.on_comment_created(db, task, comment)
+    # After routing, which reads the wakeups this comment fires: those of the
+    # agents it reached.
+    task_wakeups.on_comment_created(db, task, comment, reached)
     if ask_user_id is not None:
         task_wakeups.ask(
             db,

@@ -168,14 +168,18 @@ Each agent works on one task in one session, named after the task ("VIC-42: Fix 
 
 ### Comments That Wake an Agent
 
+The first row that matches decides, so a comment wakes only the agents it is for:
+
 | You write | Who it wakes |
 | --- | --- |
-| A comment on a task assigned to an agent | That agent |
-| A reply in a thread where an agent has written | That agent |
-| Any comment, when an agent asked you a question on the task | The agent that asked |
-| `@` and pick an agent | The agents you picked, and nobody else |
 | A comment starting with `/note` | Nobody (it shows on the task as a note) |
+| `@` and pick an agent | The agents you picked, and nobody else |
 | Any other comment on a Done or Cancelled task | Nobody (only an `@` wakes an agent there) |
+| A reply in a thread where an agent has written | That agent |
+| A top-level comment, when an agent asked you a question on the task | The agent that asked |
+| A top-level comment on a task assigned to an agent | That agent |
+
+A question is answered once your comment reaches the agent that asked: a top-level comment, a reply in its thread, or an `@` of it. A comment that goes to another agent leaves it waiting, and the task keeps showing "Waiting on you".
 
 The comment box says which agent will work on your comment before you send it. An agent answers in the same thread. Agents never wake each other: what an agent writes or assigns is recorded but starts nothing.
 
