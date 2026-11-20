@@ -8,7 +8,10 @@ Two layers, so a task session reads like a conversation rather than a manual:
   the agent profile's own instructions, so it never shows in the transcript and
   survives compaction. A session that was not started with it (one a person
   opened and later filed under the task) gets it once, in front of its first
-  task message.
+  task message. A session a dispatch started also gets `WORKTREE_RULE`:
+  Vicoa chose its folder, so whether the work needs a worktree is the
+  agent's call. A session a person started runs where they chose and never
+  gets that rule.
 * **The message**: what happened, in the user's terms: who assigned the task or
   commented, the comment text itself, and the one command the turn hinges on
   (`--reply-to`). It names the person and quotes them, so whoever watches the
@@ -56,6 +59,28 @@ The answer comes back to you here. If `--ask` is not recognised, your CLI is out
 of date: post the question as a plain top-level comment and set `blocked`.\
 """
 
+# Only in a session a dispatch started (`task_brief`). Its folder is the
+# task's: the project's own, or the worktree an earlier session on the task
+# made. Vicoa never makes a worktree for it, so the agent does when the work
+# changes code. Worded for any agent: one CLI command, no agent's own tools.
+WORKTREE_RULE = """\
+- Changing code in a git repository? Do it in a worktree of its own: \
+`vicoa worktree new <name>` (for VIC-42, `vic-42`) makes one, runs the \
+repository's worktree setup and files this session under it. Make every change \
+in the folder it prints; later sessions on the task start there. Reading, \
+answering and planning need no worktree, a session already in one stays there \
+(the command says so), and a folder outside git is worked in as it is. If \
+`vicoa worktree new` is not recognised, your CLI is out of date: use \
+`git worktree add`, then `vicoa session update "$VICOA_AGENT_INSTANCE_ID" \
+--worktree <branch>`.\
+"""
+
+
+def task_brief(*, dispatch_started: bool) -> str:
+    """The brief for a session: with `WORKTREE_RULE` when a dispatch started it."""
+    return f"{TASK_BRIEF}\n{WORKTREE_RULE}" if dispatch_started else TASK_BRIEF
+
+
 CONTINUITY_NOTE = (
     "Your earlier session on this task could not be resumed, so you start fresh "
     "here. Read the task and its thread before doing anything."
@@ -94,10 +119,12 @@ class EarlierSession:
     same_folder: bool = False
 
 
-def system_prompt_with_brief(profile_prompt: str | None) -> str:
+def system_prompt_with_brief(
+    profile_prompt: str | None, brief: str = TASK_BRIEF
+) -> str:
     """The agent profile's own instructions, then the task brief."""
     own = (profile_prompt or "").strip()
-    return f"{own}\n\n{TASK_BRIEF}" if own else TASK_BRIEF
+    return f"{own}\n\n{brief}" if own else brief
 
 
 def with_brief(message: str) -> str:

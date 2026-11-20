@@ -8,6 +8,10 @@ One task session per (profile, task). A dispatch goes into it when it exists:
 a message when its agent is live (queued behind a running turn), a resume on
 its machine when it stopped. Only when there is no session, or it can't be
 resumed, does a new one start — with a line telling the agent it starts fresh.
+A new one starts in the task's folder: the worktree an earlier session on the
+task worked in, else the project's own folder. Vicoa never makes a worktree
+for it; the brief tells the agent to make one itself when the work changes code
+in a git repository (`WORKTREE_RULE`).
 
 The claim runs in one short transaction (`FOR UPDATE SKIP LOCKED`, so two
 sweeps never take the same row): it checks the profile's concurrency cap,
@@ -56,13 +60,13 @@ from shared.task_dispatch import (
 )
 from shared.session_resume import expand_project_path
 from shared.task_dispatch_prompts import (
-    TASK_BRIEF,
     EarlierSession,
     QuotedComment,
     SinceHandover,
     ownership_prompt,
     reply_prompt,
     system_prompt_with_brief,
+    task_brief,
     with_brief,
 )
 from shared.websocket.connection_manager import connection_manager
@@ -95,10 +99,8 @@ class _SpawnPlan:
     """One way to start a new session for the dispatch: where, and what it is told."""
 
     machine_id: UUID
+    # Run in it as it is: never a new worktree.
     directory: str
-    # None: run in `directory` as it is (an existing worktree). {"mode": "new",
-    # "name": …}: a new worktree off the repo in `directory`.
-    worktree: dict | None
     prompt: str
 
 
@@ -115,10 +117,13 @@ class _Claim:
     prompt: str
     message_prompt: str
     session_config: dict
-    # The profile's instructions plus the task brief: every start and resume.
+    # The profile's instructions plus the task brief, for resuming
+    # `session_id`: with the worktree rule only if a dispatch started it.
     system_prompt: str
+    # The same for a session started here, which always has the rule.
+    spawn_system_prompt: str
     # How to start a new session when there is none or it can't be resumed,
-    # tried in order: the task's own worktree first, then a new one.
+    # tried in order: the task's own worktree first, then the project folder.
     spawns: list[_SpawnPlan]
     # Why there is nowhere to start one, when `spawns` is empty.
     placement_problem: str | None
@@ -310,18 +315,15 @@ def _plan(
     lost = session is not None  # a fresh start loses this agent's own context
 
     spawns: list[_SpawnPlan] = []
-    chose = (
-        row.machine_id is not None
-        or bool(row.directory)
-        or (bool(row.worktree) and (row.worktree or {}).get("mode") != "new")
-    )
+    # A computer or folder picked in the assign dialog beats the task's worktree.
+    # (`row.worktree` is no longer read: Vicoa doesn't make task worktrees.)
+    chose = row.machine_id is not None or bool(row.directory)
     folder = _worktree_folder(prior) if prior is not None and not chose else None
     if prior is not None and folder is not None:
         spawns.append(
             _SpawnPlan(
                 machine_id=folder[0],
                 directory=folder[1],
-                worktree=None,
                 prompt=build(
                     continuity=lost,
                     earlier=EarlierSession(prior.id, prior_agent, same_folder=True),
@@ -332,25 +334,12 @@ def _plan(
         db, profile, task, machine_id=row.machine_id, directory=row.directory
     )
     if placement.machine_id is not None and placement.directory:
-        worktree: dict[str, Any] = (
-            dict(row.worktree) if row.worktree else {"mode": "new"}
-        )
-        if worktree.get("mode") == "new" and not worktree.get("name"):
-            identifier = _task_identifier(db, task)
-            if identifier is not None:
-                # Named after the task alone (`vic-42`), whatever language or
-                # length its title is; the daemon takes `vic-42-2`, … when an
-                # earlier worktree of the task still holds the name. A task
-                # outside every project gets the default naming instead.
-                worktree["name"] = identifier.lower()
-                worktree["suffix_if_taken"] = True
-        elif worktree.get("mode") == "none":
-            worktree = {}
+        # The folder as it is. The agent makes a worktree itself if the work
+        # changes code (`WORKTREE_RULE`); reading and answering need none.
         spawns.append(
             _SpawnPlan(
                 machine_id=placement.machine_id,
                 directory=placement.directory,
-                worktree=worktree or None,
                 prompt=build(
                     continuity=lost,
                     earlier=(
@@ -452,6 +441,12 @@ def _claim_blocking() -> list[_Claim]:
             has_brief = session is not None and bool(
                 (session.instance_metadata or {}).get(TASK_BRIEF_KEY)
             )
+            # Resumed, a session keeps the brief it started with: the worktree
+            # rule only if a dispatch started it, not a person.
+            resume_brief = task_brief(
+                dispatch_started=session is not None
+                and started_by_dispatch(db, profile.user_id, session.id)
+            )
 
             row.state = "dispatching"
             row.attempts = (row.attempts or 0) + 1
@@ -466,7 +461,12 @@ def _claim_blocking() -> list[_Claim]:
                     prompt=prompt,
                     message_prompt=prompt if has_brief else with_brief(prompt),
                     session_config=resolved.session_config,
-                    system_prompt=system_prompt_with_brief(resolved.system_prompt),
+                    system_prompt=system_prompt_with_brief(
+                        resolved.system_prompt, resume_brief
+                    ),
+                    spawn_system_prompt=system_prompt_with_brief(
+                        resolved.system_prompt, task_brief(dispatch_started=True)
+                    ),
                     spawns=spawns,
                     placement_problem=problem,
                     title=_session_title(db, task),
@@ -570,7 +570,26 @@ def brief_for_resume_blocking(user_id: UUID, instance_id: UUID) -> str | None:
             .filter(AgentInstance.id == instance_id, AgentInstance.user_id == user_id)
             .scalar()
         )
-    return TASK_BRIEF if isinstance(meta, dict) and meta.get(TASK_BRIEF_KEY) else None
+        if not (isinstance(meta, dict) and meta.get(TASK_BRIEF_KEY)):
+            return None
+        return task_brief(
+            dispatch_started=started_by_dispatch(db, user_id, instance_id)
+        )
+
+
+def started_by_dispatch(db: Session, user_id: UUID, instance_id: UUID) -> bool:
+    """Whether a dispatch started this session (rather than a person, from the
+    task page or elsewhere): only such a session gets the worktree rule."""
+    return (
+        db.query(TaskDispatch.id)
+        .filter(
+            TaskDispatch.user_id == user_id,
+            TaskDispatch.agent_instance_id == instance_id,
+            TaskDispatch.state == "started",
+        )
+        .first()
+        is not None
+    )
 
 
 def _requeue_blocking(dispatch_id: UUID, *, detail: str, delay: timedelta) -> None:
@@ -756,10 +775,9 @@ class TaskDispatcher:
                 user_id=claim.user_id,
                 machine_id=plan.machine_id,
                 directory=plan.directory,
-                worktree=plan.worktree,
                 session_config=claim.session_config,
                 prompt=plan.prompt,
-                system_prompt=claim.system_prompt,
+                system_prompt=claim.spawn_system_prompt,
                 title=claim.title,
             )
             if result.status == "fired":

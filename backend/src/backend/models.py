@@ -1051,11 +1051,12 @@ class TaskDispatchSummary(BaseModel):
 
 class TaskRunTarget(BaseModel):
     """Where a new task session starts, as picked in the assign dialog.
-    Omitted fields are resolved at dispatch time."""
+    Omitted fields are resolved at dispatch time. There is no worktree choice:
+    the session runs in the folder as it is and its agent makes a worktree when
+    the work changes code. An older client's `worktree` is dropped unread."""
 
     machine_id: UUID | None = None
     directory: str | None = Field(default=None, max_length=4096)
-    worktree: Literal["new", "none"] | None = None
 
 
 class TaskRunFields(BaseModel):
@@ -1074,7 +1075,6 @@ class TaskRunFields(BaseModel):
             start=self.start,
             machine_id=target.machine_id if target else None,
             directory=(target.directory or "").strip() or None if target else None,
-            worktree=target.worktree if target else None,
         )
 
 

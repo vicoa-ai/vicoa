@@ -241,4 +241,172 @@ def test_a_stale_running_record_does_not_block(
 
 def test_bare_worktree_command_prints_usage(capsys: pytest.CaptureFixture[str]) -> None:
     assert _run() == 2
-    assert "usage: vicoa worktree setup" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "usage: vicoa worktree new" in err
+    assert "vicoa worktree setup" in err
+
+
+# --- `vicoa worktree new` -------------------------------------------------------
+
+
+@pytest.fixture
+def no_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never re-file a real session: these tests may run inside one."""
+    monkeypatch.delenv("VICOA_AGENT_INSTANCE_ID", raising=False)
+    monkeypatch.delenv("VICOA_API_KEY", raising=False)
+
+
+def _last_line(out: str) -> str:
+    return out.strip().splitlines()[-1]
+
+
+def test_new_makes_a_named_worktree_and_prints_where_to_work(
+    repo: Path, home: Path, no_session: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run("new", "vic-42", "--path", str(repo)) == 0
+    path = home / "vicoa" / "workspaces" / "app-worktrees" / "vic-42" / "app"
+    assert (path / "seed.txt").exists()
+    assert _last_line(capsys.readouterr().out) == str(path)
+
+
+def test_new_takes_the_next_free_name_when_it_is_taken(
+    repo: Path, home: Path, no_session: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _run("new", "vic-42", "--path", str(repo)) == 0
+    capsys.readouterr()
+    assert _run("new", "vic-42", "--path", str(repo)) == 0
+    out = capsys.readouterr().out
+    assert "Made worktree vic-42-2 (vic-42 was taken)" in out
+    assert _last_line(out).endswith("/vic-42-2/app")
+
+
+def test_new_from_a_subfolder_works_in_the_same_subfolder(
+    repo: Path, home: Path, no_session: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (repo / "apps" / "web").mkdir(parents=True)
+    (repo / "apps" / "web" / "keep").write_text("")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "web"], check=True)
+    assert _run("new", "vic-1", "--path", str(repo / "apps" / "web")) == 0
+    work = Path(_last_line(capsys.readouterr().out))
+    assert work.parts[-2:] == ("apps", "web")
+    assert work.is_dir()
+
+
+def test_new_inside_a_worktree_makes_nothing(
+    worktree: Path, no_session: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    before = sorted(p.name for p in worktree.parent.parent.iterdir())
+    assert _run("new", "--path", str(worktree)) == 0
+    out = capsys.readouterr().out
+    assert "Already in worktree" in out
+    assert _last_line(out) == os.path.realpath(worktree)
+    assert sorted(p.name for p in worktree.parent.parent.iterdir()) == before
+
+
+def test_new_outside_git_refuses(
+    tmp_path: Path, home: Path, no_session: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert _run("new", "--path", str(plain)) == 1
+    assert "not inside a git repository" in capsys.readouterr().err
+
+
+def test_new_runs_setup_only_for_a_trusted_repo(
+    repo: Path, home: Path, no_session: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from vicoa.rpc.worktree_trust import grant_repo_trust
+
+    _config(repo, ['touch "$VICOA_WORKTREE_PATH/set-up"'])
+    assert _run("new", "untrusted", "--path", str(repo)) == 0
+    untrusted = Path(_last_line(capsys.readouterr().out))
+    assert not (untrusted / "set-up").exists()
+
+    grant_repo_trust(str(repo))
+    assert _run("new", "trusted", "--path", str(repo)) == 0
+    out = capsys.readouterr().out
+    assert "Setup done." in out
+    assert (Path(_last_line(out)) / "set-up").exists()
+
+    assert _run("new", "skipped", "--path", str(repo), "--no-setup") == 0
+    assert not (Path(_last_line(capsys.readouterr().out)) / "set-up").exists()
+
+
+def test_new_files_the_running_session_under_the_worktree(
+    repo: Path,
+    home: Path,
+    no_session: None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from vicoa.commands import worktree as worktree_cmd
+
+    filed: list[tuple[str, str]] = []
+
+    def fake_file(args, session_id: str, branch: str) -> str | None:
+        filed.append((session_id, branch))
+        return None
+
+    monkeypatch.setattr(worktree_cmd, "_file_session", fake_file)
+    monkeypatch.setenv("VICOA_AGENT_INSTANCE_ID", "sess-1")
+    assert _run("new", "vic-9", "--path", str(repo)) == 0
+    assert filed == [("sess-1", "vic-9")]
+    assert "Filed this session under it." in capsys.readouterr().out
+
+    assert _run("new", "vic-10", "--path", str(repo), "--no-session") == 0
+    assert filed == [("sess-1", "vic-9")]
+
+
+def test_new_still_succeeds_when_the_session_cannot_be_filed(
+    repo: Path,
+    home: Path,
+    no_session: None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The worktree exists: a non-zero exit would have the agent make another."""
+    from vicoa.commands import instance
+
+    def unreachable(*args, **kwargs):
+        raise SystemExit(1)
+
+    monkeypatch.setattr(instance, "_resolve_worktree_move", unreachable)
+    monkeypatch.setenv("VICOA_AGENT_INSTANCE_ID", "sess-1")
+    monkeypatch.setenv("VICOA_API_KEY", "key")
+    assert _run("new", "vic-11", "--path", str(repo)) == 0
+    captured = capsys.readouterr()
+    assert "Couldn't file this session under it" in captured.err
+    assert "--worktree vic-11" in captured.err
+    assert _last_line(captured.out).endswith("/vic-11/app")
+
+
+def test_file_session_patches_the_folder_fields(
+    no_session: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vicoa.commands import _api, instance
+    from vicoa.commands import worktree as worktree_cmd
+
+    body = {"project": "~/w/vic-1/app", "worktree_name": "vic-1", "repo_root": "~/app"}
+    sent: list[dict] = []
+    monkeypatch.setattr(instance, "_resolve_worktree_move", lambda *a, **k: body)
+
+    def fake_request(args, api_key, method, endpoint, **kwargs):
+        sent.append({"method": method, "endpoint": endpoint, **kwargs})
+        return dict(kwargs["json"])
+
+    monkeypatch.setattr(_api, "request", fake_request)
+    args = argparse.Namespace(api_key="key", base_url="http://example.test")
+    assert worktree_cmd._file_session(args, "sess-1", "vic-1") is None
+    assert sent == [
+        {
+            "method": "PATCH",
+            "endpoint": "/api/v1/agent-instances/sess-1",
+            "json": body,
+            "raise_on_error": True,
+        }
+    ]
+
+    # A server that predates the folder fields echoes the row unchanged.
+    monkeypatch.setattr(_api, "request", lambda *a, **k: {"project": "~/app"})
+    assert "predates" in (worktree_cmd._file_session(args, "sess-1", "vic-1") or "")

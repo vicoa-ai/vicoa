@@ -301,16 +301,8 @@ class RunOptions:
     start: bool = True
     machine_id: UUID | None = None
     directory: str | None = None
-    # "new" | "none"; None = the default (a new worktree).
-    worktree: str | None = None
-
-
-def _worktree_spec(choice: str | None) -> dict | None:
-    if choice == "none":
-        return {"mode": "none"}
-    if choice in (None, "new"):
-        return {"mode": "new"}
-    return None
+    # No worktree choice: a task session starts in the folder as it is, and its
+    # agent makes a worktree when the work changes code (`WORKTREE_RULE`).
 
 
 def _merge(
@@ -339,8 +331,6 @@ def _merge(
             row.machine_id = options.machine_id
         if options.directory:
             row.directory = options.directory
-        if options.worktree is not None:
-            row.worktree = _worktree_spec(options.worktree)
     row.detail = None
     row.next_attempt_at = datetime.now(timezone.utc)
 
@@ -388,7 +378,6 @@ def enqueue(
         requested_by_user_id=requested_by,
         machine_id=options.machine_id if options else None,
         directory=(options.directory or None) if options else None,
-        worktree=_worktree_spec(options.worktree if options else None),
         state="queued",
         next_attempt_at=datetime.now(timezone.utc),
     )

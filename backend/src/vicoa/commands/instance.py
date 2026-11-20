@@ -621,7 +621,7 @@ def _worktree_move(detail: dict, branch: str, listing: dict) -> dict[str, Any]:
 
 
 def _resolve_worktree_move(
-    args, api_key: str, instance_id: str, branch: str
+    args, api_key: str, instance_id: str, branch: str, *, raise_on_error: bool = False
 ) -> dict[str, Any]:
     """Look the session up, list its repo's checkouts with local git, and
     turn ``--worktree BRANCH`` into PATCH fields (see ``_worktree_move``).
@@ -630,10 +630,17 @@ def _resolve_worktree_move(
     session the backend files under another machine. The repo is found from
     the ``repo_root`` registration stored on the session (the main checkout,
     even for a worktree session) or, for older rows, its cwd.
+    ``raise_on_error`` turns a refused lookup into ``RequestError``.
     """
     from vicoa.rpc.worktree_ops import list_worktrees
 
-    detail = request(args, api_key, "GET", f"/api/v1/agent-instances/{instance_id}")
+    detail = request(
+        args,
+        api_key,
+        "GET",
+        f"/api/v1/agent-instances/{instance_id}",
+        raise_on_error=raise_on_error,
+    )
     local_machine = _local_machine_id(args)
     remote_machine = detail.get("machine_id")
     if local_machine and remote_machine and local_machine != remote_machine:

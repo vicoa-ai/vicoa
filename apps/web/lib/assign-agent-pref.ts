@@ -5,7 +5,7 @@
  * and the assign dialog's "Don't ask again"). On by default: assigning an
  * agent starts it on one of your computers, so the dialog shows where before it
  * does. Off, picking the agent assigns and starts it right away with the
- * defaults (the agent's computer, the project's folder there, a new worktree).
+ * defaults (the agent's computer, the project's folder there).
  *
  * Kept on this device, like the archive preference next to it
  * (`archive-task-pref.ts`): the desktop app writes it to its settings file, the

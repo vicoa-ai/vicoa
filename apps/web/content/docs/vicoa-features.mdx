@@ -153,7 +153,7 @@ On the Tasks page, open **Filter → Relation to me** and tick **Waiting on me**
 
 ### Assigning an Agent
 
-Pick an agent in a task's assignee field. Vicoa asks first where it will run (the computer, the project folder, a new or existing worktree), then:
+Pick an agent in a task's assignee field. Vicoa asks first where it will run (the computer and the project folder), then:
 
 - **Start** (Enter): the agent opens its own session on the task, moves it to In Progress, and asks you when it needs a decision, an answer or access. When it has delivered (a PR, or the evidence in a comment) it moves the task to In Review. It leaves Done to you, unless you ask it to close the task.
 - **Assign only**: the agent becomes the assignee, nothing runs.
@@ -164,7 +164,7 @@ To skip the question, tick **Don't ask again**, or turn off **Confirm when assig
 
 A task in Backlog starts when you move it out of Backlog. While an agent is on a task, the task shows what it is doing: **Queued**, **Starting**, **&lt;agent&gt; working**, or **Failed** with the reason. Click it to open the session.
 
-Each agent works on one task in one session, named after the task ("VIC-42: Fix the login"); a new worktree for it is named `vic-42` (`vic-42-2` if that name is taken). Later requests go into that session (it resumes if it stopped), so you can open it and watch or steer at any time. Hand a task back to the agent that had it and it picks up in that session, told what changed while you had it (new comments, edits, the status). Hand it to a different agent and it continues in the task's existing worktree, with a pointer to the earlier session. An agent runs at most two task sessions at once by default; change it (1 to 5) in the agent's configuration in **Agents**.
+Each agent works on one task in one session, named after the task ("VIC-42: Fix the login"). The session starts in the project folder as it is. Reading the code, answering a comment or planning happens there; when the work means changing code in a git repository, the agent first makes a worktree for it (its own checkout on a new branch, named `vic-42`, or `vic-42-2` if that name is taken) and works there, and the task's later sessions start in it. Later requests go into that session (it resumes if it stopped), so you can open it and watch or steer at any time. Hand a task back to the agent that had it and it picks up in that session, told what changed while you had it (new comments, edits, the status). Hand it to a different agent and it continues in the task's existing worktree, with a pointer to the earlier session. An agent runs at most two task sessions at once by default; change it (1 to 5) in the agent's configuration in **Agents**.
 
 ### Comments That Wake an Agent
 

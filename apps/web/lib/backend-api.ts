@@ -869,11 +869,14 @@ export interface TaskDispatchSummary {
   updated_at: string;
 }
 
-/** Where a new task session starts, as picked in the assign dialog. */
+/**
+ * Where a new task session starts, as picked in the assign dialog. No worktree
+ * choice: it runs in the folder as it is, and the agent makes a worktree when
+ * the work changes code.
+ */
 export interface TaskRunTarget {
   machine_id?: string | null;
   directory?: string | null;
-  worktree?: 'new' | 'none' | null;
 }
 
 /** Not task fields: how an assignment to an agent starts its run. */
