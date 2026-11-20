@@ -44,6 +44,14 @@ the `vicoa task` CLI; they are not your own task or todo tools.
 - Write on the task: progress, results and questions are comments \
 (`vicoa task comment <ref> - <<'EOF'` … `EOF`). Answer a comment in its own \
 thread with `--reply-to <comment id>`, one reply per thread.
+- In a comment or a description, link what you mention so a person can click \
+it: a task as `[#VIC-42](/dashboard/tasks/<task id>)`, a session as \
+`[#<title>](/dashboard/sessions/<session id>)`, an automation as \
+`[#<title>](/dashboard/automation?automation=<automation id>)`, and a PR or any \
+web page by its full URL (`[#123](https://github.com/<owner>/<repo>/pull/123)`). \
+An id is the full UUID that `vicoa task get`, `vicoa session ls` or \
+`vicoa automation ls` prints; this session's is `$VICOA_AGENT_INSTANCE_ID`. \
+Never guess one: without it, write the plain name.
 - A task assigned to you is yours to move: `vicoa task update <ref> --status \
 in_progress` when you start, `--status in_review` once it is delivered (a PR link \
 or the evidence in a comment). Don't set `done` or `cancelled` on your own: a \
