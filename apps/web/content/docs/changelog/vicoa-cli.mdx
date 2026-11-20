@@ -5,6 +5,15 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.10.1
+20 November, 2026
+- An agent's task session now starts in the task's folder instead of a new worktree. Only when it changes code in a git repository does the agent make a worktree of its own, so a comment that only asks a question no longer creates a branch and runs your setup
+- New `vicoa worktree new [NAME]` makes a worktree from inside a running session: it runs the repository's setup when you trust the repo on this machine, moves the session under the worktree and prints the folder to work in
+- Rename, recolour and delete task labels from the terminal with `vicoa label update <name> --name <new> --color <#RRGGBB>` and `vicoa label delete <name>...` (it asks first; `--yes` skips that). A deleted label comes off every task that had it, and the tasks stay
+- A comment on a task wakes only the agent it is for: a mention wakes the agents it names, a reply wakes that thread's agent, and a top-level comment wakes the agent waiting on your answer, else the assignee. One answer no longer starts two runs doing the same work
+- Agents write the tasks, sessions, automations and PRs they mention in task comments as links, which the app shows with their current title
+- Fix a session brought in with `vicoa session import` showing up as a second group for the same folder in the sidebar
+
 ### v1.10.0
 19 November, 2026
 - `vicoa codex`, `vicoa --agent codex` and a Codex default agent are no longer supported. They print a pointer and exit before any login or daemon start. Start a Codex session with `vicoa session start --agent codex --dir <cwd>` or from New Session in the app, which keep running your own installed Codex CLI
