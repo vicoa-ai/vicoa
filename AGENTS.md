@@ -158,6 +158,15 @@ them; each gets a relative symlink in `.claude/skills/` for Claude Code.
   certs or service-account JSON in the tree.
 - **Ask via the question tool** if your agent harness has one, rather than
   asking in prose.
+- **Don't credit other products** — if you looked at another product for
+  design, behavior or implementation precedent, never name it in a PR title or
+  body, commit message, issue, code comment, docstring, changelog or doc, here
+  or in any other repo you open a PR against. Describe the change on its own
+  merits; if you reused a template, say "follows the usual pattern" or point at
+  prior art in this repo. Keep what you learned out of this tree. Before opening
+  a PR, scan its title, body, commit messages and diff for the names you drew
+  on. Integrating with a product, such as a supported coding agent, is not a
+  reference and may be named.
 - **Mind the blast radius** — see the next section before killing processes
   or touching services, ports, or files you did not create.
 - **Bring your session along when you move into a worktree** — Vicoa files a
