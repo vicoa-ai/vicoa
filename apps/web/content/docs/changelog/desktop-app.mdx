@@ -5,6 +5,17 @@ description: Release notes for the Vicoa desktop app (macOS, Windows) — new fe
 
 # Desktop App
 
+### v0.2.1
+20 November, 2026
+- Bundle Vicoa CLI daemon [v1.10.1](/docs/changelog/vicoa-cli#v1101)
+- Pick an assignee when you create a task: the new-task dialog has an Assignee pill next to Status and Priority, and a line above it says when an agent will start. The assignee picker also lists the people on the project's team, grouped into People and Agents, with a search box once the list is long
+- Select text in a task comment and choose "Add to reply" to quote it in that thread's reply box with a note of your own. Cmd/Ctrl+Enter posts the reply straight away
+- Assigning a task to an agent, or commenting for one, no longer makes a worktree. The session starts in the task's folder and the agent makes a worktree itself when it changes code, so the assign dialog only asks for the computer and folder
+- A comment on a task wakes only the agent it is for: a mention wakes the agents it names, a reply wakes that thread's agent, and a top-level comment wakes the agent waiting on your answer, else the assignee. The hint above the comment box follows the same rule
+- Tasks, sessions, automations and PRs that agents mention in task comments show as links with their current title
+- Plugins can read the open questions on a task, and the example Dashboard plugin's Needs you now lists the tasks with a question waiting on you, oldest first
+- Fix an imported session in a worktree showing up as a second group for the same folder in the sidebar
+
 ### v0.2.0
 19 November, 2026
 - Bundle Vicoa CLI daemon [v1.10.0](/docs/changelog/vicoa-cli#v1100)
