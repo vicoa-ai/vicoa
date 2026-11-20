@@ -400,6 +400,20 @@ vicoa task comment VIC-42 "Agreed" --reply-to <COMMENT_UUID>
   rather than nesting further, so a printed thread is never more than one indent.
 - **Use `-` for anything multi-line.** Piping the body in beats fighting the
   shell over quoting and newlines.
+- **Link what you mention.** A comment (and a description) is markdown, and the
+  app draws these links as a clickable chip with the item's current title:
+
+  ```markdown
+  [#VIC-42](/dashboard/tasks/<TASK_UUID>)
+  [#<title>](/dashboard/sessions/<SESSION_UUID>)
+  [#<title>](/dashboard/automation?automation=<AUTOMATION_UUID>)
+  [#123](https://github.com/<owner>/<repo>/pull/123)
+  ```
+
+  The link needs the full UUID, not `VIC-42`: take it from `vicoa task get`,
+  `vicoa session ls` or `vicoa automation ls` (your own session's is
+  `$VICOA_AGENT_INSTANCE_ID`). Never guess one; without it, write the plain
+  name. A PR or any other web page goes in by its full URL.
 - **Authorship is automatic.** Run inside a Vicoa session (`VICOA_AGENT_INSTANCE_ID`
   is set), a comment posted from a session started off an agent profile is signed
   by *that agent*; otherwise it is signed by the user whose key it is. Nothing to
