@@ -285,8 +285,8 @@ export function CommentComposer({
         {formatNames(wakeNames)} will work on this. Start with /note to just leave a note.
       </p>
     ) : null;
-  // An agent waiting on the viewer's answer: the box is a reply to it, wherever
-  // it sits.
+  // An agent waiting on the viewer's answer: a top-level box is the reply to it
+  // (in a thread, the box replies to that thread's agent).
   const answering = (wake?.askers ?? []).length > 0;
   const shownPlaceholder =
     wake && wakeNames.length > 0

@@ -321,10 +321,12 @@ vicoa task update VIC-42 --assignee none
 
   `--ask` makes the comment a question to one person: whoever started this run,
   or `--to` (`me`, an email, a user id, or their name; someone who can see the
-  task). They get a push, the task shows "Waiting on <them>", and their next
-  comment anywhere on the task comes back to you here. The question stops
-  waiting on its own once they comment, the task leaves `blocked` or reaches
-  `in_review`, or it closes. A plain comment is not a question: nobody is told
+  task). They get a push, the task shows "Waiting on <them>", and their answer
+  comes back to you here: a top-level comment from them, a reply in your
+  question's thread, or one that @mentions you. A comment of theirs for another
+  agent (an @mention of it, a reply in its thread) doesn't answer you. The
+  question stops waiting on its own once their answer reaches you, the task
+  leaves `blocked` or reaches `in_review`, or it closes. A plain comment is not a question: nobody is told
   to answer it. Only a session started from an agent profile can ask. An older
   CLI rejects `--ask`: then post a plain top-level comment and set `blocked`.
 - **Assigning an agent starts it** (in its task session, on its default

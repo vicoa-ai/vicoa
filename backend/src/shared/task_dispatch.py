@@ -583,34 +583,41 @@ def on_status_changed(db: Session, task: Task, *, old_status: str) -> None:
 def route_comment(
     db: Session, task: Task, comment: TaskComment
 ) -> list[tuple[UUID, str]]:
-    """Which agent profiles a person's comment is for, and why.
-
-    Always: the agents waiting for its author's reply on this task
-    (`answered`). Any comment of theirs fires those wakeups
-    (`task_wakeups.on_comment_created`), so each agent that asked hears it,
-    wherever on the task it was written. Then the first rule that applies:
+    """Which agent profiles a person's comment is for, and why. Where it is
+    written and whom it names decide: the first rule that applies, and only
+    that one, so one comment starts one run (or one per agent it names).
 
     1. It @mentions agents → those.
-    2. It replies in a thread an agent has written in → the latest such agent.
+    2. The task is Done or Cancelled → nobody. A mention is a deliberate pick;
+       anything else there is usually people talking about finished work.
+    3. It replies in a thread an agent has written in → the latest such agent.
        (A reply in a thread with no agent in it stays between people.)
-    3. It is top level on a task assigned to an agent → that agent.
+    4. It is top level and agents are waiting on its author's answer → those.
+    5. It is top level on a task assigned to an agent → that agent.
+
+    An agent waiting on the author that the comment reaches, by any rule,
+    hears it as its answer (`answered`), and only then is its question
+    answered (`task_wakeups.on_comment_created`). A comment that goes
+    elsewhere leaves the question open, since the agent that asked hasn't
+    heard anything.
     """
-    routes: dict[UUID, str] = {
-        profile_id: "answered"
-        for profile_id in agents_waiting_on(db, task, comment.author_id)
-    }
-    for profile_id, trigger in _addressed_to(db, task, comment):
-        routes.setdefault(profile_id, trigger)
-    return list(routes.items())
+    waiting = agents_waiting_on(db, task, comment.author_id)
+    return [
+        (profile_id, "answered" if profile_id in waiting else trigger)
+        for profile_id, trigger in _addressed_to(db, task, comment, waiting)
+    ]
 
 
 def _addressed_to(
-    db: Session, task: Task, comment: TaskComment
+    db: Session, task: Task, comment: TaskComment, waiting: list[UUID]
 ) -> list[tuple[UUID, str]]:
-    """Rules 1-3 of `route_comment`."""
+    """Rules 1-5 of `route_comment`. `waiting`: the agents waiting on the
+    comment's author."""
     mentioned = mentioned_profile_ids(comment.body)
     if mentioned:
         return [(profile_id, "mentioned") for profile_id in mentioned]
+    if task.status in _CLOSED_STATUSES:
+        return []
     if comment.parent_comment_id is not None:
         root = comment.parent_comment_id
         agent_author = (
@@ -626,6 +633,8 @@ def _addressed_to(
             .first()
         )
         return [(agent_author[0], "replied")] if agent_author else []
+    if waiting:
+        return [(profile_id, "answered") for profile_id in waiting]
     if task.assignee_type == "agent" and task.assignee_id is not None:
         return [(task.assignee_id, "commented")]
     return []
@@ -633,27 +642,22 @@ def _addressed_to(
 
 def on_comment_created(
     db: Session, task: Task, comment: TaskComment
-) -> dict[UUID, TaskDispatch]:
-    """A person commented: queue a Reply-mode dispatch for each agent it is for.
-    Returns them by agent profile.
-
-    On a Done or Cancelled task only an explicit @mention starts anything: a
-    mention is a deliberate pick, while a comment or a reply there is usually
-    people talking about finished work."""
-    queued: dict[UUID, TaskDispatch] = {}
+) -> dict[UUID, TaskDispatch | None]:
+    """A person commented: queue a Reply-mode dispatch for each agent it is for
+    (`route_comment`). Returns every agent it reached, by profile, with its
+    dispatch, or None where the person can't start that agent."""
+    reached: dict[UUID, TaskDispatch | None] = {}
     if comment.author_type != "user" or is_note(comment.body):
-        return queued
+        return reached
     person = comment.author_id
-    routes = route_comment(db, task, comment)
-    if task.status in _CLOSED_STATUSES:
-        routes = [route for route in routes if route[1] == "mentioned"]
-    for profile_id, trigger in routes:
+    for profile_id, trigger in route_comment(db, task, comment):
         check = check_can_start(db, profile_id, person, invited=trigger == "answered")
         if check.profile is None or check.reason is not None:
             # A mention the person can't run is still a mention: the comment
             # posts, nothing starts. The composer's hint already said so.
+            reached[profile_id] = None
             continue
-        queued[profile_id] = enqueue(
+        reached[profile_id] = enqueue(
             db,
             task=task,
             profile=check.profile,
@@ -662,7 +666,7 @@ def on_comment_created(
             requested_by=person,
             comment_id=comment.id,
         )
-    return queued
+    return reached
 
 
 # --- What the task shows ------------------------------------------------------

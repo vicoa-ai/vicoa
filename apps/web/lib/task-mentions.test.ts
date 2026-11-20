@@ -110,15 +110,22 @@ describe('questions and people', () => {
   const C = '33333333-3333-4333-8333-333333333333';
   const askers = [{ id: B, name: 'Codex' }];
 
-  it('an answer wakes the agent that asked, wherever it is written', () => {
-    expect(agentsToWake('B', { ...top, askers })).toEqual([B, A]);
-    expect(
-      agentsToWake('B', { inThread: true, threadAgentId: null, assigneeAgentId: null, askers }),
-    ).toEqual([B]);
+  it('a top-level comment is the answer: it wakes the askers, not the assignee', () => {
+    expect(agentsToWake('B', { ...top, askers })).toEqual([B]);
+    const two = [...askers, { id: C, name: 'Claude' }];
+    expect(agentsToWake('B', { ...top, askers: two })).toEqual([B, C]);
   });
 
-  it('alongside an explicit mention', () => {
-    expect(agentsToWake(`[@C](vicoa://agent/${C}) help`, { ...top, askers })).toEqual([B, C]);
+  it('a mention is for the mentioned alone', () => {
+    expect(agentsToWake(`[@C](vicoa://agent/${C}) help`, { ...top, askers })).toEqual([C]);
+    expect(agentsToWake(`[@B](vicoa://agent/${B}) B`, { ...top, askers })).toEqual([B]);
+  });
+
+  it("a reply is for the thread's agent alone", () => {
+    const thread = { inThread: true, threadAgentId: A, assigneeAgentId: null, askers };
+    expect(agentsToWake('B', thread)).toEqual([A]);
+    expect(agentsToWake('B', { ...thread, threadAgentId: B })).toEqual([B]);
+    expect(agentsToWake('B', { ...thread, threadAgentId: null })).toEqual([]);
   });
 
   it('a note answers nobody', () => {

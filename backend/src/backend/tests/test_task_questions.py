@@ -278,7 +278,7 @@ class TestClosing:
             .all()
         )
 
-    def test_the_addressees_comment_anywhere_answers_it(
+    def test_the_addressees_top_level_comment_answers_it(
         self, test_db, test_user, task, profile, ada
     ):
         wakeup = _ask_directly(test_db, test_user, task, profile, ada)
@@ -293,6 +293,52 @@ class TestClosing:
         [dispatch] = _queued(test_db, task)
         assert wakeup.dispatch_id == dispatch.id
         assert wakeup.ended_at is not None
+
+    def test_a_reply_in_its_thread_answers_it(self, test_db, test_user, task, profile):
+        wakeup = _ask_directly(test_db, test_user, task, profile, test_user)
+        _as_person(test_db, test_user)
+        task_timeline_queries.create_comment(
+            test_db,
+            task,
+            test_user.id,
+            "B",
+            parent_comment_id=wakeup.source_comment_id,
+        )
+        test_db.refresh(wakeup)
+        assert wakeup.state == "fired"
+        [row] = _queued(test_db, task)
+        assert (row.agent_profile_id, row.trigger) == (profile.id, "answered")
+
+    def test_mentioning_the_asker_answers_it(self, test_db, test_user, task, profile):
+        wakeup = _ask_directly(test_db, test_user, task, profile, test_user)
+        _as_person(test_db, test_user)
+        task_timeline_queries.create_comment(
+            test_db, task, test_user.id, f"[@Claude](vicoa://agent/{profile.id}) B"
+        )
+        test_db.refresh(wakeup)
+        assert wakeup.state == "fired"
+        [row] = _queued(test_db, task)
+        assert row.trigger == "answered"
+
+    def test_a_reply_in_another_agents_thread_does_not(
+        self, test_db, test_user, task, profile
+    ):
+        other = AgentProfile(user_id=test_user.id, name="Codex", agent="codex")
+        test_db.add(other)
+        test_db.commit()
+        set_session_actor(test_db, Actor(type="agent", id=other.id))
+        theirs = task_timeline_queries.create_comment(
+            test_db, task, test_user.id, "Done?", author=("agent", other.id)
+        )
+        _ask_directly(test_db, test_user, task, profile, test_user)
+        _as_person(test_db, test_user)
+        task_timeline_queries.create_comment(
+            test_db, task, test_user.id, "Yes", parent_comment_id=theirs.id
+        )
+        # It went to that thread's agent; the one that asked hasn't heard yet.
+        [row] = _queued(test_db, task)
+        assert (row.agent_profile_id, row.trigger) == (other.id, "replied")
+        assert len(self._open(test_db, task)) == 1
 
     def test_someone_elses_comment_does_not(
         self, test_db, test_user, task, profile, ada
@@ -389,17 +435,50 @@ class TestTheAnswerWakesTheAsker:
         assert row.requested_by_user_id == ada.id
         assert row.trigger_comment_id == answer.id
 
-    def test_alongside_a_mention(self, test_db, test_user, task, profile, ada):
+    def test_a_mention_is_for_the_mentioned_alone(
+        self, test_db, test_user, task, profile
+    ):
         other = AgentProfile(user_id=test_user.id, name="Codex", agent="codex")
         test_db.add(other)
         test_db.commit()
-        _ask_directly(test_db, test_user, task, profile, test_user)
+        wakeup = _ask_directly(test_db, test_user, task, profile, test_user)
         _as_person(test_db, test_user)
         task_timeline_queries.create_comment(
-            test_db, task, test_user.id, f"B. [@Codex](vicoa://agent/{other.id}) help"
+            test_db, task, test_user.id, f"[@Codex](vicoa://agent/{other.id}) help"
+        )
+        [row] = _queued(test_db, task)
+        assert (row.agent_profile_id, row.trigger) == (other.id, "mentioned")
+        test_db.refresh(wakeup)
+        assert wakeup.state == "waiting"
+        # Both named: each hears it, and the question is answered.
+        task_timeline_queries.create_comment(
+            test_db,
+            task,
+            test_user.id,
+            f"[@Codex](vicoa://agent/{other.id}) [@Claude](vicoa://agent/{profile.id}) B",
         )
         triggers = {(r.agent_profile_id, r.trigger) for r in _queued(test_db, task)}
-        assert triggers == {(profile.id, "answered"), (other.id, "mentioned")}
+        assert triggers == {(other.id, "mentioned"), (profile.id, "answered")}
+        test_db.refresh(wakeup)
+        assert wakeup.state == "fired"
+
+    def test_a_top_level_answer_does_not_also_wake_the_assignee(
+        self, test_db, test_user, task, profile
+    ):
+        owner = AgentProfile(user_id=test_user.id, name="Ops", agent="claude")
+        test_db.add(owner)
+        test_db.commit()
+        task.assignee_type, task.assignee_id = "agent", owner.id
+        test_db.commit()
+        _ask_directly(test_db, test_user, task, profile, test_user)
+        _as_person(test_db, test_user)
+        task_timeline_queries.create_comment(test_db, task, test_user.id, "B")
+        [row] = _queued(test_db, task)
+        assert (row.agent_profile_id, row.trigger) == (profile.id, "answered")
+        # Answered, so nobody waits on him: his next top-level comment is the owner's.
+        task_timeline_queries.create_comment(test_db, task, test_user.id, "And C")
+        triggers = {(r.agent_profile_id, r.trigger) for r in _queued(test_db, task)}
+        assert triggers == {(profile.id, "answered"), (owner.id, "commented")}
 
     def test_a_teammates_mention_still_cant_start_the_agent(
         self, test_db, test_user, task, profile, ada
