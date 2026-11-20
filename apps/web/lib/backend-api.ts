@@ -1031,6 +1031,10 @@ export interface CreateTaskRequest extends TaskRunFields {
   label_ids?: string[];
   start_date?: string | null;
   due_date?: string | null;
+  /** Set together or not at all. An agent starts on the new task unless it is
+   *  in Backlog or closed (or `start` is false). */
+  assignee_type?: 'user' | 'agent' | null;
+  assignee_id?: string | null;
 }
 
 export interface UpdateTaskRequest extends TaskRunFields {

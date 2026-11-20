@@ -20,6 +20,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { agentsForProject, labelsForProject } from '@/lib/project-vocabulary';
+import { principalFromResponse } from '@/lib/principals';
+import { useTeamMembers } from '@/lib/use-team-members';
 import {
   AssigneePickerPill,
   DatePickerPill,
@@ -89,6 +91,9 @@ export function TaskPropertyRail({
     assignTo,
     createLabelAndAttach,
   } = model;
+  const project = projects.find((p) => p.id === task.project_id);
+  // A team's project can go to any of the team's people.
+  const teamMembers = useTeamMembers(project?.team_id);
   // The agent picked in the assignee picker, while its confirm dialog is open:
   // assigning an agent starts it on one of your computers, so it asks first.
   const [assigning, setAssigning] = useState<AgentProfile | null>(null);
@@ -144,12 +149,10 @@ export function TaskPropertyRail({
             onSelect={(priority) => void patchTask({ priority })}
           />
           <AssigneePickerPill
-            assignee={task.assignee}
+            assignee={principalFromResponse(task.assignee)}
             viewer={viewer}
-            agentProfiles={agentsForProject(
-              agentProfiles,
-              projects.find((p) => p.id === task.project_id),
-            )}
+            people={teamMembers}
+            agentProfiles={agentsForProject(agentProfiles, project)}
             onSelect={(next) => {
               const agent =
                 next?.type === 'agent' ? agentProfiles.find((p) => p.id === next.id) : undefined;
@@ -238,11 +241,7 @@ export function TaskPropertyRail({
 
         <RailGroup label="Labels">
           <LabelPickerPill
-            labels={labelsForProject(
-              labels,
-              projects.find((p) => p.id === task.project_id),
-              task.labels,
-            )}
+            labels={labelsForProject(labels, project, task.labels)}
             selectedIds={task.labels.map((l) => l.id)}
             onToggle={(labelId) => {
               const current = task.labels.map((l) => l.id);

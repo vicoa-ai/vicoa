@@ -36,8 +36,12 @@ import { MentionPromptField } from '@/components/mention-prompt-field';
 import { projectMentionTarget } from '@/lib/project-mention-target';
 import { referenceMarkdown } from '@/lib/reference-links';
 import { getPref, setPref } from '@/lib/desktop-prefs';
-import { labelOwnerForProject, labelsForProject } from '@/lib/project-vocabulary';
+import { agentsForProject, labelOwnerForProject, labelsForProject } from '@/lib/project-vocabulary';
+import type { Principal } from '@/lib/principals';
+import { agentPrincipal } from '@/lib/use-agent-profiles';
+import { useTeamMembers } from '@/lib/use-team-members';
 import {
+  AgentProfile,
   TaskSessionResponse,
   ProjectResponse,
   TaskLabelResponse,
@@ -53,6 +57,7 @@ import {
 import { SessionAgentIcon } from '@/components/dashboard/agent-type-icon';
 import { TASK_SESSION_RELATION_LABEL } from '@/app/dashboard/tasks/[taskId]/task-sessions';
 import {
+  AssigneePickerPill,
   DatePickerPill,
   LabelPickerPill,
   ParentPickerPill,
@@ -66,6 +71,7 @@ import {
 import { isImeComposing } from '@/lib/ime';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
+import { agentStartHint, assigneeFitsProject, type TaskAssignee } from './task-assignee';
 
 /** Persisted (desktop settings.json / localStorage) dialog size preference. */
 const DIALOG_EXPANDED_PREF = 'tasks:dialogExpanded';
@@ -84,6 +90,9 @@ export interface TaskFormValues {
   parent_task_id: string | null;
   start_date: string; // yyyy-mm-dd or ''
   due_date: string;
+  /** Create mode only: an existing task's assignee changes on its page, where
+   *  picking an agent asks where it should run first. */
+  assignee: TaskAssignee | null;
 }
 
 /** yyyy-mm-dd for a date input, from an ISO timestamp. */
@@ -105,6 +114,8 @@ export function TaskDialog({
   defaults,
   projects,
   labels,
+  viewer = null,
+  agentProfiles = [],
   allTasks = [],
   childTasks = [],
   sessions = [],
@@ -121,6 +132,10 @@ export function TaskDialog({
   defaults?: Partial<Pick<TaskFormValues, 'status' | 'project_id' | 'parent_task_id'>>;
   projects: ProjectResponse[];
   labels: TaskLabelResponse[];
+  /** The signed-in user, first in the assignee picker. */
+  viewer?: Principal | null;
+  /** The caller's agents; the picker narrows them to the selected project's. */
+  agentProfiles?: AgentProfile[];
   /** Every task, for the parent picker + resolving the parent breadcrumb. */
   allTasks?: TaskResponse[];
   /** Sub-tasks of `task` (edit mode). */
@@ -147,6 +162,7 @@ export function TaskDialog({
     parent_task_id: null,
     start_date: '',
     due_date: '',
+    assignee: null,
   }));
   const [subtaskTitle, setSubtaskTitle] = useState('');
   const [addingSubtask, setAddingSubtask] = useState(false);
@@ -204,6 +220,7 @@ export function TaskDialog({
       parent_task_id: task?.parent_task_id ?? defaults?.parent_task_id ?? null,
       start_date: toDateInputValue(task?.start_date ?? null),
       due_date: toDateInputValue(task?.due_date ?? null),
+      assignee: null,
     });
     setSubtaskTitle('');
     setPendingSubtasks([]);
@@ -219,6 +236,42 @@ export function TaskDialog({
 
   // Labels are owner-scoped: a team's project draws from the team's set.
   const selectedProject = projects.find((p) => p.id === values.project_id) ?? null;
+
+  // Who the new task can go to, as the backend allows: you, the people of the
+  // project's team, and your agents plus the team's. Archived agents are left
+  // out; a new task is not something to hand one.
+  const teamMembers = useTeamMembers(selectedProject?.team_id);
+  const assignableAgents = useMemo(
+    () => agentsForProject(agentProfiles, selectedProject).filter((p) => !p.is_archived),
+    [agentProfiles, selectedProject],
+  );
+  const assignedAgent =
+    values.assignee?.type === 'agent'
+      ? assignableAgents.find((p) => p.id === values.assignee?.id) ?? null
+      : null;
+  const assigneePrincipal = useMemo<Principal | null>(() => {
+    const picked = values.assignee;
+    if (!picked) return null;
+    if (picked.type === 'agent') {
+      const agent = agentProfiles.find((p) => p.id === picked.id);
+      return agent ? agentPrincipal(agent) : { type: 'agent', id: picked.id };
+    }
+    if (viewer?.id === picked.id) return viewer;
+    return teamMembers.find((m) => m.id === picked.id) ?? { type: 'user', id: picked.id };
+  }, [values.assignee, agentProfiles, viewer, teamMembers]);
+
+  // Moving the task to another project drops an assignee the backend would
+  // refuse there, rather than failing the create.
+  const selectProject = (projectId: string | null) => {
+    const to = projects.find((p) => p.id === projectId) ?? null;
+    setValues((prev) => {
+      const from = projects.find((p) => p.id === prev.project_id) ?? null;
+      const keeps =
+        !prev.assignee ||
+        assigneeFitsProject(prev.assignee, { viewerId: viewer?.id, from, to, agentProfiles });
+      return { ...prev, project_id: projectId ?? '', assignee: keeps ? prev.assignee : null };
+    });
+  };
 
   // `@` file search in the description runs against the selected project's
   // linked folder (see projectMentionTarget). No link → a plain textarea.
@@ -278,6 +331,8 @@ export function TaskDialog({
           parent_task_id: prev.parent_task_id,
           start_date: '',
           due_date: '',
+          // A batch for one person or agent stays theirs.
+          assignee: prev.assignee,
         }));
         setPendingSubtasks([]);
         setRevealed(new Set());
@@ -503,19 +558,36 @@ export function TaskDialog({
           )}
         </div>
 
-        {/* Property pills. Status / Priority / Project / Labels are always
-            inline; parent, sub-tasks and the dates live behind the "…" menu
-            until added (multica's overflow pattern). */}
+        {/* Creating a task for an agent hands it the work, with no step to
+            confirm: this line says whether it starts. */}
+        {!task && assignedAgent && (
+          <p className="shrink-0 px-5 pt-1 text-[11px] text-muted-foreground/60">
+            {agentStartHint(assignedAgent, values.status)}
+          </p>
+        )}
+
+        {/* Property pills. Status / Priority / Assignee / Project / Labels
+            are always inline; parent, sub-tasks and the dates live behind the
+            "…" menu until added. */}
         <div className="flex shrink-0 flex-wrap items-center gap-1.5 px-4 py-2">
           <StatusPickerPill status={values.status} onSelect={(s) => set('status', s)} />
           <PriorityPickerPill
             priority={values.priority}
             onSelect={(p) => set('priority', p)}
           />
+          {!task && (
+            <AssigneePickerPill
+              assignee={assigneePrincipal}
+              viewer={viewer}
+              people={teamMembers}
+              agentProfiles={assignableAgents}
+              onSelect={(next) => set('assignee', next)}
+            />
+          )}
           <ProjectPickerPill
             projects={projects}
             projectId={values.project_id || null}
-            onSelect={(id) => set('project_id', id ?? '')}
+            onSelect={selectProject}
           />
           <LabelPickerPill
             labels={labelsForProject(
