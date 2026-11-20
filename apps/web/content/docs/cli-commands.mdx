@@ -9,7 +9,7 @@ The `vicoa` command is the terminal front door to your Vicoa account. From any m
 
 - **Start, resume, and stop** agent sessions (Claude Code, Codex, OpenCode, and more).
 - **List and inspect** every session you own — across machines, including finished ones — and read their message transcripts.
-- **Manage your task backlog** — create, update, move, label, and close tasks without leaving the terminal; list your projects and labels.
+- **Manage your task backlog** — create, update, move, label, and close tasks without leaving the terminal; list your projects, and manage your labels.
 - **Share a session** — mint a public link to a transcript (for a pull request, a teammate) and revoke it again.
 - **Schedule automations** — saved prompts that fire an agent session on a recurring schedule.
 
@@ -580,9 +580,14 @@ Your task-label vocabulary — one set of labels across every project, the same 
 vicoa label ls
 vicoa label create growth                    # colour picked from the name, as the web does
 vicoa label create ops --color "#3b82f6"
+vicoa label update growth --name marketing   # rename
+vicoa label update ops --color "#ef4444"     # recolour
+vicoa label delete marketing ops             # asks first; --yes to skip
 ```
 
-Rename, recolour, and delete stay in the apps. `create` refuses a name that already exists, so `--label <name>` can never be ambiguous.
+`update` and `delete` take a label's name or its id (`vicoa label ls`). Deleting a label takes it off every task that carries it, and the tasks stay. `delete` asks before it deletes anything; without a terminal to ask on (an agent), pass `--yes` or it stops. Every name is checked first, so a typo deletes nothing.
+
+`create` and `update --name` refuse a name another label already has, so `--label <name>` can never be ambiguous. Team labels are managed in the apps.
 
 ## vicoa automation
 
@@ -735,6 +740,7 @@ The "new version available" banner goes to **stderr**, so it never lands in a `-
 | `404` on `task get/update/delete` | Use the `VIC-42` identifier or the **full UUID** from the `ID` column. |
 | `no project with key or name '…'` / `N projects are named '…'` | `--project` matches a key, name, or id exactly — run `vicoa project ls`; when two projects share a name, pass the key or id. |
 | `no label named '…'` | `--label` takes an existing name — `vicoa label ls`, or `vicoa label create <name>`. |
+| `N labels are named '…'` | Two labels share the name. `label update` and `label delete` take the id instead; for `--label`, rename one with `vicoa label update <id> --name <new>`. |
 | `no session given and VICOA_AGENT_INSTANCE_ID is not set` | `session share`/`unshare` without an id only work inside a Vicoa session; pass the session id. |
 | `Nothing to update — pass at least one field` | `update` is a PATCH; pass at least one flag, e.g. `--status done`. |
 | `Aborted (pass --yes to delete non-interactively)` | Re-run `delete` with `-y`. |

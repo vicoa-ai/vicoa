@@ -428,10 +428,23 @@ per-project labels).
 |---|---|
 | `label ls [--json]` | Columns `NAME`, `COLOR`, `ID` — `NAME` is what `--label` takes |
 | `label create <name> [--color '#RRGGBB'] [--json]` | Create one; colour defaults to the one the web would pick from the name |
+| `label update <label> [--name NEW] [--color '#RRGGBB'] [--json]` | Rename and/or recolour; at least one flag (exit 2 otherwise) |
+| `label delete <label>... [--yes] [--json]` | Delete one or more; each comes off every task that carries it (the tasks stay) |
 
-`create` refuses a name that already exists (case-insensitively), so a
-`--label <name>` reference is never ambiguous. Rename, recolour, and delete
-stay in the apps.
+`<label>` on `update` / `delete` is a name (case-insensitive) or an id. `create`
+and `update --name` refuse a name another label already has (case-insensitively),
+so a `--label <name>` reference is never ambiguous; if two old labels share a
+name, the error lists both ids — pass the one you mean.
+
+`delete` resolves **every** ref before deleting anything (a miss exits 2 and
+deletes nothing), then asks `[y/N]`. With no terminal to answer it (an agent)
+and no `--yes`, it aborts with exit 1, so an agent passes `--yes`. A ref that
+fails on the server is reported on stderr and the rest still go; exit 1 if any
+failed. `--json` prints the deleted label (one ref) or a list of them (several).
+
+Only your own labels: team labels are invisible here (404) and stay in the apps.
+An older server without these routes gets "can't change labels from the CLI
+yet; do it in Settings → Tasks".
 
 ## `vicoa automation ...` — scheduled automations
 

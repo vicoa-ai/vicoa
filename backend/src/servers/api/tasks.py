@@ -60,6 +60,7 @@ from backend.models import (
     TaskStatusLiteral,
     TaskTimelineResponse,
     UpdateAgentTaskRequest,
+    UpdateTaskLabelRequest,
 )
 
 from .auth import get_current_user_id
@@ -369,10 +370,11 @@ def delete_task_endpoint(
 
 
 # ---------------------------------------------------------------------------
-# Labels — the caller's own vocabulary (`vicoa label ls` / `--label`)
+# Labels — the caller's own vocabulary (`vicoa label ...` / `--label`)
 #
-# List and create only: the owner-only lens sees personal labels, never a
-# team's, and renaming/recolouring/deleting a label stays a Settings-page act.
+# The owner-only lens: personal labels only. A team's vocabulary is a sharing
+# concept and stays on the dashboard, so a team label is 400 on create and
+# invisible (404) to rename and delete here.
 # ---------------------------------------------------------------------------
 
 
@@ -405,6 +407,38 @@ def create_label_endpoint(
         db, _user_uuid(user_id), name=request.name, color=request.color
     )
     return TaskLabelResponse.model_validate(label)
+
+
+@task_router.patch("/task-labels/{label_id}", response_model=TaskLabelResponse)
+def update_label_endpoint(
+    label_id: UUID,
+    request: UpdateTaskLabelRequest,
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    db: Session = Depends(get_db),
+) -> TaskLabelResponse:
+    """Rename and/or recolour one of the caller's personal labels."""
+    label = task_queries.update_label(
+        db, _user_uuid(user_id), label_id, request.model_dump(exclude_unset=True)
+    )
+    if label is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Label not found"
+        )
+    return TaskLabelResponse.model_validate(label)
+
+
+@task_router.delete("/task-labels/{label_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_label_endpoint(
+    label_id: UUID,
+    user_id: Annotated[str, Depends(get_current_user_id)],
+    db: Session = Depends(get_db),
+) -> None:
+    """Delete one of the caller's personal labels; it comes off every task
+    that carried it (``task_label_links`` cascades)."""
+    if not task_queries.delete_label(db, _user_uuid(user_id), label_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Label not found"
+        )
 
 
 # ---------------------------------------------------------------------------
