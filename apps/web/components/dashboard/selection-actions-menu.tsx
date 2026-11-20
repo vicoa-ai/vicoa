@@ -98,16 +98,21 @@ async function copyText(text: string): Promise<void> {
  * the comment field has focus the native selection is gone, so the passage
  * stays marked with a CSS Custom Highlight instead.
  *
- * Omit `onAddToChat` / `onContinueInNewSession` to hide those rows.
+ * Omit `onAddToChat` / `onContinueInNewSession` to hide those rows. A task
+ * comment thread mounts one too, with `addLabel="Add to reply"`: the passage
+ * goes into that thread's reply box instead of a chat composer.
  */
 export function SelectionActionsMenu({
   getContainer,
+  addLabel = 'Add to chat',
   onAddToChat,
   onCommentAnnotation,
   onContinueInNewSession,
 }: {
   /** The transcript scroller; selections outside it are ignored. */
   getContainer: () => HTMLElement | null;
+  /** The add row's label, for the composer it adds to. */
+  addLabel?: string;
   /** Add the passage to the composer; returns the annotation's id, or null if it couldn't. */
   onAddToChat?: (quote: string) => string | null;
   /** Comment on the annotation just added; `send` sends the message too. */
@@ -147,9 +152,12 @@ export function SelectionActionsMenu({
     // so the focused element is what tells the two apart.
     const active = document.activeElement;
     const inField = !!host?.closest(EDITABLE_SELECTOR) || (active instanceof Element && active.matches(EDITABLE_SELECTOR));
-    const raw = selection?.toString() ?? '';
+    // The text is read only for a selection this menu owns: a task page mounts
+    // one menu per thread, and each would otherwise stringify every selection.
+    const ours = !!selection && !!container && !!host && container.contains(host) && !inField;
+    const raw = ours && selection ? selection.toString() : '';
     const quote = normalizeSelectedText(raw);
-    if (!selection || !range || !container || !host || !container.contains(host) || inField || !quote) {
+    if (!selection || !range || !ours || !quote) {
       if (snapshotRef.current) close();
       return;
     }
@@ -305,7 +313,7 @@ export function SelectionActionsMenu({
               {onAddToChat && (
                 <button type="button" role="menuitem" onClick={handleAddToChat} className={ITEM_CLASS}>
                   <MessageSquareQuote />
-                  Add to chat
+                  {addLabel}
                 </button>
               )}
               {onContinueInNewSession && (

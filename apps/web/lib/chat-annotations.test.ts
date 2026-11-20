@@ -63,6 +63,17 @@ describe('buildAnnotationBlock', () => {
     expect(buildAnnotationBlock([annotation('  ')])).toBe('');
     expect(buildAnnotationBlock([])).toBe('');
   });
+
+  test('markdown puts a blank line between quote and comment, so the comment is not quoted', () => {
+    const block = buildAnnotationBlock([annotation('q one\nq two', 'a\nb'), annotation('second')], 'markdown');
+    expect(block).toBe(
+      ['1. > q one', '   > q two', '', '   Comment: a', '   b', '', '2. > second'].join('\n'),
+    );
+  });
+
+  test('markdown adds nothing to a quote without a comment', () => {
+    expect(buildAnnotationBlock([annotation('q')], 'markdown')).toBe('1. > q');
+  });
 });
 
 describe('appendAnnotations', () => {
@@ -76,6 +87,12 @@ describe('appendAnnotations', () => {
 
   test('leaves the body untouched without annotations', () => {
     expect(appendAnnotations('hello', [])).toBe('hello');
+  });
+
+  test('passes the format through', () => {
+    expect(appendAnnotations('why', [annotation('q', 'c')], 'markdown')).toBe(
+      'why\n\n---\n1. > q\n\n   Comment: c',
+    );
   });
 });
 
