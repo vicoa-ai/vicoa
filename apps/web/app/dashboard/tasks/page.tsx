@@ -63,7 +63,7 @@ import { TaskDisplayMenu } from './task-display-menu';
 import { TaskFilterMenu, hasActiveFilters, type TaskFilterState } from './task-filter-menu';
 import { useAgentProfiles } from '@/lib/use-agent-profiles';
 import { useTaskLiveRefresh } from '@/lib/use-task-live-refresh';
-import { useCurrentUserId } from '@/lib/hooks/use-current-user-id';
+import { useCurrentUserId, useCurrentUserPrincipal } from '@/lib/hooks/use-current-user-id';
 import { TaskBoardSkeleton, TaskListSkeleton } from './task-skeleton';
 import { getTasksCache, setTasksCache } from './task-cache';
 import {
@@ -244,6 +244,7 @@ function TasksPageInner() {
   // Assignee filter: the user's own agents, Unassigned. "Me" is the Relation
   // to me filter below.
   const viewerId = useCurrentUserId(api);
+  const viewer = useCurrentUserPrincipal(api);
   const { profiles: agentProfiles } = useAgentProfiles();
   const assigneeAgents = useMemo(
     () => agentProfiles.filter((profile) => !profile.is_archived && !profile.team_id),
@@ -431,9 +432,15 @@ function TasksPageInner() {
           setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
           return updated;
         }
-        // Append to the end of its status group.
+        // Append to the end of its status group. An agent assignee starts on
+        // it right away (unless it's in Backlog), placed by the server.
         const maxPosition = tasks.reduce((max, t) => Math.max(max, t.position), 0);
-        const created = await api.createTask({ ...payload, position: maxPosition + 1 });
+        const created = await api.createTask({
+          ...payload,
+          position: maxPosition + 1,
+          assignee_type: values.assignee?.type ?? null,
+          assignee_id: values.assignee?.id ?? null,
+        });
         setTasks((prev) => [...prev, created]);
         notifyOnboardingProgress();
         return created;
@@ -957,6 +964,8 @@ function TasksPageInner() {
         defaults={dialog.defaults}
         projects={writableProjects}
         labels={labels}
+        viewer={viewer}
+        agentProfiles={agentProfiles}
         allTasks={tasks}
         childTasks={dialogChildren}
         sessions={dialogSessions}

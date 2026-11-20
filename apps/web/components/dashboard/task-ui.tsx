@@ -52,7 +52,6 @@ import {
 } from '@/components/ui/context-menu';
 import {
   AgentProfile,
-  PrincipalResponse,
   ProjectResponse,
   TaskLabelResponse,
   TaskPriority,
@@ -65,7 +64,6 @@ import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import {
   principalDisplayName,
   principalForAvatar,
-  principalFromResponse,
   type Principal,
 } from '@/lib/principals';
 import { cn } from '@/lib/utils';
@@ -757,37 +755,62 @@ export function collectDescendantIds(
   return out;
 }
 
+/** Past this many people and agents, the assignee picker gets a search box. */
+const ASSIGNEE_SEARCH_MIN = 8;
+
+const PICKER_GROUP_LABEL = 'px-2 pb-1 pt-2 text-[0.8rem] font-normal text-muted-foreground';
+
 /**
- * Parent-task picker pill (sibling of ProjectPickerPill). Lists the user's
- * tasks in a filterable popover so any task can be made a sub-task of another.
- * `currentTaskId` and its descendants are excluded to keep the tree acyclic;
- * in create mode (`currentTaskId` null) nothing is excluded.
+ * Assignee picker pill: Unassigned, you, the other people on the task's
+ * project (its team's members), then the agents. The people and agents passed
+ * in are already the ones the backend accepts for this project.
  */
 export function AssigneePickerPill({
   assignee,
   viewer,
+  people = [],
   agentProfiles,
   onSelect,
 }: {
-  assignee: PrincipalResponse | null;
-  /** The signed-in user — the only human assignable until P3 adds grants. */
+  assignee: Principal | null;
+  /** The signed-in user, listed first. */
   viewer: Principal | null;
+  /** Everyone else the task can go to: its team's members (may include the viewer). */
+  people?: Principal[];
   agentProfiles: AgentProfile[];
   onSelect: (next: { type: 'user' | 'agent'; id: string } | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const current = principalFromResponse(assignee);
+  const [query, setQuery] = useState('');
+  const teammates = people.filter((person) => person.id && person.id !== viewer?.id);
+  const searchable =
+    (viewer?.id ? 1 : 0) + teammates.length + agentProfiles.length > ASSIGNEE_SEARCH_MIN;
+  const needle = query.trim().toLowerCase();
+  const matches = (name: string) => !needle || name.toLowerCase().includes(needle);
+  const showViewer = !!viewer?.id && matches(principalDisplayName(viewer, viewer));
+  const shownTeammates = teammates.filter((person) => matches(principalDisplayName(person, viewer)));
+  const shownAgents = agentProfiles.filter((profile) => matches(profile.name));
+  // Group labels only once there is a second human to tell apart from the agents.
+  const grouped = teammates.length > 0;
+  const pick = (next: { type: 'user' | 'agent'; id: string } | null) => {
+    onSelect(next);
+    setOpen(false);
+    setQuery('');
+  };
   return (
     <PickerPopover
       open={open}
-      onOpenChange={setOpen}
-      width="w-52"
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setQuery('');
+      }}
+      width={grouped ? 'w-56' : 'w-52'}
       trigger={
         <PillButton>
-          {current ? (
+          {assignee ? (
             <>
-              <PrincipalAvatar principal={principalForAvatar(current, viewer)} size="xs" />
-              <span className="truncate">{principalDisplayName(current, viewer)}</span>
+              <PrincipalAvatar principal={principalForAvatar(assignee, viewer)} size="xs" />
+              <span className="truncate">{principalDisplayName(assignee, viewer)}</span>
             </>
           ) : (
             <>
@@ -798,56 +821,81 @@ export function AssigneePickerPill({
         </PillButton>
       }
     >
-      <PickerItem
-        selected={!assignee}
-        onClick={() => {
-          onSelect(null);
-          setOpen(false);
-        }}
-      >
-        <UserRound className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="text-muted-foreground">Unassigned</span>
-      </PickerItem>
-      {viewer?.id && (
-        <PickerItem
-          selected={assignee?.type === 'user' && assignee.id === viewer.id}
-          onClick={() => {
-            onSelect({ type: 'user', id: viewer.id! });
-            setOpen(false);
-          }}
-        >
-          <PrincipalAvatar principal={principalForAvatar(viewer, viewer)} size="xs" />
-          <span className="truncate">{principalDisplayName(viewer, viewer)}</span>
-        </PickerItem>
-      )}
-      {/* Agents are assignable principals, not just runners (§2 layer 1) —
-          "Claude owns this one" is the single-player half of assignment. */}
-      {agentProfiles.map((profile) => (
-        <PickerItem
-          key={profile.id}
-          selected={assignee?.type === 'agent' && assignee.id === profile.id}
-          onClick={() => {
-            onSelect({ type: 'agent', id: profile.id });
-            setOpen(false);
-          }}
-        >
-          <PrincipalAvatar
-            principal={{
-              type: 'agent',
-              id: profile.id,
-              name: profile.name,
-              avatarImageUri: profile.avatar_image_uri,
-              emoji: profile.emoji,
-              updatedAt: profile.updated_at,
-            }}
-            size="xs"
+      {searchable && (
+        <div className="p-1">
+          <Input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search people and agents…"
+            className="h-7 text-xs"
           />
-          <span className="truncate">{profile.name}</span>
+        </div>
+      )}
+      <div className={cn(searchable && 'custom-scrollbar max-h-72 overflow-y-auto')}>
+        <PickerItem selected={!assignee} onClick={() => pick(null)}>
+          <UserRound className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-muted-foreground">Unassigned</span>
         </PickerItem>
-      ))}
+        {grouped && (showViewer || shownTeammates.length > 0) && (
+          <div className={PICKER_GROUP_LABEL}>People</div>
+        )}
+        {showViewer && viewer?.id && (
+          <PickerItem
+            selected={assignee?.type === 'user' && assignee.id === viewer.id}
+            onClick={() => pick({ type: 'user', id: viewer.id! })}
+          >
+            <PrincipalAvatar principal={principalForAvatar(viewer, viewer)} size="xs" />
+            <span className="truncate">{principalDisplayName(viewer, viewer)}</span>
+          </PickerItem>
+        )}
+        {shownTeammates.map((person) => (
+          <PickerItem
+            key={person.id}
+            selected={assignee?.type === 'user' && assignee.id === person.id}
+            onClick={() => pick({ type: 'user', id: person.id! })}
+          >
+            <PrincipalAvatar principal={principalForAvatar(person, viewer)} size="xs" />
+            <span className="truncate">{principalDisplayName(person, viewer)}</span>
+          </PickerItem>
+        ))}
+        {grouped && shownAgents.length > 0 && <div className={PICKER_GROUP_LABEL}>Agents</div>}
+        {/* Agents are assignable principals, not just runners (§2 layer 1) —
+            "Claude owns this one" is the single-player half of assignment. */}
+        {shownAgents.map((profile) => (
+          <PickerItem
+            key={profile.id}
+            selected={assignee?.type === 'agent' && assignee.id === profile.id}
+            onClick={() => pick({ type: 'agent', id: profile.id })}
+          >
+            <PrincipalAvatar
+              principal={{
+                type: 'agent',
+                id: profile.id,
+                name: profile.name,
+                avatarImageUri: profile.avatar_image_uri,
+                emoji: profile.emoji,
+                updatedAt: profile.updated_at,
+              }}
+              size="xs"
+            />
+            <span className="truncate">{profile.name}</span>
+          </PickerItem>
+        ))}
+        {needle && !showViewer && shownTeammates.length === 0 && shownAgents.length === 0 && (
+          <p className="px-2 py-3 text-center text-xs text-muted-foreground">No matches</p>
+        )}
+      </div>
     </PickerPopover>
   );
 }
+
+/**
+ * Parent-task picker pill (sibling of ProjectPickerPill). Lists the user's
+ * tasks in a filterable popover so any task can be made a sub-task of another.
+ * `currentTaskId` and its descendants are excluded to keep the tree acyclic;
+ * in create mode (`currentTaskId` null) nothing is excluded.
+ */
 
 export function ParentPickerPill({
   tasks,
