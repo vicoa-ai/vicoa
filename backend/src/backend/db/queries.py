@@ -430,50 +430,10 @@ def get_all_agent_types_with_instances(
             if instance.status != AgentStatus.DELETED:
                 all_instance_ids.append(instance.id)
 
-    # Get message stats for ALL instances in a simpler, more efficient query
-    message_stats = {}
-    if all_instance_ids:
-        # Use window functions to get both count and latest message in one query
-        # This leverages our new index on (agent_instance_id, created_at)
-
-        # Subquery with row_number to identify the latest message per instance
-        latest_msg_cte = (
-            db.query(
-                Message.agent_instance_id,
-                Message.content,
-                Message.created_at,
-                func.row_number()
-                .over(
-                    partition_by=Message.agent_instance_id,
-                    order_by=desc(Message.created_at),
-                )
-                .label("rn"),
-                func.count(Message.id)
-                .over(partition_by=Message.agent_instance_id)
-                .label("msg_count"),
-            )
-            .filter(Message.agent_instance_id.in_(all_instance_ids))
-            .subquery()
-        )
-
-        # Get only the latest message (rn=1) with counts
-        stats_results = (
-            db.query(
-                latest_msg_cte.c.agent_instance_id,
-                latest_msg_cte.c.content,
-                latest_msg_cte.c.created_at,
-                latest_msg_cte.c.msg_count,
-            )
-            .filter(latest_msg_cte.c.rn == 1)
-            .all()
-        )
-
-        for row in stats_results:
-            message_stats[row.agent_instance_id] = {
-                "count": row.msg_count or 0,
-                "latest_at": row.created_at,
-                "latest_content": row.content,
-            }
+    # The same per-session stats every session list reads: a grouped count
+    # plus a one-row lookup of the latest message, never a window over every
+    # message row of every session the user has.
+    message_stats = _get_instance_message_stats(db, all_instance_ids)
 
     result = []
     for agent_type in agent_types:
@@ -487,9 +447,9 @@ def get_all_agent_types_with_instances(
             instances_with_stats.append(
                 {
                     "instance": instance,
-                    "message_count": stats.get("count", 0),
-                    "latest_message_at": stats.get("latest_at"),
-                    "latest_message": stats.get("latest_content"),
+                    "message_count": stats.get("message_count", 0),
+                    "latest_message_at": stats.get("latest_message_at"),
+                    "latest_message": stats.get("latest_message"),
                 }
             )
 
