@@ -9,6 +9,39 @@ import { openBillingSettings } from '@/lib/billing-subscription';
 import { cn } from '@/lib/utils';
 
 /**
+ * The plan in the sidebar's account row, left of the Settings icon (desktop
+ * and web), so it is in sight without opening the account menu; a click opens
+ * the upgrade dialog. Free only: a paid plan or a seat keeps its row in the
+ * account menu and shows nothing here, and so does an unknown plan, for the
+ * same reason as `AccountPlanItem`.
+ */
+export function SidebarPlanButton({
+  subscription,
+  className,
+}: {
+  subscription: BillingSubscription | null | undefined;
+  className?: string;
+}) {
+  if (!subscription) return null;
+  const { label, action } = accountPlanSummary(subscription);
+  if (action !== 'upgrade') return null;
+
+  return (
+    <button
+      type="button"
+      onClick={() => openUpgradeDialog('sidebar')}
+      title="See plans"
+      className={cn(
+        'shrink-0 cursor-pointer whitespace-nowrap rounded-full border border-border/60 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground',
+        className,
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
  * The plan row under the account menu's identity header (desktop and web):
  * Free with Upgrade, which opens the upgrade dialog, or the paid plan with
  * Manage, which opens Billing. A seat someone else pays for has nothing to
@@ -56,7 +89,7 @@ export function AccountPlanItem({
     <DropdownMenuItem
       className={cardClassName}
       onSelect={() =>
-        action === 'upgrade' ? openUpgradeDialog() : openBillingSettings((href) => router.push(href))
+        action === 'upgrade' ? openUpgradeDialog('account_menu') : openBillingSettings((href) => router.push(href))
       }
     >
       {body}

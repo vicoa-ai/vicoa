@@ -58,7 +58,7 @@ export function MachineLimitDialog() {
   // in, so it is always there when this is.
   const upgrade = () => {
     setDismissed(true);
-    openUpgradeDialog();
+    openUpgradeDialog('machine_limit');
   };
 
   const retry = async () => {

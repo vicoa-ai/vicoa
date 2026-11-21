@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { getBackendAPI, type BillingInterval } from '@/lib/backend-api';
+import type { UpgradeEntry } from '@/lib/billing';
 import { IncludedGlyph } from '@/components/billing/plan-glyphs';
 import { startProCheckout } from '@/lib/billing-subscription';
 import { getDesktopAuthBridge } from '@/lib/desktop-auth';
@@ -76,14 +77,20 @@ function FeatureList({
  * the in-app checkout (the desktop opens Stripe in the browser and then calls
  * `onCheckoutInBrowser`), Contact Us opens the contact page (the desktop shell
  * opens no mailto links), and the layout is compact enough for a dialog.
+ * `entry` is what opened that dialog; it is added to every event the cards
+ * emit, so checkouts can be split by the prompt that led to them.
  */
 export function PricingCards({
   inApp = false,
+  entry,
   onCheckoutInBrowser,
 }: {
   inApp?: boolean;
+  entry?: UpgradeEntry;
   onCheckoutInBrowser?: () => void;
 } = {}) {
+  const track = (event: string, properties: Record<string, string>) =>
+    posthog.capture(event, entry ? { ...properties, entry } : properties);
   // Opens on annual, the cheaper per-month price.
   const [isAnnual, setIsAnnual] = useState(true);
   const [activeCheckoutPlan, setActiveCheckoutPlan] = useState<'pro' | null>(null);
@@ -128,16 +135,16 @@ export function PricingCards({
 
   const selectInterval = (annual: boolean) => {
     setIsAnnual(annual);
-    posthog.capture('billing_toggle_changed', { interval: annual ? 'annual' : 'monthly' });
+    track('billing_toggle_changed', { interval: annual ? 'annual' : 'monthly' });
   };
 
   const startCheckout = async () => {
     setCheckoutError(null);
-    posthog.capture('pricing_cta_clicked', { plan: 'pro', interval: isAnnual ? 'annual' : 'monthly' });
+    track('pricing_cta_clicked', { plan: 'pro', interval: isAnnual ? 'annual' : 'monthly' });
 
     if (inApp) {
       setActiveCheckoutPlan('pro');
-      posthog.capture('checkout_started', { plan: 'pro', interval: isAnnual ? 'annual' : 'monthly' });
+      track('checkout_started', { plan: 'pro', interval: isAnnual ? 'annual' : 'monthly' });
       try {
         if ((await startProCheckout(isAnnual ? 'annual' : 'monthly')) === 'browser') {
           // Checkout continues in the browser; re-enable so a user who closed
@@ -158,7 +165,7 @@ export function PricingCards({
     }
 
     setActiveCheckoutPlan('pro');
-    posthog.capture('checkout_started', { plan: 'pro', interval: isAnnual ? 'annual' : 'monthly' });
+    track('checkout_started', { plan: 'pro', interval: isAnnual ? 'annual' : 'monthly' });
 
     try {
       const origin = window.location.origin;
@@ -192,7 +199,7 @@ export function PricingCards({
     );
 
   const contactUs = () => {
-    posthog.capture('pricing_cta_clicked', { plan: 'enterprise' });
+    track('pricing_cta_clicked', { plan: 'enterprise' });
     if (!inApp) {
       window.location.assign('mailto:hi@vicoa.ai');
       return;
@@ -284,7 +291,7 @@ export function PricingCards({
                 variant="outline"
                 className={cn('w-full rounded-full', inApp ? 'h-11' : 'h-12')}
                 onClick={() => {
-                  posthog.capture('pricing_cta_clicked', { plan: 'free' });
+                  track('pricing_cta_clicked', { plan: 'free' });
                   router.push('/download');
                 }}
               >
