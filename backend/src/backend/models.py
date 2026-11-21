@@ -7,11 +7,12 @@ Models are organized by functional area: questions, agents, billing, and detaile
 
 import re
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 from uuid import UUID
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     field_serializer,
@@ -24,6 +25,32 @@ from shared.database.enums import (
 )
 from shared.database.liveness import LiveState
 from shared.task_dispatch import RunOptions
+
+# Any UTF-16 surrogate code point. Python's JSON decoder joins a valid pair
+# into one character, so a surrogate left in a `str` is always a lone one.
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _replace_lone_surrogates(value: object) -> object:
+    """Swap each lone surrogate for U+FFFD before the field is validated.
+
+    JSON can carry one as an escape (`"\\udc80"`), and Python makes them
+    itself when it decodes bytes that are not UTF-8 with `surrogateescape`
+    (command-line arguments, and stdin under a C or POSIX locale), so a client
+    can send one without meaning to. Such a string can't be encoded as UTF-8:
+    pydantic refuses it, and FastAPI's 422 handler then fails to encode the
+    refused input in its own response, so the request ends as an unhandled 500
+    that the client retries. U+FFFD is what a UTF-8 decoder shows for a byte
+    it can't read; one character replaces one, so length limits hold as sent.
+    """
+    if isinstance(value, str):
+        return _SURROGATE.sub("�", value)
+    return value
+
+
+# Free text a person or an agent writes for the database to keep: task titles,
+# descriptions and comments.
+StoredText = Annotated[str, BeforeValidator(_replace_lone_surrogates)]
 
 # ============================================================================
 # Message Models
@@ -1097,8 +1124,8 @@ class TaskAssigneeFields(BaseModel):
 
 
 class CreateTaskRequest(TaskAssigneeFields, TaskRunFields):
-    title: str = Field(..., min_length=1, max_length=255)
-    description: str | None = None
+    title: StoredText = Field(..., min_length=1, max_length=255)
+    description: StoredText | None = None
     # Omitted → No project (unfiled: owned by the caller, no identifier).
     project_id: UUID | None = None
     status: TaskStatusLiteral = "backlog"
@@ -1114,8 +1141,8 @@ class UpdateTaskRequest(TaskAssigneeFields, TaskRunFields):
     """PATCH body — only explicitly sent fields are applied, so date fields
     can be cleared by sending null."""
 
-    title: str | None = Field(default=None, min_length=1, max_length=255)
-    description: str | None = None
+    title: StoredText | None = Field(default=None, min_length=1, max_length=255)
+    description: StoredText | None = None
     project_id: UUID | None = None
     status: TaskStatusLiteral | None = None
     priority: TaskPriorityLiteral | None = None
@@ -1331,7 +1358,7 @@ class TaskTimelineResponse(BaseModel):
 
 
 class CreateTaskCommentRequest(BaseModel):
-    body: str = Field(..., min_length=1, max_length=MAX_COMMENT_BODY_CHARS)
+    body: StoredText = Field(..., min_length=1, max_length=MAX_COMMENT_BODY_CHARS)
     # Reply to this comment. Threads are one level deep: passing a reply's id
     # attaches to that reply's root rather than nesting further.
     parent_comment_id: UUID | None = None
@@ -1368,7 +1395,7 @@ class CreateAgentTaskCommentRequest(CreateTaskCommentRequest):
 
 
 class UpdateTaskCommentRequest(BaseModel):
-    body: str = Field(..., min_length=1, max_length=MAX_COMMENT_BODY_CHARS)
+    body: StoredText = Field(..., min_length=1, max_length=MAX_COMMENT_BODY_CHARS)
 
 
 class ToggleTaskReactionRequest(BaseModel):

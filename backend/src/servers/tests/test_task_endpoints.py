@@ -254,6 +254,20 @@ class TestComments:
         )
         assert resp.status_code == 404
 
+    def test_lone_surrogate_is_stored_as_a_replacement_character(self, client, task):
+        """`vicoa task comment -` can send one: Python reads stdin under a C or
+        POSIX locale with `surrogateescape`, so a byte that isn't UTF-8 becomes
+        a lone surrogate. Postgres can't store it, so the comment arrives with
+        U+FFFD in its place instead of failing as a 500. Raw JSON, since httpx
+        can't encode the surrogate itself."""
+        resp = client.post(
+            f"/api/v1/tasks/{task['id']}/comments",
+            content='{"body": "log tail: \\udc80 end"}',
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 201, resp.text
+        assert [c["body"] for c in resp.json()["comments"]] == ["log tail: � end"]
+
     def test_comment_is_authored_by_the_calling_sessions_agent_profile(
         self, test_db, test_user, client, task
     ):
