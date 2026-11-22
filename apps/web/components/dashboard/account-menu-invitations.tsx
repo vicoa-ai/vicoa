@@ -52,12 +52,14 @@ export function AccountMenuInvitations({
   rowClassName?: string;
 }) {
   const { invitations, accept, decline } = useTeamInvitations();
-  // Same key as Settings → Teams, so the list is shared with it and the menu
-  // opens on a cached value after the first read.
+  // Same key as Settings → Teams, so the list is shared with it. This
+  // component only exists while the menu is open, so the list is read when the
+  // menu opens and not otherwise: nothing at app load, nothing in the
+  // background, and no refetch when the window regains focus meanwhile.
   const { data: teams } = useSWR<TeamSummary[]>(
     isDesktopLocal() ? null : TEAMS_KEY,
     () => getBackendAPI(true).listTeams(),
-    { shouldRetryOnError: false },
+    { shouldRetryOnError: false, revalidateOnFocus: false, revalidateOnReconnect: false },
   );
   const showTeams = shouldShowTeamsEntry({
     subscription,
