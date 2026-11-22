@@ -48,7 +48,6 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { AgentTypeIcon } from '@/components/dashboard/agent-type-icon';
-import { CopyCommand } from '@/components/copy-command';
 import {
   AGENT_CATALOG_FALLBACK,
   customAgentLabel,
@@ -62,7 +61,13 @@ import {
   readAvailableAgents,
   rpcScanAgents,
 } from '@/lib/desktop-agent-scan';
-import { installInfoFor } from '@/lib/desktop-agent-install';
+import { AgentInstallSteps } from '@/components/dashboard/agent-install';
+import {
+  installInfoFor,
+  installOsForPlatform,
+  installOsForThisComputer,
+  type InstallOs,
+} from '@/lib/desktop-agent-install';
 import {
   describeProbe,
   machineSupportsProviderConfig,
@@ -330,10 +335,12 @@ function InstallableAgentRow({
   row,
   expanded,
   onToggle,
+  os,
 }: {
   row: AgentRow;
   expanded: boolean;
   onToggle: () => void;
+  os: InstallOs;
 }) {
   const info = installInfoFor(row.id);
   return (
@@ -362,16 +369,8 @@ function InstallableAgentRow({
         </span>
       </button>
       {expanded && info && (
-        <div className="space-y-2 px-4 pb-3.5">
-          <CopyCommand command={info.command} />
-          <button
-            type="button"
-            onClick={() => openExternalUrl(info.docsUrl)}
-            className="inline-flex cursor-pointer items-center gap-1 text-[11px] text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
-          >
-            Setup guide
-            <ExternalLink className="h-3 w-3" />
-          </button>
+        <div className="px-4 pb-3.5">
+          <AgentInstallSteps agentId={row.id} os={os} />
         </div>
       )}
     </div>
@@ -469,6 +468,18 @@ export function ProvidersSettingsSection() {
   const [probingId, setProbingId] = useState<string | null>(null);
   const [probes, setProbes] = useState<Record<string, ProbeState>>({});
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Opened from the new-session agent picker (`providerSetupHref`): start on
+  // the machine the session was for and open that agent's install steps.
+  // Read once from the URL rather than through useSearchParams, so the
+  // desktop settings shell that also mounts this needs no Suspense boundary.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const agent = params.get('agent');
+    const machine = params.get('machine');
+    if (agent) setExpandedId(agent);
+    if (machine) setTargetChoice(machine);
+  }, []);
 
   // Live catalog, so agents added server-side appear without a web deploy.
   useEffect(() => {
@@ -863,6 +874,9 @@ export function ProvidersSettingsSection() {
                 row={row}
                 expanded={expandedId === row.id}
                 onToggle={() => setExpandedId((cur) => (cur === row.id ? null : row.id))}
+                // The Add target's OS when there is one, else this computer's:
+                // these rows aren't tied to a machine.
+                os={target ? installOsForPlatform(target.platform) : installOsForThisComputer()}
               />
             ))}
           </SectionCard>

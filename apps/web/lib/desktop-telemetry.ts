@@ -379,7 +379,8 @@ export type SubmitBlockedReason =
   | 'no_api'
   | 'no_machine'
   | 'machine_offline'
-  | 'no_directory';
+  | 'no_directory'
+  | 'agent_not_installed';
 
 /** Stable failure codes for session creation — never the user-facing string. */
 export type SessionCreateFailure =

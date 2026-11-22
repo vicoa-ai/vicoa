@@ -1,13 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
+import { ChevronDown, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { CopyCommand } from '@/components/copy-command';
+import { AgentInstallChoices, AgentInstallSteps } from '@/components/dashboard/agent-install';
 import { AgentTypeIcon } from '@/components/dashboard/agent-type-icon';
 import { AGENT_CATALOG_FALLBACK } from '@/lib/agent-catalog';
 import { getBackendAPI, type MachineSummary } from '@/lib/backend-api';
-import { getDesktopAuthBridge } from '@/lib/desktop-auth';
 import {
   buildScannedAgents,
   fetchLocalHealth,
@@ -16,7 +15,7 @@ import {
   rpcScanAgents,
   type ScannedAgent,
 } from '@/lib/desktop-agent-scan';
-import { RECOMMENDED_AGENT_ID, installInfoFor } from '@/lib/desktop-agent-install';
+import { PLAN_CHOICES, installInfoFor, installOsForPlatform, type InstallOs } from '@/lib/desktop-agent-install';
 import {
   trackScanCompleted,
   trackScanRescanned,
@@ -85,8 +84,8 @@ export function headingFor(
       // daemon advertising the RPC, so an older one shows no such button and
       // this text would be pointing at nothing.
       body: canRefresh
-        ? "Vicoa integrates with AI agents installed on your computer, like Claude Code or Codex. Install one below and click Refresh, or skip and do it later."
-        : "Vicoa integrates with AI agents installed on your computer, like Claude Code or Codex. Install one below and restart Vicoa to connect, or skip and do it later.",
+        ? 'Vicoa runs the AI agents installed on your computer, like Claude Code or Codex. Pick the one that matches a plan you already have, install it, then click Refresh.'
+        : 'Vicoa runs the AI agents installed on your computer, like Claude Code or Codex. Pick the one that matches a plan you already have, install it, then restart Vicoa.',
     };
   }
 
@@ -110,7 +109,7 @@ async function findThisMachine(): Promise<MachineSummary | null> {
   }
 }
 
-function AgentRow({ agent, isFirst }: { agent: ScannedAgent; isFirst: boolean }) {
+function AgentRow({ agent, isFirst, os }: { agent: ScannedAgent; isFirst: boolean; os: InstallOs }) {
   const [expanded, setExpanded] = useState(false);
   const info = installInfoFor(agent.id);
 
@@ -154,16 +153,8 @@ function AgentRow({ agent, isFirst }: { agent: ScannedAgent; isFirst: boolean })
       </button>
 
       {expanded && info && (
-        <div className="space-y-2 px-4 pb-3.5">
-          <CopyCommand command={info.command} />
-          <button
-            type="button"
-            onClick={() => getDesktopAuthBridge()?.openExternal(info.docsUrl)}
-            className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
-          >
-            Setup guide
-            <ExternalLink className="h-3 w-3" />
-          </button>
+        <div className="px-4 pb-3.5">
+          <AgentInstallSteps agentId={agent.id} os={os} />
         </div>
       )}
     </div>
@@ -191,6 +182,8 @@ export function AgentScanStep({
   // Bumped on refresh to restart the empty-timeout, so a re-probe shows the
   // scanning skeleton again instead of flashing the empty state.
   const [scanEpoch, setScanEpoch] = useState(0);
+  /** The open row in the "pick by plan" list shown when nothing is installed. */
+  const [choiceId, setChoiceId] = useState<string>(PLAN_CHOICES[0].id);
   /** (epoch:phase) pairs already reported, so a re-render can't double-fire. */
   const reportedPhases = useRef<Set<string>>(new Set());
 
@@ -286,7 +279,7 @@ export function AgentScanStep({
 
   const canRefresh = machineSupportsAgentScan(machine);
   const heading = headingFor(phase, installedCount, canRefresh);
-  const recommended = installInfoFor(RECOMMENDED_AGENT_ID);
+  const os = installOsForPlatform(machine?.platform);
 
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-xl flex-1 flex-col justify-center gap-5 px-6 py-8">
@@ -302,7 +295,7 @@ export function AgentScanStep({
           <span>
             {installedCount > 0
               ? `${installedCount} ready to use`
-              : 'None found on this Mac yet'}
+              : 'None found on this computer yet'}
           </span>
           {canRefresh && (
             <button
@@ -324,6 +317,13 @@ export function AgentScanStep({
           height and pushes the button off the bottom of the window. The fade
           keeps a part-scrolled row reading as "more below" rather than as a
           clipped, broken card. */}
+      {phase === 'found' && installedCount === 0 && agents ? (
+        // Nothing installed: lead with the plan each agent runs on rather than
+        // a list of ten names. Scrolls on its own for the same 560px reason.
+        <div className="custom-scrollbar -mx-1 min-h-0 overflow-y-auto px-1">
+          <AgentInstallChoices agents={agents} os={os} selectedId={choiceId} onSelect={setChoiceId} />
+        </div>
+      ) : (
       <div className="relative flex min-h-0 flex-col">
         <div className="custom-scrollbar max-h-[45vh] flex-1 overflow-y-auto rounded-xl border border-border/60 bg-foreground/[0.03]">
           {phase === 'scanning' &&
@@ -337,21 +337,10 @@ export function AgentScanStep({
           )}
 
           {phase === 'found' &&
-            agents?.map((agent, i) => <AgentRow key={agent.id} agent={agent} isFirst={i === 0} />)}
+            agents?.map((agent, i) => <AgentRow key={agent.id} agent={agent} isFirst={i === 0} os={os} />)}
         </div>
         <div className="pointer-events-none absolute inset-x-px bottom-px h-6 rounded-b-xl bg-gradient-to-t from-background to-transparent" />
       </div>
-
-      {phase === 'found' && installedCount === 0 && recommended && (
-        <div className="rounded-xl border border-primary/20 bg-primary/[0.04] p-4">
-          <p className="text-[13px] text-foreground">
-            Not sure which to pick? OpenCode is free and the quickest to set up. Paste this in
-            your terminal and there&apos;s nothing else to do.
-          </p>
-          <div className="mt-2.5">
-            <CopyCommand command={recommended.command} />
-          </div>
-        </div>
       )}
 
       {/* One button, not two. A "Skip" beside "Continue" did the identical

@@ -82,7 +82,10 @@ import {
   type SessionConfig,
 } from '@/lib/agent-catalog';
 import type { MachineAgentModelsCache } from '@/lib/backend-api';
-import { readAvailableAgents } from '@/lib/desktop-agent-scan';
+import { machineSupportsAgentScan, readAvailableAgents, rpcScanAgents } from '@/lib/desktop-agent-scan';
+import { installOsForPlatform } from '@/lib/desktop-agent-install';
+import { agentAvailability, firstInstalledAgent, providerSetupHref, splitByInstalled } from '@/lib/agent-availability';
+import { InstallAgentPanel } from './install-agent-panel';
 import { machineSupportsProviderConfig, readAgentLabels, rpcProviderProbe } from '@/lib/desktop-provider-config';
 import { DirectoryPickerPopover } from '@/components/dashboard/directory-picker-popover';
 import { AddToChatMenu } from '@/components/dashboard/add-to-chat-menu';
@@ -137,7 +140,7 @@ import { postInstanceMessage } from '@/lib/agent-instance-api';
 import { toast, type ToastOptions } from '@/lib/toast';
 import { MAX_ATTACHMENTS_PER_MESSAGE, MAX_ATTACHMENT_BYTES, type ChatUploadedAttachment } from '@/components/chat-input';
 import { formatFileSize } from '@/components/chat-attachments';
-import { GitBranch, File as FileIcon, FolderPlus } from 'lucide-react';
+import { ChevronRight, GitBranch, File as FileIcon, FolderPlus } from 'lucide-react';
 
 const MACHINE_REFRESH_INTERVAL_MS = 30_000;
 
@@ -243,6 +246,12 @@ const LIFTED_DROPDOWN_SIDE_OFFSET = 8;
  * should never need one.
  */
 const SUBMIT_BLOCKED_COPY: Record<SubmitBlockedReason, { web: string; desktop: string }> = {
+  // Never shown as a banner: the not-installed notice and install panel say it
+  // with the actions attached. Here so the record stays complete.
+  agent_not_installed: {
+    web: 'The selected agent is not installed on this machine.',
+    desktop: 'The selected agent is not installed on this machine.',
+  },
   no_api: {
     web: 'Unable to reach the API. Check that you are still signed in.',
     desktop: 'Unable to reach the API. Check that you are still signed in.',
@@ -495,6 +504,9 @@ function NewSessionContent() {
   // once there is something to put in it.
   const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
+  // Whether the agent was chosen on this visit (a pick, a preset, a fork link).
+  // A remembered agent was not, so it may be swapped for one the machine has.
+  const agentPickedRef = useRef(false);
   // Names the team sections of the picker (a team's agents, §3.6). Only
   // fetched once there is a team agent to label.
   const hasTeamAgents = agentProfiles.some((p) => p.team_id);
@@ -635,6 +647,13 @@ function NewSessionContent() {
   );
 
   const sessionConfig: SessionConfig = perAgentConfigs[activeAgent] ?? defaultsFor(effectiveCatalog, activeAgent);
+  // Which agents the selected machine reports installed. Unknown on a daemon
+  // too old to report them, which then gates nothing.
+  const machineAvailability = useMemo(
+    () => agentAvailability(readAvailableAgents(currentMachine ?? { metadata: null })),
+    [currentMachine],
+  );
+  const selectedAgentMissing = machineAvailability.known && !machineAvailability.isInstalled(activeAgent);
   const selectedProfile = useMemo(
     () => agentProfiles.find((p) => p.id === selectedProfileId) ?? null,
     [agentProfiles, selectedProfileId],
@@ -731,6 +750,7 @@ function NewSessionContent() {
     // last one used.
     if (agentParam && next[agentParam]) {
       setActiveAgent(agentParam);
+      agentPickedRef.current = true;
     } else if (persisted.lastAgent && next[persisted.lastAgent]) {
       setActiveAgent(persisted.lastAgent);
     }
@@ -885,6 +905,7 @@ function NewSessionContent() {
     // an agent's identity (unlike model/effort, which stay editable within it),
     // so a profile whose agent no longer matches is no longer what's running.
     setSelectedProfileId(null);
+    agentPickedRef.current = true;
     setActiveAgent(nextAgentId);
     setPerAgentConfigs((prev) => {
       if (prev[nextAgentId]) return prev;
@@ -903,6 +924,7 @@ function NewSessionContent() {
       { ...(profile.config as unknown as SessionConfig), agent: profile.agent },
       effectiveCatalog,
     );
+    agentPickedRef.current = true;
     setActiveAgent(profile.agent);
     setPerAgentConfigs((prev) => ({ ...prev, [profile.agent]: next }));
     setSelectedProfileId(profile.id);
@@ -2035,10 +2057,11 @@ function NewSessionContent() {
     if (machines.length === 0 || !selectedMachineId) return 'no_machine';
     if (!isOnline) return 'machine_offline';
     if (!directory.trim()) return 'no_directory';
+    if (selectedAgentMissing) return 'agent_not_installed';
     return null;
   })();
   submitBlockedRef.current = submitBlockedReason;
-  const blockedMessage = submitBlockedReason
+  const blockedMessage = submitBlockedReason && submitBlockedReason !== 'agent_not_installed'
     ? SUBMIT_BLOCKED_COPY[submitBlockedReason][isDesktop ? 'desktop' : 'web']
     : null;
   const canSubmit = !isSubmitting && !!api && !!selectedMachineId && !!directory.trim() && isOnline;
@@ -2224,6 +2247,56 @@ function NewSessionContent() {
       .sort()
       .map((id) => ({ id, label: machineAgentLabels[id] || customAgentLabel(id) })),
   ];
+  const { installed: installedAgentEntries, missing: missingAgentEntries } = splitByInstalled(
+    agentEntries,
+    machineAvailability,
+  );
+  const noAgentInstalled = machineAvailability.known && installedAgentEntries.length === 0;
+  const fallbackAgentId = firstInstalledAgent(agentEntries.map((a) => a.id), machineAvailability);
+  const activeAgentLabel = agentEntries.find((a) => a.id === activeAgent)?.label ?? activeAgent;
+  const fallbackAgentLabel = agentEntries.find((a) => a.id === fallbackAgentId)?.label ?? null;
+  const machineName = currentMachine ? getDisplayName(currentMachine) : 'this machine';
+
+  // Start on an agent the machine has. A remembered one it lacks is swapped
+  // for the first it has, without saving, so the remembered choice comes back
+  // on a machine that has it. The user's own pick this visit is left alone:
+  // the notice above the composer offers the swap instead.
+  useEffect(() => {
+    if (agentPickedRef.current || selectedProfileId || !selectedAgentMissing || !fallbackAgentId) return;
+    setActiveAgent(fallbackAgentId);
+    setPerAgentConfigs((prev) =>
+      prev[fallbackAgentId] ? prev : { ...prev, [fallbackAgentId]: defaultsFor(effectiveCatalog, fallbackAgentId) },
+    );
+  }, [selectedProfileId, selectedAgentMissing, fallbackAgentId, effectiveCatalog]);
+
+  // Installing lives in Settings → Providers, not in the composer. The one
+  // exception is a machine with no agent at all: nothing here can run, so the
+  // page says how to get one in place of its heading.
+  const showInstallPanel = noAgentInstalled;
+
+  // Re-check the machine after an install: the daemon probes again and the
+  // answer replaces the one it reported at start-up.
+  const [refreshingAgents, setRefreshingAgents] = useState(false);
+  const canRefreshAgents = !!currentMachine && isOnline && machineSupportsAgentScan(currentMachine);
+  const refreshAgents = useCallback(async () => {
+    const machineId = selectedMachineId;
+    if (!machineId) return;
+    setRefreshingAgents(true);
+    try {
+      const fresh = await rpcScanAgents(machineId);
+      setMachines((prev) =>
+        prev.map((m) =>
+          m.machine_id === machineId ? { ...m, metadata: { ...(m.metadata ?? {}), available_agents: fresh } } : m,
+        ),
+      );
+    } catch {
+      toast.error("Couldn't check for agents", {
+        description: 'Make sure Vicoa is running on that computer, then try again.',
+      });
+    } finally {
+      setRefreshingAgents(false);
+    }
+  }, [selectedMachineId]);
 
   // Drag-drop is offered only while a session can actually be started (a
   // machine picked, online, a working directory set) — same gate as the "Add
@@ -2297,7 +2370,7 @@ function NewSessionContent() {
       {/* Main area: just the hero, centered. Banners live down in the composer,
           next to the controls they are about. */}
       <div className="flex-1 min-h-0 overflow-y-auto p-6 pb-32 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full dark:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/20">
-        <div className="max-w-4xl mx-auto flex h-full flex-col">
+        <div className="max-w-4xl mx-auto flex min-h-full flex-col">
           <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6">
             <Image
               src="/images/vicoa-light.webp"
@@ -2308,18 +2381,34 @@ function NewSessionContent() {
               sizes="100vw"
               className="h-12 w-auto opacity-90"
             />
-            <h1 className="text-center font-mono text-2xl font-light text-foreground">
-              What should we build
-              {directory.trim() ? (
-                <>
-                  {' '}in{' '}
-                  <span className="underline decoration-muted-foreground/50 decoration-dotted underline-offset-8">
-                    {directory.replace(/\/+$/, '').split('/').pop() || directory}
-                  </span>
-                </>
-              ) : null}
-              ?
-            </h1>
+            {/* With no agent on the machine there is nothing to build with yet:
+                the install panel takes the heading's place. */}
+            {!noAgentInstalled && (
+              <h1 className="text-center font-mono text-2xl font-light text-foreground">
+                What should we build
+                {directory.trim() ? (
+                  <>
+                    {' '}in{' '}
+                    <span className="underline decoration-muted-foreground/50 decoration-dotted underline-offset-8">
+                      {directory.replace(/\/+$/, '').split('/').pop() || directory}
+                    </span>
+                  </>
+                ) : null}
+                ?
+              </h1>
+            )}
+            {showInstallPanel && (
+              <InstallAgentPanel
+                title={`No AI agent on ${machineName} yet`}
+                description="Install one to start a session. Pick the one that matches a plan you already have."
+                agents={missingAgentEntries}
+                os={installOsForPlatform(currentMachine?.platform)}
+                selectedId={activeAgent}
+                onSelect={switchAgent}
+                onRefresh={canRefreshAgents ? refreshAgents : null}
+                refreshing={refreshingAgents}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -2349,6 +2438,34 @@ function NewSessionContent() {
                   {blockedMessage}
                 </div>
               )}
+            </div>
+          )}
+          {/* The agent came from a fork link or a preset and this machine
+              lacks it (and has another): say so where the send button is,
+              with the two ways forward. Setting it up happens in Providers;
+              with none installed the panel under the hero says it instead. */}
+          {selectedAgentMissing && !noAgentInstalled && (
+            <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-muted px-3 py-2 font-mono text-sm">
+              <AgentTypeIcon agentTypeName={activeAgent} size={14} whiteForOpenAI />
+              <span className="min-w-0 flex-1 text-muted-foreground">
+                {activeAgentLabel} isn&apos;t installed on {machineName}.
+              </span>
+              {fallbackAgentId && fallbackAgentLabel && (
+                <button
+                  type="button"
+                  onClick={() => switchAgent(fallbackAgentId)}
+                  className="cursor-pointer text-xs text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  Use {fallbackAgentLabel} instead
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => router.push(providerSetupHref(activeAgent, selectedMachineId))}
+                className="cursor-pointer text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+              >
+                Set it up in Settings
+              </button>
             </div>
           )}
           {/* Setup chips: machine · working dir · worktree (when supported) */}
@@ -2669,6 +2786,12 @@ function NewSessionContent() {
                             <span className="min-w-0 truncate">
                               {agentEntries.find((a) => a.id === sessionConfig.agent)?.label ?? sessionConfig.agent}
                             </span>
+                            {selectedAgentMissing && (
+                              <span
+                                title="Not installed on this machine"
+                                className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-500"
+                              />
+                            )}
                           </>
                         )
                       }
@@ -2683,7 +2806,7 @@ function NewSessionContent() {
                             machine={currentMachine}
                             onPick={(profile) => { applyAgentProfile(profile); close(); }}
                           />
-                          {agentEntries.map((a) => (
+                          {installedAgentEntries.map((a) => (
                             <TickItem
                               key={a.id}
                               label={a.label}
@@ -2693,6 +2816,29 @@ function NewSessionContent() {
                               onClick={() => { switchAgent(a.id); close(); }}
                             />
                           ))}
+                          {/* Agents the machine lacks stay listed, after the
+                              ones it has, so the range Vicoa supports is in
+                              view; picking one opens its setup in Providers. */}
+                          {missingAgentEntries.length > 0 && (
+                            <>
+                              {installedAgentEntries.length > 0 && <div className="my-1 h-px bg-border" />}
+                              <div className="px-3 pb-1 pt-1.5 text-[11px] text-muted-foreground/60">
+                                Not installed on {machineName}
+                              </div>
+                              {missingAgentEntries.map((a) => (
+                                <TickItem
+                                  key={a.id}
+                                  label={a.label}
+                                  leading={<AgentTypeIcon agentTypeName={a.id} size={12} whiteForOpenAI />}
+                                  isSelected={!selectedProfileId && a.id === sessionConfig.agent}
+                                  isPending={false}
+                                  muted
+                                  trailing={<ChevronRight className="h-3 w-3" />}
+                                  onClick={() => { close(); router.push(providerSetupHref(a.id, selectedMachineId)); }}
+                                />
+                              ))}
+                            </>
+                          )}
                         </>
                       )}
                     </ChipDropdown>
@@ -2842,7 +2988,7 @@ function NewSessionContent() {
                   disabled={isSubmitting}
                   aria-disabled={!canSubmit}
                   className={`shrink-0 rounded-full w-7 h-7 p-0 border-0 focus:outline-none focus:ring-0 focus-visible:ring-0 focus-visible:border-transparent focus-visible:outline-none ${
-                    canSubmit ? '' : 'opacity-50'
+                    canSubmit && !selectedAgentMissing ? '' : 'opacity-50'
                   }`}
                 >
                   {isSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
