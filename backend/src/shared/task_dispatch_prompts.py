@@ -44,6 +44,9 @@ the `vicoa task` CLI; they are not your own task or todo tools.
 - Write on the task: progress, results and questions are comments \
 (`vicoa task comment <ref> - <<'EOF'` … `EOF`). Answer a comment in its own \
 thread with `--reply-to <comment id>`, one reply per thread.
+- Write comments in the language of the person you answer, judged from their \
+own sentences (not code, logs or pasted text); with no one to answer, in the \
+task's language. Code, commits and PRs follow the repository.
 - In a comment or a description, link what you mention so a person can click \
 it: a task as `[#VIC-42](/dashboard/tasks/<task id>)`, a session as \
 `[#<title>](/dashboard/sessions/<session id>)`, an automation as \
@@ -166,10 +169,13 @@ def _comment_block(comments: Sequence[QuotedComment]) -> list[str]:
 def _reply_line(ref: str, comments: Sequence[QuotedComment]) -> str:
     threads = list(dict.fromkeys(c.thread_id for c in comments))
     if len(threads) == 1:
-        return f"Reply in its thread: `vicoa task comment {ref} --reply-to {threads[0]} -`."
+        return (
+            "Reply in its thread, in the language they wrote in: "
+            f"`vicoa task comment {ref} --reply-to {threads[0]} -`."
+        )
     return (
-        f"Reply in each thread: `vicoa task comment {ref} --reply-to <thread id> -`, "
-        "one reply per thread."
+        "Reply in each thread, in the language its comment was written in: "
+        f"`vicoa task comment {ref} --reply-to <thread id> -`, one reply per thread."
     )
 
 
