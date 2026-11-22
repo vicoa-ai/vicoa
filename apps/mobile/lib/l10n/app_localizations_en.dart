@@ -152,6 +152,24 @@ class AppLocalizationsEn extends AppLocalizations {
   String get tasksTitleRequired => 'Title is required';
 
   @override
+  String get tasksRelationToMe => 'Relation to me';
+
+  @override
+  String get tasksRelationAssigned => 'Assigned to me';
+
+  @override
+  String get tasksRelationWaiting => 'Waiting on me';
+
+  @override
+  String get tasksNothingWaitingOnYou => 'Nothing is waiting on you';
+
+  @override
+  String get tasksNoMatchingTasks => 'No tasks match these filters';
+
+  @override
+  String get tasksClearFilters => 'Clear filters';
+
+  @override
   String get accountCautionZone => 'CAUTION ZONE';
 
   @override

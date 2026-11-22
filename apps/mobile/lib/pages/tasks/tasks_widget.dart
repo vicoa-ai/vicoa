@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import '/components/floating_tab_bar.dart';
+import '/custom_code/utils/task_relation.dart';
 import '/custom_code/utils/task_utils.dart' as tutils;
 import '/flutter_flow/flutter_flow_icon_button.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
@@ -173,8 +174,8 @@ class _TasksWidgetState extends State<TasksWidget> {
   }
 
   /// Brings the task with [id] into view after it was created: unfolds its
-  /// section and scrolls the list to it. Does nothing when the project filter
-  /// hides it (the "Task created" snack is then the only feedback).
+  /// section and scrolls the list to it. Does nothing when a filter hides it
+  /// (the "Task created" snack is then the only feedback).
   void _revealTask(String id) {
     if (id.isEmpty) return;
     final task = _model.filteredTasks.firstWhere(
@@ -283,7 +284,8 @@ class _TasksWidgetState extends State<TasksWidget> {
 
   /// Anchored filter/display dropdown under the header icon — see
   /// `task_filter_panel.dart` (styled like the Home agent-filters panel, with
-  /// a "Project" filter section and a multi-select "Display" section).
+  /// "Project" and "Relation to me" filter sections and a multi-select
+  /// "Display" section).
   Future<void> _showFilterMenu() async {
     HapticFeedback.lightImpact();
     await showTaskFilterPanel(
@@ -294,6 +296,14 @@ class _TasksWidgetState extends State<TasksWidget> {
       },
       anchorKey: _filterButtonKey,
     );
+  }
+
+  /// Clears every filter in the filter panel: project and Relation to me.
+  void _clearFilters() {
+    HapticFeedback.lightImpact();
+    _model
+      ..clearRelationFilter()
+      ..setProjectFilter(null);
   }
 
   // --- build -----------------------------------------------------------------
@@ -337,7 +347,7 @@ class _TasksWidgetState extends State<TasksWidget> {
                     fillColor: Colors.transparent,
                     icon: Icon(
                       Icons.filter_list_rounded,
-                      color: _model.projectFilter != null
+                      color: _model.isFiltered
                           ? theme.primary
                           : theme.primaryText,
                       size: 22.0,
@@ -380,6 +390,18 @@ class _TasksWidgetState extends State<TasksWidget> {
       );
     }
     final visible = _model.filteredTasks;
+    if (visible.isEmpty && _model.relationFilter.isNotEmpty) {
+      // Only when nothing else narrows the list is "nothing waits on you" true.
+      final waitingOnly = _model.projectFilter == null && _model.relationFilter.length == 1 && _model.relationFilter.contains(kTaskRelationWaiting);
+      return _MessageState(
+        icon: Icons.checklist_rounded,
+        title: waitingOnly ? l10n.tasksNothingWaitingOnYou : l10n.tasksNoMatchingTasks,
+        onRetry: () => _model.load(),
+        cta: l10n.tasksClearFilters,
+        ctaIcon: Icons.filter_list_off_rounded,
+        onCta: _clearFilters,
+      );
+    }
     if (visible.isEmpty) {
       return _MessageState(
         icon: Icons.checklist_rounded,
@@ -475,19 +497,21 @@ class _MessageState extends StatelessWidget {
   const _MessageState({
     required this.icon,
     required this.title,
-    required this.subtitle,
+    this.subtitle,
     required this.onRetry,
     this.cta,
+    this.ctaIcon = Icons.add_rounded,
     this.onCta,
   });
 
   final IconData icon;
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final Future<void> Function() onRetry;
 
   /// Optional call-to-action button under the subtitle (e.g. "New task").
   final String? cta;
+  final IconData ctaIcon;
   final VoidCallback? onCta;
 
   @override
@@ -519,16 +543,18 @@ class _MessageState extends StatelessWidget {
                         letterSpacing: 0.0,
                       ),
                     ),
-                    const SizedBox(height: 8.0),
-                    Text(
-                      subtitle,
-                      textAlign: TextAlign.center,
-                      style: theme.bodyMedium.override(
-                        font: GoogleFonts.sourceSans3(),
-                        color: theme.secondaryText,
-                        letterSpacing: 0.0,
+                    if (subtitle != null) ...[
+                      const SizedBox(height: 8.0),
+                      Text(
+                        subtitle!,
+                        textAlign: TextAlign.center,
+                        style: theme.bodyMedium.override(
+                          font: GoogleFonts.sourceSans3(),
+                          color: theme.secondaryText,
+                          letterSpacing: 0.0,
+                        ),
                       ),
-                    ),
+                    ],
                     if (cta != null && onCta != null) ...[
                       const SizedBox(height: 20.0),
                       TextButton.icon(
@@ -542,7 +568,7 @@ class _MessageState extends StatelessWidget {
                             borderRadius: BorderRadius.circular(12.0),
                           ),
                         ),
-                        icon: const Icon(Icons.add_rounded, size: 20.0),
+                        icon: Icon(ctaIcon, size: 20.0),
                         label: Text(
                           cta!,
                           style: theme.bodyMedium.override(

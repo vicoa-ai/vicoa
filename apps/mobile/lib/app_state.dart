@@ -988,6 +988,7 @@ class UserPreferences {
     this.homeFilterCustomEnd,
     this.tasksCollapsedStatuses = const [],
     this.tasksProjectFilter,
+    this.tasksRelationFilter = const [],
     this.tasksShowStatus = false,
     this.tasksShowPriority = true,
     this.tasksShowProject = true,
@@ -1014,9 +1015,11 @@ class UserPreferences {
   String? homeFilterCustomStart;
   String? homeFilterCustomEnd;
   // Tasks list: the status sections folded, the project filtered on (a project
-  // id, `kNoProjectFilter`, or null for all) and the card properties shown.
+  // id, `kNoProjectFilter`, or null for all), the Relation to me values ticked
+  // (`kTaskRelations`; empty for no filter) and the card properties shown.
   List<String> tasksCollapsedStatuses;
   String? tasksProjectFilter;
+  List<String> tasksRelationFilter;
   bool tasksShowStatus;
   bool tasksShowPriority;
   bool tasksShowProject;
@@ -1036,6 +1039,7 @@ class UserPreferences {
         homeFilterCustomEnd: json['homeFilterCustomEnd'] as String?,
         tasksCollapsedStatuses: (json['tasksCollapsedStatuses'] as List?)?.whereType<String>().toList() ?? const [],
         tasksProjectFilter: json['tasksProjectFilter'] as String?,
+        tasksRelationFilter: (json['tasksRelationFilter'] as List?)?.whereType<String>().toList() ?? const [],
         tasksShowStatus: json['tasksShowStatus'] as bool? ?? false,
         tasksShowPriority: json['tasksShowPriority'] as bool? ?? true,
         tasksShowProject: json['tasksShowProject'] as bool? ?? true,
@@ -1056,6 +1060,7 @@ class UserPreferences {
         if (homeFilterCustomEnd != null) 'homeFilterCustomEnd': homeFilterCustomEnd,
         if (tasksCollapsedStatuses.isNotEmpty) 'tasksCollapsedStatuses': tasksCollapsedStatuses,
         if (tasksProjectFilter != null) 'tasksProjectFilter': tasksProjectFilter,
+        if (tasksRelationFilter.isNotEmpty) 'tasksRelationFilter': tasksRelationFilter,
         'tasksShowStatus': tasksShowStatus,
         'tasksShowPriority': tasksShowPriority,
         'tasksShowProject': tasksShowProject,

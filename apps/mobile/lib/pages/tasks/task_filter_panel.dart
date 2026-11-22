@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '/custom_code/utils/task_relation.dart';
 import '/l10n/app_localizations.dart';
 import '/pages/common/filter_panel.dart';
 import 'tasks_model.dart';
 
 /// Anchored filter/display dropdown for the Tasks page (chrome shared with the
 /// Automations page, see `filter_panel.dart`). "Project" is single-select;
-/// "Display" is a set of multi-select toggles (status / priority / project /
-/// labels) controlling which chips the cards show.
+/// "Relation to me" is multi-select, its values OR ("Assigned to me" or
+/// "Waiting on me"), and ANDed with the project; "Display" is a set of
+/// multi-select toggles (status / priority / project / labels) controlling
+/// which chips the cards show.
 Future<void> showTaskFilterPanel({
   required BuildContext context,
   required TasksModel model,
@@ -44,6 +47,12 @@ class _TaskFilterPanelState extends State<TaskFilterPanel> {
     widget.onStateChanged();
   }
 
+  void _toggleRelation(String relation) {
+    HapticFeedback.lightImpact();
+    setState(() => widget.model.toggleRelation(relation));
+    widget.onStateChanged();
+  }
+
   void _toggleDisplay({bool? status, bool? priority, bool? project, bool? labels}) {
     HapticFeedback.lightImpact();
     setState(() => widget.model.setDisplay(
@@ -66,6 +75,18 @@ class _TaskFilterPanelState extends State<TaskFilterPanel> {
             selected: m.projectFilter,
             onSelect: _selectProject,
           ),
+        ),
+        const FilterPanelDivider(),
+        FilterPanelSection(
+          title: l10n.tasksRelationToMe,
+          children: [
+            for (final relation in kTaskRelations)
+              FilterOptionRow(
+                label: relation == kTaskRelationAssigned ? l10n.tasksRelationAssigned : l10n.tasksRelationWaiting,
+                isSelected: m.relationFilter.contains(relation),
+                onTap: () => _toggleRelation(relation),
+              ),
+          ],
         ),
         const FilterPanelDivider(),
         FilterPanelSection(
