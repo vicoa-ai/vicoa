@@ -272,6 +272,7 @@ def test_spawn_failure_rolls_back_the_worktree(
     )
 
     assert "error" in result
+    assert result["error_code"] == "launch_failed"
     # No orphan worktree left behind — the daemon rolled it back.
     assert list_worktrees(str(committed_repo))["worktrees"] == []
 
@@ -297,6 +298,7 @@ def test_spawn_worktree_on_non_repo_errors_without_launching(
     )
 
     assert "error" in result
+    assert result["error_code"] == "worktree_failed"
     assert calls.get("called") is not True  # never tried to launch the agent
 
 

@@ -50,6 +50,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
+  readSpawnFailure,
   resetNewSessionGuards,
   trackNewSessionViewed,
   trackSessionCreateFailed,
@@ -1772,7 +1773,10 @@ function NewSessionContent() {
         },
       );
       if (result.error) {
-        trackSessionCreateFailed('spawn_error');
+        trackSessionCreateFailed('spawn_error', {
+          agent_type: sessionConfig.agent,
+          ...readSpawnFailure(result),
+        });
         setErrorMessage(String(result.error));
         setIsSubmitting(false);
         return;

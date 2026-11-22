@@ -247,7 +247,11 @@ def test_rpc_wait_surfaces_the_windows_status_instead_of_try_again(
         _FakeProcess(exit_code=3221225794),  # type: ignore[arg-type]
         timeout=2.0,
     )
-    assert failure == (
+    assert failure is not None
+    assert failure.code == "exited_early"
+    # The raw status travels with it, so telemetry can count it per code.
+    assert failure.exit_code == 3221225794
+    assert failure.message == (
         "Couldn't start the session: the agent exited with 0xC0000142 "
         "(STATUS_DLL_INIT_FAILED: Windows could not initialize the process)"
     )
@@ -297,4 +301,96 @@ def test_spawn_with_a_known_dead_credential_fails_before_launching(
     )
 
     assert "401" in result.get("error", "")
+    assert result["error_code"] == "auth"
     assert calls == []
+
+
+# ----- every spawn failure carries a stable cause -----
+
+
+def test_a_missing_agent_cli_is_not_installed(
+    daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls = _stub_launch(daemon, monkeypatch, _FakeProcess())
+    monkeypatch.setattr(
+        daemon, "_check_agent_installation", lambda agent: "Codex CLI is missing."
+    )
+
+    result = daemon.spawn_session_rpc(
+        {"params": {"directory": str(tmp_path), "agent": "codex"}}
+    )
+
+    assert result == {"error": "Codex CLI is missing.", "error_code": "not_installed"}
+    assert calls == []
+
+
+def test_a_malformed_request_is_invalid_request(daemon: MachineDaemon) -> None:
+    result = daemon.spawn_session_rpc({"params": {"directory": " ", "agent": "codex"}})
+
+    assert result == {
+        "error": "Invalid directory supplied",
+        "error_code": "invalid_request",
+    }
+
+
+def test_a_folder_that_cannot_be_created_is_directory_failed(
+    daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import errno
+
+    calls = _stub_launch(daemon, monkeypatch, _FakeProcess())
+
+    def read_only(path: str, exist_ok: bool = False) -> None:
+        raise OSError(errno.EROFS, "Read-only file system", path)
+
+    monkeypatch.setattr(machine_daemon.os, "makedirs", read_only)
+
+    result = daemon.spawn_session_rpc(
+        {"params": {"directory": str(tmp_path / "gone"), "agent": "codex"}}
+    )
+
+    assert result["error_code"] == "directory_failed"
+    assert result["os_error"] == errno.EROFS
+    # The message the user sees is unchanged.
+    assert result["error"].startswith(
+        "Failed to launch headless session: [Errno 30] Read-only file system"
+    )
+    assert calls == []
+
+
+def test_a_launch_failure_reports_the_windows_error_number(
+    daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class _WindowsError(OSError):
+        # What Popen raises on Windows when the command line is too long.
+        winerror = 206
+
+    def fail(command: list[str], **kw: Any) -> _FakeProcess:
+        raise _WindowsError(2, "The filename or extension is too long")
+
+    monkeypatch.setattr(daemon, "_launch_session_process", fail)
+
+    result = daemon.spawn_session_rpc(
+        {"params": {"directory": str(tmp_path), "agent": "codex"}}
+    )
+
+    assert result["error_code"] == "launch_failed"
+    # winerror beats the errno Windows maps it onto.
+    assert result["os_error"] == 206
+    assert result["error"].startswith("Failed to launch headless session:")
+
+
+def test_a_child_that_dies_before_registering_is_exited_early(
+    daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _stub_launch(daemon, monkeypatch, _FakeProcess(exit_code=3221225794))
+    monkeypatch.setattr(daemon, "_monitor_session_process", lambda **kw: None)
+
+    result = daemon.spawn_session_rpc(
+        {"params": {"directory": str(tmp_path), "agent": "codex"}}
+    )
+
+    assert result["error_code"] == "exited_early"
+    assert result["exit_code"] == 3221225794
+    assert "0xC0000142" in result["error"]
+    assert "agent_instance_id" not in result

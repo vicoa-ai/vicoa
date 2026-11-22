@@ -845,6 +845,9 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
           'reason': 'spawn_error',
           'error': result['error']?.toString() ?? 'unknown',
           if (code != null) 'error_code': code,
+          if (result['cause'] != null) 'cause': result['cause'],
+          if (result['exitCode'] != null) 'exit_code': result['exitCode'],
+          if (result['osError'] != null) 'os_error': result['osError'],
         });
         await _showErrorDialog(friendly ?? result['error']?.toString());
         return;
