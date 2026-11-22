@@ -24,6 +24,19 @@ export const SUMMARY_CHAT_INSET = SUMMARY_COLUMN_GAP;
 export const SUMMARY_DOCK_RESERVE = SUMMARY_COLUMN_WIDTH + SUMMARY_CHAT_INSET;
 
 /**
+ * The lane the chat keeps to while the card is docked, as insets from the
+ * session column's edges. The transcript's scroller still spans the whole
+ * column, so its scrollbar runs down the window's edge; only what it shows
+ * (rows, empty state, find bar) stays inside the lane, clear of the card.
+ */
+export interface ChatLane {
+  left: number;
+  right: number;
+}
+
+export const SUMMARY_CHAT_LANE: ChatLane = { left: SUMMARY_CHAT_INSET, right: SUMMARY_COLUMN_WIDTH };
+
+/**
  * The narrowest the transcript may get beside a docked card (row width,
  * padding included). Below it the card stops taking a column of its own and
  * opens over the chat instead, like a menu.

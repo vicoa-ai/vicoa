@@ -29,7 +29,6 @@ import { machineDisplayName } from '@/lib/machine-display';
 import {
   SUMMARY_CARD_WIDTH,
   SUMMARY_COLUMN_EDGE,
-  SUMMARY_COLUMN_GAP,
   canDockSummary,
   changeTotals,
   compactPath,
@@ -162,20 +161,20 @@ export function SessionSummaryToggle({
 }
 
 /**
- * The docked form: a card at the top of its own column beside the transcript.
- * A very short window scrolls the column rather than cutting the card off.
+ * The docked form: a card at the top right of the chat area, in the column the
+ * transcript's lane leaves free (`SUMMARY_CHAT_LANE`). It is laid over the
+ * transcript's scroller rather than beside it, so the chat's scrollbar runs
+ * down the window's edge instead of between the chat and the card. Only as
+ * tall as the card, so a wheel in the empty space under it still scrolls the
+ * chat; a very short window scrolls the card rather than cutting it off.
+ * Render it inside a positioned box that spans the chat area.
  */
 export function SessionSummaryColumn({ children }: { children: ReactNode }) {
   return (
     <aside
       aria-label="Session summary"
-      className="custom-scrollbar shrink-0 overflow-y-auto pb-3 pt-1"
-      style={{
-        width: SUMMARY_CARD_WIDTH,
-        boxSizing: 'content-box',
-        marginLeft: SUMMARY_COLUMN_GAP,
-        marginRight: SUMMARY_COLUMN_EDGE,
-      }}
+      className="custom-scrollbar absolute right-0 top-0 z-20 max-h-full overflow-y-auto pb-3 pt-1"
+      style={{ width: SUMMARY_CARD_WIDTH, marginRight: SUMMARY_COLUMN_EDGE }}
     >
       <div className="rounded-xl border border-border bg-popover text-popover-foreground shadow-sm">
         {children}

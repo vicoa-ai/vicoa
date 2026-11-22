@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore, type CSSProperties } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import { Virtuoso, type ItemProps, type VirtuosoHandle } from 'react-virtuoso';
 import { AgentTypeIcon } from '@/components/dashboard/agent-type-icon';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
 import { SessionParticipants } from '@/components/dashboard/session-participants';
@@ -73,7 +73,7 @@ import {
   SessionSummaryToggle,
   useSessionSummary,
 } from '@/components/dashboard/session-summary';
-import { SUMMARY_CHAT_INSET, SUMMARY_COLUMN_WIDTH } from '@/lib/session-summary';
+import { SUMMARY_CHAT_LANE, type ChatLane } from '@/lib/session-summary';
 import { FileSearchPalette } from '@/components/dashboard/file-search-palette';
 import { toAbsolutePath } from '@/lib/utils';
 import { RenameSessionDialog, DeleteSessionDialog } from '@/components/dashboard/session-dialogs';
@@ -1735,13 +1735,7 @@ function AgentInstanceContent() {
   // preserve scroll position when older history is prepended. The "working…"
   // indicator is NOT a row here — it lives inside the list's fixed-height
   // Footer (see VIRTUOSO_COMPONENTS), so it never resizes the list.
-  // Header/footer are module-level components; what they show comes through
-  // Virtuoso's `context` prop instead of closures.
   const showVibing = showThinking && thinkingSettingEnabled !== false;
-  const virtuosoContext = useMemo<TranscriptListContext>(
-    () => ({ loadingOlder: hasOlderMessages || isLoadingOlder, vibing: showVibing ? vibingMessage : null }),
-    [hasOlderMessages, isLoadingOlder, showVibing, vibingMessage],
-  );
 
   const chatItems = useMemo<ChatItem[]>(
     () => buildTranscriptItems(groupedMessages, { agentTypeName: instance?.agent_type_name }),
@@ -2274,6 +2268,22 @@ function AgentInstanceContent() {
   // maximized files panel, which fills the column.
   const [sessionColumn, setSessionColumn] = useState<HTMLDivElement | null>(null);
   const summary = useSessionSummary(sessionColumn, !fileOverlay);
+  // The docked card is laid over the transcript's top right (so the chat's
+  // scrollbar stays at the window's edge); what the transcript shows keeps to
+  // the lane left of it.
+  const chatLane = summary.docked ? SUMMARY_CHAT_LANE : null;
+
+  // The list's header, footer and item wrapper are module-level components;
+  // what they show, and the lane they keep to, come through Virtuoso's
+  // `context` prop instead of closures.
+  const virtuosoContext = useMemo<TranscriptListContext>(
+    () => ({
+      loadingOlder: hasOlderMessages || isLoadingOlder,
+      vibing: showVibing ? vibingMessage : null,
+      lane: chatLane,
+    }),
+    [hasOlderMessages, isLoadingOlder, showVibing, vibingMessage, chatLane],
+  );
   const { setFloating: setSummaryFloating } = summary;
   const { setActiveTab: setPanelTab } = panel;
   // The branch row's line counts open the panel on its changes.
@@ -2805,14 +2815,10 @@ function AgentInstanceContent() {
         </div>
       </div> */}
 
-      {/* The transcript, beside the docked summary card when it has room. It
-          steps in from the left by what the card's gap takes on the right, so
-          it stays centred between the sidebar and the card. */}
-      <div className="flex min-h-0 flex-1">
-      <div
-        className="flex min-w-0 flex-1 flex-col"
-        style={summary.docked ? { paddingLeft: SUMMARY_CHAT_INSET } : undefined}
-      >
+      {/* The transcript spans the column, so its scrollbar runs down the
+          window's edge; the docked summary card sits over its top right, and
+          the rows keep to the lane left of the card (`chatLane`). */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
       {/* Messages Area - virtualized via react-virtuoso */}
       <FileLinkProvider
         cwd={instance?.project ?? null}
@@ -2826,14 +2832,16 @@ function AgentInstanceContent() {
           // would otherwise render as just the bare vibing text). A freshly
           // spawned / still-working session reads as active work; an idle or
           // closed session shows the static "Session ready" card.
-          <SessionEmptyState
-            // Only the prompt-started flow shows the active "Starting your
-            // session" loader; a session with no prompt (or unknown origin,
-            // e.g. CLI) shows the idle "Session ready / Waiting for your
-            // message" card.
-            loading={initialPromptHint === true}
-            vibingMessage={vibingMessage}
-          />
+          <div className="absolute inset-0" style={laneBox(chatLane)}>
+            <SessionEmptyState
+              // Only the prompt-started flow shows the active "Starting your
+              // session" loader; a session with no prompt (or unknown origin,
+              // e.g. CLI) shows the idle "Session ready / Waiting for your
+              // message" card.
+              loading={initialPromptHint === true}
+              vibingMessage={vibingMessage}
+            />
+          </div>
         ) : (
           <Virtuoso
             key={instanceId}
@@ -2954,6 +2962,8 @@ function AgentInstanceContent() {
             size="icon"
             onClick={scrollToBottom}
             className="absolute bottom-6 left-1/2 -translate-x-1/2 h-9 w-9 rounded-full border border-border/70 shadow-lg bg-background text-foreground"
+            // Centred on the lane, not the column, while the card is docked.
+            style={chatLane ? { left: `calc(50% + ${(chatLane.left - chatLane.right) / 2}px)` } : undefined}
             aria-label="Scroll to latest message"
           >
             <ArrowDown className="w-3 h-3" />
@@ -2972,6 +2982,7 @@ function AgentInstanceContent() {
             onNext={() => gotoRelativeMatch(1)}
             onPrev={() => gotoRelativeMatch(-1)}
             onClose={closeFind}
+            clearRight={chatLane?.right}
           />
         )}
 
@@ -3004,7 +3015,6 @@ function AgentInstanceContent() {
       </div>
       </FindHighlightProvider>
       </FileLinkProvider>
-      </div>
       {summary.docked && <SessionSummaryColumn>{summaryCard}</SessionSummaryColumn>}
       </div>
 
@@ -3049,9 +3059,7 @@ function AgentInstanceContent() {
         <div
           className="p-4"
           style={
-            summary.docked
-              ? { paddingLeft: 16 + SUMMARY_CHAT_INSET, paddingRight: 16 + SUMMARY_COLUMN_WIDTH }
-              : undefined
+            chatLane ? { paddingLeft: 16 + chatLane.left, paddingRight: 16 + chatLane.right } : undefined
           }
         >
           <div className="max-w-4xl mx-auto">
@@ -3232,6 +3240,18 @@ interface TranscriptListContext {
   loadingOlder: boolean;
   /** The "working…" word to show under the last message, or null while idle. */
   vibing: string | null;
+  /** Where the rows sit while the summary card is docked; null for the full width. */
+  lane: ChatLane | null;
+}
+
+/** Padding that keeps a full-width list part inside the chat lane. */
+function lanePadding(lane: ChatLane | null | undefined): CSSProperties | undefined {
+  return lane ? { paddingLeft: lane.left, paddingRight: lane.right } : undefined;
+}
+
+/** Offsets that fit an `absolute inset-0` box to the chat lane. */
+function laneBox(lane: ChatLane | null): CSSProperties | undefined {
+  return lane ? { left: lane.left, right: lane.right } : undefined;
 }
 
 // Virtuoso treats each entry as a React component *type*, so these must be
@@ -3240,7 +3260,7 @@ interface TranscriptListContext {
 const VIRTUOSO_COMPONENTS = {
   Header: ({ context }: { context?: TranscriptListContext }) =>
     context?.loadingOlder ? (
-      <div className="flex items-center justify-center py-3 text-muted-foreground">
+      <div className="flex items-center justify-center py-3 text-muted-foreground" style={lanePadding(context.lane)}>
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
       </div>
     ) : (
@@ -3254,13 +3274,21 @@ const VIRTUOSO_COMPONENTS = {
   // A data row did: every appear pushed the transcript up and every
   // disappear dropped it back.
   Footer: ({ context }: { context?: TranscriptListContext }) => (
-    <div className="h-32 max-w-4xl mx-auto px-6" role="status">
-      {context?.vibing && (
-        <div className="px-4 pt-6 text-sm text-muted-foreground animate-in fade-in duration-200">
-          <VibingText text={context.vibing} />
-        </div>
-      )}
+    <div style={lanePadding(context?.lane)}>
+      <div className="h-32 max-w-4xl mx-auto px-6" role="status">
+        {context?.vibing && (
+          <div className="px-4 pt-6 text-sm text-muted-foreground animate-in fade-in duration-200">
+            <VibingText text={context.vibing} />
+          </div>
+        )}
+      </div>
     </div>
+  ),
+  // Every row's wrapper. Virtuoso's own props (its data-* attributes and
+  // style) must reach the div, or it can't measure the row; `item` is data,
+  // not an attribute, so it stays off the DOM.
+  Item: ({ context, item: _item, ...props }: ItemProps<ChatItem> & { context?: TranscriptListContext }) => (
+    <div {...props} style={{ ...props.style, ...lanePadding(context?.lane) }} />
   ),
 };
 
