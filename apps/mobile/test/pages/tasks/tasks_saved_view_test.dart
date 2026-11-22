@@ -1,6 +1,8 @@
 // Spec for the Tasks list opening the way it was left:
-//   - the project filter, card display options and folded sections are saved
-//     as they change and come back after a relaunch;
+//   - the project and Relation to me filters, card display options and folded
+//     sections are saved as they change and come back after a relaunch;
+//   - a remembered relation value this build doesn't know is dropped;
+//   - the relation filter narrows the list together with the project filter;
 //   - unfolding a section (e.g. to show a task just created) is saved too;
 //   - a saved filter whose project is gone falls back to all projects, but an
 //     empty project list (maybe a failed fetch) and "No project" keep it;
@@ -10,6 +12,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vicoa/app_state.dart';
+import 'package:vicoa/custom_code/utils/task_relation.dart';
 import 'package:vicoa/custom_code/utils/task_utils.dart' as tutils;
 import 'package:vicoa/pages/tasks/tasks_model.dart';
 
@@ -40,6 +43,51 @@ void main() {
     expect(model.projectFilter, 'p-1');
     expect([model.showStatus, model.showPriority, model.showProject, model.showLabels], [true, true, true, false]);
     expect(model.collapsed, {'done', 'cancelled'});
+  });
+
+  test('the Relation to me filter survives a relaunch', () async {
+    _openTasks()
+      ..toggleRelation(kTaskRelationWaiting)
+      ..toggleRelation(kTaskRelationAssigned);
+
+    await _relaunch();
+    final model = _openTasks();
+    expect(model.relationFilter, {kTaskRelationAssigned, kTaskRelationWaiting});
+    expect(model.isFiltered, isTrue);
+
+    model
+      ..toggleRelation(kTaskRelationAssigned)
+      ..toggleRelation(kTaskRelationWaiting);
+    await _relaunch();
+    expect(_openTasks().relationFilter, isEmpty);
+    expect(_openTasks().isFiltered, isFalse);
+  });
+
+  test('a remembered relation this build does not know is dropped', () async {
+    SharedPreferences.setMockInitialValues({
+      'ff_userPreferences': jsonEncode({'tasksRelationFilter': ['mentioned', 'waiting']}),
+    });
+    await FFAppState().initializePersistedState();
+    expect(_openTasks().relationFilter, {kTaskRelationWaiting});
+  });
+
+  test('the relation filter narrows the list together with the project filter', () {
+    final model = _openTasks()
+      ..viewerId = 'u-me'
+      ..tasks = [
+        {'id': 't1', 'project_id': 'p-1', 'assignee_type': 'user', 'assignee_id': 'u-me'},
+        {'id': 't2', 'project_id': 'p-2', 'assignee_type': 'user', 'assignee_id': 'u-me'},
+        {'id': 't3', 'project_id': 'p-1', 'assignee_type': 'agent', 'assignee_id': 'a-1'},
+      ];
+    List<String> ids() => model.filteredTasks.map(tutils.taskId).toList();
+
+    expect(ids(), ['t1', 't2', 't3']);
+    model.toggleRelation(kTaskRelationAssigned);
+    expect(ids(), ['t1', 't2']);
+    model.setProjectFilter('p-1');
+    expect(ids(), ['t1']);
+    model.clearRelationFilter();
+    expect(ids(), ['t1', 't3']);
   });
 
   test('unfolding a section is saved', () async {
@@ -80,6 +128,7 @@ void main() {
     await FFAppState().initializePersistedState();
     final model = _openTasks();
     expect(model.projectFilter, isNull);
+    expect(model.relationFilter, isEmpty);
     expect([model.showStatus, model.showPriority, model.showProject, model.showLabels], [false, true, true, true]);
     expect(model.collapsed, isEmpty);
   });

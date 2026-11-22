@@ -3,15 +3,17 @@ import 'dart:async' show unawaited;
 import 'package:flutter/material.dart';
 
 import '/custom_code/actions/index.dart' as actions;
+import '/custom_code/utils/task_relation.dart';
 import '/custom_code/utils/task_utils.dart' as tutils;
 import '/flutter_flow/flutter_flow_util.dart';
 import '/pages/common/filter_panel.dart' show filterByProject;
 import 'tasks_widget.dart' show TasksWidget;
 
 /// State for the Tasks list. Fetches tasks + projects + labels over REST, holds
-/// the local project filter, card display options and per-status collapse
-/// state (all three remembered across launches in `UserPreferences`), and owns
-/// the CRUD calls. Tasks/projects/labels are dynamic maps (see `task_utils.dart`).
+/// the local project and Relation to me filters, card display options and
+/// per-status collapse state (all remembered across launches in
+/// `UserPreferences`), and owns the CRUD calls. Tasks/projects/labels are
+/// dynamic maps (see `task_utils.dart`).
 class TasksModel extends FlutterFlowModel<TasksWidget> {
   List<dynamic> tasks = [];
   List<dynamic> projects = [];
@@ -21,6 +23,14 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
 
   /// null → all projects; otherwise a project id.
   String? projectFilter;
+
+  /// Relation to me values ticked (`kTaskRelations`); a task shows when it
+  /// relates to the viewer in any of them. Empty → no relation filter.
+  final Set<String> relationFilter = {};
+
+  /// The signed-in user's backend id, what the relation filter compares
+  /// against; null until `GET /auth/me` answers.
+  String? viewerId;
 
   /// Which card properties to show (Display section of the header filter).
   /// Status is off by default since the section grouping already conveys it.
@@ -39,11 +49,14 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
   @override
   void initState(BuildContext context) => restoreSavedView();
 
-  /// Opens the list the way it was left: project filter, display options and
-  /// folded sections, as saved in `UserPreferences`.
+  /// Opens the list the way it was left: filters, display options and folded
+  /// sections, as saved in `UserPreferences`.
   void restoreSavedView() {
     final prefs = FFAppState().userPreferences;
     projectFilter = prefs.tasksProjectFilter;
+    relationFilter
+      ..clear()
+      ..addAll(knownTaskRelations(prefs.tasksRelationFilter));
     showStatus = prefs.tasksShowStatus;
     showPriority = prefs.tasksShowPriority;
     showProject = prefs.tasksShowProject;
@@ -65,6 +78,8 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
     hasError = false;
     _bump();
     try {
+      // Asked once: who the viewer is doesn't change while the page lives.
+      final viewer = viewerId == null ? actions.apiGetCurrentUserId() : Future.value(viewerId);
       final results = await Future.wait([
         actions.apiGetTasks(),
         actions.apiGetProjects(),
@@ -73,6 +88,7 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
       tasks = results[0];
       projects = results[1];
       labels = results[2];
+      viewerId = await viewer;
       dropMissingProjectFilter();
     } catch (e) {
       debugPrint('Error loading tasks: $e');
@@ -94,8 +110,14 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
     if (projectById(filter) == null) setProjectFilter(null);
   }
 
-  List<dynamic> get filteredTasks =>
-      filterByProject(tasks, projectFilter, tutils.taskProjectId);
+  List<dynamic> get filteredTasks {
+    final inProject = filterByProject(tasks, projectFilter, tutils.taskProjectId);
+    if (relationFilter.isEmpty) return inProject;
+    return inProject.where((t) => taskMatchesRelation(t, relationFilter, viewerId)).toList();
+  }
+
+  /// Whether a filter narrows the list (what tints the header's filter icon).
+  bool get isFiltered => projectFilter != null || relationFilter.isNotEmpty;
 
   dynamic projectById(String? id) {
     if (id == null) return null;
@@ -174,6 +196,23 @@ class TasksModel extends FlutterFlowModel<TasksWidget> {
   void setProjectFilter(String? projectId) {
     projectFilter = projectId;
     FFAppState().updateUserPreferences((p) => p..tasksProjectFilter = projectId);
+    _bump();
+  }
+
+  /// Ticks or unticks one Relation to me value; the others stay as they are.
+  void toggleRelation(String relation) {
+    if (!relationFilter.remove(relation)) relationFilter.add(relation);
+    _saveRelationFilter();
+  }
+
+  void clearRelationFilter() {
+    if (relationFilter.isEmpty) return;
+    relationFilter.clear();
+    _saveRelationFilter();
+  }
+
+  void _saveRelationFilter() {
+    FFAppState().updateUserPreferences((p) => p..tasksRelationFilter = knownTaskRelations(relationFilter));
     _bump();
   }
 

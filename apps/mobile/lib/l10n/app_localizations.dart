@@ -380,6 +380,42 @@ abstract class AppLocalizations {
   /// **'Title is required'**
   String get tasksTitleRequired;
 
+  /// No description provided for @tasksRelationToMe.
+  ///
+  /// In en, this message translates to:
+  /// **'Relation to me'**
+  String get tasksRelationToMe;
+
+  /// No description provided for @tasksRelationAssigned.
+  ///
+  /// In en, this message translates to:
+  /// **'Assigned to me'**
+  String get tasksRelationAssigned;
+
+  /// No description provided for @tasksRelationWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting on me'**
+  String get tasksRelationWaiting;
+
+  /// No description provided for @tasksNothingWaitingOnYou.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing is waiting on you'**
+  String get tasksNothingWaitingOnYou;
+
+  /// No description provided for @tasksNoMatchingTasks.
+  ///
+  /// In en, this message translates to:
+  /// **'No tasks match these filters'**
+  String get tasksNoMatchingTasks;
+
+  /// No description provided for @tasksClearFilters.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear filters'**
+  String get tasksClearFilters;
+
   /// No description provided for @accountCautionZone.
   ///
   /// In en, this message translates to:

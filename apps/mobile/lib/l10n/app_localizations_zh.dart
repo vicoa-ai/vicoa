@@ -150,6 +150,24 @@ class AppLocalizationsZh extends AppLocalizations {
   String get tasksTitleRequired => '请输入标题';
 
   @override
+  String get tasksRelationToMe => '与我相关';
+
+  @override
+  String get tasksRelationAssigned => '分配给我';
+
+  @override
+  String get tasksRelationWaiting => '等我回复';
+
+  @override
+  String get tasksNothingWaitingOnYou => '没有等你回复的任务';
+
+  @override
+  String get tasksNoMatchingTasks => '没有符合筛选条件的任务';
+
+  @override
+  String get tasksClearFilters => '清除筛选';
+
+  @override
   String get accountCautionZone => '危险操作区';
 
   @override
