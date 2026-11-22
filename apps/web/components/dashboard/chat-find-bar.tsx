@@ -15,7 +15,15 @@ interface ChatFindBarProps {
   onNext: () => void;
   onPrev: () => void;
   onClose: () => void;
+  /**
+   * Px on the transcript's right that the bar keeps clear of (the docked
+   * summary card), so it pins to the top right of the chat lane instead.
+   */
+  clearRight?: number;
 }
+
+// The bar's own gap from the right edge it pins to (Tailwind's `right-4`).
+const FIND_BAR_EDGE = 16;
 
 /**
  * Floating find bar pinned to the top-right of the transcript. It's a
@@ -31,6 +39,7 @@ export function ChatFindBar({
   onNext,
   onPrev,
   onClose,
+  clearRight = 0,
 }: ChatFindBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -60,8 +69,8 @@ export function ChatFindBar({
 
   return (
     <div
-      className="absolute right-4 top-3 z-30 flex items-center gap-1.5 rounded-lg border border-border bg-background/95 px-2 py-1.5 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80"
-      style={NO_DRAG}
+      className="absolute top-3 z-30 flex items-center gap-1.5 rounded-lg border border-border bg-background/95 px-2 py-1.5 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/80"
+      style={{ ...NO_DRAG, right: FIND_BAR_EDGE + clearRight }}
       role="search"
     >
       <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
