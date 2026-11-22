@@ -116,4 +116,91 @@ void main() {
     expect(cache.getListing(machineId: 'm', cwd: '/p', path: ''), isNull);
     expect(cache.getContent(machineId: 'm', cwd: '/p', path: 'x'), isNull);
   });
+
+  group('image budget', () {
+    // Each stored image is its JSON wrapper: ~100 characters of content plus
+    // ~80 of metadata. A 450 budget holds two of them, not three.
+    Future<void> putImage(FilesCache c, String path, {String? content}) => c.putContent(
+          machineId: 'm',
+          cwd: '/p',
+          path: path,
+          content: content ?? 'A' * 100,
+          encoding: 'base64',
+          isBinary: true,
+          size: 75,
+          truncated: false,
+        );
+    bool has(FilesCache c, String path) => c.getContent(machineId: 'm', cwd: '/p', path: path) != null;
+
+    test('evicts the least recently viewed images once over budget', () async {
+      final small = await FilesCache.open(imageBudget: 450);
+      try {
+        // Put out of alphabetical order: recency, not key order, decides.
+        await putImage(small, 'shots/c.png');
+        await putImage(small, 'shots/a.png');
+        await putImage(small, 'shots/b.png');
+        expect(has(small, 'shots/c.png'), isFalse);
+        expect(has(small, 'shots/a.png'), isTrue);
+        expect(has(small, 'shots/b.png'), isTrue);
+      } finally {
+        await small.close();
+      }
+    });
+
+    test('viewing an image again makes it the most recent', () async {
+      final small = await FilesCache.open(imageBudget: 450);
+      try {
+        await putImage(small, 'a.png');
+        await putImage(small, 'b.png');
+        await putImage(small, 'a.png');
+        await putImage(small, 'c.png');
+        expect(has(small, 'b.png'), isFalse);
+        expect(has(small, 'a.png'), isTrue);
+        expect(has(small, 'c.png'), isTrue);
+      } finally {
+        await small.close();
+      }
+    });
+
+    test('text and other entries do not count and are never evicted', () async {
+      final small = await FilesCache.open(imageBudget: 450);
+      try {
+        await small.putContent(machineId: 'm', cwd: '/p', path: 'big.txt', content: 'x' * 1000, encoding: 'utf-8', isBinary: false, size: 1000, truncated: false);
+        await small.putListing(machineId: 'm', cwd: '/p', path: '', entries: [{'name': 'a.png'}]);
+        await putImage(small, 'a.png');
+        await putImage(small, 'b.png');
+        expect(has(small, 'big.txt'), isTrue);
+        expect(small.getListing(machineId: 'm', cwd: '/p', path: ''), isNotNull);
+        expect(has(small, 'a.png'), isTrue);
+        expect(has(small, 'b.png'), isTrue);
+      } finally {
+        await small.close();
+      }
+    });
+
+    test('images cached before the budget existed are trimmed on open', () async {
+      // No recency record yet: written straight into the box, as an older
+      // build left them.
+      final box = Hive.box<String>('files_cache_v1');
+      for (final name in ['a.png', 'b.png', 'c.png']) {
+        await box.put('C|m|/p|$name', '{"content":"${'A' * 100}","encoding":"base64","is_binary":true,"size":75,"truncated":false}');
+      }
+      await cache.close();
+      cache = await FilesCache.open(imageBudget: 450);
+      expect(['a.png', 'b.png', 'c.png'].where((n) => has(cache, n)).length, 2);
+      // Recorded from here on, so the next image evicts by recency.
+      await putImage(cache, 'd.png');
+      expect(has(cache, 'd.png'), isTrue);
+      expect(['a.png', 'b.png', 'c.png'].where((n) => has(cache, n)).length, 1);
+    });
+
+    test('opening trims to a smaller budget', () async {
+      for (final name in ['a.png', 'b.jpg', 'c.webp', 'd.gif']) {
+        await putImage(cache, name);
+      }
+      await cache.close();
+      cache = await FilesCache.open(imageBudget: 450);
+      expect(['a.png', 'b.jpg', 'c.webp', 'd.gif'].where((n) => has(cache, n)), ['c.webp', 'd.gif']);
+    });
+  });
 }

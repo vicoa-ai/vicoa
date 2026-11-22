@@ -244,4 +244,13 @@ void main() {
       expect(calls, hasLength(3));
     });
   });
+
+  test('isImageFileName follows the daemon: extension only, any case, not a bare dotfile', () {
+    for (final name in ['a.png', 'shots/B.JPG', 'x.jpeg', 'anim.gif', 'pic.webp', 'dir.v2/a.png']) {
+      expect(isImageFileName(name), isTrue, reason: name);
+    }
+    for (final name in ['logo.svg', 'a.ts', 'README', '.png', 'shots/.png', 'a.png/notes', 'clip.mp4']) {
+      expect(isImageFileName(name), isFalse, reason: name);
+    }
+  });
 }
