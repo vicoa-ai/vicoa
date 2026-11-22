@@ -228,8 +228,12 @@ export function ChipDropdown({
         )}
       >
         {/* Dimmed panel label, pinned while the list scrolls. Left padding
-            matches the items' px-3 so it lines up with their content column. */}
-        <div className="sticky top-0 z-10 bg-menu px-3 pb-1.5 pt-1 text-xs text-muted-foreground/60">
+            matches the items' px-3 so it lines up with their content column.
+            A sticky offset counts from inside the list's p-1, so `top-0` left
+            a 4px strip above the pinned label that scrolled items showed
+            through. `-top-1` pins it flush with the edge, and `-mt-1` plus the
+            extra top padding keep the text exactly where it was. */}
+        <div className="sticky -top-1 z-10 -mt-1 bg-menu px-3 pb-1.5 pt-2 text-xs text-muted-foreground/60">
           {title}
         </div>
         {children(() => setOpen(false))}
