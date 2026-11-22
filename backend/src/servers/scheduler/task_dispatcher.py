@@ -70,6 +70,9 @@ from shared.task_dispatch_prompts import (
     with_brief,
 )
 from shared.websocket.connection_manager import connection_manager
+from shared.websocket.envelope import build_instance_update
+from shared.websocket.in_tx import after_commit
+from shared.websocket.protocol import watcher_room
 from servers.profile_provenance import STAMP_DELAYS
 
 from .dispatch import DispatchResult, dispatch_automation
@@ -654,6 +657,19 @@ def _stamp_task_session_blocking(
         row = db.get(TaskDispatch, dispatch_id)
         if row is not None:
             row.agent_instance_id = instance_id
+        db.flush()
+        # The link lands seconds after the session appeared, so a page already
+        # open on it learns its task from this frame, not from a reload.
+        payload = build_instance_update(instance)
+        rooms = [
+            f"user:{owner_id}:user-scoped",
+            f"user:{owner_id}:session:{instance_id}",
+            watcher_room(str(instance_id)),
+        ]
+        after_commit(
+            db,
+            lambda: connection_manager.broadcast_update(str(owner_id), payload, rooms),
+        )
         db.commit()
         return True
 

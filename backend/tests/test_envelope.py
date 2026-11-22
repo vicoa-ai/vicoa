@@ -162,6 +162,19 @@ def test_instance_body_carries_the_project_it_is_filed_under() -> None:
     json.dumps(body)
 
 
+def test_instance_body_carries_the_task_it_works_on() -> None:
+    """Task dispatch links a session to its task seconds after it registers;
+    the open session page learns the link from this frame."""
+    inst = _instance()
+    assert build_instance_update(inst)["body"]["task_id"] is None
+
+    inst.task_id = uuid4()
+    body = build_instance_update(inst)["body"]
+
+    assert body["task_id"] == str(inst.task_id)
+    json.dumps(body)
+
+
 def test_build_instance_created_update_uses_the_created_discriminator() -> None:
     inst = _instance()
 

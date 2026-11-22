@@ -48,6 +48,8 @@ def _instance_row(inst: "StoredInstance", t: str) -> dict:
         "project": inst.project,
         # The local store has no projects: a session here is never filed.
         "project_id": None,
+        # Nor tasks: a local session never works on one.
+        "task_id": None,
         "home_dir": inst.home_dir,
         "started_at": inst.started_at,
         "ended_at": inst.ended_at,

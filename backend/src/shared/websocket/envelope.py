@@ -110,6 +110,9 @@ def _instance_row(
         # so a move (app or `vicoa session update --project`) regroups the
         # row live instead of on the next list load.
         "project_id": str(inst.project_id) if inst.project_id else None,
+        # The task the session works on. Task dispatch links it a few seconds
+        # after the session registers, so an open page picks it up live.
+        "task_id": str(inst.task_id) if inst.task_id else None,
         "home_dir": inst.home_dir,
         "started_at": _iso(inst.started_at),
         "ended_at": _iso(inst.ended_at),
