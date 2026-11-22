@@ -92,8 +92,11 @@ def test_wait_reports_the_childs_last_stderr_line(
         "s1", _FakeProcess(exit_code=1), timeout=2.0
     )  # type: ignore[arg-type]
 
+    assert failure is not None
+    assert failure.code == "exited_early"
+    assert failure.exit_code == 1
     assert (
-        failure
+        failure.message
         == "Couldn't start the session: Fatal error before registration: 503 busy"
     )
 
@@ -104,7 +107,10 @@ def test_wait_reports_generic_message_when_stderr_is_empty(
     failure = daemon._wait_for_registration(
         "s1", _FakeProcess(exit_code=2), timeout=2.0
     )  # type: ignore[arg-type]
-    assert failure == (
+    assert failure is not None
+    assert failure.code == "exited_early"
+    assert failure.exit_code == 2
+    assert failure.message == (
         "Couldn't start the session. The agent exited unexpectedly, please try again."
     )
 
@@ -113,7 +119,8 @@ def test_wait_terminates_a_child_that_never_registers(daemon: MachineDaemon) -> 
     process = _FakeProcess()
     failure = daemon._wait_for_registration("s1", process, timeout=0.2, interval=0.02)  # type: ignore[arg-type]
     assert failure is not None
-    assert failure == (
+    assert failure.code == "registration_timeout"
+    assert failure.message == (
         "Couldn't start the session. It didn't come online in time, please try again."
     )
     assert process.terminated

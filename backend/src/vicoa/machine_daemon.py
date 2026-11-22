@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, Lock, Thread
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 from uuid import uuid4
 
 import requests
@@ -197,6 +197,89 @@ def _describe_exit_code(code: int | None) -> str:
     hex_code = f"0x{code:08X}"
     name = _WINDOWS_STATUS_NAMES.get(code)
     return f"{hex_code} ({name})" if name else hex_code
+
+
+# Why a `spawn-session` did not start. Clients record it on
+# `session_create_failed`, so failures can be told apart without sending the
+# message itself, which can carry paths and user names.
+SpawnFailureCode = Literal[
+    "invalid_request",  # the request itself was malformed
+    "auth",  # this machine's credential is known to be dead
+    "worktree_failed",  # creating the requested worktree failed
+    "directory_failed",  # the working folder could not be created or opened
+    "not_installed",  # the agent's CLI was not found on this machine
+    "launch_failed",  # starting the session process failed
+    "exited_early",  # the session process exited before it registered
+    "registration_timeout",  # the session process never registered in time
+]
+
+
+@dataclass(frozen=True)
+class SpawnFailure:
+    """A failed `spawn-session`, as its RPC result reports it.
+
+    `message` is what the user is shown; `code` is the stable cause. The two
+    numbers are diagnostic details that are safe to record: the exit code of a
+    session process that died before registering (a Windows NTSTATUS says more
+    than any message), and the OS error number of a failed launch (2: the
+    executable is missing, 5: access denied, 206: command line too long).
+    """
+
+    code: SpawnFailureCode
+    message: str
+    exit_code: int | None = None
+    os_error: int | None = None
+
+    def to_rpc(self) -> dict[str, Any]:
+        result: dict[str, Any] = {"error": self.message, "error_code": self.code}
+        if self.exit_code is not None:
+            result["exit_code"] = self.exit_code
+        if self.os_error is not None:
+            result["os_error"] = self.os_error
+        return result
+
+
+class _SpawnRefused(Exception):
+    """Raised inside a spawn to stop it with a classified failure."""
+
+    def __init__(self, failure: SpawnFailure) -> None:
+        super().__init__(failure.message)
+        self.failure = failure
+
+
+def _spawn_failure_from(exc: Exception) -> SpawnFailure:
+    """Classify the exception that stopped a spawn before its process ran.
+
+    The messages are the ones each case has always produced; only the code is
+    new.
+    """
+    if isinstance(exc, _SpawnRefused):
+        return exc.failure
+    if isinstance(exc, ValueError):
+        return SpawnFailure("invalid_request", str(exc))
+    if isinstance(exc, AuthenticationError):
+        return SpawnFailure("auth", f"Failed to launch headless session: {exc}")
+    if isinstance(exc, RuntimeError):
+        return SpawnFailure("launch_failed", str(exc))
+    return SpawnFailure(
+        "launch_failed",
+        f"Failed to launch headless session: {exc}",
+        os_error=_os_error_number(exc),
+    )
+
+
+def _os_error_number(exc: BaseException) -> int | None:
+    """The OS error number behind an exception, if it has one.
+
+    Windows sets `winerror` (the number Windows itself reports, e.g. 206) and
+    maps it onto a less specific `errno`, so prefer it.
+    """
+    if not isinstance(exc, OSError):
+        return None
+    winerror = getattr(exc, "winerror", None)
+    if isinstance(winerror, int):
+        return winerror
+    return exc.errno if isinstance(exc.errno, int) else None
 
 
 def _pid_exists(pid: int) -> bool:
@@ -3258,7 +3341,10 @@ class MachineDaemon:
                     suffix_if_taken=worktree_param.get("suffix_if_taken") is True,
                 )
                 if "error" in created:
-                    return {"error": f"Failed to create worktree: {created['error']}"}
+                    return SpawnFailure(
+                        "worktree_failed",
+                        f"Failed to create worktree: {created['error']}",
+                    ).to_rpc()
                 worktree_info = created
                 # The server is naming this worktree from the prompt; take the
                 # name if it lands in time (the user's own pick always wins).
@@ -3286,11 +3372,20 @@ class MachineDaemon:
                 )
             else:
                 expanded_directory = os.path.expanduser(directory.strip())
-            os.makedirs(expanded_directory, exist_ok=True)
+            try:
+                os.makedirs(expanded_directory, exist_ok=True)
+            except OSError as exc:
+                raise _SpawnRefused(
+                    SpawnFailure(
+                        "directory_failed",
+                        f"Failed to launch headless session: {exc}",
+                        os_error=_os_error_number(exc),
+                    )
+                ) from exc
 
             install_error = self._check_agent_installation(normalized_agent)
             if install_error:
-                raise RuntimeError(install_error)
+                raise _SpawnRefused(SpawnFailure("not_installed", install_error))
 
             # `title`: a title the spawn brings for its session (a task
             # session is titled after its task), handed to the registration so
@@ -3334,12 +3429,9 @@ class MachineDaemon:
                 process = self._launch_session_process(
                     command, cwd=expanded_directory, env=env, session_id=session_id
                 )
-        except (ValueError, RuntimeError) as exc:
-            self._rollback_worktree(worktree_info)
-            return {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001 - any spawn failure -> rpc result
             self._rollback_worktree(worktree_info)
-            return {"error": f"Failed to launch headless session: {exc}"}
+            return _spawn_failure_from(exc).to_rpc()
 
         # Monitor with request_id="" — there is no spawn-request row, so the
         # monitor's status reports are no-ops, but the crash-fallback that sets
@@ -3362,8 +3454,11 @@ class MachineDaemon:
         failure = self._wait_for_registration(session_id, process)
         if failure is not None:
             self._rollback_worktree(worktree_info)
-            print(f"[daemon] RPC spawn-session {normalized_agent} failed: {failure}")
-            return {"error": failure}
+            print(
+                f"[daemon] RPC spawn-session {normalized_agent} failed: "
+                f"{failure.message}"
+            )
+            return failure.to_rpc()
         print(f"[daemon] RPC spawn-session launched {normalized_agent}: {session_id}")
         result: dict[str, Any] = {"agent_instance_id": session_id}
         if adopted is not None:
@@ -3797,15 +3892,15 @@ class MachineDaemon:
         *,
         timeout: float = REGISTRATION_WAIT_SECONDS,
         interval: float = 0.1,
-    ) -> str | None:
+    ) -> SpawnFailure | None:
         """Block until the child's registered marker appears.
 
-        Returns None once the row exists, else a one-line reason for the RPC
-        error: the child's last stderr line if it exited, or a timeout. A
-        child that is still alive at the deadline is terminated — a runner
-        that has not registered inside its own budget is either wedged or
-        about to give up, and letting it run on would recreate the invisible
-        zombie this wait exists to prevent.
+        Returns None once the row exists, else the failure for the RPC result:
+        `exited_early` (its message is the child's last stderr line, if it left
+        one) or `registration_timeout`. A child that is still alive at the
+        deadline is terminated — a runner that has not registered inside its
+        own budget is either wedged or about to give up, and letting it run on
+        would recreate the invisible zombie this wait exists to prevent.
         """
         marker = registered_marker_path(session_id)
         deadline = time.time() + timeout
@@ -3823,19 +3918,21 @@ class MachineDaemon:
                 tail = self._read_session_stderr_tail(session_id)
                 reason = tail.splitlines()[-1][:300] if tail else ""
                 if reason:
-                    return f"Couldn't start the session: {reason}"
-                if code >= _WINDOWS_STATUS_MIN:
+                    message = f"Couldn't start the session: {reason}"
+                elif code >= _WINDOWS_STATUS_MIN:
                     # Windows killed it before it ran a line, so there is no
                     # stderr to show and a retry rarely helps; the status code
                     # is the only clue, so don't hide it behind "try again".
-                    return (
+                    message = (
                         "Couldn't start the session: the agent exited with "
                         f"{_describe_exit_code(code)}"
                     )
-                return (
-                    "Couldn't start the session. The agent exited "
-                    "unexpectedly, please try again."
-                )
+                else:
+                    message = (
+                        "Couldn't start the session. The agent exited "
+                        "unexpectedly, please try again."
+                    )
+                return SpawnFailure("exited_early", message, exit_code=code)
             if time.time() >= deadline:
                 if marker.exists():
                     clear_session_registered(session_id)
@@ -3858,9 +3955,10 @@ class MachineDaemon:
                         timeout,
                         tail,
                     )
-                return (
+                return SpawnFailure(
+                    "registration_timeout",
                     "Couldn't start the session. It didn't come online in "
-                    "time, please try again."
+                    "time, please try again.",
                 )
             time.sleep(interval)
 

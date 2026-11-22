@@ -142,9 +142,12 @@ type EventMap = {
   session_submit_blocked: { reason: SubmitBlockedReason; machine_state: MachineState };
   /**
    * Session creation was attempted and failed. `reason` is a stable code, never
-   * the user-facing copy, so the shape survives message rewording.
+   * the user-facing copy, so the shape survives message rewording. A
+   * `spawn_error` also carries the daemon's own `cause` (see
+   * `SpawnFailureDetail`; absent when the daemon is too old to send one) and
+   * the agent that was asked for.
    */
-  session_create_failed: { reason: SessionCreateFailure };
+  session_create_failed: { reason: SessionCreateFailure } & SessionCreateFailedDetail;
 
   // ── Desktop-only ──────────────────────────────────────────────────────────
   /**
@@ -413,8 +416,50 @@ export function trackSubmitBlocked(reason: SubmitBlockedReason, state: MachineSt
   capture('session_submit_blocked', { reason, machine_state: state });
 }
 
-export function trackSessionCreateFailed(reason: SessionCreateFailure): void {
-  capture('session_create_failed', { reason });
+/**
+ * Why the daemon could not start a session, as `spawn-session` reports it.
+ *
+ * `cause` is the daemon's stable code (`not_installed`, `launch_failed`,
+ * `exited_early`, `registration_timeout`, …; the list lives with
+ * `SpawnFailure` in the daemon). `exit_code` is the exit status of a session
+ * that died before it registered, `os_error` the OS error number of a launch
+ * that failed. None of them is the message, which can carry paths.
+ */
+export interface SpawnFailureDetail {
+  cause: string;
+  exit_code?: number;
+  os_error?: number;
+}
+
+export type SessionCreateFailedDetail = Partial<SpawnFailureDetail> & { agent_type?: string };
+
+/** What a code may look like. Anything else is dropped, so free text never reaches telemetry. */
+const SPAWN_FAILURE_CODE = /^[a-z_]{1,40}$/;
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * The failure detail of a `spawn-session` result, or null when it carries none
+ * (a daemon too old to classify its failures).
+ */
+export function readSpawnFailure(result: Record<string, unknown>): SpawnFailureDetail | null {
+  const code = result.error_code;
+  if (typeof code !== 'string' || !SPAWN_FAILURE_CODE.test(code)) return null;
+  const detail: SpawnFailureDetail = { cause: code };
+  const exitCode = finiteNumber(result.exit_code);
+  if (exitCode !== undefined) detail.exit_code = exitCode;
+  const osError = finiteNumber(result.os_error);
+  if (osError !== undefined) detail.os_error = osError;
+  return detail;
+}
+
+export function trackSessionCreateFailed(
+  reason: SessionCreateFailure,
+  detail: SessionCreateFailedDetail = {},
+): void {
+  capture('session_create_failed', { reason, ...detail });
 }
 
 // ── Onboarding complete ─────────────────────────────────────────────────────

@@ -61,7 +61,16 @@ Future<Map<String, dynamic>> apiSpawnSession(
     );
 
     if (result['error'] != null) {
-      return {'success': false, 'error': result['error'].toString()};
+      // `error_code` is the daemon's stable cause (not_installed, launch_failed,
+      // exited_early, …), absent from an older daemon. Kept apart from
+      // `errorCode`, which is the RPC transport's code.
+      return {
+        'success': false,
+        'error': result['error'].toString(),
+        if (result['error_code'] is String) 'cause': result['error_code'],
+        if (result['exit_code'] is int) 'exitCode': result['exit_code'],
+        if (result['os_error'] is int) 'osError': result['os_error'],
+      };
     }
 
     return {

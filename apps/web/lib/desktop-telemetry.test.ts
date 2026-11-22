@@ -499,3 +499,56 @@ describe('identity', () => {
     expect(() => t.resetIdentity()).not.toThrow();
   });
 });
+
+describe('session_create_failed', () => {
+  it('reads the daemon cause and diagnostic numbers off a spawn result', async () => {
+    const t = await loadTelemetry('desktop');
+    expect(
+      t.readSpawnFailure({
+        error: 'Failed to launch headless session: [WinError 206] …',
+        error_code: 'launch_failed',
+        os_error: 206,
+      }),
+    ).toEqual({ cause: 'launch_failed', os_error: 206 });
+    expect(
+      t.readSpawnFailure({ error: 'x', error_code: 'exited_early', exit_code: 3221225794 }),
+    ).toEqual({ cause: 'exited_early', exit_code: 3221225794 });
+  });
+
+  it('has nothing to read from a daemon too old to classify', async () => {
+    const t = await loadTelemetry('desktop');
+    expect(t.readSpawnFailure({ error: 'Codex CLI is not installed.' })).toBeNull();
+  });
+
+  it('never lets free text through as a cause', async () => {
+    const t = await loadTelemetry('desktop');
+    expect(t.readSpawnFailure({ error: 'x', error_code: 'C:\\Users\\someone' })).toBeNull();
+    expect(t.readSpawnFailure({ error: 'x', error_code: 'not_installed', exit_code: '1' })).toEqual({
+      cause: 'not_installed',
+    });
+  });
+
+  it('captures the cause and agent beside the reason', async () => {
+    const t = await loadTelemetry('desktop');
+    vi.clearAllMocks();
+
+    t.trackSessionCreateFailed('spawn_error', {
+      agent_type: 'claude',
+      ...t.readSpawnFailure({ error: 'x', error_code: 'not_installed' }),
+    });
+
+    expect(onlyCapture()).toEqual([
+      'session_create_failed',
+      { reason: 'spawn_error', agent_type: 'claude', cause: 'not_installed' },
+    ]);
+  });
+
+  it('still captures the bare reason when there is no detail', async () => {
+    const t = await loadTelemetry('desktop');
+    vi.clearAllMocks();
+
+    t.trackSessionCreateFailed('daemon_timeout');
+
+    expect(onlyCapture()).toEqual(['session_create_failed', { reason: 'daemon_timeout' }]);
+  });
+});
