@@ -106,9 +106,7 @@ def test_frozen_command_carries_the_resolved_binary(
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(machine_daemon, "find_codex_cli", lambda: "/opt/codex/codex")
     monkeypatch.setattr(
-        machine_daemon,
-        "_find_cli_in_common_locations",
-        lambda name: f"/opt/{name}/{name}",
+        machine_daemon, "find_opencode_cli", lambda: "/opt/opencode/opencode"
     )
     cmd = _daemon()._build_headless_command(
         directory=os.getcwd(), agent=agent, session_id="s1", metadata=None

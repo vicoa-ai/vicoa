@@ -80,6 +80,8 @@ def _build_runner(
     # (roll back on a failed change; re-assert the model on the 'auto' recovery).
     runner.permission_mode = None
     runner.model = None
+    # No CLI handed over by the daemon: the SDK finds one itself (see __init__).
+    runner.cli_path = None
     runner.claude_client = None
     # Live context-window + rate-limit usage state (see ``__init__``). A full
     # ``run_conversation_turn`` pass stamps context via ``_usage`` and schedules

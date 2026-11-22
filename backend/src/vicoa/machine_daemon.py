@@ -60,6 +60,7 @@ from vicoa.utils import (
     SESSION_TITLE_ENV,
     derive_ws_url,
     find_codex_cli,
+    find_opencode_cli,
     get_git_identity,
     get_project_path,
 )
@@ -71,6 +72,13 @@ from vicoa.machine_identity import (
 from vicoa.constants import HOSTED_API_URL
 from vicoa.machine_fingerprint import compute_stable_machine_id, hardware_id_hash
 from vicoa.sdk.exceptions import AuthenticationError, MachineLimitReached
+from vicoa.agent_install import (
+    MANAGED_AGENTS,
+    SELF_UPDATE_OFF,
+    AgentInstaller,
+    InstallError,
+    is_managed_path,
+)
 from vicoa.machine_state import (
     STATE_PATH,
     clear_daemon_pid,
@@ -930,6 +938,9 @@ class MachineDaemon:
         # signal that the credential is dead: a background heartbeat thread
         # sets it, the main loop watches it to stop the stream and exit.
         self._fatal_auth = Event()
+        # Agent CLIs this daemon downloads itself (`agent-install`); a finished
+        # install re-publishes `available_agents` so every client sees it.
+        self._agent_installer = AgentInstaller(on_installed=self._on_agent_installed)
         # Prewarmed sessions waiting for their spawn (see vicoa.prewarm).
         self._prewarm = PrewarmPool(on_discard=self._forget_standby)
         # Set when registration is refused for want of plan capacity (402 with
@@ -1285,6 +1296,12 @@ class MachineDaemon:
         clients keep using that name for Claude and simply don't ask about
         the others, rather than paying the router's `no_handler` grace window.
 
+        `agent-install` tells the client the `agent-install` /
+        `agent-install-status` RPCs are routable here: this daemon can download
+        a pinned build of Claude Code, Codex or OpenCode itself, so the app can
+        offer an Install button instead of a command to paste. An old daemon
+        omits it and the app keeps showing the command.
+
         `system-prompt` tells the client this daemon forwards the spawn-metadata
         `system_prompt` to the agent, so an agent profile carrying custom
         instructions can be offered for this machine. This one matters more than
@@ -1308,6 +1325,7 @@ class MachineDaemon:
             "skill-manage",
             "open-in",
             "provider-usage",
+            "agent-install",
             SYSTEM_PROMPT_CAPABILITY,
         ]
 
@@ -1725,7 +1743,7 @@ class MachineDaemon:
                 cmd.extend(
                     _resolved_binary_args(
                         "--opencode-command",
-                        _find_cli_in_common_locations("opencode"),
+                        find_opencode_cli(),
                     )
                 )
                 agent_mode = self._extract_opencode_mode(metadata)
@@ -1781,6 +1799,7 @@ class MachineDaemon:
                     metadata, agent="claude"
                 )
                 cmd.extend(["--permission-mode", permission_mode or "default"])
+                cmd.extend(self._claude_cli_args())
                 prompt = self._extract_prompt(metadata)
                 if prompt:
                     cmd.extend(["--prompt", prompt])
@@ -1860,7 +1879,7 @@ class MachineDaemon:
             # Pass the resolved path, not the bare name: the child inherits
             # this daemon's PATH, which is exactly the one that could not find
             # an installer-placed binary in the first place.
-            if opencode_cli := _find_cli_in_common_locations("opencode"):
+            if opencode_cli := find_opencode_cli():
                 cmd.extend(["--opencode-command", opencode_cli])
             if session_id:
                 cmd.extend(["--session-id", session_id])
@@ -1994,6 +2013,7 @@ class MachineDaemon:
             cmd.extend(["--permission-mode", permission_mode])
         else:
             cmd.extend(["--permission-mode", "default"])
+        cmd.extend(self._claude_cli_args())
         prompt = self._extract_prompt(metadata)
         if prompt:
             cmd.extend(["--prompt", prompt])
@@ -2062,7 +2082,7 @@ class MachineDaemon:
                 return "Claude Code CLI ('claude') is not installed or not on PATH."
 
         if agent == "opencode":
-            if _find_cli_in_common_locations("opencode"):
+            if find_opencode_cli():
                 return None
             return "OpenCode CLI ('opencode') is not installed or not on PATH."
 
@@ -2803,6 +2823,10 @@ class MachineDaemon:
             return open_ops.open_path(**(frame.get("params") or {}))
         if method == "scan-agents":
             return self.scan_agents_rpc()
+        if method == "agent-install":
+            return self.agent_install_rpc(frame.get("params") or {})
+        if method == "agent-install-status":
+            return self.agent_install_status_rpc(frame.get("params") or {})
         if method == "provider-list":
             from vicoa.rpc import provider_ops
 
@@ -2903,6 +2927,8 @@ class MachineDaemon:
             "list-open-apps",
             "open-path",
             "scan-agents",
+            "agent-install",
+            "agent-install-status",
             "provider-list",
             "provider-add",
             "provider-remove",
@@ -2932,6 +2958,87 @@ class MachineDaemon:
         agents = self._detect_available_agents()
         self.push_available_agents(agents)
         return {"available_agents": agents}
+
+    def agent_install_rpc(self, params: dict[str, Any]) -> dict[str, Any]:
+        """`agent-install` {agent}: download the pinned build in the background.
+
+        Returns at once with where the install stands (`phase`, bytes); poll
+        `agent-install-status` for the rest. An agent the machine already has
+        (the user's own install or an earlier managed one) answers `installed`
+        without downloading anything. Failures carry a stable `error_code`.
+        """
+        agent = params.get("agent")
+        if not isinstance(agent, str) or agent not in MANAGED_AGENTS:
+            return {
+                "error": f"Vicoa can't install {agent!r} on this machine.",
+                "error_code": "unknown_agent",
+            }
+        if self._check_agent_installation(agent) is None:
+            return {
+                "agent": agent,
+                "phase": "installed",
+                "path": self._resolved_cli(agent),
+                "already_installed": True,
+            }
+        try:
+            return self._agent_installer.start(agent).to_dict()
+        except InstallError as exc:
+            return {"agent": agent, "error": exc.message, "error_code": exc.code}
+
+    def agent_install_status_rpc(self, params: dict[str, Any]) -> dict[str, Any]:
+        """`agent-install-status` {agent?}: what can be installed here, and how
+        the installs this daemon ran are going.
+
+        `installable` maps each agent this machine can take a build of to its
+        pinned `version` and download `size`, for the button's label.
+        """
+        agent = params.get("agent")
+        only = agent if isinstance(agent, str) and agent else None
+        installable: dict[str, Any] = {}
+        for name in MANAGED_AGENTS:
+            if only is not None and name != only:
+                continue
+            offer = self._agent_installer.offer(name)
+            if offer is not None:
+                installable[name] = offer
+        return {
+            "installable": installable,
+            "installs": self._agent_installer.status(only),
+        }
+
+    def _on_agent_installed(self, agent: str) -> None:
+        """A managed install finished: publish it, so pickers update by themselves."""
+        print(f"[daemon] installed {agent} for this machine")
+        self.push_available_agents(self._detect_available_agents())
+
+    def _resolved_cli(self, agent: str) -> str | None:
+        """The CLI detection finds for ``agent`` (user install first, then managed)."""
+        if agent == "claude":
+            from integrations.cli_wrappers.claude_code.utils.cli_finder import (
+                find_claude_cli,
+            )
+
+            try:
+                return find_claude_cli()
+            except FileNotFoundError:
+                return None
+        if agent == "codex":
+            return find_codex_cli()
+        if agent == "opencode":
+            return find_opencode_cli()
+        return None
+
+    def _claude_cli_args(self) -> list[str]:
+        """`--claude-cli=<path>` when the Claude CLI to run is Vicoa's own copy.
+
+        The SDK finds a CLI by itself (its bundled build, PATH, a few dirs) but
+        never looks under ~/.vicoa/agents, so a managed install is handed over
+        explicitly. The user's own install is left to the SDK, as before.
+        """
+        path = self._resolved_cli("claude")
+        return (
+            _resolved_binary_args("--claude-cli", path) if is_managed_path(path) else []
+        )
 
     def _after_provider_change(self, result: dict[str, Any]) -> dict[str, Any]:
         """Re-publish `available_agents` once the config file changed.
@@ -3062,6 +3169,10 @@ class MachineDaemon:
         env.pop(SESSION_TITLE_ENV, None)
         if auto_title:
             env[SESSION_TITLE_ENV] = auto_title
+        # A copy Vicoa installed stays on the build it pinned: left alone, the
+        # CLI would update itself in place to a version this release never ran.
+        if agent in SELF_UPDATE_OFF and is_managed_path(self._resolved_cli(agent)):
+            env.update(SELF_UPDATE_OFF[agent])
         return env
 
     def _standby_key_for(
