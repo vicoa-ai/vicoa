@@ -747,37 +747,10 @@ function TasksPageInner() {
           />
         </div>
 
-        {/* Assignee, Relation to me and Labels, each a submenu; the button
-            counts the ones in use. Beside the tabs, since it filters the view
-            they pick, and on the left so its submenus always open to the
-            right (at the right edge a wide one flips left). */}
-        <TaskFilterMenu state={filterState} onClear={clearFilters} />
-        <div className="min-w-0 flex-1" />
-
-        {/* View mode (multica view dropdown). Leftmost: everything after it
-            narrows or tunes what this view shows. */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
-              {view === 'board' ? <Columns3 className="size-3.5" /> : <List className="size-3.5" />}
-              <span className="hidden md:inline">{view === 'board' ? 'Board' : 'List'}</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-32 text-xs">
-            <DropdownMenuItem onSelect={() => updateActiveView({ mode: 'list' })}>
-              <List className="mr-2 size-3.5" />
-              List
-              {view === 'list' && <Check className="ml-auto h-3 w-3" />}
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => updateActiveView({ mode: 'board' })}>
-              <Columns3 className="mr-2 size-3.5" />
-              Board
-              {view === 'board' && <Check className="ml-auto h-3 w-3" />}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        {/* Project filter */}
+        {/* Project: which board this view shows, so it leads the controls that
+            act on the view. A single pick rather than a Filter dimension:
+            Share, the people stack and a new task's project all follow it,
+            so it stays named on the button instead of folding into "1 filter". */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
@@ -795,7 +768,7 @@ function TasksPageInner() {
               </span>
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52 text-xs">
+          <DropdownMenuContent align="start" className="w-52 text-xs">
             <DropdownMenuItem onSelect={() => updateActiveView({ projectFilter: 'all' })}>
               <ListTodo className="mr-2 size-3.5 text-muted-foreground" />
               All projects
@@ -822,6 +795,36 @@ function TasksPageInner() {
             <DropdownMenuItem onSelect={() => setProjectDialogOpen(true)}>
               <Plus className="mr-2 h-3.5 w-3.5" />
               New project
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Assignee, Relation to me and Labels, each a submenu; the button
+            counts the ones in use. Beside the project, since it narrows the
+            board that picks, and on the left so its submenus always open to
+            the right (at the right edge a wide one flips left). */}
+        <TaskFilterMenu state={filterState} onClear={clearFilters} />
+        <div className="min-w-0 flex-1" />
+
+        {/* View mode, then Display: how the view is drawn, on the right; what
+            it shows (project, filters) is on the left. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
+              {view === 'board' ? <Columns3 className="size-3.5" /> : <List className="size-3.5" />}
+              <span className="hidden md:inline">{view === 'board' ? 'Board' : 'List'}</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-32 text-xs">
+            <DropdownMenuItem onSelect={() => updateActiveView({ mode: 'list' })}>
+              <List className="mr-2 size-3.5" />
+              List
+              {view === 'list' && <Check className="ml-auto h-3 w-3" />}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => updateActiveView({ mode: 'board' })}>
+              <Columns3 className="mr-2 size-3.5" />
+              Board
+              {view === 'board' && <Check className="ml-auto h-3 w-3" />}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
