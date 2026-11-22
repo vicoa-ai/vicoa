@@ -32,7 +32,7 @@ import { SidebarSessions } from '@/components/dashboard/sidebar-sessions';
 import { PluginSidebarItems } from '@/components/plugins/plugin-sidebar-items';
 import { SetupChecklist } from '@/components/dashboard/setup-checklist';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
-import { AccountMenuInvitations, InvitationDot } from '@/components/dashboard/account-menu-invitations';
+import { AccountMenuInvitations } from '@/components/dashboard/account-menu-invitations';
 import type { AuthUser } from '@/lib/auth/user';
 import { AccountPlanItem, SidebarPlanButton } from '@/components/billing/account-plan-item';
 import { MENU_MAX_AGE_MS, refreshBillingSubscriptionIfOlderThan } from '@/lib/billing-subscription';
@@ -528,10 +528,8 @@ function CloudAccountArea() {
           aria-label="Account menu"
           className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10"
         >
-          {/* Relative box for the pending-invitations dot. */}
-          <span className="relative flex shrink-0">
+          <span className="flex shrink-0">
             <PrincipalAvatar principal={principal} size="sm" className="size-4" />
-            <InvitationDot className="size-1.5" />
           </span>
           <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground" title={email ?? undefined}>
             {name || email || 'Signed in'}

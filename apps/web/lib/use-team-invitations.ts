@@ -8,6 +8,11 @@
  * Invitations live on the cloud backend, so the logged-out desktop (local
  * daemon only) has nothing to ask; the key goes null there and SWR never
  * fetches. Callers also pass `enabled: false` while nobody is signed in.
+ *
+ * The list is read when a surface that shows it mounts (the web avatar dot at
+ * app load, the account menu when it opens, Settings → Teams) and not in the
+ * background: no polling, and no refetch when the window regains focus or the
+ * network returns.
  */
 
 import { useCallback } from 'react';
@@ -20,8 +25,6 @@ export const TEAM_INVITATIONS_KEY = 'team-invitations';
 /** SWR key of the caller's teams list (Settings → Teams). Accepting an
  *  invitation revalidates it so a new team shows up without a reload. */
 export const TEAMS_KEY = 'teams';
-
-const REFRESH_INTERVAL_MS = 60_000;
 
 export function useTeamInvitations({ enabled = true }: { enabled?: boolean } = {}): {
   invitations: TeamInvitation[];
@@ -36,10 +39,10 @@ export function useTeamInvitations({ enabled = true }: { enabled?: boolean } = {
     key,
     () => getBackendAPI(true).listTeamInvitations(),
     {
-      refreshInterval: REFRESH_INTERVAL_MS,
-      revalidateOnFocus: true,
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
       // A 401 or an older backend without teams would otherwise retry in a
-      // tight backoff loop; the interval above already re-polls.
+      // tight backoff loop.
       shouldRetryOnError: false,
     },
   );

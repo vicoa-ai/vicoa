@@ -10,8 +10,9 @@
  *   for it), then, while any are pending, the invitations addressed to the
  *   signed-in user with inline Join / Decline. It renders nothing at all for a
  *   free account with no team and no invitation.
- * - `<InvitationDot />` sits on the avatar trigger (a `relative` box) while
- *   any invitation is pending, so the menu is worth opening.
+ * - `<InvitationDot />` sits on the web avatar trigger (a `relative` box) while
+ *   any invitation is pending, so the menu is worth opening. The desktop app
+ *   has no dot: it reads invitations only when its menu opens.
  *
  * Both read `useTeamInvitations`, so they share one request and clear
  * together. Teams are groups you share work with, not workspaces: there is no
