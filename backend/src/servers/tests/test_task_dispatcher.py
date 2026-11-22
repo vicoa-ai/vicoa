@@ -27,9 +27,15 @@ pytestmark = pytest.mark.committed_db
 class FakeSockets:
     def __init__(self) -> None:
         self.connected: set[str] = set()
+        self.frames: list[tuple[str, dict[str, Any], list[str]]] = []
 
     def is_session_connected(self, instance_id: str) -> bool:
         return instance_id in self.connected
+
+    def broadcast_update(
+        self, user_id: str, payload: dict[str, Any], rooms: list[str]
+    ) -> None:
+        self.frames.append((user_id, payload, rooms))
 
 
 class Recorder:
@@ -333,7 +339,7 @@ async def test_a_mention_on_a_closed_task_is_still_answered(
 async def test_the_spawned_session_is_linked_to_task_and_agent(
     test_db, harness, user, machine, task, profile, monkeypatch
 ):
-    _, recorder = harness
+    sockets, recorder = harness
     monkeypatch.setattr(task_dispatcher, "STAMP_DELAYS", (0.0,))
     new_id = uuid4()
     recorder.spawn_result = DispatchResult(
@@ -377,6 +383,12 @@ async def test_the_spawned_session_is_linked_to_task_and_agent(
     assert test_db.get(TaskDispatch, row.id).agent_instance_id == new_id
     # Linking the running session moved the todo task to in_progress.
     assert test_db.get(Task, task.id).status == "in_progress"
+    # A page already open on the session hears about its task without a reload.
+    [(owner, payload, rooms)] = sockets.frames
+    assert owner == str(user.id)
+    assert payload["body"]["t"] == "instance-update"
+    assert payload["body"]["task_id"] == str(task.id)
+    assert f"user:{user.id}:session:{new_id}" in rooms
 
 
 async def test_an_older_rows_worktree_choice_is_ignored(

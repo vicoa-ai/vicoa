@@ -10,8 +10,7 @@ import { messageAuthorResolver, transcriptBylines } from '@/lib/session-people';
 import { useCurrentUserId } from '@/lib/hooks/use-current-user-id';
 import { agentPrincipal, useAgentProfiles } from '@/lib/use-agent-profiles';
 import { Button } from '@/components/ui/button';
-import { X, ArrowDown, Pin, Loader2, Menu, PanelLeft, Folder, FolderPlus, MessageCircle, FileCode, Share, CalendarClock } from 'lucide-react';
-import Link from 'next/link';
+import { X, ArrowDown, Pin, Loader2, Menu, PanelLeft, FolderPlus, MessageCircle, FileCode, Share } from 'lucide-react';
 import { useDesktopChrome } from '@/components/dashboard/desktop-chrome-context';
 import { DRAG_REGION, NO_DRAG } from '@/lib/app-region';
 import { attachSelectionDragFix } from '@/lib/selection-drag-fix';
@@ -28,7 +27,6 @@ import { getMessageStore } from '@/lib/message-store';
 import { useMessageStream, type MessageDelivery } from '@/lib/hooks/use-ws-stream';
 import { getWsClient, type InstanceBody, type UpdatePayload } from '@/lib/ws-client';
 import { extractMessageOptions, formatTaskNotifications } from '@/components/ui/message-markdown-utils';
-import { GitBranchBadge } from '@/components/dashboard/git-branch-badge';
 import { WorktreeSetupBadge } from '@/components/dashboard/worktree-setup-badge';
 import { resolveAgentType, vibingMessages, getMessageVisibleText, VibingText } from '@/components/dashboard/chat-message-item';
 import { ChatFindBar } from '@/components/dashboard/chat-find-bar';
@@ -68,9 +66,14 @@ import {
   sessionProjectChoices,
 } from '@/components/dashboard/session-project-choices';
 import { newProjectFolder } from '@/lib/project-paths';
-import { NO_PROJECT_LABEL } from '@/components/dashboard/task-ui';
 import { useProjects } from '@/lib/use-projects';
-import { SessionCreatedTasks } from '@/components/dashboard/session-created-tasks';
+import {
+  SessionSummaryCard,
+  SessionSummaryColumn,
+  SessionSummaryToggle,
+  useSessionSummary,
+} from '@/components/dashboard/session-summary';
+import { SUMMARY_CHAT_INSET, SUMMARY_COLUMN_WIDTH } from '@/lib/session-summary';
 import { FileSearchPalette } from '@/components/dashboard/file-search-palette';
 import { toAbsolutePath } from '@/lib/utils';
 import { RenameSessionDialog, DeleteSessionDialog } from '@/components/dashboard/session-dialogs';
@@ -677,6 +680,9 @@ function AgentInstanceContent() {
     // Filed under another project elsewhere (the sidebar, another device, the
     // CLI): keep the ⋯ menu's checked project current. Absent = older server.
     if (body.project_id !== undefined) patch.project_id = body.project_id;
+    // Linked to its task after it started (task dispatch stamps it a few
+    // seconds in), or linked/unlinked elsewhere: the summary card follows.
+    if (body.task_id !== undefined) patch.task_id = body.task_id;
     if (Object.keys(patch).length > 0) getMessageStore().patchInstance(instanceId, patch);
   }, [instanceId]);
 
@@ -2262,6 +2268,21 @@ function AgentInstanceContent() {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [panel.isOverlay, isOwner, fileOverlay, setPanelOpen, setPanelMaximized]);
 
+  // The summary card (project, folder, branch, computer, task, automation):
+  // docked in its own column beside the chat when the session column has room
+  // for both, a menu off its header toggle when not. Never docked under the
+  // maximized files panel, which fills the column.
+  const [sessionColumn, setSessionColumn] = useState<HTMLDivElement | null>(null);
+  const summary = useSessionSummary(sessionColumn, !fileOverlay);
+  const { setFloating: setSummaryFloating } = summary;
+  const { setActiveTab: setPanelTab } = panel;
+  // The branch row's line counts open the panel on its changes.
+  const handleShowChanges = useCallback(() => {
+    setSummaryFloating(false);
+    setPanelTab('git');
+    setPanelOpen(true);
+  }, [setPanelOpen, setPanelTab, setSummaryFloating]);
+
   if (isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center p-6">
@@ -2316,6 +2337,19 @@ function AgentInstanceContent() {
 
   // Absolute project root — lets tool-use file paths render relative to it.
   const projectRootPath = toAbsolutePath(instance.project, instance.home_dir);
+
+  // One summary card, two homes: its own column beside the chat, or the
+  // header toggle's menu. Only one shows at a time.
+  const summaryCard = (
+    <SessionSummaryCard
+      instance={instance}
+      project={headerProject}
+      isOwner={isOwner}
+      messageCount={instance.messages.length}
+      agentWorking={agentIsWorking}
+      onShowChanges={isOwner ? handleShowChanges : undefined}
+    />
+  );
 
   // Session config snapshot: prefer session_config from backend, fall back to live state.
   const sessionConfigSnapshot = extractSessionConfigFromInstance(instance);
@@ -2482,6 +2516,7 @@ function AgentInstanceContent() {
   return (
     <div className="h-full flex">
       <div
+        ref={setSessionColumn}
         className="relative flex-1 min-w-0 flex flex-col h-full"
         onDragEnter={handleDropDragEnter}
         onDragOver={handleDropDragOver}
@@ -2553,7 +2588,7 @@ function AgentInstanceContent() {
               <AgentTypeIcon agentTypeName={instance.agent_type_name} size={14} whiteForOpenAI />
             )}
             {instance.pinned_at ? <Pin className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" /> : null}
-            <h1 className="text-sm font-normal font-mono flex items-center gap-2 min-w-0 max-w-md">
+            <h1 className="text-sm font-normal font-mono flex items-center gap-2 min-w-0">
               {(() => {
                 // Helper function to extract last part of path
                 const getLastPathPart = (path: string) => {
@@ -2592,210 +2627,147 @@ function AgentInstanceContent() {
                 );
               })()}
             </h1>
+          </div>
+          <div style={NO_DRAG} className="flex flex-shrink-0 items-center gap-0.5">
+            {/* Worktree setup progress lives on the right with the other
+                transient/action controls, not beside the branch: it comes and
+                goes, and this cluster is right-anchored, so its appearance never
+                shifts the ⋯ menu or the edge buttons (and this div is already
+                NO_DRAG for its click). */}
+            {isOwner && (
+              <WorktreeSetupBadge machineId={instance.machine_id ?? null} cwd={instance.project ?? null} />
+            )}
+            {/* The ⋯ menu sits with the other action buttons, left of Share.
+                It also hosts "Open in ▸": the project directory is a
+                session-level target, so it belongs with the session's other
+                actions rather than in its own control. The files panel keeps a
+                top-level "Open in" because there the target is the file on
+                screen. */}
+            {!isOwner ? (
+              <SessionActionsMenu
+                onCopyId={() => {
+                  void handleCopySessionId();
+                }}
+                copied={copiedSessionId === (instance?.id || instanceId)}
+                className="h-8 w-8 p-0 hover:bg-muted"
+                iconClassName="h-4 w-4"
+                contentClassName="font-mono"
+              />
+            ) : (
+              <SessionActionsMenu
+                trailingItems={
+                  <OpenInSubMenu
+                    machineId={instance.machine_id ?? null}
+                    cwd={instance.project ?? null}
+                    separatorBefore
+                  />
+                }
+                projectChoices={sessionProjectChoices(
+                  fileable,
+                  instance.project_id ?? null,
+                  (projectId) => void handleMoveToProject(projectId),
+                  newFolder
+                    ? { folder: newFolder, onCreate: () => void handleMoveToNewProject() }
+                    : undefined,
+                )}
+                onResume={() => void handleResumeSession()}
+                showResume={canResume}
+                resumeDisabledReason={
+                  isResuming
+                    ? 'Resuming…'
+                    : resumeBlocked
+                      ? resumeBlockedMessage(resumeBlocked)
+                      : null
+                }
+                resumeBlockedLabel={
+                  isResuming
+                    ? 'Resuming…'
+                    : resumeBlocked
+                      ? resumeBlockedShortLabel(resumeBlocked)
+                      : null
+                }
+                onPin={handleTogglePin}
+                isPinned={!!instance.pinned_at}
+                onShare={
+                  !isDesktopLocal() && instance.is_owner !== false ? () => setShareOpen(true) : undefined
+                }
+                onRename={handleOpenRenameDialog}
+                onCopyId={() => {
+                  void handleCopySessionId();
+                }}
+                copied={copiedSessionId === (instance?.id || instanceId)}
+                onMarkDone={
+                  instance.status !== 'COMPLETED' ? () => handleMarkSessionComplete(instanceId) : undefined
+                }
+                showMarkDone={instance.status !== 'COMPLETED'}
+                onUnread={
+                  instance.status === 'REVIEWED'
+                    ? () => {
+                        void handleMarkSessionUnread(instanceId);
+                      }
+                    : undefined
+                }
+                showUnread={instance.status === 'REVIEWED'}
+                onDelete={() => {
+                  const sessionName = instance.name || '';
+                  handleDeleteSession(instanceId, sessionName);
+                }}
+                className="h-8 w-8 p-0 hover:bg-muted"
+                iconClassName="h-4 w-4"
+                contentClassName="font-mono"
+              />
+            )}
+            {/* Who is in the session, beside the button that shares it. */}
             <SessionParticipants
               participants={instance.participants ?? []}
               owner={isOwner ? null : instance.owner}
               viewerRole={isOwner ? null : instance.viewer_role}
               canPrompt={canPrompt}
             />
-            {/* Provenance: the automation whose run started this session, or
-                one that runs in it. The backend sends it only when the viewer
-                may open that automation, its own row or a read-only shared one. */}
-            {instance.automation && (
-              <>
-                <span className="text-muted-foreground flex-shrink-0">·</span>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Link
-                      href={`/dashboard/automation?automation=${instance.automation.id}`}
-                      style={NO_DRAG}
-                      className="flex min-w-0 max-w-[14vw] cursor-pointer items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-                    >
-                      <CalendarClock className="h-3.5 w-3.5 flex-shrink-0" />
-                      <span className="truncate">{instance.automation.title}</span>
-                    </Link>
-                  </TooltipTrigger>
-                  <TooltipContent align="start">
-                    <p>
-                      {instance.automation.runs_here
-                        ? 'The automation '
-                        : 'Started by the automation '}
-                      &ldquo;{instance.automation.title}&rdquo;
-                      {instance.automation.runs_here ? ' runs in this session' : ''}
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </>
+            {/* Share sits next to the panel toggle (same visual weight); the
+                ⋯ menu keeps its entry too. Same gate as the menu entry. */}
+            {!isDesktopLocal() && instance.is_owner !== false && (
+              <button
+                type="button"
+                aria-label="Share session"
+                title="Share"
+                onClick={() => setShareOpen(true)}
+                className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded p-0 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <Share className="h-4 w-4" />
+              </button>
             )}
-            {/* Provenance the other way: tasks this session created. */}
-            <SessionCreatedTasks instanceId={instance.id} messageCount={instance.messages.length} />
-            {instance.project && (
-              <>
-                <span className="text-muted-foreground flex-shrink-0">·</span>
-                {/* Folder chip: basename only. The tooltip adds the full path
-                    and the project the session is filed under, which can
-                    differ from the folder once it has been moved. NO_DRAG so
-                    the desktop title bar doesn't swallow the hover. */}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span
-                      style={NO_DRAG}
-                      className="flex min-w-0 max-w-[16vw] cursor-default items-center gap-1 font-mono text-sm text-muted-foreground"
-                    >
-                      <Folder className="h-3.5 w-3.5 flex-shrink-0" />
-                      <span className="truncate">
-                        {instance.project.replace(/\/+$/, '').split('/').pop() || instance.project}
-                      </span>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent align="start">
-                    {headerProject ? (
-                      <p>Project: {headerProject.name}</p>
-                    ) : instanceProjectId === null ? (
-                      <p>Project: {NO_PROJECT_LABEL}</p>
-                    ) : null}
-                    <p>Folder: {instance.project}</p>
-                  </TooltipContent>
-                </Tooltip>
-                {isOwner && (
-                  <GitBranchBadge machineId={instance.machine_id ?? null} cwd={instance.project} />
-                )}
-                {/* Focus-mode peek toggle: sits right after the branch (or after
-                    the project path when there's no branch, since the badge
-                    renders nothing then). Only shown while focused; hold ` for a
-                    momentary peek. */}
-                {fileOverlay && (
-                  <button
-                    type="button"
-                    style={NO_DRAG}
-                    onClick={() => setPeekSticky((v) => !v)}
-                    aria-label={peeking ? 'Back to file' : 'Peek chat'}
-                    title={
-                      peeking
-                        ? 'Back to file'
-                        : peekHint
-                          ? `Peek chat (hold ${peekHint} for a quick look)`
-                          : 'Peek chat'
-                    }
-                    className={`ml-1 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded hover:bg-muted ${
-                      peeking ? 'text-foreground' : 'text-muted-foreground'
-                    }`}
-                  >
-                    {peeking ? <FileCode className="h-4 w-4" /> : <MessageCircle className="h-4 w-4" />}
-                  </button>
-                )}
-              </>
+            {/* Project, folder, branch, computer, task: docked beside the chat
+                when there is room, a menu off this button when not. */}
+            <SessionSummaryToggle state={summary}>{summaryCard}</SessionSummaryToggle>
+            {/* Focus-mode peek toggle, beside the panel it looks past. Only
+                shown while focused; hold ` for a momentary peek. */}
+            {fileOverlay && (
+              <button
+                type="button"
+                onClick={() => setPeekSticky((v) => !v)}
+                aria-label={peeking ? 'Back to file' : 'Peek chat'}
+                title={
+                  peeking
+                    ? 'Back to file'
+                    : peekHint
+                      ? `Peek chat (hold ${peekHint} for a quick look)`
+                      : 'Peek chat'
+                }
+                className={`inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded p-0 hover:bg-muted ${
+                  peeking ? 'text-foreground' : 'text-muted-foreground'
+                }`}
+              >
+                {peeking ? <FileCode className="h-4 w-4" /> : <MessageCircle className="h-4 w-4" />}
+              </button>
             )}
+            {isOwner && <FilesGitPanelToggle open={panel.open} onToggle={panel.toggleOpen} />}
+            {/* The files/git panel takes the window's right edge only as the right
+                rail; reserve here when it's closed OR maximized into the center
+                overlay (which no longer sits at the top-right edge). */}
+            {(!panel.open || fileOverlay) && <DesktopWindowControlsSpacer />}
           </div>
         </TooltipProvider>
-        <div style={NO_DRAG} className="flex items-center gap-0.5">
-          {/* Worktree setup progress lives on the right with the other
-              transient/action controls, not beside the branch: it comes and
-              goes, and this cluster is right-anchored, so its appearance never
-              shifts the ⋯ menu or the edge buttons (and this div is already
-              NO_DRAG for its click). */}
-          {isOwner && (
-            <WorktreeSetupBadge machineId={instance.machine_id ?? null} cwd={instance.project ?? null} />
-          )}
-          {/* The ⋯ menu sits with the other action buttons, left of Share.
-              It also hosts "Open in ▸": the project directory is a
-              session-level target, so it belongs with the session's other
-              actions rather than in its own control. The files panel keeps a
-              top-level "Open in" because there the target is the file on
-              screen. */}
-          {!isOwner ? (
-            <SessionActionsMenu
-              onCopyId={() => {
-                void handleCopySessionId();
-              }}
-              copied={copiedSessionId === (instance?.id || instanceId)}
-              className="h-8 w-8 p-0 hover:bg-muted"
-              iconClassName="h-4 w-4"
-              contentClassName="font-mono"
-            />
-          ) : (
-            <SessionActionsMenu
-              trailingItems={
-                <OpenInSubMenu
-                  machineId={instance.machine_id ?? null}
-                  cwd={instance.project ?? null}
-                  separatorBefore
-                />
-              }
-              projectChoices={sessionProjectChoices(
-                fileable,
-                instance.project_id ?? null,
-                (projectId) => void handleMoveToProject(projectId),
-                newFolder
-                  ? { folder: newFolder, onCreate: () => void handleMoveToNewProject() }
-                  : undefined,
-              )}
-              onResume={() => void handleResumeSession()}
-              showResume={canResume}
-              resumeDisabledReason={
-                isResuming
-                  ? 'Resuming…'
-                  : resumeBlocked
-                    ? resumeBlockedMessage(resumeBlocked)
-                    : null
-              }
-              resumeBlockedLabel={
-                isResuming
-                  ? 'Resuming…'
-                  : resumeBlocked
-                    ? resumeBlockedShortLabel(resumeBlocked)
-                    : null
-              }
-              onPin={handleTogglePin}
-              isPinned={!!instance.pinned_at}
-              onShare={
-                !isDesktopLocal() && instance.is_owner !== false ? () => setShareOpen(true) : undefined
-              }
-              onRename={handleOpenRenameDialog}
-              onCopyId={() => {
-                void handleCopySessionId();
-              }}
-              copied={copiedSessionId === (instance?.id || instanceId)}
-              onMarkDone={
-                instance.status !== 'COMPLETED' ? () => handleMarkSessionComplete(instanceId) : undefined
-              }
-              showMarkDone={instance.status !== 'COMPLETED'}
-              onUnread={
-                instance.status === 'REVIEWED'
-                  ? () => {
-                      void handleMarkSessionUnread(instanceId);
-                    }
-                  : undefined
-              }
-              showUnread={instance.status === 'REVIEWED'}
-              onDelete={() => {
-                const sessionName = instance.name || '';
-                handleDeleteSession(instanceId, sessionName);
-              }}
-              className="h-8 w-8 p-0 hover:bg-muted"
-              iconClassName="h-4 w-4"
-              contentClassName="font-mono"
-            />
-          )}
-          {/* Share sits next to the panel toggle (same visual weight); the
-              ⋯ menu keeps its entry too. Same gate as the menu entry. */}
-          {!isDesktopLocal() && instance.is_owner !== false && (
-            <button
-              type="button"
-              aria-label="Share session"
-              title="Share"
-              onClick={() => setShareOpen(true)}
-              className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded p-0 text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <Share className="h-4 w-4" />
-            </button>
-          )}
-          {isOwner && <FilesGitPanelToggle open={panel.open} onToggle={panel.toggleOpen} />}
-          {/* The files/git panel takes the window's right edge only as the right
-              rail; reserve here when it's closed OR maximized into the center
-              overlay (which no longer sits at the top-right edge). */}
-          {(!panel.open || fileOverlay) && <DesktopWindowControlsSpacer />}
-        </div>
       </div>
 
       {/* Message Stats Row */}
@@ -2833,6 +2805,14 @@ function AgentInstanceContent() {
         </div>
       </div> */}
 
+      {/* The transcript, beside the docked summary card when it has room. It
+          steps in from the left by what the card's gap takes on the right, so
+          it stays centred between the sidebar and the card. */}
+      <div className="flex min-h-0 flex-1">
+      <div
+        className="flex min-w-0 flex-1 flex-col"
+        style={summary.docked ? { paddingLeft: SUMMARY_CHAT_INSET } : undefined}
+      >
       {/* Messages Area - virtualized via react-virtuoso */}
       <FileLinkProvider
         cwd={instance?.project ?? null}
@@ -3024,6 +3004,9 @@ function AgentInstanceContent() {
       </div>
       </FindHighlightProvider>
       </FileLinkProvider>
+      </div>
+      {summary.docked && <SessionSummaryColumn>{summaryCard}</SessionSummaryColumn>}
+      </div>
 
       {/* Git Changes Button */}
       {/* {instance.git_diff && (() => {
@@ -3060,9 +3043,17 @@ function AgentInstanceContent() {
         );
       })()} */}
 
-      {/* Fixed Chat Input at Bottom */}
+      {/* Fixed Chat Input at Bottom. Its band spans the column; with the
+          summary docked, the box itself lines up with the transcript above. */}
       <div className="flex-shrink-0 bg-muted/10">
-        <div className="p-4">
+        <div
+          className="p-4"
+          style={
+            summary.docked
+              ? { paddingLeft: 16 + SUMMARY_CHAT_INSET, paddingRight: 16 + SUMMARY_COLUMN_WIDTH }
+              : undefined
+          }
+        >
           <div className="max-w-4xl mx-auto">
             {!composerClosed && permissionModeError && (
               <div
@@ -3170,7 +3161,6 @@ function AgentInstanceContent() {
           </div>
         </div>
       </div>
-
 
       </div>
 
