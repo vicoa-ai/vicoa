@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,10 @@ _USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 _OAUTH_BETA_HEADER = "oauth-2025-04-20"
 # macOS Keychain entry the Claude Code CLI writes when the file is absent.
 _KEYCHAIN_SERVICE = "Claude Code-credentials"
+# Claude Code files that entry under an account named after the user, and
+# falls back to this name when the user name has other characters.
+_KEYCHAIN_ACCOUNT_RE = re.compile(r"[A-Za-z0-9._-]+")
+_KEYCHAIN_FALLBACK_ACCOUNT = "claude-code-user"
 
 
 def _credentials_path() -> Path:
@@ -35,34 +40,49 @@ def _credentials_path() -> Path:
     return root / ".credentials.json"
 
 
-def _read_credentials_raw() -> Optional[str]:
-    """Return the raw credentials JSON from the file, else the macOS Keychain."""
+def _read_credentials_file() -> Optional[str]:
     try:
         return _credentials_path().read_text()
     except OSError:
-        pass
-    if sys.platform == "darwin":
+        return None
+
+
+def _keychain_account() -> str:
+    """The Keychain account Claude Code reads and writes its login under:
+    ``$USER``, else the login name, else a fixed fallback."""
+    name = os.environ.get("USER") or ""
+    if not name:
         try:
-            result = subprocess.run(
-                ["security", "find-generic-password", "-s", _KEYCHAIN_SERVICE, "-w"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout
-        except (OSError, subprocess.SubprocessError):
-            return None
+            import pwd  # POSIX only; this path only runs on macOS.
+
+            name = pwd.getpwuid(os.getuid()).pw_name
+        except (ImportError, KeyError, OSError):
+            name = ""
+    if not _KEYCHAIN_ACCOUNT_RE.fullmatch(name):
+        return _KEYCHAIN_FALLBACK_ACCOUNT
+    return name
+
+
+def _read_keychain(account: Optional[str]) -> Optional[str]:
+    """Raw JSON of the ``Claude Code-credentials`` Keychain item, or ``None``.
+
+    With no ``account`` the lookup matches on service alone and returns
+    whichever item with that service the Keychain lists first.
+    """
+    command = ["security", "find-generic-password", "-s", _KEYCHAIN_SERVICE, "-w"]
+    if account:
+        command[2:2] = ["-a", account]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout
     return None
 
 
-def read_claude_oauth_token() -> Optional[str]:
-    """Return the Claude Code OAuth access token, or ``None`` when unavailable.
-
-    ``None`` covers the API-key case too: a pay-as-you-go setup has no
-    ``claudeAiOauth`` block (and no rate-limit windows to show).
-    """
-    raw = _read_credentials_raw()
+def _token_from_credentials(raw: Optional[str]) -> Optional[str]:
+    """``claudeAiOauth.accessToken`` out of a credentials JSON blob."""
     if not raw:
         return None
     try:
@@ -73,6 +93,29 @@ def read_claude_oauth_token() -> Optional[str]:
     if isinstance(oauth, dict):
         token = oauth.get("accessToken")
         if isinstance(token, str) and token:
+            return token
+    return None
+
+
+def read_claude_oauth_token() -> Optional[str]:
+    """Return the Claude Code OAuth access token, or ``None`` when unavailable.
+
+    ``None`` covers the API-key case too: a pay-as-you-go setup has no
+    ``claudeAiOauth`` block (and no rate-limit windows to show).
+
+    On macOS the Keychain is asked for the item under the user's account
+    first. More than one item can carry the service name (one holding only
+    MCP server tokens, filed under another account, has been seen), and a
+    lookup by service alone may return that one, which has no Claude login.
+    The service-only lookup stays as a fallback for an item filed under an
+    account name this process does not derive.
+    """
+    token = _token_from_credentials(_read_credentials_file())
+    if token or sys.platform != "darwin":
+        return token
+    for account in (_keychain_account(), None):
+        token = _token_from_credentials(_read_keychain(account))
+        if token:
             return token
     return None
 
