@@ -4,6 +4,18 @@ import type { BillingSeats, BillingSubscription, BillingTier, SeatPrice } from '
  *  Every seat entry point links here, whatever plan the payer is on. */
 export const SEATS_PAGE_HREF = '/dashboard/seats';
 
+/**
+ * What opened the in-app upgrade dialog. Every event the dialog emits carries
+ * it as `entry`, so a checkout can be traced back to the prompt that led to it.
+ */
+export type UpgradeEntry =
+  | 'sidebar'
+  | 'account_menu'
+  | 'billing_settings'
+  | 'teams_settings'
+  | 'machine_limit'
+  | 'automation_limit';
+
 export const BILLING_PLAN_LABELS: Record<string, string> = {
   free: 'Free',
   pro: 'Pro',

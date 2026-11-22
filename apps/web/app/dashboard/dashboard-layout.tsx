@@ -33,7 +33,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
-import { AccountPlanItem } from '@/components/billing/account-plan-item';
+import { AccountPlanItem, SidebarPlanButton } from '@/components/billing/account-plan-item';
 import { UpgradeDialog } from '@/components/billing/upgrade-dialog';
 import { MachineLimitDialog } from '@/components/desktop/machine-limit-dialog';
 import { MENU_MAX_AGE_MS, refreshBillingSubscriptionIfOlderThan } from '@/lib/billing-subscription';
@@ -629,8 +629,11 @@ function DashboardSidebar({
 
                 <AccountPlanItem subscription={billingSubscription} className="mx-2 mt-2" />
 
-                <div className="py-1">
+                {/* `empty:hidden`: a free account with no team and no invitation
+                    gets no Teams row, so this wrapper must not leave a gap. */}
+                <div className="py-1 empty:hidden">
                   <AccountMenuInvitations
+                    subscription={billingSubscription}
                     itemClassName="px-4 py-2.5 text-xs text-foreground/80"
                     rowClassName="px-4"
                   />
@@ -708,6 +711,8 @@ function DashboardSidebar({
               </DropdownMenuContent>
             </DropdownMenu>
             </div>
+            {/* Free's plan, left of the Settings shortcut. Expanded rail only. */}
+            {showSideBar && <SidebarPlanButton subscription={billingSubscription} />}
             {/* Settings shortcut beside the avatar — straight to the page,
                 skipping the account menu (session ask). Expanded rail only. */}
             {showSideBar && (

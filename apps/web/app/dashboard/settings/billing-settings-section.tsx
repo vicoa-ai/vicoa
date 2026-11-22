@@ -126,7 +126,7 @@ export function BillingSettingsSection({
                   Try Vicoa
                 </p>
               </div>
-              <Button className="cursor-pointer sm:min-w-[120px]" onClick={openUpgradeDialog}>
+              <Button className="cursor-pointer sm:min-w-[120px]" onClick={() => openUpgradeDialog('billing_settings')}>
                 Upgrade
               </Button>
             </div>

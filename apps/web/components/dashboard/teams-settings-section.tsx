@@ -205,7 +205,7 @@ function TeamOwnOffer({ className }: { className?: string }) {
         <Button asChild size="sm" className="h-8 cursor-pointer text-xs">
           <Link href={SEATS_PAGE_HREF}>Get Vicoa Team</Link>
         </Button>
-        <Button size="sm" variant="outline" className="h-8 cursor-pointer text-xs" onClick={openUpgradeDialog}>
+        <Button size="sm" variant="outline" className="h-8 cursor-pointer text-xs" onClick={() => openUpgradeDialog('teams_settings')}>
           Get Pro
         </Button>
       </div>

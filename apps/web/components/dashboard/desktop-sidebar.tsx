@@ -32,9 +32,9 @@ import { SidebarSessions } from '@/components/dashboard/sidebar-sessions';
 import { PluginSidebarItems } from '@/components/plugins/plugin-sidebar-items';
 import { SetupChecklist } from '@/components/dashboard/setup-checklist';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
-import { AccountMenuInvitations, InvitationDot } from '@/components/dashboard/account-menu-invitations';
+import { AccountMenuInvitations } from '@/components/dashboard/account-menu-invitations';
 import type { AuthUser } from '@/lib/auth/user';
-import { AccountPlanItem } from '@/components/billing/account-plan-item';
+import { AccountPlanItem, SidebarPlanButton } from '@/components/billing/account-plan-item';
 import { MENU_MAX_AGE_MS, refreshBillingSubscriptionIfOlderThan } from '@/lib/billing-subscription';
 import { useTerminalSessions } from '@/components/terminal-pane/terminal-sessions';
 
@@ -53,9 +53,10 @@ const clampSidebarWidth = (width: number) =>
 
 /**
  * Minimal sidebar for the desktop app: an OS titlebar, "New session" + nav, the
- * shared session list, and an account area. No billing, no settings menus, no
- * upgrade prompts, and no `/api/user` SWR — in desktop-local mode there is no
- * Supabase session and those endpoints would all fail.
+ * shared session list, and an account area. The plan and its Upgrade live in
+ * the cloud-mode account area only: desktop-local mode has no Supabase session,
+ * so it gets no billing, no upgrade prompts and no `/api/user` SWR, whose
+ * endpoints would all fail.
  *
  * The session list itself is the shared `<SidebarSessions>` component (also used
  * by the web dashboard). Desktop turns on its extra capabilities: worktree
@@ -527,10 +528,8 @@ function CloudAccountArea() {
           aria-label="Account menu"
           className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left transition-colors hover:bg-foreground/[0.06] dark:hover:bg-foreground/10"
         >
-          {/* Relative box for the pending-invitations dot. */}
-          <span className="relative flex shrink-0">
+          <span className="flex shrink-0">
             <PrincipalAvatar principal={principal} size="sm" className="size-4" />
-            <InvitationDot className="size-1.5" />
           </span>
           <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground" title={email ?? undefined}>
             {name || email || 'Signed in'}
@@ -553,7 +552,7 @@ function CloudAccountArea() {
           </div>
         </div>
         <AccountPlanItem subscription={billingSubscription} className="mx-1 mt-1" />
-        <AccountMenuInvitations itemClassName="gap-2 text-xs text-foreground/80" />
+        <AccountMenuInvitations subscription={billingSubscription} itemClassName="gap-2 text-xs text-foreground/80" />
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild className="cursor-pointer gap-2 text-xs text-foreground/80">
           <Link href="/dashboard/settings" className="flex w-full items-center gap-2">
@@ -593,6 +592,7 @@ function CloudAccountArea() {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+    <SidebarPlanButton subscription={billingSubscription} className="mr-0.5" />
     {/* Quick settings shortcut beside the account row (parity with the web
         sidebar's gear); the account dropdown keeps its own Settings item. */}
     <Link

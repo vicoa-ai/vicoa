@@ -12,7 +12,8 @@
  * sign-up redirect).
  *
  * Mounted once by the dashboard shell; anything inside it opens the dialog
- * with `openUpgradeDialog()`.
+ * with `openUpgradeDialog(entry)`. `entry` names the caller and rides on every
+ * event the dialog emits, including the checkout events from its cards.
  *
  * Checkout: the desktop opens Stripe in the system browser and re-reads the
  * plan whenever the window regains focus, closing once it reads Pro (the same
@@ -26,27 +27,30 @@ import posthog from 'posthog-js';
 import { X } from 'lucide-react';
 import { PricingCards } from '@/components/billing/pricing-cards';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import { SEATS_PAGE_HREF } from '@/lib/billing';
+import { SEATS_PAGE_HREF, type UpgradeEntry } from '@/lib/billing';
 import { refreshBillingSubscription } from '@/lib/billing-subscription';
 import { isPro } from '@/lib/desktop-paywall';
 
 const OPEN_EVENT = 'vicoa:open-upgrade-dialog';
 
-export function openUpgradeDialog(): void {
-  window.dispatchEvent(new Event(OPEN_EVENT));
+export function openUpgradeDialog(entry: UpgradeEntry): void {
+  window.dispatchEvent(new CustomEvent<UpgradeEntry>(OPEN_EVENT, { detail: entry }));
 }
 
 export function UpgradeDialog() {
   const [open, setOpen] = useState(false);
+  const [entry, setEntry] = useState<UpgradeEntry | undefined>(undefined);
   // Desktop only: checkout is open in the browser, so the plan may change
   // when the window comes back into focus.
   const [awaitingBrowser, setAwaitingBrowser] = useState(false);
 
   useEffect(() => {
-    const onOpen = () => {
+    const onOpen = (event: Event) => {
+      const openedFrom = (event as CustomEvent<UpgradeEntry>).detail;
+      setEntry(openedFrom);
       setAwaitingBrowser(false);
       setOpen(true);
-      posthog.capture('upgrade_page_viewed', { presentation: 'dialog' });
+      posthog.capture('upgrade_page_viewed', { presentation: 'dialog', entry: openedFrom });
     };
     window.addEventListener(OPEN_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_EVENT, onOpen);
@@ -83,7 +87,7 @@ export function UpgradeDialog() {
           </p>
         </div>
 
-        <PricingCards inApp onCheckoutInBrowser={() => setAwaitingBrowser(true)} />
+        <PricingCards inApp entry={entry} onCheckoutInBrowser={() => setAwaitingBrowser(true)} />
 
         {awaitingBrowser && (
           <p className="mt-6 text-center text-xs leading-relaxed text-muted-foreground">
@@ -94,7 +98,10 @@ export function UpgradeDialog() {
         <div className="mt-5 text-center text-xs text-muted-foreground">
           <Link
             href={SEATS_PAGE_HREF}
-            onClick={() => setOpen(false)}
+            onClick={() => {
+              posthog.capture('pricing_cta_clicked', { plan: 'team', entry });
+              setOpen(false);
+            }}
             className="cursor-pointer underline-offset-4 transition-colors hover:text-foreground hover:underline"
           >
             Buying for a team? Choose seats

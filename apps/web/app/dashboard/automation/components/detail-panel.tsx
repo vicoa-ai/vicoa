@@ -276,7 +276,7 @@ export function DetailPanel({
       if (limit) {
         setError(limit.detail);
         toast.error("Couldn't create the automation", { description: limit.detail });
-        openUpgradeDialog();
+        openUpgradeDialog('automation_limit');
       } else {
         setError(err instanceof Error ? err.message : 'Failed to save automation');
       }

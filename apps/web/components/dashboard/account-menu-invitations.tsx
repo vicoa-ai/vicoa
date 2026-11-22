@@ -6,10 +6,13 @@
  * (`components/dashboard/desktop-sidebar.tsx`):
  *
  * - `<AccountMenuInvitations />` goes inside an open `DropdownMenuContent`: a
- *   "Teams" item, then, while any are pending, the invitations addressed to
- *   the signed-in user with inline Join / Decline.
- * - `<InvitationDot />` sits on the avatar trigger (a `relative` box) while
- *   any invitation is pending, so the menu is worth opening.
+ *   "Teams" item (only where `shouldShowTeamsEntry` says the account has a use
+ *   for it), then, while any are pending, the invitations addressed to the
+ *   signed-in user with inline Join / Decline. It renders nothing at all for a
+ *   free account with no team and no invitation.
+ * - `<InvitationDot />` sits on the web avatar trigger (a `relative` box) while
+ *   any invitation is pending, so the menu is worth opening. The desktop app
+ *   has no dot: it reads invitations only when its menu opens.
  *
  * Both read `useTeamInvitations`, so they share one request and clear
  * together. Teams are groups you share work with, not workspaces: there is no
@@ -19,19 +22,30 @@
 import { useState, type MouseEvent } from 'react';
 import Link from 'next/link';
 import { Loader2, Users } from 'lucide-react';
+import useSWR from 'swr';
 
 import { SeatLimitNotice } from '@/components/billing/seat-limit-notice';
 import { DropdownMenuItem, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
 import { PrincipalAvatar } from '@/components/ui/principal-avatar';
-import { seatLimitFromError, type TeamInvitation } from '@/lib/backend-api';
-import { invitedYouLine, teamsSettingsHref } from '@/lib/team-settings';
-import { useTeamInvitations } from '@/lib/use-team-invitations';
+import {
+  getBackendAPI,
+  seatLimitFromError,
+  type BillingSubscription,
+  type TeamInvitation,
+  type TeamSummary,
+} from '@/lib/backend-api';
+import { isDesktopLocal } from '@/lib/runtime-config';
+import { invitedYouLine, shouldShowTeamsEntry, teamsSettingsHref } from '@/lib/team-settings';
+import { TEAMS_KEY, useTeamInvitations } from '@/lib/use-team-invitations';
 import { cn } from '@/lib/utils';
 
 export function AccountMenuInvitations({
+  subscription,
   itemClassName,
   rowClassName,
 }: {
+  /** The account's plan, which decides whether the "Teams" item is listed. */
+  subscription: BillingSubscription | null | undefined;
   /** Classes for the "Teams" item, to match the host menu's items. */
   itemClassName?: string;
   /** Horizontal padding for the label and invitation rows, to line them up
@@ -39,15 +53,31 @@ export function AccountMenuInvitations({
   rowClassName?: string;
 }) {
   const { invitations, accept, decline } = useTeamInvitations();
+  // Same key as Settings → Teams, so the list is shared with it. This
+  // component only exists while the menu is open, so the list is read when the
+  // menu opens and not otherwise: nothing at app load, nothing in the
+  // background, and no refetch when the window regains focus meanwhile.
+  const { data: teams } = useSWR<TeamSummary[]>(
+    isDesktopLocal() ? null : TEAMS_KEY,
+    () => getBackendAPI(true).listTeams(),
+    { shouldRetryOnError: false, revalidateOnFocus: false, revalidateOnReconnect: false },
+  );
+  const showTeams = shouldShowTeamsEntry({
+    subscription,
+    teamCount: teams?.length,
+    invitationCount: invitations.length,
+  });
 
   return (
     <>
-      <DropdownMenuItem asChild className={cn('cursor-pointer', itemClassName)}>
-        <Link href={teamsSettingsHref()} className="flex w-full items-center gap-2">
-          <Users className="h-4 w-4" />
-          <span>Teams</span>
-        </Link>
-      </DropdownMenuItem>
+      {showTeams && (
+        <DropdownMenuItem asChild className={cn('cursor-pointer', itemClassName)}>
+          <Link href={teamsSettingsHref()} className="flex w-full items-center gap-2">
+            <Users className="h-4 w-4" />
+            <span>Teams</span>
+          </Link>
+        </DropdownMenuItem>
+      )}
       {invitations.length > 0 && (
         <>
           <DropdownMenuLabel

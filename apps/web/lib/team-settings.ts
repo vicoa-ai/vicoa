@@ -10,6 +10,7 @@
 
 import {
   seatLimitFromError,
+  type BillingSubscription,
   type TeamInviteLink,
   type TeamMember,
   type TeamRole,
@@ -53,6 +54,29 @@ export function teamsSettingsHref(teamId?: string | null): string {
   const params = new URLSearchParams({ tab: 'teams' });
   if (teamId) params.set('teamId', teamId);
   return `${TEAMS_SETTINGS_PATH}?${params.toString()}`;
+}
+
+/**
+ * Whether the account menu lists "Teams". A free account that is in no team
+ * and has no invitation waiting has nothing to open there (a free plan cannot
+ * own a team), so the row stays out of its menu; Settings → Teams is still a
+ * tab. It shows for a paid plan, for anyone in a team and while an invitation
+ * is pending. An unknown plan (loading, failed, or a build with no billing)
+ * shows it too: hiding a way in on a guess is worse than a row too many.
+ * `teamCount` is undefined until the teams list has loaded.
+ */
+export function shouldShowTeamsEntry({
+  subscription,
+  teamCount,
+  invitationCount,
+}: {
+  subscription: BillingSubscription | null | undefined;
+  teamCount: number | undefined;
+  invitationCount: number;
+}): boolean {
+  if (invitationCount > 0 || (teamCount ?? 0) > 0) return true;
+  if (!subscription) return true;
+  return subscription.plan_type !== 'free';
 }
 
 /** The in-app path an invite link opens (under /dashboard so sign-in bounces
