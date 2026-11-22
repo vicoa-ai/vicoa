@@ -498,3 +498,22 @@ def find_npm_cli(
             pass
 
     return None
+
+
+def find_codex_cli() -> str | None:
+    """Locate the Codex CLI, including where its own Windows installer puts it.
+
+    Codex's PowerShell installer (`irm https://chatgpt.com/codex/install.ps1 |
+    iex`) writes ``%LOCALAPPDATA%\\Programs\\OpenAI\\Codex\\bin\\codex.exe`` and
+    adds that folder to the user PATH, which only reaches processes started
+    afterwards; a daemon already running would read the agent as missing until
+    Vicoa restarts. The macOS/Linux script uses ``~/.local/bin``, which
+    `find_npm_cli` already covers.
+    """
+    extra: list[Path] = []
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if _is_windows() and local_appdata:
+        extra.append(
+            Path(local_appdata) / "Programs" / "OpenAI" / "Codex" / "bin" / "codex"
+        )
+    return find_npm_cli("codex", extra_locations=extra)

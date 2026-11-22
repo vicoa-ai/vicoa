@@ -59,6 +59,7 @@ from integrations.headless.antigravity import spec as antigravity_spec
 from vicoa.utils import (
     SESSION_TITLE_ENV,
     derive_ws_url,
+    find_codex_cli,
     get_git_identity,
     get_project_path,
 )
@@ -109,6 +110,21 @@ class MachineRegistration:
     display_name: Optional[str]
     hostname: Optional[str]
     platform: Optional[str]
+
+
+def _resolved_binary_args(flag: str, path: str | None) -> list[str]:
+    """`[flag=path]` for a session runner, or nothing when the CLI wasn't found.
+
+    The runner otherwise looks the CLI up on the PATH it inherits from this
+    daemon, which is exactly the PATH that may not hold an installer-placed
+    binary (an install made after the daemon started, a Windows installer that
+    only edits the user PATH). Detection uses the wider search, so the launch
+    has to carry what detection found or the two disagree: the picker says
+    installed and the session dies at start. One `flag=value` token, because
+    the frozen `vicoa headless` passes flags it doesn't know through to the
+    runner as they are.
+    """
+    return [f"{flag}={path}"] if path else []
 
 
 def _find_cli_in_common_locations(name: str) -> str | None:
@@ -1689,6 +1705,7 @@ class MachineDaemon:
                 session_id or "",
             ]
             if normalized_agent == "codex":
+                cmd.extend(_resolved_binary_args("--codex-binary", find_codex_cli()))
                 auth_method = self._extract_codex_auth_method(metadata)
                 if auth_method:
                     cmd.extend(["--auth-method", auth_method])
@@ -1705,6 +1722,12 @@ class MachineDaemon:
                 if prompt:
                     cmd.extend(["--prompt", prompt])
             elif normalized_agent == "opencode":
+                cmd.extend(
+                    _resolved_binary_args(
+                        "--opencode-command",
+                        _find_cli_in_common_locations("opencode"),
+                    )
+                )
                 agent_mode = self._extract_opencode_mode(metadata)
                 if agent_mode:
                     cmd.extend(["--agent-mode", agent_mode])
@@ -1800,6 +1823,7 @@ class MachineDaemon:
                 "--agent",
                 "codex",
             ]
+            cmd.extend(_resolved_binary_args("--codex-binary", find_codex_cli()))
             if session_id:
                 cmd.extend(["--session-id", session_id])
             auth_method = self._extract_codex_auth_method(metadata)
@@ -2046,7 +2070,7 @@ class MachineDaemon:
             # Native ``codex app-server`` is the only supported backend.
             # The codex-acp adapter modules remain on disk for rollback but
             # aren't part of the install precheck anymore.
-            if _find_cli_in_common_locations("codex"):
+            if find_codex_cli():
                 return None
             return (
                 "Codex CLI ('codex') is not installed or not on PATH. "
