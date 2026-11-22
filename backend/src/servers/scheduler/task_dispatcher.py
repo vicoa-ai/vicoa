@@ -8,6 +8,11 @@ One task session per (profile, task). A dispatch goes into it when it exists:
 a message when its agent is live (queued behind a running turn), a resume on
 its machine when it stopped. Only when there is no session, or it can't be
 resumed, does a new one start — with a line telling the agent it starts fresh.
+"The task session" is one filed under the task (`agent_instances.task_id`,
+the **Linked** rows of the task's Sessions list), not a session that only
+created, changed, commented on or referenced it. So an agent that asked its
+question from an automation run gets the answer in a new session, and with no
+Linked session on the task that new one has no pointer back to the run.
 A new one starts in the task's folder: the worktree an earlier session on the
 task worked in, else the project's own folder. Vicoa never makes a worktree
 for it; the brief tells the agent to make one itself when the work changes code

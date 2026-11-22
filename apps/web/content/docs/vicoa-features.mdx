@@ -145,7 +145,7 @@ The assignee is who owns the work. Assign a task to a person and it is theirs; a
 
 When an agent needs a decision, an answer or access, it asks you in a comment and keeps the task. You get a push on your phone, and the task shows **Waiting on you** on its card, in the list and on the question itself.
 
-To answer, comment on the task, anywhere: in the question's thread or as a new comment. The agent that asked picks up your answer in its own session and carries on. A comment starting with `/note` doesn't count as an answer.
+To answer, comment on the task, anywhere: in the question's thread or as a new comment. The agent that asked picks up your answer in its session on the task and carries on. If it asked from a session that isn't on the task, such as a scheduled automation run, your answer starts a new session on the task instead ([which session picks up a comment](#which-session-picks-up-a-comment)). A comment starting with `/note` doesn't count as an answer.
 
 A question stops waiting on its own once you comment, the task leaves Blocked or reaches In Review, or the task is closed. An agent can ask someone else on the project too; the task then shows **Waiting on &lt;them&gt;**.
 
@@ -184,6 +184,14 @@ A question is answered once your comment reaches the agent that asked: a top-lev
 The comment box says which agent will work on your comment before you send it. An agent answers in the same thread. Agents never wake each other: what an agent writes or assigns is recorded but starts nothing.
 
 Type `@` and pick a person to mention someone on the project. They get a push on their phone. Mentioning a person never starts an agent.
+
+### Which Session Picks Up a Comment
+
+A comment goes into the agent's session on the task: its newest session marked **Linked** in the task's **Sessions** list, meaning one started from the task or one Vicoa started for it. If the agent is in the middle of a turn, the comment waits for that turn to end. If the session has stopped, it resumes on its computer.
+
+The **Sessions** list also shows sessions that only touched the task: ones that created it, changed it, commented on it or referenced it (**Created**, **Updated**, **Commented**, **Referenced**). A comment never goes into one of those, even when the agent you are answering asked its question from there. A scheduled automation that works through many tasks is the usual case. When the agent has no **Linked** session on the task, your comment starts a new one, named after the task.
+
+The new session starts in the task's worktree if an earlier session on the task made one, and in the project folder otherwise. It gets the comments that woke it and the task itself, plus a pointer to the task's latest **Linked** session if there is one. It gets no pointer to a session that only touched the task, so it doesn't see what that run did. Put anything the agent needs from that run in your comment or in the task's description.
 
 ## Slash Commands
 
