@@ -52,6 +52,18 @@ class FileContent {
   bool get isVideo => mimeType?.startsWith('video/') ?? false;
 }
 
+/// Mirrors the daemon's `_IMAGE_EXTS` (vicoa/rpc/file_ops.py): `read-file`
+/// sends these whole, base64-encoded, so the viewer can draw them.
+const Set<String> kImageFileExtensions = {'png', 'jpg', 'jpeg', 'gif', 'webp'};
+
+/// Whether [nameOrPath] is an image the viewer can draw, judged by extension
+/// alone like the daemon (`Path.suffix`: a bare `.png` has none).
+bool isImageFileName(String nameOrPath) {
+  final base = nameOrPath.substring(nameOrPath.lastIndexOf('/') + 1);
+  final dot = base.lastIndexOf('.');
+  return dot > 0 && kImageFileExtensions.contains(base.substring(dot + 1).toLowerCase());
+}
+
 Future<List<FilesEntry>> rpcListFiles({
   required RpcCaller call,
   required String machineId,

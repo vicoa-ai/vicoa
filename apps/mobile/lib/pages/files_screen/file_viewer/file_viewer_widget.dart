@@ -1,9 +1,10 @@
-// FileViewerWidget — pushed full-screen route for inspecting one file.
+// FileViewerWidget — pushed full-screen route for inspecting one file. An
+// image can be swiped left and right through the other images in its folder.
 // See `plans/todos/vicoa-app-files-tab.md` §Phase C File viewer route.
 
 import 'dart:async';
-import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
@@ -20,10 +21,13 @@ import '/flutter_flow/flutter_flow_theme.dart';
 import '/flutter_flow/flutter_flow_util.dart';
 import '/l10n/app_localizations.dart';
 import '../machine_offline_banner.dart';
+import 'file_content_loader.dart';
+import 'image_gallery.dart';
 import 'video_file_view.dart';
+import 'zoomable_image.dart';
 
 class FileViewerWidget extends StatefulWidget {
-  const FileViewerWidget({super.key, required this.machineId, required this.cwd, required this.path, required this.name});
+  const FileViewerWidget({super.key, required this.machineId, required this.cwd, required this.path, required this.name, this.rpc});
 
   static String routeName = 'FileViewer';
   static String routePath = '/fileViewer';
@@ -32,125 +36,168 @@ class FileViewerWidget extends StatefulWidget {
   final String cwd;
   final String path;
   final String name;
+  /// How files are fetched. Null uses the shared WS client; tests pass a fake.
+  final FileViewerRpc? rpc;
 
   @override
   State<FileViewerWidget> createState() => _FileViewerWidgetState();
 }
+
+typedef FileViewerRpc = ({RpcCaller send, bool Function() connected});
 
 // Route result key — agent_chat consumes this to drop `@<path>` into the
 // chat input area when the user taps "Add to context".
 const String kFileViewerAddToContextKey = 'addToContext';
 
 class _FileViewerWidgetState extends State<FileViewerWidget> {
-  FileContent? _content;
-  String? _errorCode;
-  bool _loading = true;
-  // True when the live fetch failed for a connectivity reason; drives the
-  // offline banner above the body. Independent of whether we have a cache to
-  // fall back on — that's `_content != null`.
-  bool _offline = false;
+  late final Future<FilesCache> _cache = FilesCache.open();
   final GlobalKey _menuButtonKey = GlobalKey();
-  FilesCache? _cache;
 
-  // Mirrors FilesTabModel's set — RPC failures matching these get treated as
-  // "machine unreachable" rather than a per-file error.
-  static const Set<String> _connectivityCodes = {
-    'not_connected',
-    'target_disconnected',
-    'timeout',
-    'no_handler',
-  };
+  // The file on screen. Starts as the one opened; the gallery moves it.
+  late String _path = widget.path;
+  late String _name = widget.name;
+  final Map<String, FileContentLoader> _loaders = {};
+
+  // Images in the opened image's folder, when there are others to swipe to.
+  // Null shows just the one file, which is always the case for non-images.
+  List<String>? _gallery;
+  PageController? _pages;
+  // Keys the PageView, so a re-read folder starts a fresh one on the right
+  // page instead of jumping.
+  int _galleryVersion = 0;
+  bool _zoomed = false;
+  // Fingers on the gallery right now. Two or more is a pinch, so paging
+  // stops: otherwise a pinch with one finger held still reads as a swipe.
+  final Set<int> _touches = {};
+  // Which way the user last swiped: the neighbour that way gets preloaded.
+  int _direction = 1;
+  bool _edgeBuzzed = false;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_load());
+    final first = _loaderFor(widget.path, viewed: true);
+    // Read the folder only once the opened image is on screen, so the
+    // gallery never slows down the first paint.
+    if (isImageFileName(widget.path)) unawaited(first.settled.then((_) => _resolveGallery()));
   }
 
-  Future<void> _load() async {
-    safeSetState(() {
-      _loading = true;
-      _errorCode = null;
-    });
-    _cache ??= await FilesCache.open();
+  @override
+  void dispose() {
+    for (final loader in _loaders.values) {
+      loader.dispose();
+    }
+    _pages?.dispose();
+    super.dispose();
+  }
 
-    // Fast path: WS already down — surface offline immediately, don't sit on
-    // callRpc's wait-then-timeout cycle (~30s).
-    if (!actions.VicoaWsClient.instance.isConnected) {
-      _renderOfflineFromCache();
+  RpcCaller get _send => widget.rpc?.send ?? actions.VicoaWsClient.instance.callRpc;
+  bool _connected() => widget.rpc?.connected() ?? actions.VicoaWsClient.instance.isConnected;
+
+  FileContentLoader _loaderFor(String path, {bool viewed = false}) {
+    final existing = _loaders[path];
+    if (existing != null) return existing;
+    final loader = FileContentLoader(machineId: widget.machineId, cwd: widget.cwd, path: path, cache: _cache, call: _send, isConnected: _connected, viewed: viewed);
+    _loaders[path] = loader;
+    unawaited(loader.load());
+    return loader;
+  }
+
+  Future<void> _resolveGallery({bool fresh = false}) async {
+    final images = await loadImagesBeside(machineId: widget.machineId, cwd: widget.cwd, path: _path, cache: await _cache, call: _send, connected: _connected(), fresh: fresh);
+    if (!mounted) return;
+    _applyGallery(images);
+  }
+
+  void _applyGallery(List<String>? images) {
+    final usable = images != null && images.contains(_path);
+    if (!usable) {
+      // Keep a gallery already on screen if a re-read can't place the
+      // current image (offline, or it was just deleted).
       return;
     }
+    final current = _gallery;
+    if (current != null && listEquals(current, images)) return;
+    final old = _pages;
+    if (old != null) WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+    final index = images.indexOf(_path);
+    safeSetState(() {
+      _gallery = images;
+      _pages = PageController(initialPage: index);
+      _galleryVersion++;
+      _zoomed = false;
+    });
+    _dropFarLoaders(index);
+    _preloadFrom(index);
+  }
 
-    try {
-      final content = await rpcReadFile(
-        call: actions.VicoaWsClient.instance.callRpc,
-        machineId: widget.machineId,
-        cwd: widget.cwd,
-        path: widget.path,
-      );
-      if (!mounted) return;
-      // Populate the cache on success so a later offline visit has something
-      // to show. Fire-and-forget — UI is already painting.
-      unawaited(_cache!.putContent(
-        machineId: widget.machineId,
-        cwd: widget.cwd,
-        path: widget.path,
-        content: content.content,
-        encoding: content.encoding,
-        isBinary: content.isBinary,
-        size: content.size,
-        truncated: content.truncated,
-      ));
-      safeSetState(() {
-        _content = content;
-        _loading = false;
-        _offline = false;
-      });
-    } on FileOpsException catch (e) {
-      if (!mounted) return;
-      if (_connectivityCodes.contains(e.code)) {
-        _renderOfflineFromCache();
-      } else {
-        safeSetState(() {
-          _errorCode = e.code;
-          _loading = false;
-          _offline = false;
-        });
-      }
-    } catch (_) {
-      if (!mounted) return;
-      _renderOfflineFromCache();
+  void _onPageChanged(int index) {
+    final images = _gallery!;
+    final path = images[index];
+    final from = images.indexOf(_path);
+    if (from >= 0 && index != from) _direction = index > from ? 1 : -1;
+    safeSetState(() {
+      _path = path;
+      _name = baseNameOf(path);
+      _zoomed = false;
+    });
+    _loaderFor(path).markViewed();
+    _dropFarLoaders(index);
+    _preloadFrom(index);
+  }
+
+  // Once the current image has loaded, fetch the next one in the swipe
+  // direction so it's ready by the time it's swiped in.
+  void _preloadFrom(int index) {
+    final images = _gallery;
+    if (images == null) return;
+    final next = index + _direction;
+    if (next < 0 || next >= images.length) return;
+    final path = images[index];
+    unawaited(_loaderFor(path).settled.then((_) {
+      if (!mounted || _path != path || _gallery != images) return;
+      _loaderFor(images[next]);
+    }));
+  }
+
+  // Only the current page and its two neighbours can be on screen (PageView
+  // builds nothing off-screen), so loaders further away are let go.
+  void _dropFarLoaders(int index) {
+    final images = _gallery!;
+    final keep = {for (var i = index - 1; i <= index + 1; i++) if (i >= 0 && i < images.length) images[i]};
+    final far = _loaders.keys.where((p) => !keep.contains(p)).toList();
+    for (final path in far) {
+      _loaders.remove(path)!.dispose();
     }
   }
 
-  void _renderOfflineFromCache() {
-    final cached = _cache?.getContent(
-      machineId: widget.machineId,
-      cwd: widget.cwd,
-      path: widget.path,
-    );
-    if (!mounted) return;
-    safeSetState(() {
-      _loading = false;
-      _offline = true;
-      _errorCode = null;
-      if (cached != null) {
-        _content = FileContent(
-          content: cached['content'] as String,
-          encoding: cached['encoding'] as String,
-          isBinary: cached['is_binary'] as bool,
-          size: cached['size'] as int,
-          truncated: cached['truncated'] as bool,
-        );
-      } else {
-        _content = null;
-      }
-    });
+  void _onTouch(PointerEvent e, {required bool down}) {
+    final wasPinch = _touches.length > 1;
+    down ? _touches.add(e.pointer) : _touches.remove(e.pointer);
+    if (wasPinch != _touches.length > 1) safeSetState(() {});
   }
 
-  String? _parentDir() {
-    final i = widget.path.lastIndexOf('/');
-    return i <= 0 ? null : widget.path.substring(0, i);
+  void _onZoomChanged(bool zoomed) {
+    if (zoomed != _zoomed) safeSetState(() => _zoomed = zoomed);
+  }
+
+  // A light tap when a swipe runs past the first or last image.
+  bool _onGalleryScroll(ScrollNotification n) {
+    if (n.depth != 0) return false;
+    if (n is ScrollStartNotification) _edgeBuzzed = false;
+    final m = n.metrics;
+    final dragging = (n is ScrollUpdateNotification && n.dragDetails != null) || (n is OverscrollNotification && n.dragDetails != null);
+    final pastEdge = n is OverscrollNotification || m.pixels < m.minScrollExtent || m.pixels > m.maxScrollExtent;
+    if (dragging && pastEdge && !_edgeBuzzed) {
+      _edgeBuzzed = true;
+      HapticFeedback.lightImpact();
+    }
+    return false;
+  }
+
+  void _refresh() {
+    unawaited(_loaderFor(_path).load());
+    if (isImageFileName(_path)) unawaited(_resolveGallery(fresh: true));
   }
 
   void _showMenu() {
@@ -164,13 +211,13 @@ class _FileViewerWidgetState extends State<FileViewerWidget> {
           onTap: () {
             // Pop the viewer with a result. FilesScreen mirrors the pop so
             // agent_chat (which awaited the original push) receives it.
-            context.pop({kFileViewerAddToContextKey: widget.path});
+            context.pop({kFileViewerAddToContextKey: _path});
           },
         ),
         FileDropdownMenuItem(
           icon: Icons.refresh_rounded,
           label: AppLocalizations.of(context).fileViewerXRefresh,
-          onTap: _load,
+          onTap: _refresh,
         ),
       ],
     );
@@ -179,14 +226,18 @@ class _FileViewerWidgetState extends State<FileViewerWidget> {
   @override
   Widget build(BuildContext context) {
     final theme = FlutterFlowTheme.of(context);
-    final parent = _parentDir();
+    final parent = parentDirOf(_path);
+    final gallery = _gallery;
+    final position = gallery == null ? null : '${gallery.indexOf(_path) + 1} / ${gallery.length}';
+    final subtitle = [if (parent.isNotEmpty) parent, if (position != null) position].join(' · ');
+    final current = _loaderFor(_path);
     return Scaffold(
       backgroundColor: theme.secondaryBackground,
       appBar: AppBar(
         backgroundColor: theme.secondaryBackground,
         automaticallyImplyLeading: false,
         elevation: 0,
-        toolbarHeight: parent != null ? 72 : 56,
+        toolbarHeight: subtitle.isNotEmpty ? 72 : 56,
         leading: Align(
           alignment: const AlignmentDirectional(1.0, 0.0),
           child: Material(
@@ -206,8 +257,8 @@ class _FileViewerWidgetState extends State<FileViewerWidget> {
         title: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(widget.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.titleMedium.override(font: GoogleFonts.sourceSans3(), fontSize: 15, letterSpacing: 0.0)),
-            if (parent != null) Text(parent, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.bodySmall.override(font: GoogleFonts.sourceSans3(), color: theme.secondaryText, letterSpacing: 0.0)),
+            Text(_name, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.titleMedium.override(font: GoogleFonts.sourceSans3(), fontSize: 15, letterSpacing: 0.0)),
+            if (subtitle.isNotEmpty) Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.bodySmall.override(font: GoogleFonts.sourceSans3(), color: theme.secondaryText, letterSpacing: 0.0)),
           ],
         ),
         centerTitle: true,
@@ -241,44 +292,74 @@ class _FileViewerWidgetState extends State<FileViewerWidget> {
         bottom: false,
         child: Column(
           children: [
-            if (_offline)
-              MachineOfflineBanner(
-                machineId: widget.machineId,
-                detail: _content != null
-                    ? AppLocalizations.of(context).fileViewerXDetailOutdated
-                    : AppLocalizations.of(context).fileViewerXDetailNotDownloaded,
-              ),
-            Expanded(child: _body(theme)),
+            ListenableBuilder(
+              listenable: current,
+              builder: (context, _) => current.offline
+                  ? MachineOfflineBanner(
+                      machineId: widget.machineId,
+                      detail: current.content != null
+                          ? AppLocalizations.of(context).fileViewerXDetailOutdated
+                          : AppLocalizations.of(context).fileViewerXDetailNotDownloaded,
+                    )
+                  : const SizedBox.shrink(),
+            ),
+            Expanded(
+              child: gallery == null
+                  ? _page(_path, _name, theme)
+                  : Listener(
+                      onPointerDown: (e) => _onTouch(e, down: true),
+                      onPointerUp: (e) => _onTouch(e, down: false),
+                      onPointerCancel: (e) => _onTouch(e, down: false),
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: _onGalleryScroll,
+                        child: PageView.builder(
+                          key: ValueKey(_galleryVersion),
+                          controller: _pages,
+                          // Zoomed in, a drag pans the image rather than paging.
+                          physics: _zoomed || _touches.length > 1 ? const NeverScrollableScrollPhysics() : null,
+                          itemCount: gallery.length,
+                          onPageChanged: _onPageChanged,
+                          itemBuilder: (context, i) => _page(gallery[i], baseNameOf(gallery[i]), theme),
+                        ),
+                      ),
+                    ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _body(FlutterFlowTheme theme) {
+  Widget _page(String path, String name, FlutterFlowTheme theme) {
+    final loader = _loaderFor(path);
+    return ListenableBuilder(listenable: loader, builder: (context, _) => _body(loader, path, name, theme));
+  }
+
+  Widget _body(FileContentLoader loader, String path, String name, FlutterFlowTheme theme) {
     // Match `_NoCachePlaceholder` alignment so the spinner doesn't visually
     // jump down when the load resolves into the no-cache state.
-    if (_loading) return const Align(alignment: Alignment(0.0, -0.3), child: CircularProgressIndicator());
-    if (_errorCode != null) return _ErrorCard(code: _errorCode!, theme: theme, onRetry: _load);
-    final content = _content;
+    if (loader.loading) return const Align(alignment: Alignment(0.0, -0.3), child: CircularProgressIndicator());
+    final errorCode = loader.errorCode;
+    if (errorCode != null) return _ErrorCard(code: errorCode, theme: theme, onRetry: loader.load);
+    final content = loader.content;
     if (content == null) return _NoCachePlaceholder(theme: theme);
-    if (content.encoding == 'base64' && content.isBinary) return _ImageView(base64Content: content.content, truncated: content.truncated, size: content.size);
+    if (content.encoding == 'base64' && content.isBinary) return _ImageView(bytes: loader.imageBytes, truncated: content.truncated, size: content.size, onZoomChanged: _onZoomChanged);
     // Offline the bytes can't be fetched, so a video falls through to the
     // plain placeholder under the offline banner.
-    if (content.isVideo && !_offline) {
-      return FileVideoView(machineId: widget.machineId, cwd: widget.cwd, path: widget.path, name: widget.name, size: content.size, theme: theme, formatBytes: _formatBytes, errorBuilder: (code, onRetry) => _ErrorCard(code: code, theme: theme, onRetry: onRetry));
+    if (content.isVideo && !loader.offline) {
+      return FileVideoView(machineId: widget.machineId, cwd: widget.cwd, path: path, name: name, size: content.size, theme: theme, formatBytes: _formatBytes, errorBuilder: (code, onRetry) => _ErrorCard(code: code, theme: theme, onRetry: onRetry));
     }
     if (content.isBinary) {
       // A video the daemon didn't tag with a mime type: it predates video
       // playback, so say how to get it rather than just "no preview".
-      final needsUpdate = !_offline && _isVideoName(widget.name);
+      final needsUpdate = !loader.offline && _isVideoName(name);
       return _BinaryPlaceholder(
         size: content.size,
         theme: theme,
         detail: needsUpdate ? AppLocalizations.of(context).fileViewerXVideoNeedsUpdate : null,
       );
     }
-    return _TextView(content: content, fileName: widget.name, theme: theme);
+    return _TextView(content: content, fileName: name, theme: theme);
   }
 }
 
@@ -395,23 +476,22 @@ class _TextView extends StatelessWidget {
 }
 
 class _ImageView extends StatelessWidget {
-  const _ImageView({required this.base64Content, required this.truncated, required this.size});
-  final String base64Content;
+  const _ImageView({required this.bytes, required this.truncated, required this.size, required this.onZoomChanged});
+  final Uint8List? bytes;
   final bool truncated;
   final int size;
+  final ValueChanged<bool> onZoomChanged;
 
   @override
   Widget build(BuildContext context) {
-    if (base64Content.isEmpty) {
+    final bytes = this.bytes;
+    if (bytes == null) {
       return Center(child: Padding(padding: const EdgeInsets.all(32), child: Text(AppLocalizations.of(context).fileViewerXImageTooLarge)));
     }
-    final bytes = base64Decode(base64Content);
     final theme = FlutterFlowTheme.of(context);
     return Column(
       children: [
-        Expanded(
-          child: InteractiveViewer(child: Center(child: Image.memory(bytes, fit: BoxFit.contain))),
-        ),
+        Expanded(child: ZoomableImage(bytes: bytes, onZoomChanged: onZoomChanged)),
         if (truncated) _TruncatedBanner(size: size, theme: theme),
       ],
     );
