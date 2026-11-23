@@ -10,11 +10,16 @@ import { getBackendAPI, type MachineSummary } from '@/lib/backend-api';
 import {
   buildScannedAgents,
   fetchLocalHealth,
+  isFinalStuckReason,
   machineSupportsAgentScan,
+  probeThisMachine,
   readAvailableAgents,
   rpcScanAgents,
+  type ScanStuckReason,
   type ScannedAgent,
 } from '@/lib/desktop-agent-scan';
+import { restartDesktopDaemon } from '@/lib/desktop-daemon';
+import { getDesktopConfig } from '@/lib/runtime-config';
 import { PLAN_CHOICES, installInfoFor, installOsForPlatform, type InstallOs } from '@/lib/desktop-agent-install';
 import {
   trackScanCompleted,
@@ -38,10 +43,52 @@ import { cn } from '@/lib/utils';
 
 /** How long to wait for the machine to appear before declaring the scan empty. */
 const EMPTY_TIMEOUT_MS = 5000;
+/**
+ * How long "Starting up…" may spin before the step says what is wrong and
+ * offers Try again. Of the desktop users whose machine showed up after the
+ * 5s mark (Aug to Nov 2026), 9 in 10 had it within 18s on Windows and 13s on
+ * Mac, and about 1 in 30 took longer than 30s. Those few see the message
+ * briefly; the poll keeps running, so it still turns into the agent list.
+ */
+const STUCK_TIMEOUT_MS = 30_000;
 /** Poll cadence while waiting for the daemon to finish cloud registration. */
 const POLL_INTERVAL_MS = 2000;
 
-type Phase = 'scanning' | 'found' | 'empty';
+type Phase = 'scanning' | 'found' | 'empty' | 'stuck';
+
+/**
+ * Copy for a step that has stopped waiting. Each one says what is going on
+ * and what the user can do; skipping is always on screen next to it.
+ */
+function stuckHeading(reason: ScanStuckReason): { title: string; body: string } {
+  switch (reason) {
+    case 'machine_limit':
+      return {
+        title: 'Upgrade to connect this computer',
+        body: 'Your plan has no room for another computer, so Vicoa can\'t check which AI agents are on this one. Free up a machine in Settings → Machines, or upgrade to connect this one.',
+      };
+    case 'auth_failed':
+      return {
+        title: 'Sign in again to connect this computer',
+        body: 'Vicoa couldn\'t confirm your sign-in on this computer. Try again. If it keeps happening, skip this step, then sign out and sign back in.',
+      };
+    case 'not_desktop':
+      return {
+        title: 'Open Vicoa on your computer',
+        body: 'This step checks which AI agents are installed on the computer running the Vicoa desktop app, so it only works in the app.',
+      };
+    case 'not_connected':
+      return {
+        title: 'Vicoa can\'t connect this computer yet',
+        body: 'Vicoa is running but hasn\'t connected this computer to your account. Check your internet connection and try again, or skip this step and check later in Settings → Providers.',
+      };
+    case 'not_started':
+      return {
+        title: 'Vicoa didn\'t finish starting',
+        body: 'Its background service isn\'t running, so Vicoa can\'t check which AI agents are on this computer. Try again, or skip this step and check later in Settings → Providers.',
+      };
+  }
+}
 
 /**
  * Copy for each state.
@@ -59,8 +106,11 @@ type Phase = 'scanning' | 'found' | 'empty';
 export function headingFor(
   phase: Phase,
   installedCount: number,
-  canRefresh: boolean
+  canRefresh: boolean,
+  stuckReason: ScanStuckReason = 'not_started'
 ): { title: string; body: string } {
+  if (phase === 'stuck') return stuckHeading(stuckReason);
+
   if (phase === 'scanning') {
     return {
       title: 'Searching for AI Agents',
@@ -96,17 +146,6 @@ export function headingFor(
         ? 'Vicoa will run with this agent on your computer, so you can start a session here and pick it up on your phone.'
         : 'Vicoa will run with these agents on your computer, so you can start a session here and pick it up on your phone.',
   };
-}
-
-async function findThisMachine(): Promise<MachineSummary | null> {
-  const health = await fetchLocalHealth();
-  if (!health?.machine_id) return null;
-  try {
-    const machines = await getBackendAPI(true).listMachines();
-    return machines.find((m) => m.machine_id === health.machine_id) ?? null;
-  } catch {
-    return null;
-  }
 }
 
 function AgentRow({ agent, isFirst, os }: { agent: ScannedAgent; isFirst: boolean; os: InstallOs }) {
@@ -178,6 +217,9 @@ export function AgentScanStep({
   const [machine, setMachine] = useState<MachineSummary | null>(null);
   const [agents, setAgents] = useState<ScannedAgent[] | null>(null);
   const [hasTimedOut, setHasTimedOut] = useState(false);
+  const [waitedTooLong, setWaitedTooLong] = useState(false);
+  /** What the latest look found instead of this machine; null once it's found. */
+  const [wait, setWait] = useState<{ reason: ScanStuckReason; detail: string } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   // Bumped on refresh to restart the empty-timeout, so a re-probe shows the
   // scanning skeleton again instead of flashing the empty state.
@@ -188,7 +230,13 @@ export function AgentScanStep({
   const reportedPhases = useRef<Set<string>>(new Set());
 
   const installedCount = agents?.filter((a) => a.installed).length ?? 0;
-  const phase: Phase = agents ? 'found' : hasTimedOut ? 'empty' : 'scanning';
+  const phase: Phase = agents
+    ? 'found'
+    : wait && (waitedTooLong || isFinalStuckReason(wait.reason))
+      ? 'stuck'
+      : hasTimedOut
+        ? 'empty'
+        : 'scanning';
 
   useEffect(() => {
     trackScanViewed();
@@ -210,8 +258,8 @@ export function AgentScanStep({
     const key = `${scanEpoch}:${phase}`;
     if (reportedPhases.current.has(key)) return;
     reportedPhases.current.add(key);
-    trackScanCompleted(agents, phase);
-  }, [phase, agents, scanEpoch]);
+    trackScanCompleted(agents, phase, phase === 'stuck' ? wait?.reason : undefined);
+  }, [phase, agents, scanEpoch, wait]);
 
   // Poll until the machine appears. The daemon restarts right after sign-in
   // (setApiKey → restart → reload), so the renderer can easily beat its cloud
@@ -225,20 +273,35 @@ export function AgentScanStep({
     let stopped = false;
     let timer: number | undefined;
 
+    const onDesktop = getDesktopConfig() !== null;
+
     const tick = async () => {
-      const found = await findThisMachine();
+      const probe = await probeThisMachine({
+        onDesktop,
+        fetchHealth: fetchLocalHealth,
+        listMachines: () => getBackendAPI(true).listMachines(),
+      });
       if (stopped) return;
-      if (found) {
-        setMachine(found);
+      if (probe.kind === 'found') {
+        setWait(null);
+        setMachine(probe.machine);
         const scanned = buildScannedAgents(
           AGENT_CATALOG_FALLBACK.agents,
-          readAvailableAgents(found)
+          readAvailableAgents(probe.machine)
         );
         setAgents(scanned);
         // The scan_completed capture lives in the phase effect above, not here
         // — this branch only sees the 'found' half of the outcome.
         return;
       }
+      setWait((prev) =>
+        prev?.reason === probe.reason && prev.detail === probe.detail
+          ? prev
+          : { reason: probe.reason, detail: probe.detail }
+      );
+      // A browser has no daemon that might still come up, so one look is the
+      // whole answer.
+      if (probe.reason === 'not_desktop') return;
       timer = window.setTimeout(tick, POLL_INTERVAL_MS);
     };
 
@@ -252,9 +315,23 @@ export function AgentScanStep({
   useEffect(() => {
     if (machine) return;
     setHasTimedOut(false);
-    const id = window.setTimeout(() => setHasTimedOut(true), EMPTY_TIMEOUT_MS);
-    return () => window.clearTimeout(id);
+    setWaitedTooLong(false);
+    const empty = window.setTimeout(() => setHasTimedOut(true), EMPTY_TIMEOUT_MS);
+    const stuck = window.setTimeout(() => setWaitedTooLong(true), STUCK_TIMEOUT_MS);
+    return () => {
+      window.clearTimeout(empty);
+      window.clearTimeout(stuck);
+    };
   }, [machine, scanEpoch]);
+
+  // Try again: restart the daemon and wait from the top. Restarting is what a
+  // retry can actually change here; the poll was already looking the whole
+  // time. Off desktop the restart is a no-op, but this button isn't shown there.
+  const retry = useCallback(() => {
+    setWait(null);
+    setScanEpoch((n) => n + 1);
+    void restartDesktopDaemon();
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!machine || refreshing) return;
@@ -278,7 +355,7 @@ export function AgentScanStep({
   }, [machine, refreshing, installedCount]);
 
   const canRefresh = machineSupportsAgentScan(machine);
-  const heading = headingFor(phase, installedCount, canRefresh);
+  const heading = headingFor(phase, installedCount, canRefresh, wait?.reason);
   const os = installOsForPlatform(machine?.platform);
 
   return (
@@ -323,6 +400,10 @@ export function AgentScanStep({
         <div className="custom-scrollbar -mx-1 min-h-0 overflow-y-auto px-1">
           <AgentInstallChoices agents={agents} os={os} selectedId={choiceId} onSelect={setChoiceId} />
         </div>
+      ) : phase === 'stuck' ? (
+        // The server's own sentence (which limit, how many machines), quoted
+        // as is. The heading already says what to do, so nothing else goes here.
+        wait?.detail ? <p className="text-sm text-foreground/90">{wait.detail}</p> : null
       ) : (
       <div className="relative flex min-h-0 flex-col">
         <div className="custom-scrollbar max-h-[45vh] flex-1 overflow-y-auto rounded-xl border border-border/60 bg-foreground/[0.03]">
@@ -348,6 +429,12 @@ export function AgentScanStep({
           so the label carries the situation instead. It always advances, so
           this step can never trap anyone. */}
       <div className="flex items-center justify-end gap-3">
+        {phase === 'stuck' && wait?.reason !== 'not_desktop' && (
+          <Button variant="outline" onClick={retry}>
+            <RefreshCw className="h-3.5 w-3.5" />
+            Try again
+          </Button>
+        )}
         <Button
           onClick={() => onContinue(installedCount === 0, installedCount)}
           className="min-w-[140px]"

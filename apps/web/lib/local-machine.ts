@@ -26,6 +26,8 @@ export interface LocalHealth {
   machine_id: string | null;
   /** Cloud registration progress: 'connecting' | 'connected' | … | null. */
   cloud: string | null;
+  /** The server's own sentence when the cloud link was refused; '' or absent otherwise. */
+  cloud_detail?: string;
 }
 
 // This machine's cloud machine_id, cached across the session. Populated as a

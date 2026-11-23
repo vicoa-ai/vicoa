@@ -31,7 +31,7 @@
 
 import posthog from 'posthog-js';
 import type { BillingInterval } from '@/lib/backend-api';
-import type { ScannedAgent } from '@/lib/desktop-agent-scan';
+import type { ScanStuckReason, ScannedAgent } from '@/lib/desktop-agent-scan';
 
 /**
  * Which app this bundle is.
@@ -102,7 +102,10 @@ type EventMap = {
   desktop_onboarding_signin_cancelled: Record<string, never>;
   desktop_onboarding_signin_returned: { outcome: SignInOutcome };
   desktop_onboarding_scan_viewed: Record<string, never>;
-  desktop_onboarding_scan_completed: ScanPayload & { phase: 'found' | 'empty' };
+  desktop_onboarding_scan_completed: ScanPayload & {
+    phase: 'found' | 'empty' | 'stuck';
+    reason?: ScanStuckReason;
+  };
   desktop_onboarding_scan_rescanned: { installed_count: number };
   desktop_onboarding_scan_continued: { skipped: boolean };
   desktop_onboarding_completed: { installed_count: number; paywall_skipped: boolean };
@@ -299,12 +302,22 @@ export function trackScanViewed(): void {
  * the authoritative outcome for a person and `empty` as "waited through the
  * timeout"; querying the LAST `desktop_onboarding_scan_completed` per person
  * gives the right answer either way.
+ *
+ * `phase: 'stuck'` is the step giving up on waiting and saying why, with
+ * `reason` naming it (`not_started`, `not_connected`, `machine_limit`,
+ * `auth_failed`, `not_desktop`). Also not terminal: the poll goes on, so a
+ * daemon that comes up late still ends in `found`.
  */
 export function trackScanCompleted(
   agents: readonly ScannedAgent[] | null | undefined,
-  phase: 'found' | 'empty',
+  phase: 'found' | 'empty' | 'stuck',
+  reason?: ScanStuckReason,
 ): void {
-  capture('desktop_onboarding_scan_completed', { ...scanPayload(agents), phase });
+  capture('desktop_onboarding_scan_completed', {
+    ...scanPayload(agents),
+    phase,
+    ...(reason ? { reason } : {}),
+  });
 }
 
 /**
