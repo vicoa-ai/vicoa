@@ -47,6 +47,7 @@ from vicoa.constants import DEFAULT_API_URL
 from vicoa.sdk.async_client import AsyncVicoaClient
 from vicoa.sdk.client import VicoaClient
 from vicoa.sdk.exceptions import AuthenticationError, APIError
+from vicoa.agent_install import pinned_build_env
 from vicoa.utils import get_project_path
 from integrations.utils.heartbeat import next_interval_from_response
 from integrations.cli_wrappers.claude_code.session_reset_handler import (
@@ -1285,6 +1286,7 @@ class ClaudeWrapper:
         if self.child_pid == 0:
             # Child process - exec Claude CLI
             os.environ["CLAUDE_CODE_ENTRYPOINT"] = "jsonlog-wrapper"
+            os.environ.update(pinned_build_env("claude", cmd[0]))
             os.execvp(cmd[0], cmd)
 
         # Parent process - set PTY size
@@ -2598,6 +2600,7 @@ def main():
         )
         try:
             claude_path = find_claude_cli()
+            os.environ.update(pinned_build_env("claude", claude_path))
             # claude_args already has Vicoa flags filtered out!
             os.execvp(claude_path, [claude_path] + claude_args)
             # Never returns - process is replaced

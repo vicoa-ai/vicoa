@@ -14,10 +14,17 @@ install finished.
 The user's own install always comes first. Detection and launch look here only
 when the agent can't be found anywhere else (see ``vicoa.utils.find_codex_cli``,
 ``find_opencode_cli`` and ``find_claude_cli``).
+
+A daemon release that pins a newer build upgrades Vicoa's copy by itself (see
+``MachineDaemon._upgrade_managed_agents``): the managed copy has self-update
+turned off, so nothing else would. The older build keeps serving until the new
+one is in place, and is deleted at the next daemon start (:meth:`AgentInstaller.tidy`),
+when no session of this daemon can still be running it.
 """
 
 from __future__ import annotations
 
+import errno
 import functools
 import hashlib
 import http.client
@@ -25,11 +32,13 @@ import logging
 import os
 import platform
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -38,6 +47,8 @@ from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import IO, Literal, Optional
+
+import certifi
 
 from vicoa.agent_release_types import PinnedRelease, ReleaseAsset
 from vicoa.agent_releases import PINNED_RELEASES
@@ -57,6 +68,23 @@ SELF_UPDATE_OFF: Mapping[str, Mapping[str, str]] = {
 _CHUNK = 1 << 16
 _USER_AGENT = "vicoa-agent-installer"
 _STAGING_PREFIX = ".staging-"
+_TRASH_PREFIX = ".trash-"
+
+#: A staging dir untouched this long belongs to an install that died; a live
+#: one is written to continuously (the download, then the unpacked files).
+_STALE_STAGING_SECONDS = 15 * 60
+#: A download slower than this many bytes per window is treated as stuck. A
+#: dead connection already fails on the socket timeout; this catches a trickle.
+_STALL_WINDOW_SECONDS = 120.0
+_STALL_MIN_BYTES = 256 * 1024
+#: How long the new build's ``--version`` may take. Generous: the first run of
+#: a fresh executable on Windows waits for the antivirus scan.
+_VERSION_CHECK_TIMEOUT = 120
+#: Headroom kept free on top of the install itself.
+_SPACE_MARGIN = 64 * 1024 * 1024
+#: An unpacked archive takes a few times its download size; the vendors' own
+#: packages run 2-3x.
+_ARCHIVE_EXPANSION = 4
 
 Phase = Literal["downloading", "verifying", "unpacking", "installed", "failed"]
 ErrorCode = Literal[
@@ -65,7 +93,14 @@ ErrorCode = Literal[
     "download_failed",
     "checksum_mismatch",
     "unpack_failed",
+    #: The unpacked build didn't run (``--version`` failed).
+    "verify_failed",
+    "no_space",
+    #: Writing to this machine's disk failed (not the network).
+    "write_failed",
 ]
+#: Failures on this machine's side: another download host can't help.
+_LOCAL_FAILURES: frozenset[str] = frozenset({"no_space", "write_failed"})
 
 
 def agents_root() -> Path:
@@ -103,8 +138,22 @@ def _is_rosetta() -> bool:
 
 
 def _is_musl() -> bool:
-    return any(Path("/lib").glob("ld-musl-*.so.1")) or any(
-        Path("/lib").glob("libc.musl-*.so.1")
+    """Whether this Linux runs musl libc rather than glibc.
+
+    The running interpreter answers first: a daemon linked against glibc is on
+    a glibc system, whatever else is installed. The files are the vendors' own
+    fallback signals (Alpine's libc, /etc/alpine-release). musl's loader,
+    /lib/ld-musl-*.so.1, is deliberately not one: a glibc distro with the musl
+    package installed has it too, and would be handed a build it can't run.
+    """
+    libc, _ = platform.libc_ver()
+    if libc == "glibc":
+        return False
+    if libc == "musl":
+        return True
+    return (
+        any(Path("/lib").glob("libc.musl-*.so.1"))
+        or Path("/etc/alpine-release").exists()
     )
 
 
@@ -131,21 +180,27 @@ def _has_avx2(os_name: str) -> bool:
 @functools.lru_cache(maxsize=1)
 def detect_host() -> Optional[Host]:
     """This machine, or None on an OS or CPU no vendor builds for."""
-    if sys.platform == "darwin":
+    return _host_from(sys.platform, platform.machine(), os.environ)
+
+
+def _host_from(
+    sys_platform: str, machine: str, env: Mapping[str, str]
+) -> Optional[Host]:
+    if sys_platform == "darwin":
         os_name: Literal["darwin", "linux", "windows"] = "darwin"
-    elif sys.platform.startswith("linux"):
+    elif sys_platform.startswith("linux"):
         os_name = "linux"
-    elif sys.platform == "win32":
+    elif sys_platform == "win32":
         os_name = "windows"
     else:
         return None
 
-    machine = platform.machine().lower()
+    machine = machine.lower()
     if os_name == "windows":
         # An x64 Python on Windows on ARM reports AMD64; the OS knows better.
         native = (
-            os.environ.get("PROCESSOR_ARCHITEW6432")
-            or os.environ.get("PROCESSOR_ARCHITECTURE")
+            env.get("PROCESSOR_ARCHITEW6432")
+            or env.get("PROCESSOR_ARCHITECTURE")
             or machine
         )
         machine = native.lower()
@@ -220,12 +275,37 @@ class InstallError(Exception):
         self.message = message
 
 
+@dataclass(frozen=True)
+class ManagedCopy:
+    """A build of an agent CLI that Vicoa installed under the agents root."""
+
+    version: str
+    path: str
+    #: Whether it is the build this daemon release pins.
+    pinned: bool
+
+
 Opener = Callable[[str], AbstractContextManager[IO[bytes]]]
+#: Runs a freshly unpacked CLI once; raises :class:`InstallError` if it can't.
+BuildCheck = Callable[[str, Path], None]
+
+
+@functools.lru_cache(maxsize=1)
+def _tls_context() -> ssl.SSLContext:
+    """certifi's CA bundle, as the daemon's other HTTPS clients use.
+
+    A frozen build's OpenSSL may not find the system CA store, and urllib's
+    default context would then fail every download with
+    CERTIFICATE_VERIFY_FAILED.
+    """
+    return ssl.create_default_context(cafile=certifi.where())
 
 
 def _urlopen(url: str) -> AbstractContextManager[IO[bytes]]:
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    return urllib.request.urlopen(request, timeout=60)  # noqa: S310 - pinned https URLs
+    return urllib.request.urlopen(  # noqa: S310 - pinned https URLs
+        request, timeout=60, context=_tls_context()
+    )
 
 
 # ----- the installer --------------------------------------------------------
@@ -248,12 +328,14 @@ class AgentInstaller:
         releases: Optional[Mapping[str, PinnedRelease]] = None,
         host: Optional[Host] = None,
         opener: Optional[Opener] = None,
+        check_build: Optional[BuildCheck] = None,
         on_installed: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._root = root
         self._releases = releases if releases is not None else PINNED_RELEASES
         self._host = host
         self._opener: Opener = opener or _urlopen
+        self._check_build: BuildCheck = check_build or _check_build_runs
         self._on_installed = on_installed
         self._lock = threading.Lock()
         self._installs: dict[str, _Running] = {}
@@ -278,12 +360,60 @@ class AgentInstaller:
         return release, asset
 
     def offer(self, agent: str) -> Optional[dict[str, object]]:
-        """What installing ``agent`` here means (version, download size), or None."""
+        """What installing ``agent`` here means, or None if it can't be.
+
+        ``version`` and ``size`` are the pinned build's; ``managed_version`` is
+        the build of Vicoa's copy already here, when there is one.
+        """
         try:
             release, asset = self._resolve(agent)
         except InstallError:
             return None
-        return {"version": release.version, "size": asset.size}
+        offer: dict[str, object] = {"version": release.version, "size": asset.size}
+        copy = self.managed_copy(agent)
+        if copy is not None:
+            offer["managed_version"] = copy.version
+        return offer
+
+    def managed_copy(self, agent: str) -> Optional[ManagedCopy]:
+        """Vicoa's installed copy of ``agent``: the pinned build, else the newest."""
+        return _find_managed_copy(
+            agent,
+            root=self.root,
+            releases=self._releases,
+            host=self._host or detect_host(),
+        )
+
+    def outdated_copy(self, agent: str) -> Optional[ManagedCopy]:
+        """Vicoa's copy of ``agent`` when it is older than the pinned build.
+
+        Only older: a newer one came from a newer daemon release sharing this
+        HOME, and installing our older pin next to it would have the two
+        daemons take turns downloading.
+        """
+        copy = self.managed_copy(agent)
+        release = self._releases.get(agent)
+        if copy is None or release is None or copy.pinned:
+            return None
+        if _version_key(copy.version) >= _version_key(release.version):
+            return None
+        return copy
+
+    def tidy(self) -> None:
+        """Daemon-start housekeeping under the agents root.
+
+        Drops what dead installs left (staging and trash dirs) and, once the
+        pinned build is in place, the older builds it replaced. Run before this
+        daemon launches anything, so none of its sessions can be using them.
+        """
+        for agent, release in self._releases.items():
+            agent_dir = self.root / agent
+            if not agent_dir.is_dir():
+                continue
+            _sweep_leftovers(agent_dir)
+            copy = self.managed_copy(agent)
+            if copy is not None and copy.pinned:
+                _remove_older_versions(agent_dir, release.version)
 
     def start(self, agent: str) -> InstallProgress:
         """Start installing ``agent`` in the background; return where it stands.
@@ -337,25 +467,26 @@ class AgentInstaller:
     def _run(
         self, running: _Running, release: PinnedRelease, asset: ReleaseAsset
     ) -> None:
+        # Status is read field by field while this runs, so each outcome's
+        # details are set before the phase that announces it.
         progress = running.progress
         try:
             try:
                 path = self._install(release, asset, progress)
-                progress.path = str(path)
-                progress.phase = "installed"
             except InstallError as exc:
-                progress.phase, progress.error_code, progress.error = (
-                    "failed",
-                    exc.code,
-                    exc.message,
-                )
+                progress.error_code, progress.error = exc.code, exc.message
+                progress.phase = "failed"
+                return
             except Exception as exc:  # noqa: BLE001 - surface anything as a failed install
                 logger.exception("installing %s failed", release.agent)
-                progress.phase, progress.error_code = "failed", "download_failed"
+                progress.error_code = "download_failed"
                 progress.error = f"Couldn't install {release.agent}: {exc}"
-            # Published before the install reads as done, so whoever waits on
-            # it sees the machine's agents already updated.
-            if progress.phase == "installed" and self._on_installed is not None:
+                progress.phase = "failed"
+                return
+            progress.path = str(path)
+            # Published before the install reads as done, so a client that
+            # polls status and then reads the machine finds the agent there.
+            if self._on_installed is not None:
                 try:
                     self._on_installed(release.agent)
                 except Exception:  # noqa: BLE001 - the install itself succeeded
@@ -364,6 +495,7 @@ class AgentInstaller:
                         release.agent,
                         exc_info=True,
                     )
+            progress.phase = "installed"
         finally:
             running.done.set()
 
@@ -375,7 +507,13 @@ class AgentInstaller:
         if (final / asset.binary).is_file():
             return final / asset.binary
         agent_dir.mkdir(parents=True, exist_ok=True)
-        _sweep_staging(agent_dir)
+        _sweep_leftovers(agent_dir)
+        if final.exists():
+            # A version dir without its CLI can't have come from the rename
+            # (that is all or nothing), so something outside removed files.
+            # Clear it now: the rename below can't replace a non-empty dir.
+            _discard(final)
+        _check_free_space(agent_dir, asset, release.agent)
 
         staging = Path(
             tempfile.mkdtemp(
@@ -398,15 +536,23 @@ class AgentInstaller:
                 )
             if os.name != "nt":
                 binary.chmod(0o755)
+            # A build that can't start here (wrong libc or CPU, blocked by
+            # security software) would otherwise read as installed and fail
+            # every session instead.
+            self._check_build(release.agent, binary)
             try:
-                os.replace(content, final)
-            except OSError:
+                _replace(content, final)
+            except OSError as exc:
                 # Another daemon finished the same version first: theirs stands.
                 if not (final / asset.binary).is_file():
-                    raise
+                    raise InstallError(
+                        "unpack_failed",
+                        f"Couldn't move the {release.agent} build into place: {exc}",
+                    ) from exc
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-        _remove_other_versions(agent_dir, keep=release.version)
+        # Older builds stay until the next daemon start (see `tidy`): a
+        # session launched before this install finished may be running one.
         return final / asset.binary
 
     def _download(
@@ -416,47 +562,84 @@ class AgentInstaller:
         failure: Optional[InstallError] = None
         for url in urls:
             try:
-                progress.phase = "downloading"
-                progress.bytes_done = 0
-                digest = hashlib.sha256()
-                done = 0
-                with self._opener(url) as response, open(dest, "wb") as out:
-                    for chunk in _chunks(response):
-                        done += len(chunk)
-                        if done > asset.size:
-                            raise InstallError(
-                                "checksum_mismatch",
-                                "The download is larger than the pinned build.",
-                            )
-                        digest.update(chunk)
-                        out.write(chunk)
-                        progress.bytes_done = done
-                progress.phase = "verifying"
-                if done != asset.size:
-                    raise InstallError(
-                        "download_failed",
-                        f"The download stopped after {done} of {asset.size} bytes.",
-                    )
-                if digest.hexdigest() != asset.sha256:
-                    raise InstallError(
-                        "checksum_mismatch",
-                        "The download doesn't match the pinned build's SHA-256.",
-                    )
+                self._fetch(url, asset, dest, progress)
                 return
             except InstallError as exc:
+                if exc.code in _LOCAL_FAILURES:
+                    raise
                 failure = exc
-            except (
-                OSError,
-                urllib.error.URLError,
-                http.client.HTTPException,  # e.g. IncompleteRead: the body stopped short
-                ValueError,
-            ) as exc:
-                failure = InstallError(
-                    "download_failed", f"Couldn't download {url}: {exc}"
-                )
             dest.unlink(missing_ok=True)
         assert failure is not None
         raise failure
+
+    def _fetch(
+        self, url: str, asset: ReleaseAsset, dest: Path, progress: InstallProgress
+    ) -> None:
+        """Download ``url`` to ``dest`` and check it is exactly the pinned build.
+
+        Errors writing to this machine's disk raise :data:`_LOCAL_FAILURES`
+        codes, distinct from the network's, so no other host is tried for them.
+        """
+        progress.phase = "downloading"
+        progress.bytes_done = 0
+        digest = hashlib.sha256()
+        done = 0
+        try:
+            out = open(dest, "wb")  # noqa: SIM115 - closed below, errors mapped
+        except OSError as exc:
+            raise _local_failure(exc) from exc
+        try:
+            with self._opener(url) as response:
+                window_start, window_done = time.monotonic(), 0
+                for chunk in _chunks(response):
+                    done += len(chunk)
+                    if done > asset.size:
+                        raise InstallError(
+                            "checksum_mismatch",
+                            "The download is larger than the pinned build.",
+                        )
+                    digest.update(chunk)
+                    try:
+                        out.write(chunk)
+                    except OSError as exc:
+                        raise _local_failure(exc) from exc
+                    progress.bytes_done = done
+                    now = time.monotonic()
+                    if now - window_start >= _STALL_WINDOW_SECONDS:
+                        if done - window_done < _STALL_MIN_BYTES:
+                            raise InstallError(
+                                "download_failed",
+                                f"The download from {url} stalled.",
+                            )
+                        window_start, window_done = now, done
+        except InstallError:
+            _close_quietly(out)
+            raise
+        except (
+            OSError,
+            urllib.error.URLError,
+            http.client.HTTPException,  # e.g. IncompleteRead: the body stopped short
+            ValueError,
+        ) as exc:
+            _close_quietly(out)
+            raise InstallError(
+                "download_failed", f"Couldn't download {url}: {exc}"
+            ) from exc
+        try:
+            out.close()
+        except OSError as exc:
+            raise _local_failure(exc) from exc
+        progress.phase = "verifying"
+        if done != asset.size:
+            raise InstallError(
+                "download_failed",
+                f"The download stopped after {done} of {asset.size} bytes.",
+            )
+        if digest.hexdigest() != asset.sha256:
+            raise InstallError(
+                "checksum_mismatch",
+                "The download doesn't match the pinned build's SHA-256.",
+            )
 
 
 def _snapshot(progress: InstallProgress) -> InstallProgress:
@@ -468,17 +651,136 @@ def _chunks(stream: IO[bytes]) -> Iterator[bytes]:
         yield chunk
 
 
-def _sweep_staging(agent_dir: Path) -> None:
-    """Drop what an interrupted install left behind."""
+def _replace(src: Path, dst: Path) -> None:
+    """``os.replace``, retried briefly on Windows.
+
+    An antivirus scan of a freshly written executable holds it open for a
+    moment, and a rename in that window fails with a sharing violation.
+    """
+    attempts = 5 if os.name == "nt" else 1
+    for attempt in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.5 * (attempt + 1))
+
+
+def _close_quietly(stream: IO[bytes]) -> None:
+    try:
+        stream.close()
+    except OSError:
+        pass
+
+
+def _local_failure(exc: OSError) -> InstallError:
+    if exc.errno == errno.ENOSPC:
+        return InstallError("no_space", "The disk filled up during the download.")
+    return InstallError("write_failed", f"Couldn't write the download to disk: {exc}")
+
+
+def _check_free_space(agent_dir: Path, asset: ReleaseAsset, agent: str) -> None:
+    """Refuse up front rather than fill the disk halfway through a download."""
+    expansion = 1 if asset.archive == "raw" else _ARCHIVE_EXPANSION
+    needed = asset.size * expansion + _SPACE_MARGIN
+    try:
+        free = shutil.disk_usage(agent_dir).free
+    except OSError:
+        return  # can't tell; the download itself will find out
+    if free < needed:
+        raise InstallError(
+            "no_space",
+            f"Installing {agent} needs about {needed >> 20} MB of free disk "
+            f"space; this computer has {free >> 20} MB.",
+        )
+
+
+def _check_build_runs(agent: str, binary: Path) -> None:
+    """Run the unpacked CLI's ``--version``; raise if it doesn't start."""
+    env = {**os.environ, **SELF_UPDATE_OFF.get(agent, {})}
+    try:
+        result = subprocess.run(
+            [str(binary), "--version"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=_VERSION_CHECK_TIMEOUT,
+            env=env,
+            check=False,
+            # No console window flashing up on Windows.
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise InstallError(
+            "verify_failed", f"The {agent} build doesn't run on this computer: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()[-300:]
+        raise InstallError(
+            "verify_failed",
+            f"The {agent} build doesn't run on this computer "
+            f"(exit code {result.returncode}){': ' + detail if detail else ''}.",
+        )
+
+
+def _last_activity(path: Path) -> float:
+    """The newest mtime in ``path``'s tree (0 when it is already gone)."""
+    latest = 0.0
+    for entry in [path, *path.rglob("*")]:
+        try:
+            latest = max(latest, entry.lstat().st_mtime)
+        except OSError:
+            continue
+    return latest
+
+
+def _sweep_leftovers(agent_dir: Path) -> None:
+    """Drop what dead installs left behind.
+
+    Only staging dirs no one has written to for a while: another daemon
+    sharing this HOME (one per server, say) may be mid-install in a fresh one.
+    Trash dirs are always fair game; their rename already took them out of use.
+    """
+    cutoff = time.time() - _STALE_STAGING_SECONDS
     for leftover in agent_dir.glob(f"{_STAGING_PREFIX}*"):
-        shutil.rmtree(leftover, ignore_errors=True)
+        if _last_activity(leftover) < cutoff:
+            shutil.rmtree(leftover, ignore_errors=True)
+    for trash in agent_dir.glob(f"{_TRASH_PREFIX}*"):
+        shutil.rmtree(trash, ignore_errors=True)
 
 
-def _remove_other_versions(agent_dir: Path, keep: str) -> None:
-    """Free the space of builds an earlier daemon release installed."""
+def _discard(path: Path) -> bool:
+    """Take ``path`` out of use in one rename, then delete it.
+
+    A dir deleted in place can end up half gone (on Windows a running CLI
+    keeps its own file), and what's left would still read as an installed
+    build. Renamed first, it is either intact or out of the way. Returns False
+    when even the rename fails (it is in use); the next start retries.
+    """
+    trash = path.with_name(f"{_TRASH_PREFIX}{path.name}-{os.getpid()}-{time.time_ns()}")
+    try:
+        os.replace(path, trash)
+    except OSError:
+        return False
+    shutil.rmtree(trash, ignore_errors=True)
+    return True
+
+
+def _remove_older_versions(agent_dir: Path, pinned: str) -> None:
+    """Free the space of builds older than ``pinned``.
+
+    Newer ones stay: they belong to a newer daemon release sharing this HOME.
+    """
     for entry in agent_dir.iterdir():
-        if entry.is_dir() and entry.name != keep and not entry.name.startswith("."):
-            shutil.rmtree(entry, ignore_errors=True)
+        if (
+            entry.is_dir()
+            and not entry.name.startswith(".")
+            and _version_key(entry.name) < _version_key(pinned)
+        ):
+            _discard(entry)
 
 
 def _inside(base: Path, name: str) -> Path:
@@ -495,24 +797,39 @@ def _unpack(asset: ReleaseAsset, archive: Path, dest: Path) -> None:
         if asset.archive == "raw":
             target = _inside(dest, asset.binary)
             target.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(archive, target)
+            _replace(archive, target)
         elif asset.archive == "tar.gz":
             with tarfile.open(archive, "r:gz") as tar:
-                for member in tar.getmembers():
+                members = tar.getmembers()
+                has_filter = hasattr(tarfile, "data_filter")
+                for member in members:
                     _inside(dest, member.name)
-                    if member.issym() or member.islnk():
-                        _inside(
-                            dest,
-                            os.path.join(os.path.dirname(member.name), member.linkname),
-                        )
                     if member.isdev():
                         raise InstallError(
                             "unpack_failed",
                             f"The archive holds a device file: {member.name}",
                         )
-                if hasattr(tarfile, "data_filter"):
+                    if not (member.issym() or member.islnk()):
+                        continue
+                    if not has_filter:
+                        # Python before 3.11.4 has no "data" filter to police
+                        # links as it writes them, and no pinned build has any.
+                        raise InstallError(
+                            "unpack_failed",
+                            f"The archive holds a link, which this Python can't "
+                            f"unpack safely: {member.name}",
+                        )
+                    # A symlink points relative to its own folder; a hard
+                    # link names another member, relative to the archive root.
+                    _inside(
+                        dest,
+                        os.path.join(os.path.dirname(member.name), member.linkname)
+                        if member.issym()
+                        else member.linkname,
+                    )
+                if has_filter:
                     tar.extractall(dest, filter="data")
-                else:  # Python before 3.11.4: the checks above are the guard
+                else:
                     tar.extractall(dest)  # noqa: S202 - every member checked above
         elif asset.archive == "zip":
             with zipfile.ZipFile(archive) as zf:
@@ -537,20 +854,23 @@ def _unpack(asset: ReleaseAsset, archive: Path, dest: Path) -> None:
 # ----- lookup ---------------------------------------------------------------
 
 
-def managed_cli_path(agent: str, root: Optional[Path] = None) -> Optional[str]:
-    """The installed managed copy of ``agent``'s CLI, or None.
-
-    The pinned version first; failing that, a build an earlier daemon release
-    installed, so an upgrade never makes a working agent read as missing.
-    """
-    release = PINNED_RELEASES.get(agent)
-    host = detect_host()
+def _find_managed_copy(
+    agent: str,
+    *,
+    root: Path,
+    releases: Mapping[str, PinnedRelease],
+    host: Optional[Host],
+) -> Optional[ManagedCopy]:
+    """The pinned build of ``agent`` under ``root``; failing that, the newest
+    build an earlier (or another) daemon release installed, so a daemon upgrade
+    never makes a working agent read as missing."""
+    release = releases.get(agent)
     if release is None or host is None:
         return None
     asset = release.assets.get(asset_key(agent, host))
     if asset is None:
         return None
-    agent_dir = (root or agents_root()) / agent
+    agent_dir = root / agent
     if not agent_dir.is_dir():
         return None
     versions = [release.version] + sorted(
@@ -567,15 +887,63 @@ def managed_cli_path(agent: str, root: Optional[Path] = None) -> Optional[str]:
     for version in versions:
         candidate = agent_dir / version / asset.binary
         if candidate.is_file():
-            return str(candidate)
+            return ManagedCopy(
+                version=version,
+                path=str(candidate),
+                pinned=version == release.version,
+            )
     return None
 
 
-def is_managed_path(path: Optional[str], root: Optional[Path] = None) -> bool:
+def managed_cli_path(agent: str) -> Optional[str]:
+    """The installed managed copy of ``agent``'s CLI, or None."""
+    copy = _find_managed_copy(
+        agent, root=agents_root(), releases=PINNED_RELEASES, host=detect_host()
+    )
+    return copy.path if copy is not None else None
+
+
+def has_build_for_this_host() -> bool:
+    """Whether any agent this release pins has a build for this machine."""
+    host = detect_host()
+    return host is not None and any(
+        asset_key(agent, host) in release.assets
+        for agent, release in PINNED_RELEASES.items()
+    )
+
+
+@functools.lru_cache(maxsize=1)
+def sdk_bundles_claude() -> bool:
+    """Whether the Claude Agent SDK here carries its own Claude CLI build.
+
+    A pip or npm install of Vicoa gets the SDK's platform wheel, which does;
+    the frozen daemon in the desktop app leaves that ~370 MB file out.
+    """
+    try:
+        import claude_agent_sdk
+    except ImportError:
+        return False
+    name = "claude.exe" if sys.platform == "win32" else "claude"
+    return (Path(claude_agent_sdk.__file__).parent / "_bundled" / name).is_file()
+
+
+def pinned_build_env(agent: str, cli_path: Optional[str]) -> dict[str, str]:
+    """Environment that keeps a managed copy on its pinned build.
+
+    Empty for the user's own CLI. Every launcher of a managed copy applies it
+    (daemon sessions and the terminal wrappers alike), or the CLI updates
+    itself in place to a version this release never ran.
+    """
+    if agent in SELF_UPDATE_OFF and is_managed_path(cli_path):
+        return dict(SELF_UPDATE_OFF[agent])
+    return {}
+
+
+def is_managed_path(path: Optional[str]) -> bool:
     """Whether ``path`` is a CLI Vicoa installed (rather than the user's own)."""
     if not path:
         return False
-    base = (root or agents_root()).resolve()
+    base = agents_root().resolve()
     try:
         return base in Path(path).resolve().parents
     except OSError:

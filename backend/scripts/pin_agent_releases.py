@@ -4,7 +4,11 @@ release may download, pinned to exact versions with their SHA-256 and size.
 
 Run it when bumping a pinned version, review the diff, commit the result:
 
-    python scripts/pin_agent_releases.py --claude 2.1.330 --codex 0.153.4 --opencode 1.18.18
+    python scripts/pin_agent_releases.py --codex 0.153.4 --opencode 1.18.18
+
+Claude Code defaults to the build the installed Claude Agent SDK was released
+with (its ``__cli_version__``), the version the daemon's Claude runner is
+tested against; ``--claude`` overrides that, with a warning.
 
 Everything comes from the vendor's own release metadata, the same sources
 their install scripts verify against; nothing here downloads a binary:
@@ -77,7 +81,7 @@ def claude_assets(version: str) -> dict[str, dict[str, Any]]:
         binary = entry["binary"]
         assets[platform] = {
             "url": f"{CLAUDE_BASE}/{version}/{platform}/{binary}",
-            "sha256": entry["checksum"],
+            "sha256": str(entry["checksum"]).lower(),
             "size": int(entry["size"]),
             "archive": "raw",
             "binary": binary,
@@ -121,7 +125,7 @@ def opencode_assets(version: str) -> dict[str, dict[str, Any]]:
                     raise SystemExit(f"{name} has no SHA-256 digest on GitHub")
                 assets[key] = {
                     "url": asset["browser_download_url"],
-                    "sha256": digest.removeprefix("sha256:"),
+                    "sha256": digest.removeprefix("sha256:").lower(),
                     "size": int(asset["size"]),
                     "archive": archive,
                     "binary": "opencode.exe"
@@ -146,20 +150,23 @@ def render(pins: dict[str, tuple[str, dict[str, dict[str, Any]]]]) -> str:
         "",
         "PINNED_RELEASES: dict[str, PinnedRelease] = {",
     ]
+    # Vendor metadata becomes Python source: json.dumps quotes and escapes each
+    # value, so a stray quote can't break or inject into the generated file.
+    q = json.dumps
     for agent, (version, assets) in pins.items():
-        lines.append(f'    "{agent}": PinnedRelease(')
-        lines.append(f'        agent="{agent}",')
-        lines.append(f'        version="{version}",')
+        lines.append(f"    {q(agent)}: PinnedRelease(")
+        lines.append(f"        agent={q(agent)},")
+        lines.append(f"        version={q(version)},")
         lines.append("        assets={")
         for key, a in assets.items():
-            lines.append(f'            "{key}": ReleaseAsset(')
-            lines.append(f'                url="{a["url"]}",')
+            lines.append(f"            {q(key)}: ReleaseAsset(")
+            lines.append(f"                url={q(a['url'])},")
             if a.get("fallback_url"):
-                lines.append(f'                fallback_url="{a["fallback_url"]}",')
-            lines.append(f'                sha256="{a["sha256"]}",')
-            lines.append(f"                size={a['size']},")
-            lines.append(f'                archive="{a["archive"]}",')
-            lines.append(f'                binary="{a["binary"]}",')
+                lines.append(f"                fallback_url={q(a['fallback_url'])},")
+            lines.append(f"                sha256={q(a['sha256'])},")
+            lines.append(f"                size={int(a['size'])},")
+            lines.append(f"                archive={q(a['archive'])},")
+            lines.append(f"                binary={q(a['binary'])},")
             lines.append("            ),")
         lines.append("        },")
         lines.append("    ),")
@@ -167,12 +174,33 @@ def render(pins: dict[str, tuple[str, dict[str, dict[str, Any]]]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _sdk_claude_version() -> str | None:
+    try:
+        from claude_agent_sdk._cli_version import __cli_version__
+    except ImportError:
+        return None
+    return str(__cli_version__)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
-    parser.add_argument("--claude", required=True, help="Claude Code version")
+    parser.add_argument(
+        "--claude",
+        help="Claude Code version (default: the installed SDK's own build)",
+    )
     parser.add_argument("--codex", required=True, help="Codex version")
     parser.add_argument("--opencode", required=True, help="OpenCode (v1) version")
     args = parser.parse_args()
+    sdk_claude = _sdk_claude_version()
+    if args.claude is None:
+        if sdk_claude is None:
+            parser.error("claude_agent_sdk isn't installed here; pass --claude")
+        args.claude = sdk_claude
+    elif sdk_claude is not None and args.claude != sdk_claude:
+        print(
+            f"warning: pinning Claude Code {args.claude}, but the installed SDK "
+            f"was released with {sdk_claude}"
+        )
     pins = {
         "claude": (args.claude, claude_assets(args.claude)),
         "codex": (args.codex, codex_assets(args.codex)),
