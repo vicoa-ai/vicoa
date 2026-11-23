@@ -264,6 +264,71 @@ export function worktreeSessionPaths(instances: AgentInstanceResponse[]): string
   return Array.from(paths).sort();
 }
 
+/** The repo's main checkout a session was registered in (`repo_root`, stamped
+ *  on every git session, worktree or not), folder-normalized; null when absent
+ *  (a non-git folder, or a session from before the stamp). */
+function sessionRepoRoot(inst: AgentInstanceResponse): string | null {
+  const root = inst.instance_metadata?.repo_root;
+  return typeof root === 'string' && root.length > 0 ? normalizeWorktreePath(root) : null;
+}
+
+/** Where the sidebar lists one project's worktrees from, and which of its
+ *  sessions' worktree folders that listing can speak for. */
+export interface WorktreeListingTarget {
+  /** The main checkout of the repo the worktree sessions belong to, from their
+   *  stamped `repo_root`; null when none carries one. Where every worktree RPC
+   *  (list, remove, start a session in one) must run. */
+  repoRoot: string | null;
+  /** A cwd of the repo that still exists, to run `git worktree list` from. */
+  listPath: string;
+  /** The repo's main checkout, for what it has checked out; null when unknown. */
+  mainPath: string | null;
+  /** Worktree folders (see `worktreeSessionPaths`) of the listed repo only. */
+  worktreePaths: string[];
+}
+
+/**
+ * Pick the repo to list a project's worktrees from. A project can hold
+ * sessions of more than one repo (an umbrella repo that nests the product repo
+ * as its own checkout, say), and `git worktree list` answers for one of them:
+ * listed from the wrong one it holds none of the others' worktrees, which the
+ * sidebar would read as every one of them being deleted.
+ *
+ * So the repo is the one the newest worktree session was registered in
+ * (`repo_root`), not the folder of whichever main-checkout session happens to
+ * be newest, and only worktree folders of that repo are offered to the list to
+ * judge: a worktree of another repo is neither listed nor called missing, it
+ * keeps rendering from its sessions. Without a stamped `repo_root` (sessions
+ * from before it) there is nothing to tell the repos apart by, so this falls
+ * back to the newest main-checkout session's folder and judges every worktree.
+ *
+ * `instances` is expected newest-first, as `groupSessions` returns it.
+ */
+export function worktreeListingTarget(instances: AgentInstanceResponse[]): WorktreeListingTarget {
+  const repoRoot =
+    instances.filter((i) => i.worktree_name).map(sessionRepoRoot).find((r) => r !== null) ?? null;
+  if (repoRoot === null) {
+    const mainPath = instances.find((i) => !i.worktree_name)?.project ?? null;
+    return {
+      repoRoot: null,
+      listPath: mainPath ?? instances[0]?.project ?? '',
+      mainPath,
+      worktreePaths: worktreeSessionPaths(instances),
+    };
+  }
+  return {
+    repoRoot,
+    listPath: repoRoot,
+    mainPath: repoRoot,
+    worktreePaths: worktreeSessionPaths(
+      instances.filter((i) => {
+        const root = sessionRepoRoot(i);
+        return root === null || root === repoRoot;
+      }),
+    ),
+  };
+}
+
 /** Claude Code's own scratch worktrees (`EnterWorktree`) — agent-internal, so
  *  one with no Vicoa session in it is noise in a sidebar, not a workspace. */
 export function isAgentScratchWorktree(path: string): boolean {

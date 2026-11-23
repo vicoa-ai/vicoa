@@ -637,49 +637,61 @@ async def wait_for_answer(
     timeout_seconds: int = 86400,  # 24 hours default
     tool_context: Context | None = None,
 ) -> str | None:
-    """Wait for an answer to a question using polling"""
+    """Wait for an answer to a question using polling.
+
+    Read-only, and every poll ends its transaction before the wait. The wait
+    can last as long as the person takes to answer (up to a day), and an open
+    transaction holds its locks on `agent_instances` and `messages` for all of
+    it: a migration's `ALTER TABLE` then queues behind it, and every other
+    query on those tables queues behind the `ALTER`. Ending the transaction
+    also hands the connection back to the pool between polls.
+    """
     start_time = time.time()
     last_progress_report = start_time
     total_minutes = timeout_seconds // 60
 
     # Get the question message
-    question = db.query(Message).filter(Message.id == question_id).first()
-    if not question or not question.requires_user_input:
-        return None
+    try:
+        question = db.query(Message).filter(Message.id == question_id).first()
+        if not question or not question.requires_user_input:
+            return None
+        instance_id = question.agent_instance_id
+        asked_at = question.created_at
+    finally:
+        db.rollback()
 
     while time.time() - start_time < timeout_seconds:
-        # Check if agent has moved on (last read message changed)
-        instance = (
-            db.query(AgentInstance)
-            .filter(AgentInstance.id == question.agent_instance_id)
-            .first()
-        )
-
-        # If last_read_message_id has changed from our question, agent has moved on
-        if instance and instance.last_read_message_id != question_id:
-            return None
-
-        # Check for a user message after this question
-        answer = (
-            db.query(Message)
-            .filter(
-                Message.agent_instance_id == question.agent_instance_id,
-                Message.sender_type == SenderType.USER,
-                Message.created_at > question.created_at,
+        try:
+            # Check if agent has moved on (last read message changed)
+            last_read = (
+                db.query(AgentInstance.last_read_message_id)
+                .filter(AgentInstance.id == instance_id)
+                .first()
             )
-            .order_by(Message.created_at)
-            .first()
-        )
 
-        if answer:
-            # Update last read message to this answer
-            if instance:
-                instance.last_read_message_id = answer.id
+            # If last_read_message_id has changed from our question, agent has moved on
+            if last_read is not None and last_read[0] != question_id:
+                return None
 
+            # Check for a user message after this question
+            answer = (
+                db.query(Message.content)
+                .filter(
+                    Message.agent_instance_id == instance_id,
+                    Message.sender_type == SenderType.USER,
+                    Message.created_at > asked_at,
+                )
+                .order_by(Message.created_at)
+                .first()
+            )
+        finally:
+            db.rollback()
+
+        if answer is not None:
             if tool_context:
                 await tool_context.report_progress(total_minutes, total_minutes)
 
-            return answer.content
+            return answer[0]
 
         # Report progress every minute if tool_context is provided
         current_time = time.time()

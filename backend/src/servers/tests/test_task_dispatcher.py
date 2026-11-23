@@ -281,6 +281,70 @@ async def test_the_cap_holds_the_rest_back(
     assert reloaded.detail == "queued: 1 of 1 sessions busy"
 
 
+def _rate_limit(db, session: AgentInstance, until: datetime) -> None:
+    # The sweep reads it back from the database in its own session.
+    session.rate_limited_until = until
+    db.commit()
+
+
+async def test_a_rate_limited_session_waits_for_its_reset(
+    test_db, harness, user, machine, task, profile
+):
+    sockets, recorder = harness
+    session = _session(test_db, user, machine, task, profile)
+    sockets.connected.add(str(session.id))
+    reset = (datetime.now(timezone.utc) + timedelta(hours=1)).replace(microsecond=0)
+    _rate_limit(test_db, session, reset)
+    row = _queue(test_db, task, profile, mode="reply", trigger="commented")
+    await task_dispatcher.TaskDispatcher().sweep_once()
+
+    assert recorder.deliveries == [] and recorder.spawns == []
+    reloaded = _reload(test_db, row)
+    assert reloaded.state == "queued"
+    assert reloaded.detail == "waiting for the agent's rate limit to reset"
+    assert reloaded.next_attempt_at == reset
+
+
+async def test_a_rate_limit_that_has_reset_no_longer_holds_it(
+    test_db, harness, user, machine, task, profile
+):
+    sockets, recorder = harness
+    session = _session(test_db, user, machine, task, profile)
+    sockets.connected.add(str(session.id))
+    _rate_limit(test_db, session, datetime.now(timezone.utc) - timedelta(minutes=1))
+    row = _queue(test_db, task, profile, mode="reply", trigger="commented")
+    await task_dispatcher.TaskDispatcher().sweep_once()
+
+    [delivery] = recorder.deliveries
+    assert delivery["instance_id"] == session.id
+    assert _reload(test_db, row).state == "delivered"
+
+
+async def test_a_rate_limited_dispatch_does_not_hold_up_the_others(
+    test_db, harness, user, machine, task, profile
+):
+    _, recorder = harness
+    session = _session(test_db, user, machine, task, profile)
+    _rate_limit(test_db, session, datetime.now(timezone.utc) + timedelta(hours=1))
+    waiting = _queue(test_db, task, profile, mode="reply", trigger="commented")
+    other = Task(
+        user_id=user.id,
+        project_id=task.project_id,
+        number=8,
+        title="Write the release notes",
+        status="todo",
+    )
+    test_db.add(other)
+    test_db.commit()
+    ready = _queue(test_db, other, profile)
+    await task_dispatcher.TaskDispatcher().sweep_once()
+
+    assert _reload(test_db, waiting).state == "queued"
+    [spawn] = recorder.spawns
+    assert spawn["title"] == "VIC-8: Write the release notes"
+    assert _reload(test_db, ready).state == "started"
+
+
 async def test_a_message_into_a_running_turn_needs_no_slot(
     test_db, harness, user, machine, task, profile
 ):

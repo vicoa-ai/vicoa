@@ -80,7 +80,7 @@ import {
   normalizeWorktreePath,
   splitProjectByWorktree,
   withEmptyProjectGroups,
-  worktreeSessionPaths,
+  worktreeListingTarget,
   GROUP_BY_STORAGE_KEY,
   PROJECT_ORDER_STORAGE_KEY,
   STATUS_FILTER_OPTIONS,
@@ -890,19 +890,17 @@ export function SidebarSessions({
         : sidebarGroups
             .filter((g) => g.key !== 'PINNED' && g.label !== null && g.instances.length > 0)
             .map((g) => {
-              const mainPath = g.instances.find((i) => !i.worktree_name)?.project ?? null;
-              // List from the main checkout (or the stamped repo root) rather
-              // than the newest session's cwd: that cwd may be a worktree whose
-              // folder is gone, and git can't list from a folder that isn't there.
-              const repoRoot = g.instances
-                .map((i) => i.instance_metadata?.repo_root)
-                .find((r): r is string => typeof r === 'string' && r.length > 0);
+              // From the repo's main checkout, not the newest session's cwd
+              // (a worktree whose folder is gone can't host the git call), and
+              // from the repo the worktree sessions belong to: a project that
+              // also holds sessions of another repo must not list from that one.
+              const { listPath, mainPath, worktreePaths } = worktreeListingTarget(g.instances);
               return {
                 key: g.key,
                 machineId: g.instances[0]?.machine_id ?? null,
-                listPath: mainPath ?? repoRoot ?? g.instances[0]?.project ?? '',
+                listPath,
                 mainPath,
-                worktreePaths: worktreeSessionPaths(g.instances),
+                worktreePaths,
               };
             }),
     [sidebarGroups, worktreesOn, groupBy],
@@ -1296,15 +1294,13 @@ export function SidebarSessions({
 
         const repoMachineId = instances[0]?.machine_id ?? null;
         const mainDirectory = instances.find((i) => !i.worktree_name)?.project ?? null;
-        // Every worktree RPC runs from the repo's main checkout: a main-checkout
-        // session's cwd, else the `repo_root` the daemon stamped on a worktree
-        // session at registration (a project may have only worktree sessions).
-        const repoDirectory =
-          mainDirectory ??
-          instances
-            .map((i) => i.instance_metadata?.repo_root)
-            .find((r): r is string => typeof r === 'string' && r.length > 0) ??
-          null;
+        // Every worktree RPC runs from the main checkout of the repo the
+        // worktrees belong to: the `repo_root` the daemon stamped on a worktree
+        // session at registration, else a main-checkout session's cwd. Not the
+        // newest main-checkout session's cwd first: in a project that also holds
+        // sessions of another repo it can be that repo, which has none of these
+        // worktrees to remove or to start a session in.
+        const repoDirectory = worktreeListingTarget(instances).repoRoot ?? mainDirectory;
         const subs: RenderedSubGroup[] = [];
         const prs = view?.prs ?? {};
         const mainRef = view?.mainRef ?? null;

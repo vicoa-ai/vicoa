@@ -256,8 +256,12 @@ class AgentInstance(Base):
     # value — rate-limit is an orthogonal, transient, auto-recovering axis that
     # must not overwrite the idle/active lifecycle. Set and cleared by the same
     # projection (usage back under 100% -> NULL). See
-    # plans/todos/auto-continue-rate-limited-sessions.md.
-    rate_limited_until: Mapped[datetime | None] = mapped_column(default=None)
+    # plans/todos/auto-continue-rate-limited-sessions.md. With a time zone,
+    # unlike this table's older timestamps: it is compared in Python with an
+    # aware "now" (the task dispatch sweep), and a naive value there raises.
+    rate_limited_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
     instance_metadata: Mapped[dict | None] = mapped_column(JSONB, default=dict)
     # User-visible spawn-time configuration (agent, model, effort, permission/mode).
     # Mirrors SessionConfig.toJson() in mobile. Kept separate from

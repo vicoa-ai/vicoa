@@ -12,6 +12,7 @@ import {
   rankProjects,
   splitProjectByWorktree,
   withEmptyProjectGroups,
+  worktreeListingTarget,
   worktreeSessionPaths,
   type LiveWorktree,
 } from './session-grouping';
@@ -569,6 +570,121 @@ describe('worktreeSessionPaths', () => {
     ];
 
     expect(worktreeSessionPaths(instances)).toEqual(['~/wt/a/app', '~/wt/b/app']);
+  });
+});
+
+describe('worktreeListingTarget', () => {
+  const meta = (repo_root: string) => ({ repo_root });
+
+  // One project that holds sessions of two repos: the umbrella repo, and the
+  // product repo it nests as a checkout of its own. Newest first.
+  const twoRepos = (): AgentInstanceResponse[] => [
+    make({ id: 'umbrella', project: '~/p/umbrella', instance_metadata: meta('~/p/umbrella') }),
+    make({
+      id: 'wt-a',
+      project: '~/wt/a/app',
+      worktree_name: 'a',
+      instance_metadata: meta('~/p/umbrella/app'),
+    }),
+    make({ id: 'app', project: '~/p/umbrella/app', instance_metadata: meta('~/p/umbrella/app') }),
+    make({
+      id: 'wt-b',
+      project: '~/wt/b/app',
+      worktree_name: 'b',
+      instance_metadata: meta('~/p/umbrella/app'),
+    }),
+  ];
+
+  it("lists from the repo the worktree sessions belong to, not the newest main session's folder", () => {
+    const target = worktreeListingTarget(twoRepos());
+
+    // The newest main-checkout session is in the umbrella repo, which has none
+    // of these worktrees: listed from there, every one would read as deleted.
+    expect(target.listPath).toBe('~/p/umbrella/app');
+    expect(target.mainPath).toBe('~/p/umbrella/app');
+    expect(target.repoRoot).toBe('~/p/umbrella/app');
+    expect(target.worktreePaths).toEqual(['~/wt/a/app', '~/wt/b/app']);
+  });
+
+  it('does not offer another repo’s worktrees to be judged missing', () => {
+    const instances = [
+      ...twoRepos(),
+      make({
+        id: 'wt-other',
+        project: '~/wt/c/umbrella',
+        worktree_name: 'c',
+        instance_metadata: meta('~/p/umbrella'),
+      }),
+    ];
+
+    // Anchored on the repo of the newest worktree session; the umbrella's own
+    // worktree is out of this list's reach, so it is not in the judged set.
+    const target = worktreeListingTarget(instances);
+    expect(target.repoRoot).toBe('~/p/umbrella/app');
+    expect(target.worktreePaths).toEqual(['~/wt/a/app', '~/wt/b/app']);
+  });
+
+  it('judges a worktree session that carries no repo_root against the anchored repo', () => {
+    const instances = [
+      ...twoRepos(),
+      make({ id: 'old', project: '~/wt/old/app', worktree_name: 'old' }),
+    ];
+
+    expect(worktreeListingTarget(instances).worktreePaths).toEqual([
+      '~/wt/a/app',
+      '~/wt/b/app',
+      '~/wt/old/app',
+    ]);
+  });
+
+  it('is the same repo whichever main-checkout session is newest', () => {
+    const appFirst = twoRepos();
+    [appFirst[0], appFirst[2]] = [appFirst[2]!, appFirst[0]!]; // the product repo's session leads
+
+    expect(worktreeListingTarget(appFirst)).toEqual(worktreeListingTarget(twoRepos()));
+  });
+
+  it('falls back to the newest main-checkout session when no worktree session has a repo_root', () => {
+    const instances = [
+      make({ id: 'wt', project: '~/wt/a/app', worktree_name: 'a' }),
+      make({ id: 'main', project: '~/p/app' }),
+    ];
+
+    expect(worktreeListingTarget(instances)).toEqual({
+      repoRoot: null,
+      listPath: '~/p/app',
+      mainPath: '~/p/app',
+      worktreePaths: ['~/wt/a/app'],
+    });
+  });
+
+  it('with only worktree sessions and no repo_root, lists from the newest cwd and has no main path', () => {
+    const instances = [make({ id: 'wt', project: '~/wt/a/app', worktree_name: 'a' })];
+
+    expect(worktreeListingTarget(instances)).toEqual({
+      repoRoot: null,
+      listPath: '~/wt/a/app',
+      mainPath: null,
+      worktreePaths: ['~/wt/a/app'],
+    });
+  });
+
+  it('keeps a worktree that exists in the listed repo, and calls only the missing one deleted', () => {
+    const instances = twoRepos();
+    const target = worktreeListingTarget(instances);
+    const live: LiveWorktree[] = [
+      {
+        path: '/Users/me/wt/a/app',
+        display_path: '~/wt/a/app',
+        branch: 'a',
+        managed: true,
+      },
+    ];
+
+    const { worktrees } = splitProjectByWorktree(instances, live, new Set(target.worktreePaths));
+
+    expect(worktrees.find((w) => w.path === '~/wt/a/app')?.missing).toBe(false);
+    expect(worktrees.find((w) => w.path === '~/wt/b/app')?.missing).toBe(true);
   });
 });
 

@@ -1,3 +1,4 @@
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -96,10 +97,20 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    # A migration waits at most this long for a lock, then fails. DDL that
+    # queues for a lock blocks every later query on that table, plain reads
+    # included, until it gets the lock: one long transaction elsewhere would
+    # otherwise stall the whole API for as long as it stays open, and a
+    # migration abandoned mid-wait keeps queueing after its process is gone.
+    # Failing fails the deploy's release step, and the running version stays
+    # up. Set MIGRATION_LOCK_TIMEOUT in the process environment to change it
+    # ("0" waits forever).
+    lock_timeout = os.environ.get("MIGRATION_LOCK_TIMEOUT", "5s")
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args={"options": f"-c lock_timeout={lock_timeout}"},
     )
 
     with connectable.connect() as connection:

@@ -215,6 +215,46 @@ class TestMessageIntegration:
         assert instance.last_read_message_id == question.id
 
     @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_wait_for_answer_holds_no_transaction_while_waiting(
+        self, test_db, test_user
+    ):
+        """Between polls the session is out of its transaction. An open one
+        would hold locks on agent_instances and messages for the whole wait,
+        and a migration's ALTER TABLE on either would stall every query."""
+        instance = get_or_create_agent_instance(
+            test_db, str(uuid4()), str(test_user.id), agent_type="Test Agent"
+        )
+        test_db.commit()
+        question = create_agent_message(
+            db=test_db,
+            instance_id=instance.id,
+            content="Ready to deploy?",
+            requires_user_input=True,
+        )
+        test_db.commit()
+
+        wait_future = asyncio.create_task(
+            wait_for_answer(db=test_db, question_id=question.id, timeout_seconds=5)
+        )
+        # Let it poll at least once and go to sleep.
+        await asyncio.sleep(1.5)
+        assert not wait_future.done()
+        assert not test_db.in_transaction()
+
+        test_db.add(
+            Message(
+                agent_instance_id=instance.id,
+                sender_type=SenderType.USER,
+                content="Yes",
+                requires_user_input=False,
+            )
+        )
+        test_db.commit()
+        assert await wait_future == "Yes"
+        assert not test_db.in_transaction()
+
+    @pytest.mark.integration
     def test_multiple_user_messages_queuing(self, test_db, test_user):
         """Test handling multiple queued user messages."""
         # Create instance with initial message
