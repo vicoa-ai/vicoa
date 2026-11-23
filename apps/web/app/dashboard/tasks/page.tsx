@@ -11,6 +11,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Check,
   Columns3,
+  Folders,
   List,
   ListTodo,
   Plus,
@@ -20,6 +21,7 @@ import {
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -71,6 +73,7 @@ import {
   TaskView,
   activeAssigneeFilter,
   activeLabelFilter,
+  activeProjectFilter,
   activeRelationFilter,
   cloneView,
   compareTasks,
@@ -83,6 +86,7 @@ import {
   saveViews,
   taskMatchesAssignee,
   taskMatchesLabels,
+  taskMatchesProjects,
   taskMatchesRelation,
 } from './task-views';
 
@@ -103,6 +107,10 @@ export default function TasksPage() {
 
 // The board watches its tasks' dispatches only, not every session filed under a task.
 const NO_SESSION_IDS: string[] = [];
+
+// Ticking a project keeps the picker open, so several are one visit.
+const keepMenuOpen = (event: Event) => event.preventDefault();
+const PROJECT_ITEM_CLASS = 'cursor-pointer text-xs';
 
 function TasksPageInner() {
   const router = useRouter();
@@ -230,7 +238,16 @@ function TasksPageInner() {
     [views, activeViewId],
   );
   const view = activeView.mode;
-  const projectFilter = activeView.projectFilter;
+  // The projects the view shows (empty = every project), narrowed to ones that
+  // still exist once the list has loaded; before that the saved ids stand, so
+  // a cold start doesn't flash "All projects" on a filtered view.
+  const projectFilter = useMemo(
+    () =>
+      isLoading
+        ? new Set(activeView.projectFilter)
+        : activeProjectFilter(activeView.projectFilter, projects),
+    [isLoading, activeView.projectFilter, projects],
+  );
   const showSubTasks = activeView.showSubTasks;
   const properties = activeView.properties;
   const sortBy = activeView.sortBy;
@@ -312,7 +329,7 @@ function TasksPageInner() {
   useEffect(() => {
     const projectId = searchParams?.get('project');
     if (!projectId || !activeViewId) return;
-    updateActiveView({ projectFilter: projectId });
+    updateActiveView({ projectFilter: [projectId] });
     router.replace('/dashboard/tasks', { scroll: false });
   }, [searchParams, activeViewId, updateActiveView, router]);
 
@@ -459,7 +476,7 @@ function TasksPageInner() {
         const project = await api.createProject(values);
         setProjects((prev) => [...prev, project]);
         refreshProjects();
-        updateActiveView({ projectFilter: project.id });
+        updateActiveView({ projectFilter: [project.id] });
       } catch (err) {
         console.error('Failed to create project:', err);
         throw err; // the dialog reports it and stays open for a retry
@@ -572,11 +589,7 @@ function TasksPageInner() {
 
   const visibleTasks = useMemo(() => {
     const filtered = tasks.filter((t) => {
-      if (projectFilter === NO_PROJECT_FILTER) {
-        if (t.project_id !== null) return false;
-      } else if (projectFilter !== 'all' && t.project_id !== projectFilter) {
-        return false;
-      }
+      if (!taskMatchesProjects(t, projectFilter)) return false;
       if (!taskMatchesLabels(t, labelFilter)) return false;
       if (!taskMatchesAssignee(t, assigneeFilter)) return false;
       if (!taskMatchesRelation(t, relationFilter, viewerId)) return false;
@@ -645,9 +658,42 @@ function TasksPageInner() {
     };
   }, [api, dialogTaskId]);
 
-  const filterProject = projects.find((p) => p.id === projectFilter);
+  // The picked projects in the picker's order, and whether "No project" is one.
+  const filterProjects = useMemo(
+    () => projects.filter((p) => projectFilter.has(p.id)),
+    [projects, projectFilter],
+  );
+  const filterUnfiled = projectFilter.has(NO_PROJECT_FILTER);
+  // The one project the board shows, when it shows exactly one.
+  const filterProject = projectFilter.size === 1 ? filterProjects[0] : undefined;
+  // Tick a project (or "No project") in or out of the view. Writes back from
+  // the narrowed set, so a project that went away drops out on the next tick.
+  const toggleProjectFilter = useCallback(
+    (value: string) => {
+      const next = new Set(projectFilter);
+      if (next.has(value)) next.delete(value);
+      else next.add(value);
+      updateActiveView({ projectFilter: [...next] });
+    },
+    [projectFilter, updateActiveView],
+  );
+  // The picker button names every project, the one picked, or how many are
+  // picked, with their names in its tooltip.
+  const projectPickerLabel =
+    projectFilter.size === 0
+      ? 'All projects'
+      : projectFilter.size === 1
+        ? filterUnfiled
+          ? NO_PROJECT_LABEL
+          : projectLabel(filterProject)
+        : `${projectFilter.size} projects`;
+  const projectPickerTitle =
+    projectFilter.size > 1
+      ? [...filterProjects.map((p) => projectLabel(p)), ...(filterUnfiled ? [NO_PROJECT_LABEL] : [])].join(', ')
+      : undefined;
   // Share the board (collaboration P4): one project at a time, admin standing,
-  // cloud backend only. "All projects" has nothing to point a link at.
+  // cloud backend only. "All projects" and a pick of several have no one
+  // project to point a link at.
   const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
   const [shareTab, setShareTab] = useState<ShareTab>('link');
   // Bumped when the dialog changes a grant, so the avatar stack refetches.
@@ -679,18 +725,21 @@ function TasksPageInner() {
       projectRoleAtLeast(projectById.get(task.project_id)?.role, 'editor'),
     [projectById],
   );
+  // A task can be added when the board shows somewhere it can be filed:
+  // every project, unfiled tasks, or a picked project the caller edits.
   const canCreateHere =
-    projectFilter === 'all' ||
-    projectFilter === NO_PROJECT_FILTER ||
-    projectRoleAtLeast(filterProject?.role, 'editor');
+    projectFilter.size === 0 ||
+    filterUnfiled ||
+    filterProjects.some((p) => projectRoleAtLeast(p.role, 'editor'));
   // The create dialog only offers projects a task can actually be filed into.
   const writableProjects = useMemo(
     () => projects.filter((p) => projectRoleAtLeast(p.role, 'editor')),
     [projects],
   );
-  // A new task starts in the project the view is filtered to (every entry
-  // point: header button, empty state, board column "+"); under "All" or "No
-  // project" it starts unfiled.
+  // A new task starts in the project the view is filtered to, the first one
+  // it can be filed into when several are picked (every entry point: header
+  // button, empty state, board column "+"); under "All" or "No project" it
+  // starts unfiled.
   const openCreateDialog = useCallback(
     (defaults?: { status?: TaskStatus }) =>
       setDialog({
@@ -747,53 +796,71 @@ function TasksPageInner() {
           />
         </div>
 
-        {/* Project: which board this view shows, so it leads the controls that
-            act on the view. A single pick rather than a Filter dimension:
-            Share, the people stack and a new task's project all follow it,
-            so it stays named on the button instead of folding into "1 filter". */}
+        {/* Projects: which boards this view shows, so it leads the controls
+            that act on the view. Projects are ticked in place like the Filter
+            menu's values (OR within, the menu stays open), but it stays its
+            own control: it names the project on the button instead of folding
+            into "1 filter", and Share, the people stack and a new task's
+            project follow it. */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
-              {projectFilter === 'all' ? (
-                <ListTodo className="size-3.5 text-muted-foreground" />
-              ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              title={projectPickerTitle}
+            >
+              {/* One project draws its own icon (a folder by default); every
+                  project and several draw the stacked folders. */}
+              {projectFilter.size === 1 ? (
                 <ProjectIcon project={filterProject} />
+              ) : (
+                <Folders className="size-3.5 text-muted-foreground" />
               )}
-              <span className="hidden md:inline">
-                {projectFilter === 'all'
-                  ? 'All projects'
-                  : projectFilter === NO_PROJECT_FILTER
-                    ? NO_PROJECT_LABEL
-                    : projectLabel(filterProject)}
-              </span>
+              <span className="hidden md:inline">{projectPickerLabel}</span>
+              {projectFilter.size > 1 && (
+                <span className="tabular-nums md:hidden">{projectFilter.size}</span>
+              )}
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-52 text-xs">
-            <DropdownMenuItem onSelect={() => updateActiveView({ projectFilter: 'all' })}>
-              <ListTodo className="mr-2 size-3.5 text-muted-foreground" />
+          <DropdownMenuContent align="start" className="w-56 text-xs">
+            <DropdownMenuCheckboxItem
+              checked={projectFilter.size === 0}
+              onCheckedChange={() => updateActiveView({ projectFilter: [] })}
+              className={PROJECT_ITEM_CLASS}
+            >
+              <Folders className="size-3.5 text-muted-foreground" />
               All projects
-              {projectFilter === 'all' && <Check className="ml-auto h-3 w-3" />}
-            </DropdownMenuItem>
+            </DropdownMenuCheckboxItem>
             <DropdownMenuSeparator />
             {projects.map((project) => (
-              <DropdownMenuItem
+              <DropdownMenuCheckboxItem
                 key={project.id}
-                onSelect={() => updateActiveView({ projectFilter: project.id })}
+                checked={projectFilter.has(project.id)}
+                onCheckedChange={() => toggleProjectFilter(project.id)}
+                onSelect={keepMenuOpen}
+                className={PROJECT_ITEM_CLASS}
               >
-                <ProjectIcon project={project} className="mr-2" />
-                {projectLabel(project)}
-                {projectFilter === project.id && <Check className="ml-auto h-3 w-3" />}
-              </DropdownMenuItem>
+                <ProjectIcon project={project} />
+                <span className="truncate">{projectLabel(project)}</span>
+              </DropdownMenuCheckboxItem>
             ))}
             {/* Unfiled tasks, pinned last like the sidebar's No project bucket. */}
-            <DropdownMenuItem onSelect={() => updateActiveView({ projectFilter: NO_PROJECT_FILTER })}>
-              <ProjectIcon project={null} className="mr-2" />
+            <DropdownMenuCheckboxItem
+              checked={filterUnfiled}
+              onCheckedChange={() => toggleProjectFilter(NO_PROJECT_FILTER)}
+              onSelect={keepMenuOpen}
+              className={PROJECT_ITEM_CLASS}
+            >
+              <ProjectIcon project={null} />
               {NO_PROJECT_LABEL}
-              {projectFilter === NO_PROJECT_FILTER && <Check className="ml-auto h-3 w-3" />}
-            </DropdownMenuItem>
+            </DropdownMenuCheckboxItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => setProjectDialogOpen(true)}>
-              <Plus className="mr-2 h-3.5 w-3.5" />
+            <DropdownMenuItem
+              onSelect={() => setProjectDialogOpen(true)}
+              className="pl-8 text-xs"
+            >
+              <Plus className="size-3.5" />
               New project
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -897,9 +964,11 @@ function TasksPageInner() {
           <ListTodo className="h-10 w-10 text-muted-foreground/40" />
           <p className="text-sm">
             {!filtering
-              ? projectFilter === 'all'
+              ? projectFilter.size === 0
                 ? 'No tasks yet'
-                : 'No tasks in this project'
+                : projectFilter.size === 1
+                  ? 'No tasks in this project'
+                  : 'No tasks in these projects'
               : assigneeFilter.size === 0 &&
                   labelFilter.size === 0 &&
                   relationFilter.size === 1 &&

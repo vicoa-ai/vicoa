@@ -6,6 +6,7 @@ import {
   NO_PROJECT_FILTER,
   activeAssigneeFilter,
   activeLabelFilter,
+  activeProjectFilter,
   activeRelationFilter,
   capColumnIds,
   cloneView,
@@ -15,6 +16,7 @@ import {
   normalizeView,
   taskMatchesAssignee,
   taskMatchesLabels,
+  taskMatchesProjects,
   taskMatchesRelation,
   type TaskView,
 } from './task-views';
@@ -242,23 +244,98 @@ describe('normalizeView', () => {
   });
 });
 
+describe('normalizeView project filter', () => {
+  const saved = (projectFilter: unknown) =>
+    normalizeView({ id: 'v1', name: 'Mine', projectFilter } as Partial<TaskView>)!.projectFilter;
+
+  it('reads a view saved while the picker took one project', () => {
+    expect(saved('all')).toEqual([]);
+    expect(saved('')).toEqual([]);
+    expect(saved(NO_PROJECT_FILTER)).toEqual([NO_PROJECT_FILTER]);
+    expect(saved('alpha')).toEqual(['alpha']);
+  });
+
+  it('keeps several picks once each, dropping what is not an id', () => {
+    expect(saved(['alpha', 'beta', 'alpha', 7, null, NO_PROJECT_FILTER])).toEqual([
+      'alpha',
+      'beta',
+      NO_PROJECT_FILTER,
+    ]);
+  });
+
+  it('shows every project when nothing usable was saved', () => {
+    expect(saved(undefined)).toEqual([]);
+    expect(saved({ alpha: true })).toEqual([]);
+  });
+
+  it('copies the project filter on duplicate', () => {
+    const source = normalizeView({ id: 'v1', name: 'Mine', projectFilter: ['alpha'] })!;
+    const copy = cloneView(source, 'Copy');
+    expect(copy.projectFilter).toEqual(['alpha']);
+    expect(copy.projectFilter).not.toBe(source.projectFilter);
+  });
+});
+
+describe('activeProjectFilter', () => {
+  const projects = [{ id: 'alpha' }, { id: 'beta' }];
+
+  it('keeps projects that still exist and "No project"', () => {
+    expect([...activeProjectFilter(['beta', NO_PROJECT_FILTER], projects)]).toEqual([
+      'beta',
+      NO_PROJECT_FILTER,
+    ]);
+  });
+
+  it('drops a project that went away, so the view does not match nothing', () => {
+    expect([...activeProjectFilter(['gone'], projects)]).toEqual([]);
+    expect([...activeProjectFilter(['gone', 'alpha'], projects)]).toEqual(['alpha']);
+  });
+});
+
+describe('taskMatchesProjects', () => {
+  const filed = { project_id: 'alpha' };
+  const unfiled = { project_id: null };
+
+  it('passes everything when no project is picked', () => {
+    expect(taskMatchesProjects(filed, new Set())).toBe(true);
+    expect(taskMatchesProjects(unfiled, new Set())).toBe(true);
+  });
+
+  it('passes a task in any picked project', () => {
+    expect(taskMatchesProjects(filed, new Set(['beta', 'alpha']))).toBe(true);
+    expect(taskMatchesProjects(filed, new Set(['beta']))).toBe(false);
+  });
+
+  it('passes an unfiled task only while "No project" is picked', () => {
+    expect(taskMatchesProjects(unfiled, new Set(['alpha']))).toBe(false);
+    expect(taskMatchesProjects(unfiled, new Set(['alpha', NO_PROJECT_FILTER]))).toBe(true);
+    expect(taskMatchesProjects(filed, new Set([NO_PROJECT_FILTER]))).toBe(false);
+  });
+});
+
 describe('createProjectDefault', () => {
   const writable = [{ id: 'alpha' }, { id: 'beta' }];
 
   it('starts a new task in the project the view is filtered to', () => {
-    expect(createProjectDefault('alpha', writable)).toBe('alpha');
-    expect(createProjectDefault('beta', writable)).toBe('beta');
+    expect(createProjectDefault(new Set(['alpha']), writable)).toBe('alpha');
+    expect(createProjectDefault(new Set(['beta']), writable)).toBe('beta');
+  });
+
+  it('picks the first project in picker order when several are picked', () => {
+    expect(createProjectDefault(new Set(['beta', 'alpha']), writable)).toBe('alpha');
+    expect(createProjectDefault(new Set([NO_PROJECT_FILTER, 'beta']), writable)).toBe('beta');
   });
 
   it('starts unfiled under "All" and "No project"', () => {
-    expect(createProjectDefault('all', writable)).toBeUndefined();
-    expect(createProjectDefault(NO_PROJECT_FILTER, writable)).toBeUndefined();
+    expect(createProjectDefault(new Set(), writable)).toBeUndefined();
+    expect(createProjectDefault(new Set([NO_PROJECT_FILTER]), writable)).toBeUndefined();
   });
 
   it('ignores a project the caller cannot file into', () => {
     // A stale saved view, or a board shared read-only: not offered by the dialog.
-    expect(createProjectDefault('gamma', writable)).toBeUndefined();
-    expect(createProjectDefault('alpha', [])).toBeUndefined();
+    expect(createProjectDefault(new Set(['gamma']), writable)).toBeUndefined();
+    expect(createProjectDefault(new Set(['alpha']), [])).toBeUndefined();
+    expect(createProjectDefault(new Set(['gamma', 'beta']), writable)).toBe('beta');
   });
 });
 
