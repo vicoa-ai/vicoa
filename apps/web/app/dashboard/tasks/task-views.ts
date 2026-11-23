@@ -182,24 +182,61 @@ export const TASK_PROPERTY_OPTIONS: { key: keyof TaskViewProperties; label: stri
 ];
 
 /**
- * `projectFilter` value for "unfiled tasks only" (`project_id` null). "No
- * project" is not a project row, so it needs its own sentinel next to 'all'.
+ * `projectFilter` value for unfiled tasks (`project_id` null). "No project" is
+ * not a project row, so it needs its own sentinel beside the project ids.
  */
 export const NO_PROJECT_FILTER = 'none';
 
 /**
- * The project a new task starts in while the view is filtered to one project,
- * so "New task" files it where the user is looking. `undefined` for the
- * "all" and "No project" filters (the dialog starts unfiled), and for a project
- * the caller can't file into (a stale saved view, or a viewer-only board), which
- * the create dialog doesn't offer.
+ * A saved project filter in today's shape: project ids and/or
+ * `NO_PROJECT_FILTER`, deduped, empty for every project. A view saved while
+ * the picker took one project holds a single string, with 'all' for every
+ * project.
+ */
+function normalizeProjectFilter(raw: unknown): string[] {
+  if (typeof raw === 'string') return raw && raw !== 'all' ? [raw] : [];
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.filter((value): value is string => typeof value === 'string'))];
+}
+
+/**
+ * The view's project filter narrowed to projects the caller can still see,
+ * plus "No project". A project deleted, archived or unshared after it was
+ * picked would otherwise keep the view matching nothing, with no row in the
+ * menu to unpick.
+ */
+export function activeProjectFilter(
+  projectFilter: readonly string[],
+  projects: readonly { id: string }[],
+): Set<string> {
+  const known = new Set<string>([NO_PROJECT_FILTER, ...projects.map((p) => p.id)]);
+  return new Set(projectFilter.filter((value) => known.has(value)));
+}
+
+/**
+ * A task passes when it is filed in any of the active projects, or is unfiled
+ * while "No project" is active (none active = every project).
+ */
+export function taskMatchesProjects(
+  task: Pick<TaskResponse, 'project_id'>,
+  active: ReadonlySet<string>,
+): boolean {
+  return active.size === 0 || active.has(task.project_id ?? NO_PROJECT_FILTER);
+}
+
+/**
+ * The project a new task starts in while the view is filtered to projects, so
+ * "New task" files it where the user is looking: the first one the view
+ * shows, in the order of `writableProjects` (the picker's order), that the
+ * caller can file into. `undefined` (the dialog starts unfiled) for every
+ * project, for "No project" alone, and when the caller can file into none of
+ * them (a stale saved view, or viewer-only boards).
  */
 export function createProjectDefault(
-  projectFilter: string,
+  projectFilter: ReadonlySet<string>,
   writableProjects: readonly { id: string }[],
 ): string | undefined {
-  if (projectFilter === 'all' || projectFilter === NO_PROJECT_FILTER) return undefined;
-  return writableProjects.some((p) => p.id === projectFilter) ? projectFilter : undefined;
+  return writableProjects.find((p) => projectFilter.has(p.id))?.id;
 }
 
 /**
@@ -327,8 +364,9 @@ export interface TaskView {
   id: string;
   name: string;
   mode: TaskViewMode;
-  /** 'all', NO_PROJECT_FILTER, or a project id. */
-  projectFilter: string;
+  /** Project ids and/or NO_PROJECT_FILTER; a task shows when it is in any of
+   *  them. Empty = every project. */
+  projectFilter: string[];
   /** Label ids; a task shows when it has any of them. Empty = no label filter. */
   labelFilter: string[];
   /** ASSIGNEE_NONE / agent profile ids; a task shows when its assignee is any
@@ -368,7 +406,7 @@ export function defaultView(): TaskView {
     id: newId(),
     name: 'All tasks',
     mode: 'board',
-    projectFilter: 'all',
+    projectFilter: [],
     labelFilter: [],
     assigneeFilter: [],
     relationFilter: [],
@@ -405,7 +443,7 @@ export function normalizeView(raw: Partial<TaskView> | null | undefined): TaskVi
     id: typeof raw.id === 'string' && raw.id ? raw.id : base.id,
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name : base.name,
     mode: raw.mode === 'list' ? 'list' : 'board',
-    projectFilter: typeof raw.projectFilter === 'string' ? raw.projectFilter : 'all',
+    projectFilter: normalizeProjectFilter(raw.projectFilter),
     labelFilter: Array.isArray(raw.labelFilter)
       ? raw.labelFilter.filter((id): id is string => typeof id === 'string')
       : [],
@@ -450,6 +488,7 @@ export function cloneView(source: TaskView, name: string): TaskView {
     ...source,
     id: newId(),
     name,
+    projectFilter: [...source.projectFilter],
     labelFilter: [...source.labelFilter],
     assigneeFilter: [...source.assigneeFilter],
     relationFilter: [...source.relationFilter],
