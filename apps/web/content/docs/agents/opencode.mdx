@@ -27,14 +27,16 @@ After authentication via the web portal, you're ready to use OpenCode from anywh
 
 ### Manual Installation
 
-If you prefer manual setup, add the plugin to your OpenCode config (`~/.config/opencode/config.json`):
+If you prefer manual setup, add the plugin to your global OpenCode config (`~/.config/opencode/opencode.json`):
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["opencode-vicoa"]
+  "plugin": ["@vicoa/opencode"]
 }
 ```
+
+The plugin is built for OpenCode 1.x (the `opencode-ai` npm package). OpenCode 2 doesn't run 1.x plugins.
 
 Then authenticate with Vicoa CLI or set your API key manually:
 
