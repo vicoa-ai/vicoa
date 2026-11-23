@@ -418,7 +418,7 @@ class FFAppState extends ChangeNotifier {
         'ff_surveys', _surveys.map((x) => x.serialize()).toList());
   }
 
-  String _appVersion = "1.7.16";
+  String _appVersion = "1.7.18";
   String get appVersion => _appVersion;
   set appVersion(String value) {
     _appVersion = value;
