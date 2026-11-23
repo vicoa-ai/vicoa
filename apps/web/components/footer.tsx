@@ -89,6 +89,7 @@ export function Footer() {
               <li><a href="/vs/moshi" className="hover:text-blue-400 transition-colors">Vicoa vs Moshi</a></li>
               <li><a href="/vs/codex-relay" className="hover:text-blue-400 transition-colors">Vicoa vs Codex Relay</a></li>
               <li><a href="/vs/remodex" className="hover:text-blue-400 transition-colors">Vicoa vs Remodex</a></li>
+              <li><a href="/vs/orca" className="hover:text-blue-400 transition-colors">Vicoa vs Orca</a></li>
             </ul>
           </div>
 
