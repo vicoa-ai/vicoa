@@ -436,9 +436,10 @@ class HeadlessClaudeRunner:
         cli_path: Optional[str] = None,
     ):
         self.vicoa_api_key = vicoa_api_key
-        # The Claude CLI to run, when the daemon hands one over (Vicoa's own
-        # copy under ~/.vicoa/agents, which the SDK would not look for).
-        # None leaves the SDK to find one as it always has.
+        # The Claude CLI to run, when the daemon hands over the one its
+        # detection found: Vicoa's own copy under ~/.vicoa/agents, or the
+        # user's own install when the SDK carries no bundled build (the
+        # frozen daemon). None leaves the SDK to find one as it always has.
         self.cli_path = cli_path
         self.vicoa_base_url = vicoa_base_url
         self.initial_prompt = initial_prompt
@@ -3908,7 +3909,7 @@ def main():
         "--claude-cli",
         dest="claude_cli",
         default=None,
-        help="Path of the Claude CLI to run (the daemon passes Vicoa's own copy)",
+        help="Path of the Claude CLI to run (the daemon passes the one it detected)",
     )
     parser.add_argument(
         "--system-prompt",

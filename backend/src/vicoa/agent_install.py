@@ -18,8 +18,8 @@ when the agent can't be found anywhere else (see ``vicoa.utils.find_codex_cli``,
 A daemon release that pins a newer build upgrades Vicoa's copy by itself (see
 ``MachineDaemon._upgrade_managed_agents``): the managed copy has self-update
 turned off, so nothing else would. The older build keeps serving until the new
-one is in place, and is deleted at the next daemon start (:meth:`AgentInstaller.tidy`),
-when no session of this daemon can still be running it.
+one is in place, and is deleted at a later daemon start (:meth:`AgentInstaller.tidy`)
+once no running process uses it: sessions outlive a daemon restart.
 """
 
 from __future__ import annotations
@@ -28,6 +28,8 @@ import errno
 import functools
 import hashlib
 import http.client
+import importlib.util
+import json
 import logging
 import os
 import platform
@@ -101,6 +103,12 @@ ErrorCode = Literal[
 ]
 #: Failures on this machine's side: another download host can't help.
 _LOCAL_FAILURES: frozenset[str] = frozenset({"no_space", "write_failed"})
+#: Failures that downloading the same build again won't change. After one, the
+#: daemon stops upgrading to that build by itself at every start (each try is
+#: a full download); an explicit Install still tries it.
+_NO_AUTO_RETRY: frozenset[str] = frozenset({"verify_failed", "checksum_mismatch"})
+#: Per agent dir: the pinned version whose install hit a _NO_AUTO_RETRY failure.
+_AUTO_UPGRADE_BLOCK = ".auto-upgrade-blocked"
 
 
 def agents_root() -> Path:
@@ -269,10 +277,15 @@ class InstallProgress:
 class InstallError(Exception):
     """An install that can't go on, with a stable code for clients."""
 
-    def __init__(self, code: ErrorCode, message: str) -> None:
+    def __init__(
+        self, code: ErrorCode, message: str, *, transient: bool = False
+    ) -> None:
         super().__init__(message)
         self.code: ErrorCode = code
         self.message = message
+        #: Might go away on a retry (a timeout, a file briefly held by an
+        #: antivirus scan): never blocks the automatic upgrade.
+        self.transient = transient
 
 
 @dataclass(frozen=True)
@@ -288,6 +301,8 @@ class ManagedCopy:
 Opener = Callable[[str], AbstractContextManager[IO[bytes]]]
 #: Runs a freshly unpacked CLI once; raises :class:`InstallError` if it can't.
 BuildCheck = Callable[[str, Path], None]
+#: Every running process's command line, or None when they can't be listed.
+CommandLines = Callable[[], Optional[list[str]]]
 
 
 @functools.lru_cache(maxsize=1)
@@ -329,6 +344,7 @@ class AgentInstaller:
         host: Optional[Host] = None,
         opener: Optional[Opener] = None,
         check_build: Optional[BuildCheck] = None,
+        running_commands: Optional[CommandLines] = None,
         on_installed: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._root = root
@@ -336,6 +352,7 @@ class AgentInstaller:
         self._host = host
         self._opener: Opener = opener or _urlopen
         self._check_build: BuildCheck = check_build or _check_build_runs
+        self._running_commands: CommandLines = running_commands or _running_commands
         self._on_installed = on_installed
         self._lock = threading.Lock()
         self._installs: dict[str, _Running] = {}
@@ -403,17 +420,47 @@ class AgentInstaller:
         """Daemon-start housekeeping under the agents root.
 
         Drops what dead installs left (staging and trash dirs) and, once the
-        pinned build is in place, the older builds it replaced. Run before this
-        daemon launches anything, so none of its sessions can be using them.
+        pinned build is in place, the older builds it replaced, except one a
+        running process still uses: sessions are started in their own process
+        group and outlive a daemon restart, and one may be on an older build.
+        Such a build is kept for a later start.
         """
+        command_lines: Optional[list[str]] = None
+        listed = False
         for agent, release in self._releases.items():
             agent_dir = self.root / agent
             if not agent_dir.is_dir():
                 continue
             _sweep_leftovers(agent_dir)
             copy = self.managed_copy(agent)
-            if copy is not None and copy.pinned:
-                _remove_older_versions(agent_dir, release.version)
+            if copy is None or not copy.pinned:
+                continue
+            older = _older_versions(agent_dir, release.version)
+            if not older:
+                continue
+            if not listed:
+                command_lines, listed = self._running_commands(), True
+            if command_lines is None:
+                # Can't tell what is running: keep everything until next time.
+                logger.info("not removing older %s builds: can't list processes", agent)
+                continue
+            for entry in older:
+                if _in_use(entry, command_lines):
+                    logger.info("keeping %s: a running process uses it", entry)
+                    continue
+                _discard(entry)
+
+    def auto_upgrade_blocked(self, agent: str) -> bool:
+        """Whether installing ``agent``'s pinned build failed here in a way a
+        new download won't fix (it didn't run, or didn't match its checksum)."""
+        release = self._releases.get(agent)
+        if release is None:
+            return False
+        try:
+            data = json.loads((self.root / agent / _AUTO_UPGRADE_BLOCK).read_text())
+        except (OSError, ValueError):
+            return False
+        return isinstance(data, dict) and data.get("version") == release.version
 
     def start(self, agent: str) -> InstallProgress:
         """Start installing ``agent`` in the background; return where it stands.
@@ -470,11 +517,23 @@ class AgentInstaller:
         # Status is read field by field while this runs, so each outcome's
         # details are set before the phase that announces it.
         progress = running.progress
+        block = self.root / release.agent / _AUTO_UPGRADE_BLOCK
         try:
             try:
                 path = self._install(release, asset, progress)
             except InstallError as exc:
+                if exc.code in _NO_AUTO_RETRY and not exc.transient:
+                    _write_quietly(
+                        block, {"version": release.version, "error_code": exc.code}
+                    )
                 progress.error_code, progress.error = exc.code, exc.message
+                progress.phase = "failed"
+                return
+            except OSError as exc:
+                # Setting up dirs on this disk (mkdir, mkdtemp, chmod): not the
+                # network, whatever happens to fail.
+                local = _local_failure(exc)
+                progress.error_code, progress.error = local.code, local.message
                 progress.phase = "failed"
                 return
             except Exception as exc:  # noqa: BLE001 - surface anything as a failed install
@@ -484,6 +543,10 @@ class AgentInstaller:
                 progress.phase = "failed"
                 return
             progress.path = str(path)
+            try:
+                block.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("couldn't clear %s", block, exc_info=True)
             # Published before the install reads as done, so a client that
             # polls status and then reads the machine finds the agent there.
             if self._on_installed is not None:
@@ -508,6 +571,9 @@ class AgentInstaller:
             return final / asset.binary
         agent_dir.mkdir(parents=True, exist_ok=True)
         _sweep_leftovers(agent_dir)
+        if (final / asset.binary).is_file():
+            # Another daemon sharing this HOME finished it meanwhile.
+            return final / asset.binary
         if final.exists():
             # A version dir without its CLI can't have come from the rename
             # (that is all or nothing), so something outside removed files.
@@ -647,7 +713,11 @@ def _snapshot(progress: InstallProgress) -> InstallProgress:
 
 
 def _chunks(stream: IO[bytes]) -> Iterator[bytes]:
-    while chunk := stream.read(_CHUNK):
+    # read1 returns whatever one socket read brought; read(n) blocks until n
+    # bytes or EOF, so a server sending a byte a minute (inside the socket
+    # timeout) would never reach the stall check between chunks.
+    read: Callable[[int], bytes] = getattr(stream, "read1", None) or stream.read
+    while chunk := read(_CHUNK):
         yield chunk
 
 
@@ -677,8 +747,17 @@ def _close_quietly(stream: IO[bytes]) -> None:
 
 def _local_failure(exc: OSError) -> InstallError:
     if exc.errno == errno.ENOSPC:
-        return InstallError("no_space", "The disk filled up during the download.")
-    return InstallError("write_failed", f"Couldn't write the download to disk: {exc}")
+        return InstallError("no_space", "The disk filled up during the install.")
+    return InstallError(
+        "write_failed", f"Couldn't write to this computer's disk: {exc}"
+    )
+
+
+def _write_quietly(path: Path, data: dict[str, object]) -> None:
+    try:
+        path.write_text(json.dumps(data))
+    except OSError:
+        logger.warning("couldn't record %s", path, exc_info=True)
 
 
 def _check_free_space(agent_dir: Path, asset: ReleaseAsset, agent: str) -> None:
@@ -714,8 +793,12 @@ def _check_build_runs(agent: str, binary: Path) -> None:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.SubprocessError) as exc:
+        # A timeout or a file held open (a first-run antivirus scan) may pass
+        # next time; a non-zero exit below won't.
         raise InstallError(
-            "verify_failed", f"The {agent} build doesn't run on this computer: {exc}"
+            "verify_failed",
+            f"The {agent} build doesn't run on this computer: {exc}",
+            transient=True,
         ) from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()[-300:]
@@ -769,18 +852,59 @@ def _discard(path: Path) -> bool:
     return True
 
 
-def _remove_older_versions(agent_dir: Path, pinned: str) -> None:
-    """Free the space of builds older than ``pinned``.
+def _older_versions(agent_dir: Path, pinned: str) -> list[Path]:
+    """Build dirs older than ``pinned``. Newer ones are left out: they belong
+    to a newer daemon release sharing this HOME."""
+    return [
+        entry
+        for entry in agent_dir.iterdir()
+        if entry.is_dir()
+        and not entry.name.startswith(".")
+        and _version_key(entry.name) < _version_key(pinned)
+    ]
 
-    Newer ones stay: they belong to a newer daemon release sharing this HOME.
+
+def _in_use(build_dir: Path, command_lines: list[str]) -> bool:
+    """Whether a running process was started from ``build_dir``: the CLI
+    itself (its own path is argv[0]), a sidecar beside it, or a runner the
+    daemon handed the path to (``--claude-cli=``, ``--codex-binary=``...)."""
+    marks = {f"{build_dir}{os.sep}"}
+    try:
+        marks.add(f"{build_dir.resolve()}{os.sep}")
+    except OSError:
+        pass
+    return any(mark in line for line in command_lines for mark in marks)
+
+
+def _running_commands() -> Optional[list[str]]:
+    """Every running process's command line; None when they can't be listed.
+
+    Empty on Windows: there a build in use can't be renamed, so `_discard`
+    already leaves it alone.
     """
-    for entry in agent_dir.iterdir():
-        if (
-            entry.is_dir()
-            and not entry.name.startswith(".")
-            and _version_key(entry.name) < _version_key(pinned)
-        ):
-            _discard(entry)
+    if os.name == "nt":
+        return []
+    # By path: a daemon started by a desktop app or service manager can have
+    # a PATH without /bin, and "can't list" keeps every old build forever.
+    ps = next(
+        (path for path in ("/bin/ps", "/usr/bin/ps") if os.path.exists(path)), None
+    ) or shutil.which("ps")
+    if ps is None:
+        return None
+    try:
+        result = subprocess.run(
+            [ps, "-A", "-ww", "-o", "command="],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.splitlines()
 
 
 def _inside(base: Path, name: str) -> Path:
@@ -845,7 +969,13 @@ def _unpack(asset: ReleaseAsset, archive: Path, dest: Path) -> None:
             )
     except InstallError:
         raise
-    except (OSError, tarfile.TarError, zipfile.BadZipFile) as exc:
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC:
+            raise _local_failure(exc) from exc
+        raise InstallError(
+            "unpack_failed", f"Couldn't unpack the download: {exc}"
+        ) from exc
+    except (tarfile.TarError, zipfile.BadZipFile) as exc:
         raise InstallError(
             "unpack_failed", f"Couldn't unpack the download: {exc}"
         ) from exc
@@ -871,22 +1001,29 @@ def _find_managed_copy(
     if asset is None:
         return None
     agent_dir = root / agent
-    if not agent_dir.is_dir():
-        return None
-    versions = [release.version] + sorted(
-        (
+    try:
+        if not agent_dir.is_dir():
+            return None
+        older = [
             entry.name
             for entry in agent_dir.iterdir()
             if entry.is_dir()
             and not entry.name.startswith(".")
             and entry.name != release.version
-        ),
-        key=_version_key,
-        reverse=True,
-    )
+        ]
+    except OSError:
+        # An unreadable agents dir (one a `sudo` run left root-owned, say)
+        # means no copy here. Never an exception: detection runs at daemon
+        # start, and the user's own install must still be found.
+        return None
+    versions = [release.version] + sorted(older, key=_version_key, reverse=True)
     for version in versions:
         candidate = agent_dir / version / asset.binary
-        if candidate.is_file():
+        try:
+            present = candidate.is_file()
+        except OSError:
+            continue
+        if present:
             return ManagedCopy(
                 version=version,
                 path=str(candidate),
@@ -919,12 +1056,16 @@ def sdk_bundles_claude() -> bool:
     A pip or npm install of Vicoa gets the SDK's platform wheel, which does;
     the frozen daemon in the desktop app leaves that ~370 MB file out.
     """
+    # Located, not imported: importing loads the whole SDK (hundreds of
+    # modules, ~30 MB) into the long-lived daemon just to check one file.
     try:
-        import claude_agent_sdk
-    except ImportError:
+        spec = importlib.util.find_spec("claude_agent_sdk")
+    except (ImportError, ValueError):
+        return False
+    if spec is None or not spec.origin:
         return False
     name = "claude.exe" if sys.platform == "win32" else "claude"
-    return (Path(claude_agent_sdk.__file__).parent / "_bundled" / name).is_file()
+    return (Path(spec.origin).parent / "_bundled" / name).is_file()
 
 
 def pinned_build_env(agent: str, cli_path: Optional[str]) -> dict[str, str]:

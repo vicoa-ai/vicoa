@@ -84,6 +84,9 @@ jobs:
           pip install -e .
           pip install pyinstaller
 
+      - name: Check the pinned Claude Code build matches the SDK (warning only)
+        run: python scripts/pin_agent_releases.py --check --warn
+
       - name: Build binary
         run: |
           cd pyinstaller
@@ -179,6 +182,10 @@ jobs:
           arch -x86_64 "$PY" -m pip install -e .
           arch -x86_64 "$PY" -m pip install pyinstaller
 
+      - name: Check the pinned Claude Code build matches the SDK (warning only)
+        run: |
+          "$CONDA/envs/dev312-x64/bin/python3" scripts/pin_agent_releases.py --check --warn
+
       - name: Build binary (PyInstaller under Rosetta)
         shell: bash -l {0}
         run: |
@@ -266,6 +273,9 @@ jobs:
           pip install -e .
           pip install pyinstaller
 
+      - name: Check the pinned Claude Code build matches the SDK (warning only)
+        run: python scripts/pin_agent_releases.py --check --warn
+
       - name: Build binary
         run: |
           cd pyinstaller
@@ -328,6 +338,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
           pip install pyinstaller
+
+      - name: Check the pinned Claude Code build matches the SDK (warning only)
+        run: python scripts/pin_agent_releases.py --check --warn
 
       - name: Build binary
         run: |

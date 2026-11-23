@@ -52,6 +52,8 @@ class _Files:
         self.files: dict[str, bytes] = {}
         self.hits: dict[str, int] = {}
         self.truncate: set[str] = set()
+        #: Paths whose body is sent ten bytes at a time, slowly.
+        self.trickle: set[str] = set()
         self.hold: Optional[threading.Event] = None
         self.base = ""
 
@@ -74,6 +76,11 @@ def server() -> Iterator[_Files]:
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             short = self.path in state.truncate
+            if self.path in state.trickle:
+                for i in range(0, len(body), 10):
+                    self.wfile.write(body[i : i + 10])
+                    time.sleep(0.05)
+                return
             self.wfile.write(body[: len(body) // 2] if short else body)
 
         def log_message(self, *args: Any) -> None:
@@ -158,8 +165,12 @@ def _install(
 
 
 def _nothing_installed(root: Path, agent: str) -> bool:
+    """No build and no leftovers. The auto-upgrade block a failed install may
+    record is no build; tests that expect one assert it themselves."""
     agent_dir = root / agent
-    return not agent_dir.exists() or not any(agent_dir.iterdir())
+    return not agent_dir.exists() or all(
+        entry.name == agent_install._AUTO_UPGRADE_BLOCK for entry in agent_dir.iterdir()
+    )
 
 
 # ----- which build a machine takes -----
@@ -306,6 +317,7 @@ def test_a_build_that_doesnt_match_its_checksum_is_rejected(
     assert result.phase == "failed"
     assert result.error_code == "checksum_mismatch"
     assert _nothing_installed(tmp_path, "claude")
+    assert (tmp_path / "claude" / agent_install._AUTO_UPGRADE_BLOCK).is_file()
     assert installed == []
 
 
@@ -774,20 +786,59 @@ def test_the_users_own_claude_is_handed_over_when_the_sdk_has_none(
     assert "DISABLE_AUTOUPDATER" not in daemon._session_env("claude", "s1")
 
 
-def test_npms_windows_shim_is_never_handed_to_the_sdk(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    daemon = MachineDaemon(api_key="test-key", base_url="http://localhost:0")
-    monkeypatch.setattr(machine_daemon, "sdk_bundles_claude", lambda: False)
-    monkeypatch.setattr(
-        daemon,
-        "_resolved_cli",
-        lambda agent: r"C:\Users\a\AppData\Roaming\npm\claude.cmd",
-    )
+NPM_SHIM = r"C:\\Users\\a\\AppData\\Roaming\\npm\\claude.cmd"
+
+
+@pytest.fixture(params=[NPM_SHIM, NPM_SHIM.removesuffix(".cmd")])
+def windows_npm_claude(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """A Windows machine whose own Claude is one of npm's shims: claude.cmd,
+    or the extensionless sh script the search lands on when npm's dir isn't
+    on PATH."""
+    from integrations.cli_wrappers.claude_code.utils import cli_finder
+
+    shim: str = request.param
+    monkeypatch.setattr(cli_finder, "find_claude_cli", lambda: shim)
     with monkeypatch.context() as m:
         m.setattr(machine_daemon.sys, "platform", "win32")
-        args = daemon._claude_cli_args()
-    assert args == []
+        yield
+
+
+def test_npms_windows_shim_alone_cant_run_sessions(
+    fake_home: Path, windows_npm_claude: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(machine_daemon, "sdk_bundles_claude", lambda: False)
+    daemon = MachineDaemon(api_key="test-key", base_url="http://localhost:0")
+
+    # The SDK refuses a .cmd: it must not read as installed...
+    assert daemon._resolved_cli("claude") is None
+    # ...and the reason says so, with the way out.
+    message = daemon._check_agent_installation("claude")
+    assert message is not None and "claude.cmd" in message
+    assert "sign-in carries over" in message
+
+
+def test_vicoas_copy_stands_in_for_npms_windows_shim(
+    fake_home: Path, windows_npm_claude: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    managed = _managed_copy(fake_home, "claude")
+    monkeypatch.setattr(machine_daemon, "sdk_bundles_claude", lambda: False)
+    daemon = MachineDaemon(api_key="test-key", base_url="http://localhost:0")
+
+    assert daemon._check_agent_installation("claude") is None
+    assert daemon._claude_cli_args() == [f"--claude-cli={managed}"]
+
+
+def test_with_a_bundled_build_the_shim_still_counts(
+    fake_home: Path, windows_npm_claude: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # pip/npm installs of Vicoa: the SDK runs its own bundled claude.exe.
+    monkeypatch.setattr(machine_daemon, "sdk_bundles_claude", lambda: True)
+    daemon = MachineDaemon(api_key="test-key", base_url="http://localhost:0")
+
+    assert daemon._check_agent_installation("claude") is None
+    assert daemon._claude_cli_args() == []
 
 
 def test_the_claude_runner_takes_the_cli_it_is_handed(
@@ -845,6 +896,10 @@ def _daemon_with(
 ) -> MachineDaemon:
     daemon = MachineDaemon(api_key="test-key", base_url="http://localhost:0")
     monkeypatch.setattr(daemon, "_agent_installer", installer)
+    # agent-install republishes on a thread; it must not outlive the test
+    # running real detection against another test's patches.
+    monkeypatch.setattr(daemon, "_detect_available_agents", lambda: {})
+    monkeypatch.setattr(daemon, "push_available_agents", lambda agents: None)
     return daemon
 
 
@@ -919,11 +974,15 @@ def test_the_daemon_advertises_the_install_rpcs() -> None:
     assert {"agent-install", "agent-install-status"} <= set(
         daemon._supported_rpc_methods()
     )
-    for method in ("agent-install", "agent-install-status"):
-        result = daemon._handle_rpc_request(
-            {"method": method, "params": {"agent": "not-an-agent"}}
-        )
-        assert isinstance(result, dict)
+    install = daemon._handle_rpc_request(
+        {"method": "agent-install", "params": {"agent": "not-an-agent"}}
+    )
+    status = daemon._handle_rpc_request(
+        {"method": "agent-install-status", "params": {"agent": "not-an-agent"}}
+    )
+    # An unrouted method answers {"error": "unknown RPC method"} instead.
+    assert install["error_code"] == "unknown_agent"
+    assert status == {"installable": {}, "installs": {}}
 
 
 def test_install_status_offers_every_agent_this_machine_can_take(
@@ -1193,3 +1252,682 @@ def test_one_spawn_looks_the_cli_up_once(
     # A scan (the Rescan button, registration) always looks again.
     daemon._detect_available_agents()
     assert calls == ["codex", "codex"]
+
+
+# ----- what the second review found -----
+
+
+def test_an_unreadable_agents_dir_reads_as_no_copy(
+    fake_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("root reads any directory")
+    agents = fake_home / ".vicoa" / "agents"
+    (agents / "codex").mkdir(parents=True)
+    agents.chmod(0o000)
+    try:
+        assert managed_cli_path("codex") is None
+        daemon = MachineDaemon(api_key="test-key", base_url="http://localhost:0")
+        # Detection runs at start; it must answer, never raise.
+        assert daemon._check_agent_installation("codex") is not None
+    finally:
+        agents.chmod(0o700)
+
+
+def test_a_trickling_download_fails_before_it_finishes(
+    server: _Files, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = RUNS + b"#" * 400
+    releases = _release(server, "claude", payload, "raw", "claude")
+    server.trickle.add("/claude/1.0.0/build")
+    monkeypatch.setattr(agent_install, "_STALL_WINDOW_SECONDS", 0.3)
+    monkeypatch.setattr(agent_install, "_STALL_MIN_BYTES", 10_000)
+
+    result, _ = _install(tmp_path, releases, "claude")
+
+    assert result.phase == "failed"
+    assert result.error_code == "download_failed"
+    assert "stalled" in (result.error or "")
+    # Caught mid-body, not after a blocking read waited for all of it.
+    assert result.bytes_done < len(payload)
+
+
+def test_a_build_another_daemon_just_finished_is_kept(
+    server: _Files, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    releases = _release(server, "claude", RUNS, "raw", "claude")
+    final = tmp_path / "claude" / "1.0.0"
+    real_sweep = agent_install._sweep_leftovers
+
+    def other_daemon_renames_meanwhile(agent_dir: Path) -> None:
+        real_sweep(agent_dir)
+        final.mkdir(parents=True, exist_ok=True)
+        (final / "claude").write_bytes(RUNS)
+
+    monkeypatch.setattr(
+        agent_install, "_sweep_leftovers", other_daemon_renames_meanwhile
+    )
+
+    result, _ = _install(tmp_path, releases, "claude")
+
+    assert result.phase == "installed", result
+    assert (final / "claude").read_bytes() == RUNS
+    assert server.hits == {}
+
+
+def test_two_daemons_installing_at_once_both_end_installed(
+    server: _Files, tmp_path: Path
+) -> None:
+    releases = _release(server, "claude", RUNS, "raw", "claude")
+    server.hold = threading.Event()
+    first = AgentInstaller(root=tmp_path, releases=releases, host=MAC_ARM)
+    second = AgentInstaller(root=tmp_path, releases=releases, host=MAC_ARM)
+
+    first.start("claude")
+    second.start("claude")
+    deadline = time.monotonic() + 5
+    while server.hits.get("/claude/1.0.0/build", 0) < 2:
+        assert time.monotonic() < deadline, server.hits
+        time.sleep(0.01)
+    server.hold.set()
+
+    for installer in (first, second):
+        assert (result := installer.wait("claude", timeout=10)) is not None
+        assert result.phase == "installed", result
+    assert sorted(p.name for p in (tmp_path / "claude").iterdir()) == ["1.0.0"]
+
+
+@pytest.mark.parametrize(
+    ("older", "newer"),
+    [("0.153.4", "0.153.10"), ("1.9.0", "1.10.0"), ("2.1.99", "2.1.330")],
+)
+def test_versions_compare_as_numbers(older: str, newer: str) -> None:
+    assert agent_install._version_key(older) < agent_install._version_key(newer)
+
+
+def test_tidy_compares_versions_as_numbers(tmp_path: Path) -> None:
+    for version in ("1.8.0", "1.9.0", "1.10.0"):
+        (tmp_path / "claude" / version).mkdir(parents=True)
+        (tmp_path / "claude" / version / "claude").write_bytes(RUNS)
+    asset = ReleaseAsset(
+        url="https://example.invalid/claude",
+        sha256="0" * 64,
+        size=1,
+        archive="raw",
+        binary="claude",
+    )
+    releases = {
+        "claude": PinnedRelease(
+            agent="claude", version="1.9.0", assets={"darwin-arm64": asset}
+        )
+    }
+
+    AgentInstaller(root=tmp_path, releases=releases, host=MAC_ARM).tidy()
+
+    # As strings "1.10.0" < "1.9.0": a string compare would delete it.
+    assert sorted(p.name for p in (tmp_path / "claude").iterdir()) == [
+        "1.10.0",
+        "1.9.0",
+    ]
+
+
+def test_no_install_capability_without_a_build_for_this_machine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(machine_daemon, "has_build_for_this_host", lambda: False)
+    daemon = MachineDaemon(api_key="test-key", base_url="http://localhost:0")
+    assert "agent-install" not in daemon._capabilities()
+
+
+def test_install_rpc_on_an_installed_agent_republishes_the_machine(
+    fake_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed_copy(fake_home, "opencode")
+    published = threading.Event()
+    daemon = _daemon_with(AgentInstaller(host=MAC_ARM), monkeypatch)
+    monkeypatch.setattr(daemon, "_detect_available_agents", lambda: {"opencode": True})
+    monkeypatch.setattr(daemon, "push_available_agents", lambda agents: published.set())
+
+    assert daemon.agent_install_rpc({"agent": "opencode"})["already_installed"]
+    # What makes a client that offered Install from a stale row stop offering it.
+    assert published.wait(5)
+
+
+def test_a_cli_lookup_is_reused_only_briefly(
+    fake_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        machine_daemon, "find_opencode_cli", lambda: calls.append("x") or "/opt/oc"
+    )
+    daemon = MachineDaemon(api_key="test-key", base_url="http://localhost:0")
+
+    assert daemon._check_agent_installation("opencode") is None
+    daemon._build_headless_command(
+        directory=os.getcwd(), agent="opencode", session_id="s1", metadata=None
+    )
+    daemon._session_env("opencode", "s1")
+    assert calls == ["x"]
+
+    monkeypatch.setattr(machine_daemon, "_CLI_LOOKUP_TTL_SECONDS", 0.0)
+    daemon._resolved_cli("opencode")
+    assert calls == ["x", "x"]
+
+
+def test_a_lookup_overtaken_by_an_install_is_not_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    daemon = MachineDaemon(api_key="test-key", base_url="http://localhost:0")
+    calls: list[str] = []
+
+    def find_codex() -> Optional[str]:
+        calls.append("x")
+        if len(calls) == 1:
+            # The install finishes (and clears the cache) mid-lookup.
+            daemon._forget_cli_lookups()
+            return None
+        return "/opt/codex/codex"
+
+    monkeypatch.setattr(machine_daemon, "find_codex_cli", find_codex)
+
+    assert daemon._resolved_cli("codex") is None
+    assert daemon._resolved_cli("codex") == "/opt/codex/codex"
+
+
+def test_codex_session_import_runs_the_detected_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from vicoa.local_sessions import codex as local_codex
+
+    seen: dict[str, Any] = {}
+
+    async def fake_spawn(**kwargs: Any) -> Any:
+        seen.update(kwargs)
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(local_codex, "find_codex_cli", lambda: "/opt/codex/codex")
+    monkeypatch.setattr(local_codex, "spawn_codex_app_server", fake_spawn)
+
+    async def work(transport: Any) -> None:
+        return None
+
+    with pytest.raises(local_codex.LocalSessionError):
+        asyncio.run(local_codex._with_app_server(work))
+    assert seen["command"] == ["/opt/codex/codex", "app-server"]
+
+
+def test_vicoa_opencode_runs_vicoas_copy_with_self_update_off(
+    fake_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import types
+
+    from vicoa.agents import opencode as launcher
+
+    managed = _managed_copy(fake_home, "opencode")
+    monkeypatch.delenv("OPENCODE_DISABLE_AUTOUPDATE", raising=False)
+    monkeypatch.setattr(launcher, "_ensure_plugin_registered", lambda: True)
+    monkeypatch.setattr(launcher, "_ensure_plugin_installed", lambda: None)
+    seen: dict[str, Any] = {}
+
+    def fake_popen(command: list[str], env: dict[str, str], cwd: str) -> Any:
+        seen.update(command=command, env=env)
+        raise RuntimeError("stop before launching")
+
+    class _NoClient:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def __enter__(self) -> "_NoClient":
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            return None
+
+        def update_agent_instance_status(self, *args: Any) -> None:
+            return None
+
+        def end_session(self, *args: Any) -> None:
+            return None
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(launcher, "VicoaClient", _NoClient)
+    args = types.SimpleNamespace(
+        project_path=str(tmp_path),
+        model=None,
+        name=None,
+        agent_instance_id="s1",
+        base_url="http://localhost:0",
+        resume=None,
+        upgrade=False,
+    )
+
+    launcher.run_opencode(args, [], "test-key")
+
+    assert seen["command"][0] == str(managed)
+    assert seen["env"]["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
+
+
+def test_the_terminal_wrapper_keeps_vicoas_claude_off_self_update(
+    fake_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from integrations.cli_wrappers.claude_code import claude_wrapper_v2_0 as wrapper
+
+    managed = _managed_copy(fake_home, "claude")
+    # setenv first: delenv on an unset variable records nothing to undo, and
+    # main() sets it in os.environ for the rest of the session.
+    monkeypatch.setenv("DISABLE_AUTOUPDATER", "")
+    monkeypatch.delenv("DISABLE_AUTOUPDATER")
+    monkeypatch.setattr(wrapper, "find_claude_cli", lambda: str(managed))
+    execs: list[list[str]] = []
+
+    class _Exec(Exception):
+        pass
+
+    def fake_execvp(path: str, argv: list[str]) -> None:
+        execs.append(argv)
+        raise _Exec
+
+    monkeypatch.setattr(wrapper.os, "execvp", fake_execvp)
+    monkeypatch.setattr(sys, "argv", ["claude-wrapper", "--continue"])
+
+    with pytest.raises(_Exec):
+        wrapper.main()
+
+    assert execs[0][0] == str(managed)
+    assert os.environ["DISABLE_AUTOUPDATER"] == "1"
+
+
+# ----- third review round -----
+
+
+def test_tidy_keeps_an_older_build_a_surviving_session_still_runs(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+
+    for version in ("0.9.0", "1.0.0"):
+        binary = tmp_path / "claude" / version / "claude"
+        binary.parent.mkdir(parents=True)
+        binary.write_text("#!/bin/sh\nsleep 30\n")
+        binary.chmod(0o755)
+    old = tmp_path / "claude" / "0.9.0" / "claude"
+    releases = _pinned_claude_without_download("1.0.0")
+    # Started in its own session, as the daemon starts agents: it outlived the
+    # daemon restart that is now tidying.
+    session = subprocess.Popen([str(old)], start_new_session=True)
+    try:
+        time.sleep(0.2)
+        AgentInstaller(root=tmp_path, releases=releases, host=MAC_ARM).tidy()
+        assert old.is_file()
+    finally:
+        session.kill()
+        session.wait()
+
+    AgentInstaller(root=tmp_path, releases=releases, host=MAC_ARM).tidy()
+    assert not old.parent.exists()
+
+
+def test_tidy_keeps_older_builds_when_processes_cant_be_listed(
+    tmp_path: Path,
+) -> None:
+    for version in ("0.9.0", "1.0.0"):
+        (tmp_path / "claude" / version).mkdir(parents=True)
+        (tmp_path / "claude" / version / "claude").write_bytes(RUNS)
+
+    AgentInstaller(
+        root=tmp_path,
+        releases=_pinned_claude_without_download("1.0.0"),
+        host=MAC_ARM,
+        running_commands=lambda: None,
+    ).tidy()
+
+    assert (tmp_path / "claude" / "0.9.0" / "claude").is_file()
+
+
+def test_a_runner_handed_the_build_counts_as_using_it(tmp_path: Path) -> None:
+    build = tmp_path / "claude" / "0.9.0"
+    runner = f"python -m integrations.headless.claude_code --claude-cli={build}/claude"
+    assert agent_install._in_use(build, [runner])
+    # A sibling version whose name merely starts the same is someone else's.
+    assert not agent_install._in_use(tmp_path / "claude" / "0.9", [runner])
+
+
+def _pinned_claude_without_download(version: str) -> dict[str, PinnedRelease]:
+    asset = ReleaseAsset(
+        url="https://example.invalid/claude",
+        sha256="0" * 64,
+        size=1,
+        archive="raw",
+        binary="claude",
+    )
+    return {
+        "claude": PinnedRelease(
+            agent="claude", version=version, assets={"darwin-arm64": asset}
+        )
+    }
+
+
+def test_a_build_that_wont_run_here_is_not_auto_upgraded_again(
+    server: _Files, fake_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _old_managed_copy(fake_home, "opencode", "0.0.1")
+    path = f"/opencode/{PINNED_RELEASES['opencode'].version}/build"
+    daemon, installer, _ = _upgrading_daemon(server, fake_home, monkeypatch)
+    broken = _zip({"opencode": (b"#!/bin/sh\nexit 3\n", 0o755)})
+    server.files[path] = broken
+    _retarget(installer, "opencode", broken)
+
+    daemon._upgrade_managed_agents()
+    assert (first := installer.wait("opencode", timeout=10)) is not None
+    assert first.error_code == "verify_failed"
+    assert installer.auto_upgrade_blocked("opencode")
+
+    # The next start leaves it (the server serves a working build again, so a
+    # download would be visible): one more full download at every start, for
+    # a build that already failed here, is what the block prevents.
+    restarted, again, _ = _upgrading_daemon(server, fake_home, monkeypatch)
+    hits_before = server.hits.get(path, 0)
+    restarted._upgrade_managed_agents()
+    assert again.status() == {}
+    assert server.hits.get(path, 0) == hits_before
+
+    # An explicit Install still tries, and a success lifts the block.
+    restarted.agent_install_rpc({"agent": "opencode"})
+    assert (done := again.wait("opencode", timeout=10)) is not None
+    assert done.phase == "installed", done
+    assert not again.auto_upgrade_blocked("opencode")
+
+
+def _retarget(installer: AgentInstaller, agent: str, payload: bytes) -> None:
+    """Point the installer's pinned asset at ``payload`` (its checksum and size)."""
+    release = installer._releases[agent]
+    key = asset_key(agent, MAC_ARM)
+    asset = dataclasses.replace(
+        release.assets[key],
+        sha256=hashlib.sha256(payload).hexdigest(),
+        size=len(payload),
+    )
+    installer._releases = {agent: dataclasses.replace(release, assets={key: asset})}
+
+
+def test_a_download_failure_is_retried_at_the_next_start(
+    server: _Files, fake_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _old_managed_copy(fake_home, "opencode", "0.0.1")
+    path = f"/opencode/{PINNED_RELEASES['opencode'].version}/build"
+    daemon, installer, _ = _upgrading_daemon(server, fake_home, monkeypatch)
+    body = server.files.pop(path)
+
+    daemon._upgrade_managed_agents()
+    assert (first := installer.wait("opencode", timeout=10)) is not None
+    assert first.error_code == "download_failed"
+    assert not installer.auto_upgrade_blocked("opencode")
+
+    server.files[path] = body
+    restarted, again, _ = _upgrading_daemon(server, fake_home, monkeypatch)
+    again.tidy()
+    restarted._upgrade_managed_agents()
+    assert (second := again.wait("opencode", timeout=10)) is not None
+    assert second.phase == "installed", second
+
+
+def test_an_unwritable_agents_dir_reports_a_disk_failure(
+    server: _Files, tmp_path: Path
+) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("root writes anywhere")
+    root = tmp_path / "agents"
+    root.mkdir()
+    root.chmod(0o500)
+    releases = _release(server, "claude", RUNS, "raw", "claude")
+    try:
+        result, installed = _install(root, releases, "claude")
+    finally:
+        root.chmod(0o700)
+    assert result.phase == "failed"
+    assert result.error_code == "write_failed"
+    assert installed == []
+
+
+def test_a_full_disk_while_unpacking_is_no_space(
+    server: _Files, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    releases = _release(
+        server, "opencode", _zip({"opencode": (RUNS, 0o755)}), "zip", "opencode"
+    )
+
+    def full_disk(*args: Any, **kwargs: Any) -> str:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(agent_install.zipfile.ZipFile, "extract", full_disk)
+
+    result, _ = _install(tmp_path, releases, "opencode")
+
+    assert result.phase == "failed"
+    assert result.error_code == "no_space"
+
+
+def test_checking_for_the_sdks_bundled_claude_imports_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent_install.sdk_bundles_claude.cache_clear()
+    for name in [m for m in sys.modules if m.split(".")[0] == "claude_agent_sdk"]:
+        monkeypatch.delitem(sys.modules, name)
+    try:
+        agent_install.sdk_bundles_claude()
+        assert "claude_agent_sdk" not in sys.modules
+    finally:
+        agent_install.sdk_bundles_claude.cache_clear()
+
+
+def test_no_sdk_means_no_bundled_claude(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent_install.sdk_bundles_claude.cache_clear()
+    monkeypatch.setattr(agent_install.importlib.util, "find_spec", lambda name: None)
+    try:
+        assert agent_install.sdk_bundles_claude() is False
+    finally:
+        agent_install.sdk_bundles_claude.cache_clear()
+
+
+def _tar_with(member: tarfile.TarInfo, data: bytes = b"") -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        ok = tarfile.TarInfo("bin/codex")
+        ok.size, ok.mode = len(RUNS), 0o755
+        tar.addfile(ok, io.BytesIO(RUNS))
+        tar.addfile(member, io.BytesIO(data) if data else None)
+    return buf.getvalue()
+
+
+def _escape_member(kind: str) -> tarfile.TarInfo:
+    if kind == "path":
+        member = tarfile.TarInfo("../escaped")
+        member.size = 1
+    elif kind == "symlink":
+        member = tarfile.TarInfo("bin/link")
+        member.type, member.linkname = tarfile.SYMTYPE, "../../outside"
+    elif kind == "hardlink":
+        member = tarfile.TarInfo("bin/hard")
+        member.type, member.linkname = tarfile.LNKTYPE, "../../outside"
+    else:
+        member = tarfile.TarInfo("bin/tty")
+        member.type = tarfile.CHRTYPE
+    return member
+
+
+@pytest.mark.parametrize("kind", ["path", "symlink", "hardlink", "device"])
+def test_a_tar_package_cannot_escape_or_carry_a_device(
+    server: _Files, tmp_path: Path, kind: str
+) -> None:
+    member = _escape_member(kind)
+    payload = _tar_with(member, b"x" if kind == "path" else b"")
+    root = tmp_path / "root"
+    releases = _release(server, "codex", payload, "tar.gz", "bin/codex")
+
+    result, _ = _install(root, releases, "codex")
+
+    assert result.phase == "failed"
+    assert result.error_code == "unpack_failed"
+    assert not (tmp_path / "escaped").exists()
+    assert not (tmp_path / "outside").exists()
+    assert _nothing_installed(root, "codex")
+
+
+def test_the_pin_check_fails_when_the_sdk_ships_another_claude(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib.util as ilu
+
+    script = (
+        Path(__file__).resolve().parent.parent / "scripts" / "pin_agent_releases.py"
+    )
+    spec = ilu.spec_from_file_location("pin_agent_releases", script)
+    assert spec is not None and spec.loader is not None
+    pins = ilu.module_from_spec(spec)
+    spec.loader.exec_module(pins)
+
+    monkeypatch.setattr(pins, "_sdk_claude_version", lambda: "0.0.1")
+    assert pins.check() == 1
+    # What the release workflow runs: a reminder, never a stopped release.
+    assert pins.check(warn=True) == 0
+    pinned = PINNED_RELEASES["claude"].version
+    monkeypatch.setattr(pins, "_sdk_claude_version", lambda: pinned)
+    assert pins.check() == 0
+
+
+# ----- the state cells the second review listed -----
+
+
+def test_a_bare_machine_installs_nothing_at_start(
+    server: _Files, fake_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    daemon, installer, _ = _upgrading_daemon(server, fake_home, monkeypatch)
+    installer.tidy()
+    daemon._upgrade_managed_agents()
+    assert installer.status() == {} and server.hits == {}
+    assert not (fake_home / ".vicoa" / "agents").exists()
+
+
+def test_start_sweeps_a_dead_staging_and_keeps_a_live_one(
+    server: _Files, fake_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent_dir = fake_home / ".vicoa" / "agents" / "opencode"
+    dead = agent_dir / ".staging-x-dead"
+    (dead / "content").mkdir(parents=True)
+    _age(dead, 3600)
+    # Fresh: a daemon restarted mid-install, or another daemon installing now.
+    live = agent_dir / ".staging-x-live"
+    (live / "content").mkdir(parents=True)
+    daemon, installer, _ = _upgrading_daemon(server, fake_home, monkeypatch)
+
+    installer.tidy()
+    daemon._upgrade_managed_agents()
+
+    assert not dead.exists() and live.is_dir()
+    assert installer.status() == {} and server.hits == {}
+
+
+def test_a_leftover_trash_dir_is_no_build_and_install_sweeps_it(
+    server: _Files, fake_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trash = fake_home / ".vicoa" / "agents" / "opencode" / ".trash-0.0.1-1-2"
+    trash.mkdir(parents=True)
+    (trash / "opencode").write_bytes(RUNS)
+    daemon, installer, _ = _upgrading_daemon(server, fake_home, monkeypatch)
+
+    status = daemon.agent_install_status_rpc({"agent": "opencode"})
+    assert "managed_version" not in status["installable"]["opencode"]
+    assert daemon._check_agent_installation("opencode") is not None
+
+    daemon.agent_install_rpc({"agent": "opencode"})
+    assert (done := installer.wait("opencode", timeout=10)) is not None
+    assert done.phase == "installed", done
+    assert not trash.exists()
+
+
+def test_a_pinned_dir_without_its_cli_is_no_copy_and_start_leaves_it(
+    server: _Files, fake_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    broken = (
+        fake_home
+        / ".vicoa"
+        / "agents"
+        / "opencode"
+        / PINNED_RELEASES["opencode"].version
+    )
+    broken.mkdir(parents=True)
+    (broken / "leftover").write_text("x")
+    daemon, installer, _ = _upgrading_daemon(server, fake_home, monkeypatch)
+
+    status = daemon.agent_install_status_rpc({"agent": "opencode"})
+    assert "managed_version" not in status["installable"]["opencode"]
+    installer.tidy()
+    daemon._upgrade_managed_agents()
+    assert installer.status() == {} and server.hits == {} and broken.is_dir()
+
+
+def test_an_older_and_the_pinned_build_answer_installed_on_the_pin(
+    server: _Files, fake_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _old_managed_copy(fake_home, "opencode", "0.0.1")
+    pinned = _old_managed_copy(
+        fake_home, "opencode", PINNED_RELEASES["opencode"].version
+    )
+    daemon, installer, _ = _upgrading_daemon(server, fake_home, monkeypatch)
+
+    result = daemon.agent_install_rpc({"agent": "opencode"})
+    status = daemon.agent_install_status_rpc({"agent": "opencode"})
+
+    assert result["already_installed"] is True and result["path"] == str(pinned)
+    assert (
+        status["installable"]["opencode"]["managed_version"]
+        == PINNED_RELEASES["opencode"].version
+    )
+    assert installer.status() == {} and server.hits == {}
+
+
+def test_a_newer_copy_is_reported_without_an_install(
+    server: _Files, fake_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _old_managed_copy(fake_home, "opencode", "999.0.0")
+    daemon, _, _ = _upgrading_daemon(server, fake_home, monkeypatch)
+    status = daemon.agent_install_status_rpc({"agent": "opencode"})
+    assert status["installable"]["opencode"]["managed_version"] == "999.0.0"
+    assert status["installs"] == {}
+
+
+def test_start_leaves_the_pinned_copy_alone(
+    server: _Files, fake_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pinned = _old_managed_copy(
+        fake_home, "opencode", PINNED_RELEASES["opencode"].version
+    )
+    daemon, installer, _ = _upgrading_daemon(server, fake_home, monkeypatch)
+    installer.tidy()
+    daemon._upgrade_managed_agents()
+    assert pinned.is_file() and installer.status() == {} and server.hits == {}
+
+
+def test_start_never_installs_beside_the_users_cli(
+    server: _Files, fake_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _user_install(tmp_path, "opencode")
+    daemon, installer, _ = _upgrading_daemon(server, fake_home, monkeypatch)
+    installer.tidy()
+    daemon._upgrade_managed_agents()
+    assert installer.status() == {} and server.hits == {}
+    assert not (fake_home / ".vicoa" / "agents").exists()
+
+
+def test_status_with_the_users_cli_and_an_old_copy_offers_no_upgrade(
+    server: _Files, fake_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _old_managed_copy(fake_home, "opencode", "0.0.1")
+    _user_install(tmp_path, "opencode")
+    daemon, _, _ = _upgrading_daemon(server, fake_home, monkeypatch)
+    status = daemon.agent_install_status_rpc({"agent": "opencode"})
+    assert status["installable"]["opencode"]["managed_version"] == "0.0.1"
+    assert status["installs"] == {}
+    assert daemon._managed_upgrade_due("opencode") is None

@@ -79,6 +79,7 @@ from vicoa.agent_install import (
     InstallError,
     has_build_for_this_host,
     is_managed_path,
+    managed_cli_path,
     pinned_build_env,
     sdk_bundles_claude,
 )
@@ -125,6 +126,26 @@ class MachineRegistration:
 
 #: How long one agent CLI lookup is reused (see ``MachineDaemon._cli_cache``).
 _CLI_LOOKUP_TTL_SECONDS = 5.0
+#: Cache key for the Claude CLI exactly as the search found it, before the
+#: Windows-shim substitution `_find_cli("claude")` applies.
+_CLAUDE_AS_FOUND = "claude:as-found"
+
+#: Why Claude reads as missing on a Windows machine whose only Claude is npm's.
+_CLAUDE_NPM_SHIM_ON_WINDOWS = (
+    "Claude Code from npm (claude.cmd) can't be run by Vicoa on Windows. "
+    "Install Claude Code from Vicoa (your sign-in carries over), or the native "
+    "build: irm https://claude.ai/install.ps1 | iex"
+)
+
+
+def _is_windows_batch(path: str) -> bool:
+    """A Windows Claude the SDK can't start: anything but a native .exe.
+
+    npm installs three shims, `claude.cmd`, `claude.ps1` and an extensionless
+    sh script; the SDK refuses the first and CreateProcess can't run the
+    others. Which one the search lands on depends on PATH.
+    """
+    return sys.platform == "win32" and not path.lower().endswith(".exe")
 
 
 def _resolved_binary_args(flag: str, path: str | None) -> list[str]:
@@ -952,6 +973,9 @@ class MachineDaemon:
         # several times (precheck, command, env), and each full search may
         # run `npm config get prefix`. Cleared on every scan and install.
         self._cli_cache: dict[str, tuple[float, str | None]] = {}
+        # Bumped by every clear, so a lookup that started before an install
+        # finished can't write its stale answer back afterwards.
+        self._cli_cache_generation = 0
         # Prewarmed sessions waiting for their spawn (see vicoa.prewarm).
         self._prewarm = PrewarmPool(on_discard=self._forget_standby)
         # Set when registration is refused for want of plan capacity (402 with
@@ -1210,9 +1234,10 @@ class MachineDaemon:
         `_check_agent_installation` returns None when the CLI is found, so a
         None result maps to True. Detection runs once here at registration —
         cheap, and it avoids spawning `--version` subprocesses on the heartbeat
-        loop (D3).
+        loop (D3). It runs again on a Rescan (`scan-agents`) and after every
+        agent install the daemon makes itself (`_publish_available_agents`).
         """
-        self._cli_cache.clear()
+        self._forget_cli_lookups()
         return {
             agent: self._check_agent_installation(agent) is None
             for agent in self._known_agent_ids()
@@ -2092,6 +2117,8 @@ class MachineDaemon:
         if agent == "claude":
             if self._resolved_cli("claude"):
                 return None
+            if self._claude_is_npm_shim_only():
+                return _CLAUDE_NPM_SHIM_ON_WINDOWS
             return "Claude Code CLI ('claude') is not installed or not on PATH."
 
         if agent == "opencode":
@@ -2955,14 +2982,15 @@ class MachineDaemon:
     def scan_agents_rpc(self) -> dict[str, Any]:
         """Re-probe for installed agent CLIs and publish the fresh result.
 
-        Detection otherwise runs exactly once, at registration (D3 — keeping
-        `--version` subprocesses off the heartbeat loop), so an agent installed
-        after the daemon started stays invisible. This is the only way to
-        refresh it without a restart, which matters because a restart would
-        kill the machine's live sessions.
+        Detection otherwise runs at registration (D3 — keeping `--version`
+        subprocesses off the heartbeat loop) and after an install this daemon
+        made itself, so an agent the user installed after the daemon started
+        stays invisible. This is how to refresh it without a restart, which
+        matters because a restart would kill the machine's live sessions.
 
         Not cheap: `find_npm_cli` falls back to an `npm config get prefix`
-        subprocess per miss. Only ever call this on an explicit user action.
+        subprocess per miss. Call it on an explicit user action or a finished
+        install, never on a timer.
 
         Returns the fresh map directly so the caller doesn't need a cloud
         round-trip; the push to `machines.machine_metadata` is what lets *other*
@@ -3036,7 +3064,7 @@ class MachineDaemon:
     def _on_agent_installed(self, agent: str) -> None:
         """A managed install finished: publish it, so pickers update by themselves."""
         print(f"[daemon] installed {agent} for this machine")
-        self._cli_cache.clear()
+        self._forget_cli_lookups()
         self._publish_available_agents()
 
     def _managed_upgrade_due(self, agent: str) -> str | None:
@@ -3063,6 +3091,12 @@ class MachineDaemon:
                 old = self._managed_upgrade_due(agent)
                 if old is None:
                     continue
+                if self._agent_installer.auto_upgrade_blocked(agent):
+                    # The pinned build failed here before (didn't run, or
+                    # didn't match its checksum): another full download at
+                    # every start won't change that. Install still retries.
+                    logger.info("not updating %s: its pinned build failed here", agent)
+                    continue
                 print(f"[daemon] updating {agent} {old} for this machine")
                 self._agent_installer.start(agent)
             except InstallError as exc:
@@ -3086,13 +3120,18 @@ class MachineDaemon:
         cached = self._cli_cache.get(agent)
         if cached is not None and now - cached[0] < _CLI_LOOKUP_TTL_SECONDS:
             return cached[1]
+        generation = self._cli_cache_generation
         path = self._find_cli(agent)
-        self._cli_cache[agent] = (now, path)
+        if generation == self._cli_cache_generation:
+            self._cli_cache[agent] = (now, path)
         return path
 
-    @staticmethod
-    def _find_cli(agent: str) -> str | None:
-        if agent == "claude":
+    def _forget_cli_lookups(self) -> None:
+        self._cli_cache_generation += 1
+        self._cli_cache.clear()
+
+    def _find_cli(self, agent: str) -> str | None:
+        if agent == _CLAUDE_AS_FOUND:
             from integrations.cli_wrappers.claude_code.utils.cli_finder import (
                 find_claude_cli,
             )
@@ -3101,6 +3140,19 @@ class MachineDaemon:
                 return find_claude_cli()
             except FileNotFoundError:
                 return None
+        if agent == "claude":
+            path = self._resolved_cli(_CLAUDE_AS_FOUND)
+            if path is None:
+                return None
+            if _is_windows_batch(path) and not sdk_bundles_claude():
+                # The SDK refuses to run npm's claude.cmd (cmd.exe re-parses
+                # its arguments), and the frozen daemon has no bundled build to
+                # fall back on. Vicoa's copy reads the same sign-in, so use it;
+                # without one Claude can't run sessions here (see
+                # _claude_is_npm_shim_only). With a bundled build the SDK picks
+                # that itself, so the shim still counts as installed.
+                return managed_cli_path("claude")
+            return path
         if agent == "codex":
             return find_codex_cli()
         if agent == "opencode":
@@ -3123,11 +3175,14 @@ class MachineDaemon:
             return []
         if not is_managed_path(path) and sdk_bundles_claude():
             return []
-        if sys.platform == "win32" and path.lower().endswith((".cmd", ".bat")):
-            # npm's shim: the SDK refuses to run one, and its own search (only
-            # claude.exe) can still find a native build elsewhere.
-            return []
+        # Never npm's Windows shim: `_find_cli` only returns one when the SDK
+        # has a bundled build, and that case returned just above.
         return _resolved_binary_args("--claude-cli", path)
+
+    def _claude_is_npm_shim_only(self) -> bool:
+        """Claude is installed, but only as npm's Windows shim Vicoa can't run."""
+        path = self._resolved_cli(_CLAUDE_AS_FOUND)  # cached: no second search
+        return path is not None and _is_windows_batch(path)
 
     def _after_provider_change(self, result: dict[str, Any]) -> dict[str, Any]:
         """Re-publish `available_agents` once the config file changed.

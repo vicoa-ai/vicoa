@@ -19,6 +19,7 @@ from integrations.headless.codex.item_renderer import render_item
 from integrations.headless.codex.spawn import spawn_codex_app_server
 from integrations.headless.codex.transport import CodexTransport
 from integrations.headless.thinking import build_thinking_metadata
+from vicoa.utils import find_codex_cli
 
 from .types import (
     HistoryMessage,
@@ -113,9 +114,16 @@ def _session_from(thread: dict[str, Any]) -> LocalSession:
 
 async def _with_app_server(work: Callable[[CodexTransport], Awaitable[T]]) -> T:
     env = {k: v for k, v in os.environ.items() if not k.startswith("VICOA_")}
+    # The same search detection uses (npm prefix, the Windows installer's
+    # dir, Vicoa's own copy), not just this daemon's PATH.
+    binary = find_codex_cli()
     try:
-        codex = await spawn_codex_app_server(env=env)
-    except RuntimeError as exc:
+        codex = await spawn_codex_app_server(
+            env=env, command=[binary, "app-server"] if binary else None
+        )
+    except (RuntimeError, OSError) as exc:
+        # RuntimeError: none found; OSError: the found path won't start (a
+        # Windows npm shim, or a copy removed since the lookup).
         raise LocalSessionError("Codex isn't installed on this machine") from exc
     try:
         await codex.transport.start()

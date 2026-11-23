@@ -10,6 +10,13 @@ Claude Code defaults to the build the installed Claude Agent SDK was released
 with (its ``__cli_version__``), the version the daemon's Claude runner is
 tested against; ``--claude`` overrides that, with a warning.
 
+``--check`` downloads nothing and writes nothing: it reports whether the
+pinned Claude Code is the installed SDK's own build, exiting non-zero when it
+isn't. With ``--warn`` it exits 0 and, under GitHub Actions, raises a warning
+annotation instead. The binary release workflow runs ``--check --warn``: the
+SDK ships almost daily and tolerates other Claude versions, so a mismatch is a
+reminder to regenerate the pins, not a reason to stop a release.
+
 Everything comes from the vendor's own release metadata, the same sources
 their install scripts verify against; nothing here downloads a binary:
 
@@ -29,6 +36,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
 import urllib.request
 from http.client import HTTPResponse
 from pathlib import Path
@@ -182,15 +191,57 @@ def _sdk_claude_version() -> str | None:
     return str(__cli_version__)
 
 
+def check(*, warn: bool = False) -> int:
+    """Whether the pinned Claude Code is the installed SDK's own build."""
+    sys.path.insert(0, str(OUT.parent.parent))
+    from vicoa.agent_releases import PINNED_RELEASES
+
+    pinned = PINNED_RELEASES["claude"].version
+    sdk = _sdk_claude_version()
+    if sdk is None:
+        print("claude_agent_sdk isn't installed here; can't check the Claude pin")
+        return 1
+    if sdk != pinned:
+        message = (
+            f"Claude Code is pinned to {pinned}, but the claude-agent-sdk in this "
+            f"build was released with {sdk}. Run scripts/pin_agent_releases.py "
+            "(with the current --codex and --opencode pins) and commit the result."
+        )
+        if not warn:
+            print(message)
+            return 1
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print(f"::warning title=Claude Code pin::{message}")
+        else:
+            print(f"warning: {message}")
+        return 0
+    print(f"ok: the pinned Claude Code {pinned} is the SDK's own build")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument(
         "--claude",
         help="Claude Code version (default: the installed SDK's own build)",
     )
-    parser.add_argument("--codex", required=True, help="Codex version")
-    parser.add_argument("--opencode", required=True, help="OpenCode (v1) version")
+    parser.add_argument("--codex", help="Codex version")
+    parser.add_argument("--opencode", help="OpenCode (v1) version")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="only check that the pinned Claude Code matches the installed SDK",
+    )
+    parser.add_argument(
+        "--warn",
+        action="store_true",
+        help="with --check: report a mismatch as a warning and exit 0",
+    )
     args = parser.parse_args()
+    if args.check:
+        raise SystemExit(check(warn=args.warn))
+    if not args.codex or not args.opencode:
+        parser.error("--codex and --opencode are required")
     sdk_claude = _sdk_claude_version()
     if args.claude is None:
         if sdk_claude is None:
