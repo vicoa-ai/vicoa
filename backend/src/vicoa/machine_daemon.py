@@ -976,6 +976,9 @@ class MachineDaemon:
         # Bumped by every clear, so a lookup that started before an install
         # finished can't write its stale answer back afterwards.
         self._cli_cache_generation = 0
+        # The `available_agents` the machine row last got from us, so a spawn
+        # that finds an agent gone can tell whether the pickers still offer it.
+        self._published_agents: dict[str, bool] = {}
         # Prewarmed sessions waiting for their spawn (see vicoa.prewarm).
         self._prewarm = PrewarmPool(on_discard=self._forget_standby)
         # Set when registration is refused for want of plan capacity (402 with
@@ -1389,6 +1392,7 @@ class MachineDaemon:
         # uuid4. compute_stable_machine_id returns None when no stable hardware
         # id is readable, and register then mints the legacy uuid4.
         machine_id = entry.get("machine_id") or compute_stable_machine_id(self.api_key)
+        available_agents = self._detect_available_agents()
 
         payload: dict[str, Any] = {
             "machine_id": machine_id,
@@ -1406,7 +1410,7 @@ class MachineDaemon:
                 "cli_version": self.cli_version,
                 "python_version": platform.python_version(),
                 "cwd": get_project_path(),
-                "available_agents": self._detect_available_agents(),
+                "available_agents": available_agents,
                 "agent_labels": self._agent_labels(),
                 "capabilities": self._capabilities(),
             },
@@ -1422,6 +1426,7 @@ class MachineDaemon:
         data = response.json()
 
         self.machine_id = data["machine_id"]
+        self._published_agents = dict(available_agents)
         self._persist_entry(
             {
                 "machine_id": self.machine_id,
@@ -3111,6 +3116,23 @@ class MachineDaemon:
         except Exception:  # noqa: BLE001 - best effort; the next scan corrects it
             logger.warning("publishing available agents failed", exc_info=True)
 
+    def _note_agent_missing(self, agent: str) -> None:
+        """A spawn found ``agent`` gone: republish if the pickers still offer it.
+
+        The list is detected at registration, so a CLI removed since then keeps
+        showing as installed until a Refresh. The spawn that runs into it fails
+        either way; this makes it the only one. Once the row says not
+        installed, further misses republish nothing. ``pop`` lets only one of
+        two concurrent spawns start the publish.
+        """
+        if not self._published_agents.pop(agent, False):
+            return
+        Thread(
+            target=self._publish_available_agents,
+            name="publish-agents",
+            daemon=True,
+        ).start()
+
     def _resolved_cli(self, agent: str) -> str | None:
         """The CLI detection finds for ``agent`` (user install first, then managed).
 
@@ -3288,6 +3310,7 @@ class MachineDaemon:
                 },
             )
             response.raise_for_status()
+            self._published_agents = dict(agents)
         except Exception:
             # The caller already has the fresh map; failing to publish it is
             # not worth failing the scan over.
@@ -3664,6 +3687,7 @@ class MachineDaemon:
 
             install_error = self._check_agent_installation(normalized_agent)
             if install_error:
+                self._note_agent_missing(normalized_agent)
                 raise _SpawnRefused(SpawnFailure("not_installed", install_error))
 
             # `title`: a title the spawn brings for its session (a task
@@ -4061,6 +4085,7 @@ class MachineDaemon:
 
             agent_install_error = self._check_agent_installation(normalized_agent)
             if agent_install_error:
+                self._note_agent_missing(normalized_agent)
                 self.report_request_status(
                     request_id,
                     "error",
