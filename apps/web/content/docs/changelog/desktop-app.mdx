@@ -5,6 +5,19 @@ description: Release notes for the Vicoa desktop app (macOS, Windows) — new fe
 
 # Desktop App
 
+### v0.2.3
+23 November, 2026
+- Bundle Vicoa CLI daemon [v1.10.3](/docs/changelog/vicoa-cli#v1103)
+- A computer with no coding agent now shows how to get one, in onboarding and on the New Session page. A card leads with the plan each agent runs on (Claude Code for a Claude plan, Codex for ChatGPT, OpenCode's free models for neither) and gives the steps for the computer's system, such as the PowerShell installers on Windows. Settings → Providers shows the same steps
+- New Session starts on an installed agent. The agent picker lists installed agents first and the rest under "Not installed", and picking one of those opens its setup in Settings → Providers. A fork link or preset whose agent the computer lacks shows a notice offering another agent or the setup, and send is blocked instead of the session failing to start
+- The project picker on Tasks takes several projects at once: tick them in place and a task shows when it is in any ticked project. It now sits at the left, before Filter. Share and the people stack show only while exactly one project is picked
+- Fix a project's worktrees all showing as deleted in the sidebar when the project holds sessions from more than one repo, for example a repo that nests another
+- Fix Claude plan usage (Session and Weekly) going missing from the usage popover, the new-session page and running sessions on macOS when the Keychain held a second `Claude Code-credentials` item
+- Fix a Codex or OpenCode session dying at start while the picker listed the agent as installed
+- Fix one rate-limited task session holding back every other task from reaching an agent
+- The chat's scrollbar runs down the window's edge beside the summary card, instead of between the chat and the card
+- Fix the agent and model dropdowns in the composer showing options above the pinned list label while you scroll
+
 ### v0.2.2
 22 November, 2026
 - Bundle Vicoa CLI daemon [v1.10.2](/docs/changelog/vicoa-cli#v1102)
