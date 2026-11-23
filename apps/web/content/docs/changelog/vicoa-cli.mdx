@@ -5,6 +5,13 @@ description: Release notes for the Vicoa CLI and daemon — new agent support, b
 
 # Vicoa CLI
 
+### v1.10.3
+23 November, 2026
+- Fix a Codex or OpenCode session dying at start while the picker listed the agent as installed. This happened when the CLI was installed after the daemon started, or by Codex's Windows installer, which only edits your user PATH. The session now starts the CLI that was found, and Codex detection also looks where its PowerShell installer puts it
+- Fix Claude plan usage (Session and Weekly) going missing from the usage popover, the new-session page and running sessions on macOS when the Keychain held a second `Claude Code-credentials` item
+- Fix one task session at its provider rate limit holding back every other task. Assignments, comments and answers on any task stopped reaching an agent until the limit lapsed; now only the limited session waits for its reset
+- Fix the server going unresponsive during an update while an agent was waiting for someone's answer to a question
+
 ### v1.10.2
 22 November, 2026
 - An agent answers a task comment in the language it was written in, judged from the person's own sentences rather than code or logs, so a comment in another language no longer gets an English reply. Code, commits and PRs keep the repository's conventions
