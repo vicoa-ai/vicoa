@@ -349,6 +349,22 @@ vicoa task update VIC-42 --assignee none
 `--project` is given. `update` changes only the flags you pass. Moving a task
 between projects reassigns its identifier (the CLI prints `VIC-20 → VIC2-2`).
 
+**Fill in the attributes when you create a task.** A task left at `priority=none`
+with no labels is hard to triage later. When you file one on the user's behalf,
+set what the request implies:
+
+- `--priority`: `urgent` only for something broken or against a deadline, `high`
+  for work they want soon, `medium` for planned but not pressing, `low` for polish
+  or nice-to-haves.
+- `--label`: run `vicoa label ls` first and reuse the names already there (for
+  example a bug / feature / improvement split) rather than inventing new ones;
+  `label create` is for when the user asks for a new label.
+- `--project` when the task clearly belongs to one.
+
+If the request doesn't say and you can't tell, leave the field unset rather than
+guess. On a task that already exists, change only the fields that are still empty:
+a priority or label the user set themselves is a decision, not a default.
+
 **Refer to a task by its identifier.** `VIC-42` — the thing shown in the KEY
 column of `task ls`, in the task-detail header, and in what the user says out
 loud — works everywhere a task reference is taken: the positional argument on
