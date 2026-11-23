@@ -507,6 +507,11 @@ function NewSessionContent() {
   // Whether the agent was chosen on this visit (a pick, a preset, a fork link).
   // A remembered agent was not, so it may be swapped for one the machine has.
   const agentPickedRef = useRef(false);
+  // The open row of the no-agent install list. Its own state, not
+  // `activeAgent`: the page always holds some agent (Claude Code by default),
+  // and mirroring that would open its row as if it were the recommended pick.
+  // A pick made here or in the composer's picker opens that row.
+  const [installPick, setInstallPick] = useState<string | null>(null);
   // Names the team sections of the picker (a team's agents, §3.6). Only
   // fetched once there is a team agent to label.
   const hasTeamAgents = agentProfiles.some((p) => p.team_id);
@@ -906,6 +911,7 @@ function NewSessionContent() {
     // so a profile whose agent no longer matches is no longer what's running.
     setSelectedProfileId(null);
     agentPickedRef.current = true;
+    setInstallPick(nextAgentId);
     setActiveAgent(nextAgentId);
     setPerAgentConfigs((prev) => {
       if (prev[nextAgentId]) return prev;
@@ -2399,12 +2405,12 @@ function NewSessionContent() {
             )}
             {showInstallPanel && (
               <InstallAgentPanel
-                title={`No AI agent on ${machineName} yet`}
+                title="No AI agent detected yet"
                 description="Install one to start a session. Pick the one that matches a plan you already have."
                 agents={missingAgentEntries}
                 os={installOsForPlatform(currentMachine?.platform)}
-                selectedId={activeAgent}
-                onSelect={switchAgent}
+                selectedId={installPick}
+                onSelect={(agentId) => (agentId ? switchAgent(agentId) : setInstallPick(null))}
                 onRefresh={canRefreshAgents ? refreshAgents : null}
                 refreshing={refreshingAgents}
               />
@@ -2823,7 +2829,7 @@ function NewSessionContent() {
                             <>
                               {installedAgentEntries.length > 0 && <div className="my-1 h-px bg-border" />}
                               <div className="px-3 pb-1 pt-1.5 text-[11px] text-muted-foreground/60">
-                                Not installed on {machineName}
+                                Not installed
                               </div>
                               {missingAgentEntries.map((a) => (
                                 <TickItem

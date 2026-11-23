@@ -105,7 +105,9 @@ interface ChoiceRow extends ChoiceAgent {
  * Leads with the plan each agent runs on (`PLAN_CHOICES`): a Claude plan means
  * Claude Code, a ChatGPT plan means Codex, no plan means OpenCode's free
  * models. Every other not-installed agent sits behind "Show N more agents".
- * One row is open at a time; picking one is the caller's to act on (the
+ * Nothing is open until the user picks a row, so no agent reads as the
+ * recommended one. One row is open at a time, and picking the open row closes
+ * it again (`onSelect(null)`). Picking is the caller's to act on (the
  * new-session page also makes it the session's agent, so once it is installed
  * the message goes straight out).
  */
@@ -120,7 +122,7 @@ export function AgentInstallChoices({
   agents: ChoiceAgent[];
   os: InstallOs;
   selectedId: string | null;
-  onSelect: (agentId: string) => void;
+  onSelect: (agentId: string | null) => void;
   className?: string;
 }) {
   const leading: ChoiceRow[] = PLAN_CHOICES.flatMap((choice) => {
@@ -146,7 +148,7 @@ export function AgentInstallChoices({
             <div key={row.id} className={cn(i > 0 && 'border-t border-border')}>
               <button
                 type="button"
-                onClick={() => onSelect(row.id)}
+                onClick={() => onSelect(open ? null : row.id)}
                 aria-expanded={open}
                 className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-foreground/[0.02]"
               >

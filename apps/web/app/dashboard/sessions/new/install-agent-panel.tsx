@@ -27,8 +27,9 @@ export function InstallAgentPanel({
   /** Agents not installed on the machine, in picker order. */
   agents: { id: string; label: string }[];
   os: InstallOs;
-  selectedId: string;
-  onSelect: (agentId: string) => void;
+  /** The open row; null (nothing open) until the user picks one. */
+  selectedId: string | null;
+  onSelect: (agentId: string | null) => void;
   /** Re-check the machine; null when its daemon can't (too old, offline). */
   onRefresh: (() => void) | null;
   refreshing: boolean;

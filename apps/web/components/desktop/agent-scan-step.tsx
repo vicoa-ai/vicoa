@@ -20,7 +20,7 @@ import {
 } from '@/lib/desktop-agent-scan';
 import { restartDesktopDaemon } from '@/lib/desktop-daemon';
 import { getDesktopConfig } from '@/lib/runtime-config';
-import { PLAN_CHOICES, installInfoFor, installOsForPlatform, type InstallOs } from '@/lib/desktop-agent-install';
+import { installInfoFor, installOsForPlatform, type InstallOs } from '@/lib/desktop-agent-install';
 import {
   trackScanCompleted,
   trackScanRescanned,
@@ -224,8 +224,9 @@ export function AgentScanStep({
   // Bumped on refresh to restart the empty-timeout, so a re-probe shows the
   // scanning skeleton again instead of flashing the empty state.
   const [scanEpoch, setScanEpoch] = useState(0);
-  /** The open row in the "pick by plan" list shown when nothing is installed. */
-  const [choiceId, setChoiceId] = useState<string>(PLAN_CHOICES[0].id);
+  /** The open row in the "pick by plan" list shown when nothing is installed;
+   *  none until the user picks one. */
+  const [choiceId, setChoiceId] = useState<string | null>(null);
   /** (epoch:phase) pairs already reported, so a re-render can't double-fire. */
   const reportedPhases = useRef<Set<string>>(new Set());
 
