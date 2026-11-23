@@ -59,6 +59,8 @@ from integrations.headless.antigravity import spec as antigravity_spec
 from vicoa.utils import (
     SESSION_TITLE_ENV,
     derive_ws_url,
+    find_codex_cli,
+    find_opencode_cli,
     get_git_identity,
     get_project_path,
 )
@@ -70,6 +72,17 @@ from vicoa.machine_identity import (
 from vicoa.constants import HOSTED_API_URL
 from vicoa.machine_fingerprint import compute_stable_machine_id, hardware_id_hash
 from vicoa.sdk.exceptions import AuthenticationError, MachineLimitReached
+from vicoa.agent_install import (
+    MANAGED_AGENTS,
+    SELF_UPDATE_OFF,
+    AgentInstaller,
+    InstallError,
+    has_build_for_this_host,
+    is_managed_path,
+    managed_cli_path,
+    pinned_build_env,
+    sdk_bundles_claude,
+)
 from vicoa.machine_state import (
     STATE_PATH,
     clear_daemon_pid,
@@ -109,6 +122,45 @@ class MachineRegistration:
     display_name: Optional[str]
     hostname: Optional[str]
     platform: Optional[str]
+
+
+#: How long one agent CLI lookup is reused (see ``MachineDaemon._cli_cache``).
+_CLI_LOOKUP_TTL_SECONDS = 5.0
+#: Cache key for the Claude CLI exactly as the search found it, before the
+#: Windows-shim substitution `_find_cli("claude")` applies.
+_CLAUDE_AS_FOUND = "claude:as-found"
+
+#: Why Claude reads as missing on a Windows machine whose only Claude is npm's.
+_CLAUDE_NPM_SHIM_ON_WINDOWS = (
+    "Claude Code from npm (claude.cmd) can't be run by Vicoa on Windows. "
+    "Install Claude Code from Vicoa (your sign-in carries over), or the native "
+    "build: irm https://claude.ai/install.ps1 | iex"
+)
+
+
+def _is_windows_batch(path: str) -> bool:
+    """A Windows Claude the SDK can't start: anything but a native .exe.
+
+    npm installs three shims, `claude.cmd`, `claude.ps1` and an extensionless
+    sh script; the SDK refuses the first and CreateProcess can't run the
+    others. Which one the search lands on depends on PATH.
+    """
+    return sys.platform == "win32" and not path.lower().endswith(".exe")
+
+
+def _resolved_binary_args(flag: str, path: str | None) -> list[str]:
+    """`[flag=path]` for a session runner, or nothing when the CLI wasn't found.
+
+    The runner otherwise looks the CLI up on the PATH it inherits from this
+    daemon, which is exactly the PATH that may not hold an installer-placed
+    binary (an install made after the daemon started, a Windows installer that
+    only edits the user PATH). Detection uses the wider search, so the launch
+    has to carry what detection found or the two disagree: the picker says
+    installed and the session dies at start. One `flag=value` token, because
+    the frozen `vicoa headless` passes flags it doesn't know through to the
+    runner as they are.
+    """
+    return [f"{flag}={path}"] if path else []
 
 
 def _find_cli_in_common_locations(name: str) -> str | None:
@@ -914,6 +966,19 @@ class MachineDaemon:
         # signal that the credential is dead: a background heartbeat thread
         # sets it, the main loop watches it to stop the stream and exit.
         self._fatal_auth = Event()
+        # Agent CLIs this daemon downloads itself (`agent-install`); a finished
+        # install re-publishes `available_agents` so every client sees it.
+        self._agent_installer = AgentInstaller(on_installed=self._on_agent_installed)
+        # agent -> (looked up at, CLI path): one spawn asks for the same CLI
+        # several times (precheck, command, env), and each full search may
+        # run `npm config get prefix`. Cleared on every scan and install.
+        self._cli_cache: dict[str, tuple[float, str | None]] = {}
+        # Bumped by every clear, so a lookup that started before an install
+        # finished can't write its stale answer back afterwards.
+        self._cli_cache_generation = 0
+        # The `available_agents` the machine row last got from us, so a spawn
+        # that finds an agent gone can tell whether the pickers still offer it.
+        self._published_agents: dict[str, bool] = {}
         # Prewarmed sessions waiting for their spawn (see vicoa.prewarm).
         self._prewarm = PrewarmPool(on_discard=self._forget_standby)
         # Set when registration is refused for want of plan capacity (402 with
@@ -1172,8 +1237,10 @@ class MachineDaemon:
         `_check_agent_installation` returns None when the CLI is found, so a
         None result maps to True. Detection runs once here at registration —
         cheap, and it avoids spawning `--version` subprocesses on the heartbeat
-        loop (D3).
+        loop (D3). It runs again on a Rescan (`scan-agents`) and after every
+        agent install the daemon makes itself (`_publish_available_agents`).
         """
+        self._forget_cli_lookups()
         return {
             agent: self._check_agent_installation(agent) is None
             for agent in self._known_agent_ids()
@@ -1269,6 +1336,12 @@ class MachineDaemon:
         clients keep using that name for Claude and simply don't ask about
         the others, rather than paying the router's `no_handler` grace window.
 
+        `agent-install` tells the client the `agent-install` /
+        `agent-install-status` RPCs are routable here: this daemon can download
+        a pinned build of Claude Code, Codex or OpenCode itself, so the app can
+        offer an Install button instead of a command to paste. An old daemon
+        omits it and the app keeps showing the command.
+
         `system-prompt` tells the client this daemon forwards the spawn-metadata
         `system_prompt` to the agent, so an agent profile carrying custom
         instructions can be offered for this machine. This one matters more than
@@ -1292,6 +1365,10 @@ class MachineDaemon:
             "skill-manage",
             "open-in",
             "provider-usage",
+            # Only where some agent has a pinned build for this host: an
+            # Install button that can only answer unsupported_platform would
+            # replace the install command that works.
+            *(["agent-install"] if has_build_for_this_host() else []),
             SYSTEM_PROMPT_CAPABILITY,
         ]
 
@@ -1315,6 +1392,7 @@ class MachineDaemon:
         # uuid4. compute_stable_machine_id returns None when no stable hardware
         # id is readable, and register then mints the legacy uuid4.
         machine_id = entry.get("machine_id") or compute_stable_machine_id(self.api_key)
+        available_agents = self._detect_available_agents()
 
         payload: dict[str, Any] = {
             "machine_id": machine_id,
@@ -1332,7 +1410,7 @@ class MachineDaemon:
                 "cli_version": self.cli_version,
                 "python_version": platform.python_version(),
                 "cwd": get_project_path(),
-                "available_agents": self._detect_available_agents(),
+                "available_agents": available_agents,
                 "agent_labels": self._agent_labels(),
                 "capabilities": self._capabilities(),
             },
@@ -1348,6 +1426,7 @@ class MachineDaemon:
         data = response.json()
 
         self.machine_id = data["machine_id"]
+        self._published_agents = dict(available_agents)
         self._persist_entry(
             {
                 "machine_id": self.machine_id,
@@ -1689,6 +1768,9 @@ class MachineDaemon:
                 session_id or "",
             ]
             if normalized_agent == "codex":
+                cmd.extend(
+                    _resolved_binary_args("--codex-binary", self._resolved_cli("codex"))
+                )
                 auth_method = self._extract_codex_auth_method(metadata)
                 if auth_method:
                     cmd.extend(["--auth-method", auth_method])
@@ -1705,6 +1787,12 @@ class MachineDaemon:
                 if prompt:
                     cmd.extend(["--prompt", prompt])
             elif normalized_agent == "opencode":
+                cmd.extend(
+                    _resolved_binary_args(
+                        "--opencode-command",
+                        self._resolved_cli("opencode"),
+                    )
+                )
                 agent_mode = self._extract_opencode_mode(metadata)
                 if agent_mode:
                     cmd.extend(["--agent-mode", agent_mode])
@@ -1758,6 +1846,7 @@ class MachineDaemon:
                     metadata, agent="claude"
                 )
                 cmd.extend(["--permission-mode", permission_mode or "default"])
+                cmd.extend(self._claude_cli_args())
                 prompt = self._extract_prompt(metadata)
                 if prompt:
                     cmd.extend(["--prompt", prompt])
@@ -1800,6 +1889,9 @@ class MachineDaemon:
                 "--agent",
                 "codex",
             ]
+            cmd.extend(
+                _resolved_binary_args("--codex-binary", self._resolved_cli("codex"))
+            )
             if session_id:
                 cmd.extend(["--session-id", session_id])
             auth_method = self._extract_codex_auth_method(metadata)
@@ -1836,7 +1928,7 @@ class MachineDaemon:
             # Pass the resolved path, not the bare name: the child inherits
             # this daemon's PATH, which is exactly the one that could not find
             # an installer-placed binary in the first place.
-            if opencode_cli := _find_cli_in_common_locations("opencode"):
+            if opencode_cli := self._resolved_cli("opencode"):
                 cmd.extend(["--opencode-command", opencode_cli])
             if session_id:
                 cmd.extend(["--session-id", session_id])
@@ -1970,6 +2062,7 @@ class MachineDaemon:
             cmd.extend(["--permission-mode", permission_mode])
         else:
             cmd.extend(["--permission-mode", "default"])
+        cmd.extend(self._claude_cli_args())
         prompt = self._extract_prompt(metadata)
         if prompt:
             cmd.extend(["--prompt", prompt])
@@ -2027,18 +2120,14 @@ class MachineDaemon:
     def _check_agent_installation(self, agent: str) -> str | None:
         """Return an error message when the requested agent is unavailable."""
         if agent == "claude":
-            try:
-                from integrations.cli_wrappers.claude_code.utils.cli_finder import (
-                    find_claude_cli,
-                )
-
-                find_claude_cli()
+            if self._resolved_cli("claude"):
                 return None
-            except FileNotFoundError:
-                return "Claude Code CLI ('claude') is not installed or not on PATH."
+            if self._claude_is_npm_shim_only():
+                return _CLAUDE_NPM_SHIM_ON_WINDOWS
+            return "Claude Code CLI ('claude') is not installed or not on PATH."
 
         if agent == "opencode":
-            if _find_cli_in_common_locations("opencode"):
+            if self._resolved_cli("opencode"):
                 return None
             return "OpenCode CLI ('opencode') is not installed or not on PATH."
 
@@ -2046,7 +2135,7 @@ class MachineDaemon:
             # Native ``codex app-server`` is the only supported backend.
             # The codex-acp adapter modules remain on disk for rollback but
             # aren't part of the install precheck anymore.
-            if _find_cli_in_common_locations("codex"):
+            if self._resolved_cli("codex"):
                 return None
             return (
                 "Codex CLI ('codex') is not installed or not on PATH. "
@@ -2779,6 +2868,10 @@ class MachineDaemon:
             return open_ops.open_path(**(frame.get("params") or {}))
         if method == "scan-agents":
             return self.scan_agents_rpc()
+        if method == "agent-install":
+            return self.agent_install_rpc(frame.get("params") or {})
+        if method == "agent-install-status":
+            return self.agent_install_status_rpc(frame.get("params") or {})
         if method == "provider-list":
             from vicoa.rpc import provider_ops
 
@@ -2879,6 +2972,8 @@ class MachineDaemon:
             "list-open-apps",
             "open-path",
             "scan-agents",
+            "agent-install",
+            "agent-install-status",
             "provider-list",
             "provider-add",
             "provider-remove",
@@ -2892,14 +2987,15 @@ class MachineDaemon:
     def scan_agents_rpc(self) -> dict[str, Any]:
         """Re-probe for installed agent CLIs and publish the fresh result.
 
-        Detection otherwise runs exactly once, at registration (D3 — keeping
-        `--version` subprocesses off the heartbeat loop), so an agent installed
-        after the daemon started stays invisible. This is the only way to
-        refresh it without a restart, which matters because a restart would
-        kill the machine's live sessions.
+        Detection otherwise runs at registration (D3 — keeping `--version`
+        subprocesses off the heartbeat loop) and after an install this daemon
+        made itself, so an agent the user installed after the daemon started
+        stays invisible. This is how to refresh it without a restart, which
+        matters because a restart would kill the machine's live sessions.
 
         Not cheap: `find_npm_cli` falls back to an `npm config get prefix`
-        subprocess per miss. Only ever call this on an explicit user action.
+        subprocess per miss. Call it on an explicit user action or a finished
+        install, never on a timer.
 
         Returns the fresh map directly so the caller doesn't need a cloud
         round-trip; the push to `machines.machine_metadata` is what lets *other*
@@ -2908,6 +3004,207 @@ class MachineDaemon:
         agents = self._detect_available_agents()
         self.push_available_agents(agents)
         return {"available_agents": agents}
+
+    def agent_install_rpc(self, params: dict[str, Any]) -> dict[str, Any]:
+        """`agent-install` {agent}: download the pinned build in the background.
+
+        Returns at once with where the install stands (`phase`, bytes); poll
+        `agent-install-status` for the rest. An agent the machine already has
+        (the user's own install, or Vicoa's copy on the pinned build) answers
+        `installed` without downloading anything; Vicoa's copy on an older
+        build is upgraded. Failures carry a stable `error_code`.
+        """
+        agent = params.get("agent")
+        if not isinstance(agent, str) or agent not in MANAGED_AGENTS:
+            return {
+                "error": f"Vicoa can't install {agent!r} on this machine.",
+                "error_code": "unknown_agent",
+            }
+        if (
+            self._check_agent_installation(agent) is None
+            and self._managed_upgrade_due(agent) is None
+        ):
+            # The machine row can predate this install (detection runs at
+            # registration), which is how a client came to offer Install:
+            # republish so it stops.
+            Thread(
+                target=self._publish_available_agents,
+                name="publish-agents",
+                daemon=True,
+            ).start()
+            return {
+                "agent": agent,
+                "phase": "installed",
+                "path": self._resolved_cli(agent),
+                "already_installed": True,
+            }
+        try:
+            return self._agent_installer.start(agent).to_dict()
+        except InstallError as exc:
+            return {"agent": agent, "error": exc.message, "error_code": exc.code}
+
+    def agent_install_status_rpc(self, params: dict[str, Any]) -> dict[str, Any]:
+        """`agent-install-status` {agent?}: what can be installed here, and how
+        the installs this daemon ran are going.
+
+        `installable` maps each agent this machine can take a build of to its
+        pinned `version` and download `size`, for the button's label, plus
+        `managed_version` when Vicoa's copy is already here (older than
+        `version` while an upgrade is due).
+        """
+        agent = params.get("agent")
+        only = agent if isinstance(agent, str) and agent else None
+        installable: dict[str, Any] = {}
+        for name in MANAGED_AGENTS:
+            if only is not None and name != only:
+                continue
+            offer = self._agent_installer.offer(name)
+            if offer is not None:
+                installable[name] = offer
+        return {
+            "installable": installable,
+            "installs": self._agent_installer.status(only),
+        }
+
+    def _on_agent_installed(self, agent: str) -> None:
+        """A managed install finished: publish it, so pickers update by themselves."""
+        print(f"[daemon] installed {agent} for this machine")
+        self._forget_cli_lookups()
+        self._publish_available_agents()
+
+    def _managed_upgrade_due(self, agent: str) -> str | None:
+        """The older build of Vicoa's copy this machine runs ``agent`` on, if any.
+
+        None when the user's own install is what runs (we never touch that) or
+        Vicoa's copy is already the pinned build.
+        """
+        outdated = self._agent_installer.outdated_copy(agent)
+        if outdated is None or self._resolved_cli(agent) != outdated.path:
+            return None
+        return outdated.version
+
+    def _upgrade_managed_agents(self) -> None:
+        """Bring Vicoa's copies up to the builds this release pins.
+
+        Self-update is off for them, so this is the only way they move. Runs
+        in the background at start; the older build keeps serving sessions
+        until the new one is in place, and a failure (offline, say) is retried
+        at the next start.
+        """
+        for agent in MANAGED_AGENTS:
+            try:
+                old = self._managed_upgrade_due(agent)
+                if old is None:
+                    continue
+                if self._agent_installer.auto_upgrade_blocked(agent):
+                    # The pinned build failed here before (didn't run, or
+                    # didn't match its checksum): another full download at
+                    # every start won't change that. Install still retries.
+                    logger.info("not updating %s: its pinned build failed here", agent)
+                    continue
+                print(f"[daemon] updating {agent} {old} for this machine")
+                self._agent_installer.start(agent)
+            except InstallError as exc:
+                logger.info("not updating %s: %s", agent, exc.message)
+            except Exception:  # noqa: BLE001 - never let this stop the daemon
+                logger.warning("updating %s failed", agent, exc_info=True)
+
+    def _publish_available_agents(self) -> None:
+        """Re-detect the agents and push them to the machine row."""
+        try:
+            self.push_available_agents(self._detect_available_agents())
+        except Exception:  # noqa: BLE001 - best effort; the next scan corrects it
+            logger.warning("publishing available agents failed", exc_info=True)
+
+    def _note_agent_missing(self, agent: str) -> None:
+        """A spawn found ``agent`` gone: republish if the pickers still offer it.
+
+        The list is detected at registration, so a CLI removed since then keeps
+        showing as installed until a Refresh. The spawn that runs into it fails
+        either way; this makes it the only one. Once the row says not
+        installed, further misses republish nothing. ``pop`` lets only one of
+        two concurrent spawns start the publish.
+        """
+        if not self._published_agents.pop(agent, False):
+            return
+        Thread(
+            target=self._publish_available_agents,
+            name="publish-agents",
+            daemon=True,
+        ).start()
+
+    def _resolved_cli(self, agent: str) -> str | None:
+        """The CLI detection finds for ``agent`` (user install first, then managed).
+
+        Remembered for a few seconds (see ``_cli_cache``).
+        """
+        now = time.monotonic()
+        cached = self._cli_cache.get(agent)
+        if cached is not None and now - cached[0] < _CLI_LOOKUP_TTL_SECONDS:
+            return cached[1]
+        generation = self._cli_cache_generation
+        path = self._find_cli(agent)
+        if generation == self._cli_cache_generation:
+            self._cli_cache[agent] = (now, path)
+        return path
+
+    def _forget_cli_lookups(self) -> None:
+        self._cli_cache_generation += 1
+        self._cli_cache.clear()
+
+    def _find_cli(self, agent: str) -> str | None:
+        if agent == _CLAUDE_AS_FOUND:
+            from integrations.cli_wrappers.claude_code.utils.cli_finder import (
+                find_claude_cli,
+            )
+
+            try:
+                return find_claude_cli()
+            except FileNotFoundError:
+                return None
+        if agent == "claude":
+            path = self._resolved_cli(_CLAUDE_AS_FOUND)
+            if path is None:
+                return None
+            if _is_windows_batch(path) and not sdk_bundles_claude():
+                # The SDK refuses to run npm's claude.cmd (cmd.exe re-parses
+                # its arguments), and the frozen daemon has no bundled build to
+                # fall back on. Vicoa's copy reads the same sign-in, so use it;
+                # without one Claude can't run sessions here (see
+                # _claude_is_npm_shim_only). With a bundled build the SDK picks
+                # that itself, so the shim still counts as installed.
+                return managed_cli_path("claude")
+            return path
+        if agent == "codex":
+            return find_codex_cli()
+        if agent == "opencode":
+            return find_opencode_cli()
+        return None
+
+    def _claude_cli_args(self) -> list[str]:
+        """`--claude-cli=<path>`: the Claude CLI detection found, when the SDK
+        wouldn't find that one itself.
+
+        The SDK searches on its own (its bundled build first, then PATH and a
+        few dirs), but never under ~/.vicoa/agents, nor in most of the dirs
+        detection probes (npm prefix, winget links...). So Vicoa's copy is
+        always handed over, and so is the user's own whenever the SDK has no
+        bundled build to prefer, as in the frozen daemon. With one, the user's
+        install is left to the SDK, which picks its version-matched build.
+        """
+        path = self._resolved_cli("claude")
+        if not path:
+            return []
+        if not is_managed_path(path) and sdk_bundles_claude():
+            return []
+        # Never npm's Windows shim: `_find_cli` only returns one when the SDK
+        # has a bundled build, and that case returned just above.
+        return _resolved_binary_args("--claude-cli", path)
+
+    def _claude_is_npm_shim_only(self) -> bool:
+        """Claude is installed, but only as npm's Windows shim Vicoa can't run."""
+        path = self._resolved_cli(_CLAUDE_AS_FOUND)  # cached: no second search
+        return path is not None and _is_windows_batch(path)
 
     def _after_provider_change(self, result: dict[str, Any]) -> dict[str, Any]:
         """Re-publish `available_agents` once the config file changed.
@@ -3013,6 +3310,7 @@ class MachineDaemon:
                 },
             )
             response.raise_for_status()
+            self._published_agents = dict(agents)
         except Exception:
             # The caller already has the fresh map; failing to publish it is
             # not worth failing the scan over.
@@ -3038,6 +3336,10 @@ class MachineDaemon:
         env.pop(SESSION_TITLE_ENV, None)
         if auto_title:
             env[SESSION_TITLE_ENV] = auto_title
+        # A copy Vicoa installed stays on the build it pinned: left alone, the
+        # CLI would update itself in place to a version this release never ran.
+        if agent in SELF_UPDATE_OFF:
+            env.update(pinned_build_env(agent, self._resolved_cli(agent)))
         return env
 
     def _standby_key_for(
@@ -3385,6 +3687,7 @@ class MachineDaemon:
 
             install_error = self._check_agent_installation(normalized_agent)
             if install_error:
+                self._note_agent_missing(normalized_agent)
                 raise _SpawnRefused(SpawnFailure("not_installed", install_error))
 
             # `title`: a title the spawn brings for its session (a task
@@ -3782,6 +4085,7 @@ class MachineDaemon:
 
             agent_install_error = self._check_agent_installation(normalized_agent)
             if agent_install_error:
+                self._note_agent_missing(normalized_agent)
                 self.report_request_status(
                     request_id,
                     "error",
@@ -3982,7 +4286,18 @@ class MachineDaemon:
     def run(self) -> None:
         self._sweep_worktree_trash()
         try:
+            # Before anything launches, so no session of ours can be on a
+            # build it removes.
+            self._agent_installer.tidy()
+        except Exception:  # noqa: BLE001 - housekeeping; retried next start
+            logger.warning("tidying managed agents failed", exc_info=True)
+        try:
             self.register_machine()
+            Thread(
+                target=self._upgrade_managed_agents,
+                name="agent-upgrade",
+                daemon=True,
+            ).start()
             # Renew the credential in the background now that registration has
             # proven the session works. daemon=True so it never blocks exit;
             # the finally below wakes it out of its long sleep.

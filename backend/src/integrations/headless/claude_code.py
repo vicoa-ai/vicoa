@@ -433,8 +433,14 @@ class HeadlessClaudeRunner:
         system_prompt: Optional[str] = None,
         debug: bool = False,
         is_resuming: bool = False,
+        cli_path: Optional[str] = None,
     ):
         self.vicoa_api_key = vicoa_api_key
+        # The Claude CLI to run, when the daemon hands over the one its
+        # detection found: Vicoa's own copy under ~/.vicoa/agents, or the
+        # user's own install when the SDK carries no bundled build (the
+        # frozen daemon). None leaves the SDK to find one as it always has.
+        self.cli_path = cli_path
         self.vicoa_base_url = vicoa_base_url
         self.initial_prompt = initial_prompt
         self.session_id = session_id
@@ -763,6 +769,8 @@ class HeadlessClaudeRunner:
             options_kwargs["model"] = self.model
         if effort_for_options is not None:
             options_kwargs["effort"] = effort_for_options
+        if self.cli_path:
+            options_kwargs["cli_path"] = self.cli_path
         return ClaudeAgentOptions(**options_kwargs)
 
     def _build_system_prompt_option(self) -> Dict[str, Any]:
@@ -3898,6 +3906,12 @@ def main():
         help="Working directory for Claude (defaults to current directory)",
     )
     parser.add_argument(
+        "--claude-cli",
+        dest="claude_cli",
+        default=None,
+        help="Path of the Claude CLI to run (the daemon passes the one it detected)",
+    )
+    parser.add_argument(
         "--system-prompt",
         dest="system_prompt",
         type=str,
@@ -4023,6 +4037,7 @@ def main():
         system_prompt=args.system_prompt,
         debug=args.debug,
         is_resuming=bool(resume_session_id),
+        cli_path=args.claude_cli,
     )
 
     logger.info("Starting headless Claude Code session...")

@@ -324,6 +324,34 @@ def test_a_missing_agent_cli_is_not_installed(
     assert calls == []
 
 
+def test_a_missing_agent_the_row_still_offers_is_republished_once(
+    daemon: MachineDaemon, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The CLI was removed after registration: the pickers still offer it, so
+    # the first spawn that runs into it refreshes the row, and only that one.
+    _stub_launch(daemon, monkeypatch, _FakeProcess())
+    monkeypatch.setattr(
+        daemon, "_check_agent_installation", lambda agent: "Codex CLI is missing."
+    )
+    published: list[str] = []
+    monkeypatch.setattr(
+        daemon, "_publish_available_agents", lambda: published.append("publish")
+    )
+    monkeypatch.setattr(
+        machine_daemon,
+        "Thread",
+        lambda target, **kw: SimpleNamespace(start=target),
+    )
+    daemon._published_agents = {"claude": True, "codex": True}
+
+    for _ in range(2):
+        daemon.spawn_session_rpc(
+            {"params": {"directory": str(tmp_path), "agent": "codex"}}
+        )
+
+    assert published == ["publish"]
+
+
 def test_a_malformed_request_is_invalid_request(daemon: MachineDaemon) -> None:
     result = daemon.spawn_session_rpc({"params": {"directory": " ", "agent": "codex"}})
 

@@ -15,8 +15,10 @@ import uuid
 from pathlib import Path
 from typing import List, Optional
 
+from vicoa.agent_install import pinned_build_env
 from vicoa.constants import DEFAULT_API_URL
 from vicoa.sdk.client import VicoaClient
+from vicoa.utils import find_opencode_cli
 
 
 def _terminal_status_for_exit_code(exit_code: int) -> str:
@@ -91,8 +93,8 @@ def run_opencode(args, unknown_args: List[str], api_key: str) -> int:
     Returns:
         Exit code (0 for success, non-zero for error)
     """
-    # Check if OpenCode is installed
-    opencode_path = shutil.which("opencode")
+    # Check if OpenCode is installed (the user's own, else Vicoa's copy)
+    opencode_path = find_opencode_cli()
     if not opencode_path:
         print("Error: OpenCode not installed", file=sys.stderr)
         print("Install OpenCode from: https://opencode.ai/", file=sys.stderr)
@@ -153,8 +155,11 @@ def run_opencode(args, unknown_args: List[str], api_key: str) -> int:
     if model:
         env["OPENCODE_MODEL"] = model
 
+    # A copy Vicoa installed stays on its pinned build.
+    env.update(pinned_build_env("opencode", opencode_path))
+
     # Build OpenCode command
-    command = ["opencode"]
+    command = [opencode_path]
 
     # Add any additional args
     if unknown_args:

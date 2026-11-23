@@ -22,12 +22,81 @@
 
 import { getRpcClient, RpcError } from '@/lib/ws-client';
 import type { MachineSummary } from '@/lib/backend-api';
+import type { LocalHealth } from '@/lib/local-machine';
 
 // `fetchLocalHealth` / `LocalHealth` moved to `lib/local-machine.ts` (the
 // machine-identity seam RPC routing also needs). Re-exported here so existing
 // importers (agent-scan-step.tsx) keep working.
 export { fetchLocalHealth } from '@/lib/local-machine';
 export type { LocalHealth } from '@/lib/local-machine';
+
+/**
+ * Why this machine hasn't turned up yet.
+ *
+ * - `not_started`: the daemon's local server doesn't answer.
+ * - `not_connected`: it answers, but hasn't registered with the cloud (or the
+ *   cloud's machine list doesn't have it yet).
+ * - `machine_limit` / `auth_failed`: the daemon gave up on the cloud link, so
+ *   waiting longer will not help.
+ * - `not_desktop`: a browser, where there is no local daemon to ask.
+ */
+export type ScanStuckReason =
+  | 'not_started'
+  | 'not_connected'
+  | 'machine_limit'
+  | 'auth_failed'
+  | 'not_desktop';
+
+/** Reasons that won't clear by waiting, so the step says so straight away. */
+export function isFinalStuckReason(reason: ScanStuckReason): boolean {
+  return reason === 'machine_limit' || reason === 'auth_failed' || reason === 'not_desktop';
+}
+
+export type MachineProbe =
+  | { kind: 'found'; machine: MachineSummary }
+  | { kind: 'waiting'; reason: ScanStuckReason; detail: string };
+
+/**
+ * One look for this machine.
+ *
+ * On desktop, ask the local daemon who it is and find that id in the account's
+ * machine list. In a browser there is no local daemon: the only honest match
+ * is an account with exactly one machine, which is what a preview of this
+ * page has. With two or more, "this computer" can't be told apart.
+ */
+export async function probeThisMachine(deps: {
+  onDesktop: boolean;
+  fetchHealth: () => Promise<LocalHealth | null>;
+  listMachines: () => Promise<MachineSummary[]>;
+}): Promise<MachineProbe> {
+  if (!deps.onDesktop) {
+    try {
+      const machines = await deps.listMachines();
+      if (machines.length === 1) return { kind: 'found', machine: machines[0] };
+    } catch {
+      // Same answer as two machines: nothing to show as "this computer".
+    }
+    return { kind: 'waiting', reason: 'not_desktop', detail: '' };
+  }
+
+  const health = await deps.fetchHealth();
+  if (!health) return { kind: 'waiting', reason: 'not_started', detail: '' };
+  if (health.cloud === 'machine_limit') {
+    return { kind: 'waiting', reason: 'machine_limit', detail: health.cloud_detail ?? '' };
+  }
+  if (health.cloud === 'auth_failed') {
+    return { kind: 'waiting', reason: 'auth_failed', detail: '' };
+  }
+  if (!health.machine_id) return { kind: 'waiting', reason: 'not_connected', detail: '' };
+  try {
+    const machines = await deps.listMachines();
+    const machine = machines.find((m) => m.machine_id === health.machine_id);
+    if (machine) return { kind: 'found', machine };
+  } catch {
+    // The backend is unreachable or slow; same as not registered yet.
+  }
+  return { kind: 'waiting', reason: 'not_connected', detail: '' };
+}
 
 /** One row in the scan UI. */
 export interface ScannedAgent {

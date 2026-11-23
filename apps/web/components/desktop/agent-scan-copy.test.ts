@@ -59,6 +59,29 @@ describe('agent scan copy', () => {
     expect(headingFor('found', 0, false).body).toContain('Claude Code');
   });
 
+  it('only offers Try again where that button renders', () => {
+    // Every stuck state shows Try again except a browser, which has no daemon
+    // to restart.
+    expect(headingFor('stuck', 0, false, 'not_desktop').body).not.toMatch(/try again/i);
+    for (const reason of ['not_started', 'not_connected', 'auth_failed'] as const) {
+      expect(headingFor('stuck', 0, false, reason).body, reason).toMatch(/try again/i);
+    }
+  });
+
+  it('gives every stuck reason a non-empty title and body', () => {
+    for (const reason of [
+      'not_started',
+      'not_connected',
+      'machine_limit',
+      'auth_failed',
+      'not_desktop',
+    ] as const) {
+      const { title, body } = headingFor('stuck', 0, false, reason);
+      expect(title.trim(), reason).not.toBe('');
+      expect(body.trim(), reason).not.toBe('');
+    }
+  });
+
   it('gives every state a non-empty title and body', () => {
     for (const phase of ['scanning', 'found', 'empty'] as const) {
       for (const count of [0, 1, 5]) {

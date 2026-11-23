@@ -13,6 +13,9 @@ def find_claude_cli() -> str:
     Claude-specific override (the path used by Claude Code's native
     installer, not in any standard npm-global / system bin dir).
 
+    The user's own install wins; the copy Vicoa installed itself
+    (`vicoa.agent_install`) is the fallback.
+
     Raises ``FileNotFoundError`` when nothing matches — preserves the
     legacy contract callers rely on.
     """
@@ -22,6 +25,11 @@ def find_claude_cli() -> str:
     )
     if cli:
         return cli
+    from vicoa.agent_install import managed_cli_path
+
+    managed = managed_cli_path("claude")
+    if managed:
+        return managed
     raise FileNotFoundError(
         "Claude Code not found. Install: https://code.claude.com/docs"
     )

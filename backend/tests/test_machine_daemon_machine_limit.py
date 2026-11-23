@@ -14,8 +14,16 @@ from __future__ import annotations
 import pytest
 import requests
 
+from vicoa.agent_install import AgentInstaller
 from vicoa.machine_daemon import MachineDaemon
 from vicoa.sdk.exceptions import MachineLimitReached
+
+
+@pytest.fixture(autouse=True)
+def _no_agent_housekeeping(monkeypatch: pytest.MonkeyPatch) -> None:
+    """run() tidies ~/.vicoa/agents and starts upgrades: never the real ones here."""
+    monkeypatch.setattr(AgentInstaller, "tidy", lambda self: None)
+    monkeypatch.setattr(MachineDaemon, "_upgrade_managed_agents", lambda self: None)
 
 
 @pytest.fixture

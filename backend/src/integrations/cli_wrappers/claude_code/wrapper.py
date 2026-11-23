@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Optional, TextIO
 
+from vicoa.agent_install import pinned_build_env
 from vicoa.utils import get_project_path
 
 from .config import ClaudeWrapperConfig, VICOA_WRAPPER_LOG_DIR
@@ -389,7 +390,10 @@ class ClaudeWrapper:
         cmd = self._build_claude_command(claude_path)
 
         # Create PTY
-        env = {"CLAUDE_CODE_ENTRYPOINT": "jsonlog-wrapper"}
+        env = {
+            "CLAUDE_CODE_ENTRYPOINT": "jsonlog-wrapper",
+            **pinned_build_env("claude", claude_path),
+        }
         self.pty_manager.create_pty(cmd, env)
         self.pty_manager.set_raw_mode()
 

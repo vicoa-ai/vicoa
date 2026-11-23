@@ -90,6 +90,8 @@ export function TickItem({
   disabled,
   onClick,
   leading,
+  trailing,
+  muted = false,
 }: {
   label: string;
   /** Muted trailing text — the raw model id when the label alone doesn't name it. */
@@ -99,6 +101,10 @@ export function TickItem({
   disabled?: boolean;
   onClick: () => void;
   leading?: React.ReactNode;
+  /** Right-aligned, before the tick column: e.g. a chevron on an agent that opens its setup elsewhere. */
+  trailing?: React.ReactNode;
+  /** Dim the row: pickable, but not ready to use as it stands. */
+  muted?: boolean;
 }) {
   return (
     <button
@@ -108,18 +114,21 @@ export function TickItem({
       onClick={onClick}
       className="group/item relative flex w-full cursor-pointer select-none items-center gap-2 rounded-sm border-0 px-3 py-1.5 text-xs outline-none transition-colors duration-100 hover:bg-foreground/[0.06] dark:hover:bg-foreground/10 hover:text-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
     >
-      {leading}
+      {muted ? <span className="opacity-50">{leading}</span> : leading}
       <span className="flex min-w-0 flex-1 items-baseline gap-1.5 overflow-hidden text-left">
         {/* The name never shrinks — it's short and it's what you scan for.
             The id takes whatever is left and ellipsizes; the full text is on
             the button's title either way. */}
-        <span className="flex-shrink-0">{label}</span>
+        <span className={cn('flex-shrink-0', muted && 'text-muted-foreground')}>{label}</span>
         {sublabel && (
           <span className="min-w-0 truncate text-[10px] text-muted-foreground/60">
             {sublabel}
           </span>
         )}
       </span>
+      {trailing && (
+        <span className="flex-shrink-0 text-[11px] text-muted-foreground/60">{trailing}</span>
+      )}
       <span className="flex w-4 flex-shrink-0 items-center justify-center">
         {isPending ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
