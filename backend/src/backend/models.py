@@ -6,7 +6,7 @@ Models are organized by functional area: questions, agents, billing, and detaile
 """
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Literal, Optional
 from uuid import UUID
 
@@ -25,6 +25,20 @@ from shared.database.enums import (
 )
 from shared.database.liveness import LiveState
 from shared.task_dispatch import RunOptions
+
+
+def _utc_z(dt: datetime) -> str:
+    """ISO-8601 in UTC with a trailing "Z", the shape these fields have always had.
+
+    Most columns behind them are naive UTC and just get the "Z". An aware value
+    (a timestamptz column such as `agent_instances.rate_limited_until`, or one
+    set earlier in the same request) is converted to UTC first, so it never
+    comes out as "+00:00Z".
+    """
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt.isoformat() + "Z"
+
 
 # Any UTF-16 surrogate code point. Python's JSON decoder joins a valid pair
 # into one character, so a surrogate left in a `str` is always a lone one.
@@ -266,7 +280,7 @@ class AgentInstanceResponse(BaseModel):
     def serialize_datetime(self, dt: datetime | None, _info):
         if dt is None:
             return None
-        return dt.isoformat() + "Z"
+        return _utc_z(dt)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -315,7 +329,7 @@ class AgentTypeOverview(BaseModel):
 
     @field_serializer("created_at")
     def serialize_datetime(self, dt: datetime, _info):
-        return dt.isoformat() + "Z"
+        return _utc_z(dt)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -339,7 +353,7 @@ class MessageResponse(BaseModel):
 
     @field_serializer("created_at")
     def serialize_datetime(self, dt: datetime, _info):
-        return dt.isoformat() + "Z"
+        return _utc_z(dt)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -408,7 +422,7 @@ class AgentInstanceDetail(BaseModel):
     def serialize_datetime(self, dt: datetime | None, _info):
         if dt is None:
             return None
-        return dt.isoformat() + "Z"
+        return _utc_z(dt)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -432,7 +446,7 @@ class MachineSummary(BaseModel):
     def serialize_datetime(self, dt: datetime | None, _info):
         if dt is None:
             return None
-        return dt.isoformat() + "Z"
+        return _utc_z(dt)
 
 
 class MachineListResponse(BaseModel):
@@ -548,7 +562,7 @@ class SpawnRequestSummary(BaseModel):
     def serialize_datetime(self, dt: datetime | None, _info):
         if dt is None:
             return None
-        return dt.isoformat() + "Z"
+        return _utc_z(dt)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -610,7 +624,7 @@ class InstanceShareResponse(BaseModel):
 
     @field_serializer("created_at", "updated_at")
     def serialize_datetime(self, dt: datetime, _info):
-        return dt.isoformat() + "Z"
+        return _utc_z(dt)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -816,7 +830,7 @@ class UserAgentResponse(BaseModel):
 
     @field_serializer("created_at", "updated_at")
     def serialize_datetime(self, dt: datetime, _info):
-        return dt.isoformat() + "Z"
+        return _utc_z(dt)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1614,7 +1628,7 @@ class SearchSessionResult(BaseModel):
     def serialize_datetime(self, dt: datetime | None, _info):
         if dt is None:
             return None
-        return dt.isoformat() + "Z"
+        return _utc_z(dt)
 
 
 class SearchTaskResult(BaseModel):

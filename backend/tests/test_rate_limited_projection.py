@@ -95,8 +95,10 @@ def test_maxed_window_usage_patch_sets_rate_limited_until(
 ) -> None:
     user_id, instance_id = user_and_instance
     _patch(instance_id, user_id, _usage(100.0, "2026-08-20T18:00:00+00:00"))
-    # reset + 45s buffer, stored UTC-naive (session tz is UTC).
-    assert _row(instance_id).rate_limited_until == datetime(2026, 8, 20, 18, 0, 45)
+    # reset + 45s buffer, read back aware (timestamptz).
+    assert _row(instance_id).rate_limited_until == datetime(
+        2026, 8, 20, 18, 0, 45, tzinfo=timezone.utc
+    )
 
 
 def test_recovering_usage_patch_clears_rate_limited_until(
