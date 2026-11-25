@@ -3,6 +3,9 @@
 import hashlib
 import json
 
+from integrations.cli_wrappers.claude_code.monitoring.jsonl_monitor import (
+    _CLAUDE_LABEL_TO_SLUG,
+)
 from shared.agent_catalog import (
     AGENT_CATALOG,
     AGENT_CATALOG_ETAG,
@@ -64,6 +67,48 @@ class TestAgentCatalogShape:
         sonnet_55 = next(m for m in claude["models"] if m["id"] == "claude-sonnet-5-5")
         assert sonnet_55.get("default_thinking_effort") is None
 
+    def test_newest_claude_models_sit_with_their_family(self):
+        """Fable 5.2 leads its family and Haiku 5.5 joins the newest tier after
+        Sonnet 5.5. Claude Code defaults both to `medium`, so neither carries
+        Fable 5's `xhigh` override, and neither is the picker default."""
+        claude = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "claude")
+        ids = [m["id"] for m in claude["models"]]
+        assert ids[:5] == [
+            "claude-fable-5-2",
+            "claude-fable-5",
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+            "claude-haiku-5-5",
+        ]
+        for model_id in ("claude-fable-5-2", "claude-haiku-5-5"):
+            model = next(m for m in claude["models"] if m["id"] == model_id)
+            assert model.get("default_thinking_effort") is None, model_id
+            assert not model.get("is_default"), model_id
+
+    def test_codex_gpt6_models_follow_the_default_in_upstream_order(self):
+        """The gpt-6.x line sits right after the default, in codex's own list
+        order; gpt-5.5 stays the only default."""
+        codex = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "codex")
+        ids = [m["id"] for m in codex["models"]]
+        assert ids[:5] == [
+            "gpt-5.5",
+            "gpt-6.2-sol",
+            "gpt-6.2-astra",
+            "gpt-6.1-terra",
+            "gpt-6-luna",
+        ]
+        assert [m["id"] for m in codex["models"] if m.get("is_default")] == ["gpt-5.5"]
+        # Codex efforts are one agent-level list: no per-model fields.
+        for model in codex["models"]:
+            assert set(model) <= {"id", "label", "is_default"}, model["id"]
+
+    def test_terminal_label_map_mirrors_every_claude_model(self):
+        """The terminal wrapper learns a /model pick from its label alone, so a
+        catalog entry missing from that map never reaches session_config. Kept
+        here, where CI collects it, so adding a model can't leave the map behind."""
+        claude = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "claude")
+        assert _CLAUDE_LABEL_TO_SLUG == {m["label"]: m["id"] for m in claude["models"]}
+
     def test_only_200k_default_models_have_1m_variant(self):
         """Claude Code runs a `native_1m` model's bare id at 1M, so a `[1m]` row
         for it is a duplicate. Only Opus 4.6 / Sonnet 4.6 default to 200k."""
@@ -90,8 +135,9 @@ class TestAgentCatalogShape:
     def test_opus_47_plus_default_to_xhigh(self):
         """Opus 4.7/4.8, Opus 5, and Fable 5 per-model `default_thinking_effort` → `xhigh`.
 
-        Opus 5.5 is the deliberate exception: Claude Code's own default for it
-        is `medium`, so it carries no override and takes the agent-level `high`.
+        Opus 5.5 and Fable 5.2 are the deliberate exceptions: Claude Code's own
+        default for them is `medium`, so they carry no override and take the
+        agent-level `high`.
         """
         claude = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "claude")
         for model in claude["models"]:
@@ -105,8 +151,8 @@ class TestAgentCatalogShape:
                 )
             )
             # Fable 5 is the deepest-reasoning tier, so it shares the xhigh
-            # baseline with Opus 4.7+.
-            is_fable_5 = model_id.startswith("claude-fable-5")
+            # baseline with Opus 4.7+. Exact id: Fable 5.2 defaults to medium.
+            is_fable_5 = model_id == "claude-fable-5"
             should_default_xhigh = is_opus_47_plus or is_fable_5
             override = model.get("default_thinking_effort")
             if should_default_xhigh:

@@ -212,11 +212,12 @@ def claude_context_window_from_model_usage(
 #
 # These mirror Claude Code's window selection, NOT the API's model limits. Models
 # marked ``native_1m`` in the CLI's baked catalog run their bare id at 1M (Fable
-# 5, Opus 4.7 through 5.5, Sonnet 5 and 5.5); a ``[1m]`` suffix on them changes
-# nothing, and substring matching gives old sessions' ``claude-opus-4-8[1m]``
-# the same 1M. Opus 4.6 and Sonnet 4.6 run the bare id at 200k and need the
-# explicit ``[1m]`` variant for 1M; Haiku 4.5 is 200k only.
+# 5 and 5.2, Opus 4.7 through 5.5, Sonnet 5 and 5.5, Haiku 5.5); a ``[1m]``
+# suffix on them changes nothing, and substring matching gives old sessions'
+# ``claude-opus-4-8[1m]`` the same 1M. Opus 4.6 and Sonnet 4.6 run the bare id
+# at 200k and need the explicit ``[1m]`` variant for 1M; Haiku 4.5 is 200k only.
 _CLAUDE_CONTEXT_WINDOWS: Dict[str, int] = {
+    "claude-fable-5-2": 1_000_000,
     "claude-fable-5": 1_000_000,
     "claude-mythos-5": 1_000_000,
     "claude-opus-5-5": 1_000_000,
@@ -229,6 +230,7 @@ _CLAUDE_CONTEXT_WINDOWS: Dict[str, int] = {
     "claude-opus-4-6": 200_000,
     "claude-sonnet-4-6[1m]": 1_000_000,
     "claude-sonnet-4-6": 200_000,
+    "claude-haiku-5-5": 1_000_000,
     "claude-haiku-4-5": 200_000,
 }
 _CLAUDE_DEFAULT_CONTEXT_WINDOW = 200_000

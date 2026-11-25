@@ -26,7 +26,7 @@ from protocol.acp_catalog import ACP_CATALOG
 
 
 AGENT_CATALOG: dict[str, Any] = {
-    "version": "2026-10-29-1",
+    "version": "2026-11-26-1",
     "min_cli_version": "1.20.0",
     "min_client_version": "0.42.0",
     "agents": [
@@ -59,6 +59,11 @@ AGENT_CATALOG: dict[str, Any] = {
                 # Fable 5 is premium-priced and thinking-always-on, so it is not
                 # the picker default. `xhigh` is the recommended coding/agentic
                 # effort tier for Fable 5 and Opus 5.
+                # Fable 5.2 is the newest Fable (in Claude Code 2.1.330's baked
+                # catalog). Unlike Fable 5, Claude Code defaults it to `medium`,
+                # so it takes the agent-level `high` and carries no
+                # `default_thinking_effort`. Native 1M, rejects disabled thinking.
+                {"id": "claude-fable-5-2", "label": "Fable 5.2"},
                 {
                     "id": "claude-fable-5",
                     "label": "Fable 5",
@@ -76,6 +81,10 @@ AGENT_CATALOG: dict[str, Any] = {
                 # Claude Code defaults it to `medium` and it rejects disabled
                 # thinking, so no `default_thinking_effort` override.
                 {"id": "claude-sonnet-5-5", "label": "Sonnet 5.5"},
+                # Haiku 5.5 is the newest Haiku (in Claude Code 2.1.330's baked
+                # catalog). Unlike Haiku 4.5 it is native 1M, so no `[1m]` row.
+                # Claude Code defaults it to `medium`: no override, as Sonnet 5.5.
+                {"id": "claude-haiku-5-5", "label": "Haiku 5.5"},
                 {
                     "id": "claude-opus-5",
                     "label": "Opus 5",
@@ -146,8 +155,19 @@ AGENT_CATALOG: dict[str, Any] = {
             # latest frontier, Terra = balanced everyday, Luna = fast/cheap);
             # all three share the low/medium/high/xhigh effort axis below.
             # gpt-5.5 stays the default; 5.6 is opt-in until it's proven.
+            #
+            # The gpt-6.x line follows in codex's own list order (codex-rs
+            # models.json, rust-v0.172.0). Each needs a minimum codex CLI:
+            # gpt-6.2-sol and gpt-6.2-astra 0.166.0 (paid ChatGPT plans only),
+            # gpt-6.1-terra 0.153.0, gpt-6-luna 0.155.0. They offer `max` (and
+            # `ultra` on the first three) beyond the four efforts below; only
+            # the shared four are exposed here.
             "models": [
                 {"id": "gpt-5.5", "label": "GPT-5.5", "is_default": True},
+                {"id": "gpt-6.2-sol", "label": "GPT-6.2-Sol"},
+                {"id": "gpt-6.2-astra", "label": "GPT-6.2-Astra"},
+                {"id": "gpt-6.1-terra", "label": "GPT-6.1 Terra"},
+                {"id": "gpt-6-luna", "label": "GPT-6-Luna"},
                 {"id": "gpt-5.6-sol", "label": "GPT-5.6-Sol"},
                 {"id": "gpt-5.6-terra", "label": "GPT-5.6-Terra"},
                 {"id": "gpt-5.6-luna", "label": "GPT-5.6-Luna"},

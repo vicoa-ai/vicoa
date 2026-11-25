@@ -26,12 +26,17 @@ from ..format_utils import format_content_block
 # so the table is maintained in lock-step with the catalog. When upstream
 # adds a model, add it here too — existing tests guard the parsing path.
 _CLAUDE_LABEL_TO_SLUG: Dict[str, str] = {
+    "Fable 5.2": "claude-fable-5-2",
+    "Fable 5": "claude-fable-5",
+    "Opus 5.5": "claude-opus-5-5",
+    "Sonnet 5.5": "claude-sonnet-5-5",
+    "Haiku 5.5": "claude-haiku-5-5",
     "Opus 5": "claude-opus-5",
     "Opus 4.8": "claude-opus-4-8",
     "Opus 4.7": "claude-opus-4-7",
     "Opus 4.6": "claude-opus-4-6",
     "Opus 4.6 1M": "claude-opus-4-6[1m]",
-    "Sonnet 5.5": "claude-sonnet-5-5",
+    "Sonnet 5": "claude-sonnet-5",
     "Sonnet 4.6": "claude-sonnet-4-6",
     "Sonnet 4.6 1M": "claude-sonnet-4-6[1m]",
     "Haiku 4.5": "claude-haiku-4-5",
