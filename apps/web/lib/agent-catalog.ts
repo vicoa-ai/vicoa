@@ -529,7 +529,7 @@ export function savePersistedSelection(payload: Partial<PersistedSelection>): vo
 // ---------------------------------------------------------------------------
 
 export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
-  version: "2026-11-26-1",
+  version: "2026-11-26-2",
   min_cli_version: "1.20.0",
   min_client_version: "0.42.0",
   agents: [
@@ -597,8 +597,6 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
         { id: "gpt-5.6-sol", label: "GPT-5.6-Sol" },
         { id: "gpt-5.6-terra", label: "GPT-5.6-Terra" },
         { id: "gpt-5.6-luna", label: "GPT-5.6-Luna" },
-        { id: "gpt-5.4", label: "GPT-5.4" },
-        { id: "gpt-5.4-mini", label: "GPT-5.4-Mini" },
       ],
       reasoning_efforts: [
         { id: "low", label: "Low" },

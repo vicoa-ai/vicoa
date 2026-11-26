@@ -450,7 +450,7 @@ String sessionConfigSummary(AgentCatalog catalog, SessionConfig config) {
 /// the flag today; this comment is the rule.
 const String _agentCatalogFallbackJson = r'''
 {
-  "version": "2026-11-26-1",
+  "version": "2026-11-26-2",
   "min_cli_version": "1.20.0",
   "min_client_version": "0.42.0",
   "agents": [
@@ -502,9 +502,7 @@ const String _agentCatalogFallbackJson = r'''
         {"id": "gpt-6-luna", "label": "GPT-6-Luna"},
         {"id": "gpt-5.6-sol", "label": "GPT-5.6-Sol"},
         {"id": "gpt-5.6-terra", "label": "GPT-5.6-Terra"},
-        {"id": "gpt-5.6-luna", "label": "GPT-5.6-Luna"},
-        {"id": "gpt-5.4", "label": "GPT-5.4"},
-        {"id": "gpt-5.4-mini", "label": "GPT-5.4-Mini"}
+        {"id": "gpt-5.6-luna", "label": "GPT-5.6-Luna"}
       ],
       "reasoning_efforts": [
         {"id": "low", "label": "Low"},
