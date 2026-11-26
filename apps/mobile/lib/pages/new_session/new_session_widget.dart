@@ -646,13 +646,6 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
             AnnotationsChip(composer: _model),
             const SizedBox(height: 6.0),
           ],
-          // Starting will file this session under a `#`-referenced task.
-          ReferenceLinkHint(
-            mixin: _model,
-            currentTaskId: () => _model.seedTaskId,
-            message: AppLocalizations.of(context).newSessionReferenceLinkOnStart,
-            padding: const EdgeInsetsDirectional.fromSTEB(8.0, 2.0, 8.0, 6.0),
-          ),
           if (_model.pendingAttachments.isNotEmpty) ...[
             PendingAttachmentStrip(
               attachments: _model.pendingAttachments,
@@ -822,9 +815,11 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
     // together with the files as the first message once the instance registers.
     final hasAttachments = _model.pendingAttachments.isNotEmpty;
     final promptText = _model.composeFirstMessage();
-    // The task to file the session under (seeding task, else a `#` one), read
-    // now for the same reason: the prompt is cleared before the link runs.
+    // The task to file the session under (the seeding task only) and the
+    // tasks the prompt `#`-references, read now for the same reason: the
+    // prompt is cleared before either runs.
     final linkTaskId = _model.linkTaskId;
+    final referencedTasks = _model.referencedTaskIdsForStart;
     try {
       final result =
           await _model.startSession(includePromptInSpawn: !hasAttachments);
@@ -949,10 +944,10 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
               attachmentIds: ids);
         }
       }
-      // Launched from a task, or a task referenced with `#`: link the spawned
-      // session to it and advance the task to in_progress (mirrors the web
-      // new-session flow). Best-effort — the session already exists, so a
-      // failed link must not block navigation.
+      // Launched from a task: link the spawned session to it and advance the
+      // task to in_progress (mirrors the web new-session flow). Best-effort —
+      // the session already exists, so a failed link must not block
+      // navigation.
       if (linkTaskId != null) {
         try {
           await actions.apiUpdateAgentInstance(
@@ -964,6 +959,10 @@ class _NewSessionWidgetState extends State<NewSessionWidget>
           }
         } catch (_) {}
       }
+      // The prompt's `#` tasks note the new session in their activity, and
+      // nothing more: naming a task is not starting work on it.
+      // Fire-and-forget, like the link above.
+      unawaited(actions.apiRecordTaskReferences(agentInstanceId, referencedTasks));
       _model.clearDraftPrompt();
       context.pop({
         'status': 'success',

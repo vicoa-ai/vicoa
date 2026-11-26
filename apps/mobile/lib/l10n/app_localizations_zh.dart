@@ -607,11 +607,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatInputPlaceholder => '发消息、@文件、/技能或命令';
 
   @override
-  String chatInputReferenceLinkOnSend(String label) {
-    return '发送后，此任务会归到待办「$label」下';
-  }
-
-  @override
   String get chatInputReferencesNoMatches => '没有匹配的任务、待办或自动化';
 
   @override
@@ -1446,11 +1441,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get newSessionAddToChat => '添加到对话';
-
-  @override
-  String newSessionReferenceLinkOnStart(String label) {
-    return '开始后，此任务会归到待办「$label」下';
-  }
 
   @override
   String get newSessionAgent => 'Agent';
@@ -3287,4 +3277,277 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get gettingStartedDownloadCta => '或访问 vicoa.ai/download';
+
+  @override
+  String get tasksTimelineActivity => '动态';
+
+  @override
+  String get tasksSessionsSection => '会话';
+
+  @override
+  String get tasksActivityCreated => '创建了此待办';
+
+  @override
+  String tasksActivityStatusChanged(Object from, Object to) {
+    return '将状态从 $from 改为 $to';
+  }
+
+  @override
+  String tasksActivityPriorityChanged(Object from, Object to) {
+    return '将优先级从 $from 改为 $to';
+  }
+
+  @override
+  String get tasksActivityAssigned => '更改了负责人';
+
+  @override
+  String get tasksActivityUnassigned => '清除了负责人';
+
+  @override
+  String get tasksActivityTitleChanged => '编辑了标题';
+
+  @override
+  String get tasksActivityDescriptionChanged => '编辑了描述';
+
+  @override
+  String tasksActivityLabelAdded(Object label) {
+    return '添加了标签 $label';
+  }
+
+  @override
+  String tasksActivityLabelRemoved(Object label) {
+    return '移除了标签 $label';
+  }
+
+  @override
+  String get tasksActivityDueDateSet => '设置了截止日期';
+
+  @override
+  String get tasksActivityDueDateRemoved => '移除了截止日期';
+
+  @override
+  String get tasksActivityStartDateSet => '设置了开始日期';
+
+  @override
+  String get tasksActivityStartDateRemoved => '移除了开始日期';
+
+  @override
+  String get tasksActivityProjectChanged => '将此待办移到了另一个项目';
+
+  @override
+  String get tasksActivityParentChanged => '更改了父待办';
+
+  @override
+  String get tasksActivityParentRemoved => '移除了父待办';
+
+  @override
+  String get tasksActivityReferenced => '引用了此待办';
+
+  @override
+  String get tasksActivityNone => '无';
+
+  @override
+  String tasksActivityRun(int count) {
+    return '做了 $count 处更改';
+  }
+
+  @override
+  String get tasksSessionRunning => '运行中';
+
+  @override
+  String tasksSessionStatusChanges(int count) {
+    return '此会话带来的 $count 次状态变更';
+  }
+
+  @override
+  String get tasksSessionOpen => '打开';
+
+  @override
+  String tasksVia(Object session) {
+    return '来自 $session';
+  }
+
+  @override
+  String get tasksCreatedIn => '创建于';
+
+  @override
+  String tasksSessionRefAgent(Object agent) {
+    return '一个 $agent 会话';
+  }
+
+  @override
+  String get tasksSessionRefUnnamed => '一个会话';
+
+  @override
+  String get tasksSessionRelationLinked => '关联';
+
+  @override
+  String get tasksSessionRelationCreated => '创建';
+
+  @override
+  String get tasksSessionRelationUpdated => '更新';
+
+  @override
+  String get tasksSessionRelationCommented => '评论';
+
+  @override
+  String get tasksSessionRelationReferenced => '引用';
+
+  @override
+  String tasksShowAll(int count) {
+    return '显示全部（$count）';
+  }
+
+  @override
+  String get tasksShowFewer => '收起';
+
+  @override
+  String get tasksCommentDeletedBody => '此评论已删除。';
+
+  @override
+  String get tasksCommentEdited => '（已编辑）';
+
+  @override
+  String get tasksAgentBadge => 'Agent';
+
+  @override
+  String get tasksNoteBadge => '备注';
+
+  @override
+  String get tasksCommentEditAction => '编辑';
+
+  @override
+  String get tasksCommentDeleteAction => '删除';
+
+  @override
+  String get tasksDeleteCommentTitle => '删除评论';
+
+  @override
+  String get tasksDeleteCommentBody => '确定要删除这条评论吗？此操作无法撤销。';
+
+  @override
+  String get tasksReply => '回复';
+
+  @override
+  String get tasksCommentPlaceholder => '发表评论…';
+
+  @override
+  String tasksReplyingTo(Object name) {
+    return '回复 $name';
+  }
+
+  @override
+  String tasksReplyToNames(Object names) {
+    return '回复 $names…';
+  }
+
+  @override
+  String tasksCommentForNames(Object names) {
+    return '给 $names 的评论…';
+  }
+
+  @override
+  String tasksWakeHint(Object names) {
+    return '$names 会处理这条评论。以 /note 开头则只留备注。';
+  }
+
+  @override
+  String get tasksNoteHint => '只是备注，不会有 Agent 处理它。';
+
+  @override
+  String get tasksEditingComment => '正在编辑你的评论';
+
+  @override
+  String get tasksCommentPostFailed => '无法发送评论';
+
+  @override
+  String get tasksCommentSaveFailed => '无法保存评论';
+
+  @override
+  String get tasksCommentDeleteFailed => '无法删除评论';
+
+  @override
+  String get tasksReactionFailed => '无法更新表情回应';
+
+  @override
+  String get tasksCommentViewOnly => '你可以查看此待办。评论需要该项目的评论者权限。';
+
+  @override
+  String tasksNamesAnd(Object first, Object last) {
+    return '$first和$last';
+  }
+
+  @override
+  String get tasksAddReaction => '添加表情回应';
+
+  @override
+  String tasksReactedWith(Object people, Object emoji) {
+    return '$people 回应了 $emoji';
+  }
+
+  @override
+  String get tasksYou => '你';
+
+  @override
+  String tasksReactorsOthers(int count) {
+    return '其他 $count 人';
+  }
+
+  @override
+  String get tasksSomeone => '有人';
+
+  @override
+  String get tasksPrincipalAgent => 'Agent';
+
+  @override
+  String get tasksPrincipalUser => 'Vicoa 用户';
+
+  @override
+  String get tasksPrincipalUnknown => '未知';
+
+  @override
+  String tasksWaitingOn(Object names) {
+    return '等待 $names';
+  }
+
+  @override
+  String tasksWaitingOnCount(int count) {
+    return '等待 $count 人';
+  }
+
+  @override
+  String get tasksWaitingOnYou => '你';
+
+  @override
+  String get tasksWaitingOnSomeone => '某人';
+
+  @override
+  String get tasksDispatchQueued => '排队中';
+
+  @override
+  String get tasksDispatchStarting => '正在启动';
+
+  @override
+  String tasksDispatchWorking(Object agent) {
+    return '$agent 工作中';
+  }
+
+  @override
+  String get tasksDispatchFailed => '失败';
+
+  @override
+  String tasksDispatchFailedReason(Object agent, Object reason) {
+    return '$agent 无法启动：$reason';
+  }
+
+  @override
+  String tasksDispatchFailedNoReason(Object agent) {
+    return '$agent 无法启动';
+  }
+
+  @override
+  String get tasksReplyPlaceholder => '回复…';
+
+  @override
+  String get tasksTimelineLoadFailed => '无法加载动态';
 }

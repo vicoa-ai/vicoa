@@ -41,15 +41,16 @@ void main() {
     model.promptController.text = 'nothing referenced any more';
 
     expect(model.composeFirstMessage(), 'nothing referenced any more');
-    expect(model.linkTaskId, isNull);
+    expect(model.referencedTaskIdsForStart, isEmpty);
   });
 
-  test('a referenced task files the session when nothing seeded it', () {
+  test('a referenced task is only noted, never filed under', () {
     final model = NewSessionModel()
       ..pendingReferences = [_sessionRef, _taskRef];
     model.promptController.text = '#slow-invoice-search then #LIG-1';
 
-    expect(model.linkTaskId, 'task-1');
+    expect(model.linkTaskId, isNull);
+    expect(model.referencedTaskIdsForStart, ['task-1']);
   });
 
   test('the seeding task wins, and a # to it is not repeated', () {
@@ -58,6 +59,7 @@ void main() {
     model.promptController.text = 'Fix flaky checkout test\n\nsee #LIG-1';
 
     expect(model.linkTaskId, 'task-1');
+    expect(model.referencedTaskIdsForStart, isEmpty);
     expect(model.composeFirstMessage(), isNot(contains(_block)));
   });
 
@@ -74,6 +76,7 @@ void main() {
     model.promptController.text = 'also #LIG-2';
 
     expect(model.linkTaskId, 'task-1');
+    expect(model.referencedTaskIdsForStart, ['task-2']);
     expect(model.composeFirstMessage(), contains(other.context));
   });
 }

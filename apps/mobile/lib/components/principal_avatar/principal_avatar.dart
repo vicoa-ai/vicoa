@@ -28,15 +28,15 @@ enum PrincipalAvatarSize { xs, sm, md, lg, xl }
 /// ~0.25-0.30 of the box (higher at the small end only because 16px has a
 /// legibility floor) so the monogram reads as a mark rather than filling the
 /// circle. Change one table, change the other.
-/// An emoji is a picture, not a letter: it reads at roughly twice the type size
-/// a monogram wants, so it gets its own column.
+/// An emoji is a picture, not a letter, and it sits bare in the circle's slot
+/// sized to fill most of it, so it gets its own column (the web's sizes).
 const Map<PrincipalAvatarSize, ({double box, double text, double emoji})>
     _metrics = {
-  PrincipalAvatarSize.xs: (box: 16.0, text: 8.0, emoji: 10.0),
-  PrincipalAvatarSize.sm: (box: 24.0, text: 9.0, emoji: 14.0),
-  PrincipalAvatarSize.md: (box: 32.0, text: 11.0, emoji: 18.0),
-  PrincipalAvatarSize.lg: (box: 56.0, text: 16.0, emoji: 30.0),
-  PrincipalAvatarSize.xl: (box: 80.0, text: 20.0, emoji: 48.0),
+  PrincipalAvatarSize.xs: (box: 16.0, text: 8.0, emoji: 13.0),
+  PrincipalAvatarSize.sm: (box: 24.0, text: 9.0, emoji: 19.0),
+  PrincipalAvatarSize.md: (box: 32.0, text: 11.0, emoji: 26.0),
+  PrincipalAvatarSize.lg: (box: 56.0, text: 16.0, emoji: 44.0),
+  PrincipalAvatarSize.xl: (box: 80.0, text: 20.0, emoji: 64.0),
 };
 
 /// paseo's IDENTITY_COLORS — muted tones tuned for a white letter on top.
@@ -67,6 +67,21 @@ int _hashString(String seed) {
 Color identityColor(String seed) =>
     kIdentityPalette[_hashString(seed) % kIdentityPalette.length];
 
+/// The wire's `type` as a [PrincipalType]. `system` is an actor rather than a
+/// principal that holds an avatar, so it reads as an agent; anything unknown
+/// reads as a user.
+PrincipalType principalTypeFromWire(String? type) {
+  switch (type) {
+    case 'agent':
+    case 'system':
+      return PrincipalType.agent;
+    case 'team':
+      return PrincipalType.team;
+    default:
+      return PrincipalType.user;
+  }
+}
+
 /// A principal's single initial, or null when there is no name.
 ///
 /// One letter, not two: a monogram reads as a mark at any size, while "AL" in a
@@ -89,6 +104,29 @@ class PrincipalAvatar extends StatelessWidget {
     this.updatedAt,
     this.size = PrincipalAvatarSize.md,
   });
+
+  /// From a backend `PrincipalResponse` map (`type`, `id`, `name`,
+  /// `avatar_image_uri`, `emoji`, `updated_at`), the one shape every task
+  /// surface carries. `system` (an automated actor) draws as an agent, and a
+  /// missing principal (an unattributed change) as the generic person glyph.
+  factory PrincipalAvatar.fromResponse(dynamic principal, {Key? key, PrincipalAvatarSize size = PrincipalAvatarSize.md}) {
+    final p = principal is Map ? principal : const {};
+    String? str(String k) {
+      final v = p[k]?.toString();
+      return v == null || v.isEmpty ? null : v;
+    }
+
+    return PrincipalAvatar(
+      key: key,
+      type: principalTypeFromWire(str('type')),
+      id: str('id'),
+      name: str('name'),
+      avatarImageUri: str('avatar_image_uri'),
+      emoji: str('emoji'),
+      updatedAt: str('updated_at'),
+      size: size,
+    );
+  }
 
   final PrincipalType type;
 
@@ -137,24 +175,22 @@ class PrincipalAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: _radius,
-      child: SizedBox(
-        width: _px,
-        height: _px,
-        child: _content(context),
-      ),
-    );
+    final box = SizedBox(width: _px, height: _px, child: _content(context));
+    // A bare emoji fills most of the slot; the circle's clip would shave its
+    // corners off.
+    final bareEmoji = (avatarImageUri ?? '').isEmpty && (emoji ?? '').trim().isNotEmpty;
+    return bareEmoji ? box : ClipRRect(borderRadius: _radius, child: box);
   }
 
   Widget _content(BuildContext context) {
-    // Only users have stored images today; teams (P3) and agents (P1) reuse
-    // this widget for their initials/glyph until they do.
-    if (type == PrincipalType.user && id != null && (avatarImageUri ?? '').isNotEmpty) {
+    // Users, agents and teams each serve their stored image from their own
+    // route, as on the web (`principalAvatarSrc`).
+    if (id != null && (avatarImageUri ?? '').isNotEmpty) {
       // The URL is stable across replacements, so `updated_at` is both the
       // cache-buster and the disk-cache key.
       final version = updatedAt == null ? '' : '?v=${Uri.encodeComponent(updatedAt!)}';
-      final url = '${getVicoaApiBaseUrl()}/api/v1/users/$id/avatar$version';
+      final base = switch (type) { PrincipalType.agent => 'agents', PrincipalType.team => 'teams', PrincipalType.user => 'users' };
+      final url = '${getVicoaApiBaseUrl()}/api/v1/$base/$id/avatar$version';
       final token = SupaFlow.client.auth.currentSession?.accessToken ?? '';
       return CachedNetworkImage(
         imageUrl: url,
@@ -170,14 +206,13 @@ class PrincipalAvatar extends StatelessWidget {
   Widget _fallback(BuildContext context) {
     final pickedEmoji = (emoji ?? '').trim();
     if (pickedEmoji.isNotEmpty) {
-      // Neutral, not the hash-palette colour the initial uses: an emoji already
-      // carries its own colour. Matches the web.
+      // Bare, with no disc behind it: a fill behind an emoji reads as a second
+      // badge around the first. Matches the web's PrincipalAvatar.
       return Container(
-        color: FlutterFlowTheme.of(context).alternate.withValues(alpha: 0.4),
         alignment: Alignment.center,
-        child: Text(
-          pickedEmoji,
-          style: TextStyle(height: 1.0, fontSize: _emojiPx),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(pickedEmoji, style: TextStyle(height: 1.0, fontSize: _emojiPx)),
         ),
       );
     }

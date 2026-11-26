@@ -180,26 +180,19 @@ void main() {
     });
   });
 
-  group('taskLinkForSend', () {
-    test('links the first referenced task when the session has none', () {
+  group('referencedTaskIds', () {
+    test('lists every referenced task, first-typed first, each once', () {
       final refs = [
         ref(kind: 'session', id: 's', token: 'z'),
         ref(id: 'task-a', token: 'VIC-42'),
         ref(id: 'task-b', token: 'VIC-43'),
+        ref(id: 'task-a', token: 'VIC-42'),
       ];
-      expect(taskLinkForSend(refs, null), 'task-a');
+      expect(referencedTaskIds(refs), ['task-a', 'task-b']);
     });
 
-    test('never re-files a session that already belongs to a task', () {
-      expect(taskLinkForSend([ref(id: 'task-a')], 'task-b'), isNull);
-    });
-
-    test('treats an empty task id as no task', () {
-      expect(taskLinkForSend([ref(id: 'task-a')], ''), 'task-a');
-    });
-
-    test('is null when no task was referenced', () {
-      expect(taskLinkForSend([ref(kind: 'automation', id: 'x')], null), isNull);
+    test('is empty when no task was referenced', () {
+      expect(referencedTaskIds([ref(kind: 'automation', id: 'x')]), isEmpty);
     });
   });
 
@@ -315,15 +308,6 @@ void main() {
       final c = _FakeComposer(enabled: false);
       c.type('#');
       expect(c.showReferenceSuggestions, isFalse);
-    });
-
-    test('the link hint follows the token and the current task', () {
-      final c = _FakeComposer();
-      c.type('#');
-      c.insertReference(_task);
-      expect(c.pendingTaskLink(c.controller.text, null)?.id, 'task-1');
-      expect(c.pendingTaskLink(c.controller.text, 'other-task'), isNull);
-      expect(c.pendingTaskLink('token deleted', null), isNull);
     });
 
     test('clearing forgets the picks', () {
