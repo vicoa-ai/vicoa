@@ -57,6 +57,15 @@ export 'api_update_task.dart' show apiUpdateTask;
 export 'api_delete_task.dart' show apiDeleteTask;
 export 'api_get_projects.dart' show apiGetProjects;
 export 'api_get_task_labels.dart' show apiGetTaskLabels;
+export 'api_get_task.dart' show apiGetTask;
+export 'api_get_task_timeline.dart' show apiGetTaskTimeline;
+export 'api_get_task_sessions.dart' show apiGetTaskSessions;
+export 'api_create_task_comment.dart' show apiCreateTaskComment;
+export 'api_update_task_comment.dart' show apiUpdateTaskComment;
+export 'api_delete_task_comment.dart' show apiDeleteTaskComment;
+export 'api_toggle_task_reaction.dart' show apiToggleTaskReaction;
+export 'api_record_task_references.dart' show apiRecordTaskReferences;
+export 'api_get_current_user_profile.dart' show apiGetCurrentUserProfile;
 export 'api_shares.dart' show apiListShareLinks, apiCreateSessionShareLink, apiUpdateShareLink, apiRevokeShareLink, shareLinkUrl, getVicoaWebBaseUrl;
 export 'api_automations.dart'
     show

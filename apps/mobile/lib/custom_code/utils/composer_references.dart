@@ -246,18 +246,18 @@ String composeOutgoingMessage(String body, List<ComposerReference> refs) {
   return body.isNotEmpty ? '$body\n\n---\n$block' : block;
 }
 
-/// The task a send should file the session under, or null.
+/// The tasks a send referenced, first-typed first, each once.
 ///
-/// One task, because `agent_instances.task_id` is a single column. The
-/// *first* referenced task wins, and an existing link is never overwritten:
-/// silently re-filing someone's session is the one failure mode here that
-/// loses data the UI doesn't show.
-String? taskLinkForSend(List<ComposerReference> refs, String? currentTaskId) {
-  if (currentTaskId != null && currentTaskId.isNotEmpty) return null;
+/// A `#` to a task only notes the session in that task's activity
+/// (`apiRecordTaskReferences`); it never files the session under the task or
+/// moves its status. That is starting a session from the task, not naming it
+/// in a message. Mirrors the web's `referencedTaskIds`.
+List<String> referencedTaskIds(List<ComposerReference> refs) {
+  final ids = <String>[];
   for (final ref in refs) {
-    if (ref.kind == 'task') return ref.id;
+    if (ref.kind == 'task' && !ids.contains(ref.id)) ids.add(ref.id);
   }
-  return null;
+  return ids;
 }
 
 /// The `#` picker's state for one composer: the panel (query → candidates)
@@ -295,7 +295,8 @@ mixin ComposerReferenceMixin {
 
   /// Whether `#` opens the picker on this composer. The chat turns it off for
   /// a session the viewer doesn't own: the candidates are the viewer's own
-  /// things, and a task link would re-file someone else's session.
+  /// things, and a referenced task would be noted against someone else's
+  /// session.
   bool get referencesEnabled => true;
 
   /// The session doing the referencing; dropped from the candidates.
@@ -426,18 +427,6 @@ mixin ComposerReferenceMixin {
   /// The picks whose token is still in [text]: what a send would attach.
   List<ComposerReference> liveReferences(String text) =>
       activeReferences(pendingReferences, text.trim());
-
-  /// The referenced task a send would file this session under, for the hint
-  /// above the composer. Null when nothing would be linked.
-  ComposerReference? pendingTaskLink(String text, String? currentTaskId) {
-    final refs = liveReferences(text);
-    final taskId = taskLinkForSend(refs, currentTaskId);
-    if (taskId == null) return null;
-    for (final ref in refs) {
-      if (ref.kind == 'task' && ref.id == taskId) return ref;
-    }
-    return null;
-  }
 
   /// Forget the picks (after a send). The panel closes too.
   void clearPendingReferences() {

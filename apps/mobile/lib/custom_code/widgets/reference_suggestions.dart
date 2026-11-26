@@ -113,56 +113,6 @@ class ReferenceSuggestions extends StatelessWidget {
       );
 }
 
-/// "Sending files this session under X": shown above the composer while a
-/// `#`-referenced task would link this session, because a send that writes to
-/// the user's Tasks board shouldn't happen with nothing on screen saying so.
-/// Listens to the text itself, so deleting the token hides it at once.
-class ReferenceLinkHint extends StatelessWidget {
-  const ReferenceLinkHint({
-    super.key,
-    required this.mixin,
-    required this.currentTaskId,
-    required this.message,
-    this.padding = const EdgeInsets.only(bottom: 6.0),
-  });
-
-  final ComposerReferenceMixin mixin;
-
-  /// The task the session already belongs to (a link never re-files it).
-  final String? Function() currentTaskId;
-  final String Function(String label) message;
-  final EdgeInsetsGeometry padding;
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<TextEditingValue>(
-      valueListenable: mixin.referenceTextController,
-      builder: (context, value, _) {
-        final link = mixin.pendingTaskLink(value.text, currentTaskId());
-        if (link == null) return const SizedBox.shrink();
-        final theme = FlutterFlowTheme.of(context);
-        return Padding(
-          padding: padding,
-          child: Row(
-            children: [
-              Icon(Icons.link_rounded, size: 14.0, color: theme.secondaryText),
-              const SizedBox(width: 6.0),
-              Expanded(
-                child: Text(
-                  message(link.label),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.bodySmall.override(font: GoogleFonts.sourceSans3(), fontSize: 13.0, letterSpacing: 0.0, color: theme.secondaryText),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
 /// One line per row, like the web panel: glyph, title, then where the thing
 /// lives (project icon + name, else its folder ellipsized from the front) and
 /// a task's `#KEY`.

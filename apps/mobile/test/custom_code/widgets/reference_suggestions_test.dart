@@ -106,44 +106,4 @@ void main() {
     await _pump(tester, ReferenceSuggestions(mixin: composer));
     expect(find.text('Sessions'), findsNothing);
   });
-
-  testWidgets('the link hint follows the token', (tester) async {
-    final composer = _Composer();
-    composer.controller.value = const TextEditingValue(
-      text: '#',
-      selection: TextSelection.collapsed(offset: 1),
-    );
-    composer.insertReference(_items[1]);
-    await _pump(
-      tester,
-      ReferenceLinkHint(
-        mixin: composer,
-        currentTaskId: () => null,
-        message: (label) => 'Sending files this session under $label',
-      ),
-    );
-    expect(find.text('Sending files this session under Fix flaky checkout test'), findsOneWidget);
-
-    composer.controller.text = 'token gone';
-    await tester.pump();
-    expect(find.textContaining('Sending files'), findsNothing);
-  });
-
-  testWidgets('no hint for a session that already has a task', (tester) async {
-    final composer = _Composer();
-    composer.controller.value = const TextEditingValue(
-      text: '#',
-      selection: TextSelection.collapsed(offset: 1),
-    );
-    composer.insertReference(_items[1]);
-    await _pump(
-      tester,
-      ReferenceLinkHint(
-        mixin: composer,
-        currentTaskId: () => 'other-task',
-        message: (label) => 'Sending files this session under $label',
-      ),
-    );
-    expect(find.textContaining('Sending files'), findsNothing);
-  });
 }

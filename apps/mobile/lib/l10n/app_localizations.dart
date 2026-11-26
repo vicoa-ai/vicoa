@@ -1214,12 +1214,6 @@ abstract class AppLocalizations {
   /// **'Type messages, @files, /skills or commands'**
   String get chatInputPlaceholder;
 
-  /// No description provided for @chatInputReferenceLinkOnSend.
-  ///
-  /// In en, this message translates to:
-  /// **'Sending files this session under {label}'**
-  String chatInputReferenceLinkOnSend(String label);
-
   /// No description provided for @chatInputReferencesNoMatches.
   ///
   /// In en, this message translates to:
@@ -2809,12 +2803,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Add to chat'**
   String get newSessionAddToChat;
-
-  /// No description provided for @newSessionReferenceLinkOnStart.
-  ///
-  /// In en, this message translates to:
-  /// **'Starting files this session under {label}'**
-  String newSessionReferenceLinkOnStart(String label);
 
   /// No description provided for @newSessionAgent.
   ///
@@ -6091,6 +6079,480 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Or open vicoa.ai/download'**
   String get gettingStartedDownloadCta;
+
+  /// No description provided for @tasksTimelineActivity.
+  ///
+  /// In en, this message translates to:
+  /// **'Activity'**
+  String get tasksTimelineActivity;
+
+  /// No description provided for @tasksSessionsSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Sessions'**
+  String get tasksSessionsSection;
+
+  /// No description provided for @tasksActivityCreated.
+  ///
+  /// In en, this message translates to:
+  /// **'created this task'**
+  String get tasksActivityCreated;
+
+  /// No description provided for @tasksActivityStatusChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'moved from {from} to {to}'**
+  String tasksActivityStatusChanged(Object from, Object to);
+
+  /// No description provided for @tasksActivityPriorityChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'changed priority from {from} to {to}'**
+  String tasksActivityPriorityChanged(Object from, Object to);
+
+  /// No description provided for @tasksActivityAssigned.
+  ///
+  /// In en, this message translates to:
+  /// **'changed the assignee'**
+  String get tasksActivityAssigned;
+
+  /// No description provided for @tasksActivityUnassigned.
+  ///
+  /// In en, this message translates to:
+  /// **'cleared the assignee'**
+  String get tasksActivityUnassigned;
+
+  /// No description provided for @tasksActivityTitleChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'edited the title'**
+  String get tasksActivityTitleChanged;
+
+  /// No description provided for @tasksActivityDescriptionChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'edited the description'**
+  String get tasksActivityDescriptionChanged;
+
+  /// No description provided for @tasksActivityLabelAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'added label {label}'**
+  String tasksActivityLabelAdded(Object label);
+
+  /// No description provided for @tasksActivityLabelRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'removed label {label}'**
+  String tasksActivityLabelRemoved(Object label);
+
+  /// No description provided for @tasksActivityDueDateSet.
+  ///
+  /// In en, this message translates to:
+  /// **'set a due date'**
+  String get tasksActivityDueDateSet;
+
+  /// No description provided for @tasksActivityDueDateRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'removed the due date'**
+  String get tasksActivityDueDateRemoved;
+
+  /// No description provided for @tasksActivityStartDateSet.
+  ///
+  /// In en, this message translates to:
+  /// **'set a start date'**
+  String get tasksActivityStartDateSet;
+
+  /// No description provided for @tasksActivityStartDateRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'removed the start date'**
+  String get tasksActivityStartDateRemoved;
+
+  /// No description provided for @tasksActivityProjectChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'moved this task to another project'**
+  String get tasksActivityProjectChanged;
+
+  /// No description provided for @tasksActivityParentChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'changed the parent task'**
+  String get tasksActivityParentChanged;
+
+  /// No description provided for @tasksActivityParentRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'removed the parent task'**
+  String get tasksActivityParentRemoved;
+
+  /// No description provided for @tasksActivityReferenced.
+  ///
+  /// In en, this message translates to:
+  /// **'referenced this task'**
+  String get tasksActivityReferenced;
+
+  /// No description provided for @tasksActivityNone.
+  ///
+  /// In en, this message translates to:
+  /// **'none'**
+  String get tasksActivityNone;
+
+  /// No description provided for @tasksActivityRun.
+  ///
+  /// In en, this message translates to:
+  /// **'made {count} changes'**
+  String tasksActivityRun(int count);
+
+  /// No description provided for @tasksSessionRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'running'**
+  String get tasksSessionRunning;
+
+  /// No description provided for @tasksSessionStatusChanges.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 status change from this session} other{{count} status changes from this session}}'**
+  String tasksSessionStatusChanges(int count);
+
+  /// No description provided for @tasksSessionOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get tasksSessionOpen;
+
+  /// No description provided for @tasksVia.
+  ///
+  /// In en, this message translates to:
+  /// **'via {session}'**
+  String tasksVia(Object session);
+
+  /// No description provided for @tasksCreatedIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Created in'**
+  String get tasksCreatedIn;
+
+  /// No description provided for @tasksSessionRefAgent.
+  ///
+  /// In en, this message translates to:
+  /// **'a {agent} session'**
+  String tasksSessionRefAgent(Object agent);
+
+  /// No description provided for @tasksSessionRefUnnamed.
+  ///
+  /// In en, this message translates to:
+  /// **'a session'**
+  String get tasksSessionRefUnnamed;
+
+  /// No description provided for @tasksSessionRelationLinked.
+  ///
+  /// In en, this message translates to:
+  /// **'Linked'**
+  String get tasksSessionRelationLinked;
+
+  /// No description provided for @tasksSessionRelationCreated.
+  ///
+  /// In en, this message translates to:
+  /// **'Created'**
+  String get tasksSessionRelationCreated;
+
+  /// No description provided for @tasksSessionRelationUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Updated'**
+  String get tasksSessionRelationUpdated;
+
+  /// No description provided for @tasksSessionRelationCommented.
+  ///
+  /// In en, this message translates to:
+  /// **'Commented'**
+  String get tasksSessionRelationCommented;
+
+  /// No description provided for @tasksSessionRelationReferenced.
+  ///
+  /// In en, this message translates to:
+  /// **'Referenced'**
+  String get tasksSessionRelationReferenced;
+
+  /// No description provided for @tasksShowAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Show all ({count})'**
+  String tasksShowAll(int count);
+
+  /// No description provided for @tasksShowFewer.
+  ///
+  /// In en, this message translates to:
+  /// **'Show fewer'**
+  String get tasksShowFewer;
+
+  /// No description provided for @tasksCommentDeletedBody.
+  ///
+  /// In en, this message translates to:
+  /// **'This comment was deleted.'**
+  String get tasksCommentDeletedBody;
+
+  /// No description provided for @tasksCommentEdited.
+  ///
+  /// In en, this message translates to:
+  /// **'(edited)'**
+  String get tasksCommentEdited;
+
+  /// No description provided for @tasksAgentBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'agent'**
+  String get tasksAgentBadge;
+
+  /// No description provided for @tasksNoteBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'Note'**
+  String get tasksNoteBadge;
+
+  /// No description provided for @tasksCommentEditAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit'**
+  String get tasksCommentEditAction;
+
+  /// No description provided for @tasksCommentDeleteAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get tasksCommentDeleteAction;
+
+  /// No description provided for @tasksDeleteCommentTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete comment'**
+  String get tasksDeleteCommentTitle;
+
+  /// No description provided for @tasksDeleteCommentBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Are you sure you want to delete this comment? This action cannot be undone.'**
+  String get tasksDeleteCommentBody;
+
+  /// No description provided for @tasksReply.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply'**
+  String get tasksReply;
+
+  /// No description provided for @tasksCommentPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave a comment…'**
+  String get tasksCommentPlaceholder;
+
+  /// No description provided for @tasksReplyingTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Replying to {name}'**
+  String tasksReplyingTo(Object name);
+
+  /// No description provided for @tasksReplyToNames.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply to {names}…'**
+  String tasksReplyToNames(Object names);
+
+  /// No description provided for @tasksCommentForNames.
+  ///
+  /// In en, this message translates to:
+  /// **'Comment for {names}…'**
+  String tasksCommentForNames(Object names);
+
+  /// No description provided for @tasksWakeHint.
+  ///
+  /// In en, this message translates to:
+  /// **'{names} will work on this. Start with /note to just leave a note.'**
+  String tasksWakeHint(Object names);
+
+  /// No description provided for @tasksNoteHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Just a note. No agent will act on it.'**
+  String get tasksNoteHint;
+
+  /// No description provided for @tasksEditingComment.
+  ///
+  /// In en, this message translates to:
+  /// **'Editing your comment'**
+  String get tasksEditingComment;
+
+  /// No description provided for @tasksCommentPostFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t post the comment'**
+  String get tasksCommentPostFailed;
+
+  /// No description provided for @tasksCommentSaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t save the comment'**
+  String get tasksCommentSaveFailed;
+
+  /// No description provided for @tasksCommentDeleteFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t delete the comment'**
+  String get tasksCommentDeleteFailed;
+
+  /// No description provided for @tasksReactionFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t update the reaction'**
+  String get tasksReactionFailed;
+
+  /// No description provided for @tasksCommentViewOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'You can view this task. Commenting needs commenter access to its project.'**
+  String get tasksCommentViewOnly;
+
+  /// No description provided for @tasksNamesAnd.
+  ///
+  /// In en, this message translates to:
+  /// **'{first} and {last}'**
+  String tasksNamesAnd(Object first, Object last);
+
+  /// No description provided for @tasksAddReaction.
+  ///
+  /// In en, this message translates to:
+  /// **'Add reaction'**
+  String get tasksAddReaction;
+
+  /// No description provided for @tasksReactedWith.
+  ///
+  /// In en, this message translates to:
+  /// **'{people} reacted with {emoji}'**
+  String tasksReactedWith(Object people, Object emoji);
+
+  /// No description provided for @tasksYou.
+  ///
+  /// In en, this message translates to:
+  /// **'You'**
+  String get tasksYou;
+
+  /// No description provided for @tasksReactorsOthers.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 other} other{{count} others}}'**
+  String tasksReactorsOthers(int count);
+
+  /// No description provided for @tasksSomeone.
+  ///
+  /// In en, this message translates to:
+  /// **'Someone'**
+  String get tasksSomeone;
+
+  /// No description provided for @tasksAnyEmoji.
+  ///
+  /// In en, this message translates to:
+  /// **'Any emoji'**
+  String get tasksAnyEmoji;
+
+  /// No description provided for @tasksAnyEmojiHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Type an emoji'**
+  String get tasksAnyEmojiHint;
+
+  /// No description provided for @tasksPrincipalAgent.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent'**
+  String get tasksPrincipalAgent;
+
+  /// No description provided for @tasksPrincipalUser.
+  ///
+  /// In en, this message translates to:
+  /// **'Vicoa user'**
+  String get tasksPrincipalUser;
+
+  /// No description provided for @tasksPrincipalUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown'**
+  String get tasksPrincipalUnknown;
+
+  /// No description provided for @tasksWaitingOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting on {names}'**
+  String tasksWaitingOn(Object names);
+
+  /// No description provided for @tasksWaitingOnCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting on {count} people'**
+  String tasksWaitingOnCount(int count);
+
+  /// No description provided for @tasksWaitingOnYou.
+  ///
+  /// In en, this message translates to:
+  /// **'you'**
+  String get tasksWaitingOnYou;
+
+  /// No description provided for @tasksWaitingOnSomeone.
+  ///
+  /// In en, this message translates to:
+  /// **'someone'**
+  String get tasksWaitingOnSomeone;
+
+  /// No description provided for @tasksDispatchQueued.
+  ///
+  /// In en, this message translates to:
+  /// **'Queued'**
+  String get tasksDispatchQueued;
+
+  /// No description provided for @tasksDispatchStarting.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting'**
+  String get tasksDispatchStarting;
+
+  /// No description provided for @tasksDispatchWorking.
+  ///
+  /// In en, this message translates to:
+  /// **'{agent} working'**
+  String tasksDispatchWorking(Object agent);
+
+  /// No description provided for @tasksDispatchFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed'**
+  String get tasksDispatchFailed;
+
+  /// No description provided for @tasksDispatchFailedReason.
+  ///
+  /// In en, this message translates to:
+  /// **'{agent} couldn\'t start: {reason}'**
+  String tasksDispatchFailedReason(Object agent, Object reason);
+
+  /// No description provided for @tasksDispatchFailedNoReason.
+  ///
+  /// In en, this message translates to:
+  /// **'{agent} couldn\'t start'**
+  String tasksDispatchFailedNoReason(Object agent);
+
+  /// No description provided for @tasksReplyPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave a reply…'**
+  String get tasksReplyPlaceholder;
+
+  /// No description provided for @tasksTimelineLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t load the activity'**
+  String get tasksTimelineLoadFailed;
 }
 
 class _AppLocalizationsDelegate

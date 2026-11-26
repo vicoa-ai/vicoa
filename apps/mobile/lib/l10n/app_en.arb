@@ -263,14 +263,6 @@
   "chatInputModelConfig": "Model Config",
   "chatInputOpenWebPreview": "Open web preview",
   "chatInputPlaceholder": "Type messages, @files, /skills or commands",
-  "chatInputReferenceLinkOnSend": "Sending files this session under {label}",
-  "@chatInputReferenceLinkOnSend": {
-    "placeholders": {
-      "label": {
-        "type": "String"
-      }
-    }
-  },
   "chatInputReferencesNoMatches": "No sessions, tasks or automations match",
   "chatInputReferencesSearching": "Searching…",
   "chatInputSessionConfig": "Session Config",
@@ -673,14 +665,6 @@
   "messageSelectionSheetTitle": "Select Messages",
   "messageSelectionSheetYou": "You",
   "newSessionAddToChat": "Add to chat",
-  "newSessionReferenceLinkOnStart": "Starting files this session under {label}",
-  "@newSessionReferenceLinkOnStart": {
-    "placeholders": {
-      "label": {
-        "type": "String"
-      }
-    }
-  },
   "newSessionAgent": "Agent",
   "newSessionAgentDidNotStart": "{label} didn't start on this machine.\n\nMake sure it's installed there and your Vicoa daemon is up to date, then try again.",
   "@newSessionAgentDidNotStart": {
@@ -1545,5 +1529,147 @@
       }
     }
   },
-  "gettingStartedDownloadCta": "Or open vicoa.ai/download"
+  "gettingStartedDownloadCta": "Or open vicoa.ai/download",
+  "tasksTimelineActivity": "Activity",
+  "tasksSessionsSection": "Sessions",
+  "tasksActivityCreated": "created this task",
+  "tasksActivityStatusChanged": "moved from {from} to {to}",
+  "@tasksActivityStatusChanged": {
+    "placeholders": { "from": { "type": "Object" }, "to": { "type": "Object" } }
+  },
+  "tasksActivityPriorityChanged": "changed priority from {from} to {to}",
+  "@tasksActivityPriorityChanged": {
+    "placeholders": { "from": { "type": "Object" }, "to": { "type": "Object" } }
+  },
+  "tasksActivityAssigned": "changed the assignee",
+  "tasksActivityUnassigned": "cleared the assignee",
+  "tasksActivityTitleChanged": "edited the title",
+  "tasksActivityDescriptionChanged": "edited the description",
+  "tasksActivityLabelAdded": "added label {label}",
+  "@tasksActivityLabelAdded": {
+    "placeholders": { "label": { "type": "Object" } }
+  },
+  "tasksActivityLabelRemoved": "removed label {label}",
+  "@tasksActivityLabelRemoved": {
+    "placeholders": { "label": { "type": "Object" } }
+  },
+  "tasksActivityDueDateSet": "set a due date",
+  "tasksActivityDueDateRemoved": "removed the due date",
+  "tasksActivityStartDateSet": "set a start date",
+  "tasksActivityStartDateRemoved": "removed the start date",
+  "tasksActivityProjectChanged": "moved this task to another project",
+  "tasksActivityParentChanged": "changed the parent task",
+  "tasksActivityParentRemoved": "removed the parent task",
+  "tasksActivityReferenced": "referenced this task",
+  "tasksActivityNone": "none",
+  "tasksActivityRun": "made {count} changes",
+  "@tasksActivityRun": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "tasksSessionRunning": "running",
+  "tasksSessionStatusChanges": "{count, plural, =1{1 status change from this session} other{{count} status changes from this session}}",
+  "@tasksSessionStatusChanges": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "tasksSessionOpen": "Open",
+  "tasksVia": "via {session}",
+  "@tasksVia": {
+    "placeholders": { "session": { "type": "Object" } }
+  },
+  "tasksCreatedIn": "Created in",
+  "tasksSessionRefAgent": "a {agent} session",
+  "@tasksSessionRefAgent": {
+    "placeholders": { "agent": { "type": "Object" } }
+  },
+  "tasksSessionRefUnnamed": "a session",
+  "tasksSessionRelationLinked": "Linked",
+  "tasksSessionRelationCreated": "Created",
+  "tasksSessionRelationUpdated": "Updated",
+  "tasksSessionRelationCommented": "Commented",
+  "tasksSessionRelationReferenced": "Referenced",
+  "tasksShowAll": "Show all ({count})",
+  "@tasksShowAll": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "tasksShowFewer": "Show fewer",
+  "tasksCommentDeletedBody": "This comment was deleted.",
+  "tasksCommentEdited": "(edited)",
+  "tasksAgentBadge": "agent",
+  "tasksNoteBadge": "Note",
+  "tasksCommentEditAction": "Edit",
+  "tasksCommentDeleteAction": "Delete",
+  "tasksDeleteCommentTitle": "Delete comment",
+  "tasksDeleteCommentBody": "Are you sure you want to delete this comment? This action cannot be undone.",
+  "tasksReply": "Reply",
+  "tasksCommentPlaceholder": "Leave a comment…",
+  "tasksReplyingTo": "Replying to {name}",
+  "@tasksReplyingTo": {
+    "placeholders": { "name": { "type": "Object" } }
+  },
+  "tasksReplyToNames": "Reply to {names}…",
+  "@tasksReplyToNames": {
+    "placeholders": { "names": { "type": "Object" } }
+  },
+  "tasksCommentForNames": "Comment for {names}…",
+  "@tasksCommentForNames": {
+    "placeholders": { "names": { "type": "Object" } }
+  },
+  "tasksWakeHint": "{names} will work on this. Start with /note to just leave a note.",
+  "@tasksWakeHint": {
+    "placeholders": { "names": { "type": "Object" } }
+  },
+  "tasksNoteHint": "Just a note. No agent will act on it.",
+  "tasksEditingComment": "Editing your comment",
+  "tasksCommentPostFailed": "Couldn't post the comment",
+  "tasksCommentSaveFailed": "Couldn't save the comment",
+  "tasksCommentDeleteFailed": "Couldn't delete the comment",
+  "tasksReactionFailed": "Couldn't update the reaction",
+  "tasksCommentViewOnly": "You can view this task. Commenting needs commenter access to its project.",
+  "tasksNamesAnd": "{first} and {last}",
+  "@tasksNamesAnd": {
+    "placeholders": { "first": { "type": "Object" }, "last": { "type": "Object" } }
+  },
+  "tasksAddReaction": "Add reaction",
+  "tasksReactedWith": "{people} reacted with {emoji}",
+  "@tasksReactedWith": {
+    "placeholders": { "people": { "type": "Object" }, "emoji": { "type": "Object" } }
+  },
+  "tasksYou": "You",
+  "tasksReactorsOthers": "{count, plural, =1{1 other} other{{count} others}}",
+  "@tasksReactorsOthers": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "tasksSomeone": "Someone",
+  "tasksAnyEmoji": "Any emoji",
+  "tasksAnyEmojiHint": "Type an emoji",
+  "tasksPrincipalAgent": "Agent",
+  "tasksPrincipalUser": "Vicoa user",
+  "tasksPrincipalUnknown": "Unknown",
+  "tasksWaitingOn": "Waiting on {names}",
+  "@tasksWaitingOn": {
+    "placeholders": { "names": { "type": "Object" } }
+  },
+  "tasksWaitingOnCount": "Waiting on {count} people",
+  "@tasksWaitingOnCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "tasksWaitingOnYou": "you",
+  "tasksWaitingOnSomeone": "someone",
+  "tasksDispatchQueued": "Queued",
+  "tasksDispatchStarting": "Starting",
+  "tasksDispatchWorking": "{agent} working",
+  "@tasksDispatchWorking": {
+    "placeholders": { "agent": { "type": "Object" } }
+  },
+  "tasksDispatchFailed": "Failed",
+  "tasksDispatchFailedReason": "{agent} couldn't start: {reason}",
+  "@tasksDispatchFailedReason": {
+    "placeholders": { "agent": { "type": "Object" }, "reason": { "type": "Object" } }
+  },
+  "tasksDispatchFailedNoReason": "{agent} couldn't start",
+  "@tasksDispatchFailedNoReason": {
+    "placeholders": { "agent": { "type": "Object" } }
+  },
+  "tasksReplyPlaceholder": "Leave a reply…",
+  "tasksTimelineLoadFailed": "Couldn't load the activity"
 }

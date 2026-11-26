@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '/backend/agent_catalog.dart';
 import '/custom_code/actions/index.dart' as actions;
-import '/custom_code/widgets/reference_suggestions.dart';
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/l10n/app_localizations.dart';
 import '/pages/agent_chat/agent_chat_model.dart';
@@ -116,13 +115,6 @@ class ChatInputArea extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Sending will file this session under a `#`-referenced task.
-          ReferenceLinkHint(
-            mixin: model,
-            currentTaskId: () => model.currentTaskId,
-            message: AppLocalizations.of(context).chatInputReferenceLinkOnSend,
-            padding: const EdgeInsetsDirectional.fromSTEB(8.0, 2.0, 8.0, 6.0),
-          ),
           if (model.annotations.isNotEmpty) ...[
             AnnotationsChip(composer: model),
             const SizedBox(height: 6.0),

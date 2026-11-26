@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -120,7 +122,21 @@ class _TasksWidgetState extends State<TasksWidget> {
         parentTask: parentTask,
         subtasks: subtasks,
       );
-      if (!mounted || action == null) return;
+      if (!mounted) return;
+      // The sheet may have answered a question or moved the task: bring the
+      // cards up to date behind it.
+      unawaited(_model.load());
+      if (action == null) return;
+      if (action.startsWith('session:')) {
+        await _openSessionChat(action.substring(8));
+        if (!mounted) return;
+        // Back from the chat: the same task again, as it now stands.
+        current = _model.tasks.firstWhere(
+          (t) => tutils.taskId(t) == id,
+          orElse: () => current,
+        );
+        continue;
+      }
       if (action.startsWith('open:')) {
         final target = _model.tasks.firstWhere(
           (t) => tutils.taskId(t) == action.substring(5),
@@ -143,6 +159,23 @@ class _TasksWidgetState extends State<TasksWidget> {
       }
       return;
     }
+  }
+
+  /// A session named on the task (a Sessions row, a session card, a "via"
+  /// line, "Created in"). Opened by id alone, as search does: the chat loads
+  /// the rest.
+  Future<void> _openSessionChat(String instanceId) async {
+    if (instanceId.isEmpty) return;
+    await context.pushNamed(
+      AgentChatWidget.routeName,
+      pathParameters: {'instanceId': instanceId},
+      extra: <String, dynamic>{
+        kTransitionInfoKey: const TransitionInfo(
+          hasTransition: true,
+          transitionType: PageTransitionType.rightToLeft,
+        ),
+      },
+    );
   }
 
   /// Where a newly-created task lands: the project being filtered on, if any,
@@ -439,6 +472,7 @@ class _TasksWidgetState extends State<TasksWidget> {
             showPriority: _model.showPriority,
             showProject: _model.showProject,
             showLabels: _model.showLabels,
+            viewerId: _model.viewerId,
             onTap: () => _openTask(t),
           );
         },

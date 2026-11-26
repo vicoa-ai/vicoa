@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '/custom_code/utils/task_questions.dart';
 import '/custom_code/utils/task_utils.dart' as tutils;
 import '/flutter_flow/flutter_flow_theme.dart';
 import 'task_chips.dart';
 import 'task_glyphs.dart';
+import 'task_people.dart';
 
 /// One row in the tasks list: the title on top, then a second row carrying the
 /// "VIC-42" identifier, the priority glyph, an optional status glyph, the
-/// project chip and label chips. Which of priority/status/project/labels appear
-/// is controlled by the Display toggles in the header filter; the identifier
-/// always shows. Tapping opens the task detail sheet.
+/// project chip and label chips, and "Waiting on …" while an agent's question
+/// is open. Which of priority/status/project/labels appear is controlled by
+/// the Display toggles in the header filter; the identifier and the waiting
+/// pill always show. Tapping opens the task detail sheet.
 class TaskCard extends StatelessWidget {
   const TaskCard({
     super.key,
@@ -21,6 +24,7 @@ class TaskCard extends StatelessWidget {
     required this.showPriority,
     required this.showProject,
     required this.showLabels,
+    this.viewerId,
   });
 
   final dynamic task;
@@ -32,6 +36,9 @@ class TaskCard extends StatelessWidget {
   final bool showPriority;
   final bool showProject;
   final bool showLabels;
+
+  /// The signed-in user's backend id, so "Waiting on you" can read as theirs.
+  final String? viewerId;
 
   @override
   Widget build(BuildContext context) {
@@ -50,6 +57,10 @@ class TaskCard extends StatelessWidget {
       if (showProjectChip)
         TaskProjectChip(project: project, name: tutils.projectName(project)),
       if (showLabels) ...labels.map((l) => TaskLabelChip(label: l)),
+      // Why a task is under "Waiting on me": an agent's question to someone
+      // is still open. Not behind a Display toggle, like the identifier: it
+      // says whose turn it is.
+      if (waitingOnPeople(task).isNotEmpty) WaitingOnPill.forTask(task, viewerId),
     ];
 
     return Padding(

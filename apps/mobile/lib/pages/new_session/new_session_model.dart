@@ -175,13 +175,18 @@ class NewSessionModel extends FlutterFlowModel<NewSessionWidget>
           if (!(ref.kind == 'task' && ref.id == seedTaskId)) ref,
       ];
 
-  /// The task the new session is filed under: the seeding task, else the
-  /// first `#`-referenced one (the chat composer's rule).
+  /// The task the new session is filed under: the seeding task (started
+  /// from the task), or none. A `#`-referenced task is only noted
+  /// ([referencedTaskIdsForStart]); naming a task is not starting work on it.
   String? get linkTaskId {
     final seed = seedTaskId;
-    if (seed != null && seed.isNotEmpty) return seed;
-    return taskLinkForSend(firstMessageReferences(), null);
+    return seed != null && seed.isNotEmpty ? seed : null;
   }
+
+  /// The tasks the first message `#`-references, to note the new session in
+  /// their activity once it exists. A `#` to the seeding task is left out
+  /// with its block, since that task is already on top.
+  List<String> get referencedTaskIdsForStart => referencedTaskIds(firstMessageReferences());
 
   /// Drop the forked conversation: the session starts from a clean slate.
   void removeForkContext() {

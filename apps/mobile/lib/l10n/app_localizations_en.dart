@@ -630,11 +630,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'Type messages, @files, /skills or commands';
 
   @override
-  String chatInputReferenceLinkOnSend(String label) {
-    return 'Sending files this session under $label';
-  }
-
-  @override
   String get chatInputReferencesNoMatches =>
       'No sessions, tasks or automations match';
 
@@ -1509,11 +1504,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get newSessionAddToChat => 'Add to chat';
-
-  @override
-  String newSessionReferenceLinkOnStart(String label) {
-    return 'Starting files this session under $label';
-  }
 
   @override
   String get newSessionAgent => 'Agent';
@@ -3420,4 +3410,298 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get gettingStartedDownloadCta => 'Or open vicoa.ai/download';
+
+  @override
+  String get tasksTimelineActivity => 'Activity';
+
+  @override
+  String get tasksSessionsSection => 'Sessions';
+
+  @override
+  String get tasksActivityCreated => 'created this task';
+
+  @override
+  String tasksActivityStatusChanged(Object from, Object to) {
+    return 'moved from $from to $to';
+  }
+
+  @override
+  String tasksActivityPriorityChanged(Object from, Object to) {
+    return 'changed priority from $from to $to';
+  }
+
+  @override
+  String get tasksActivityAssigned => 'changed the assignee';
+
+  @override
+  String get tasksActivityUnassigned => 'cleared the assignee';
+
+  @override
+  String get tasksActivityTitleChanged => 'edited the title';
+
+  @override
+  String get tasksActivityDescriptionChanged => 'edited the description';
+
+  @override
+  String tasksActivityLabelAdded(Object label) {
+    return 'added label $label';
+  }
+
+  @override
+  String tasksActivityLabelRemoved(Object label) {
+    return 'removed label $label';
+  }
+
+  @override
+  String get tasksActivityDueDateSet => 'set a due date';
+
+  @override
+  String get tasksActivityDueDateRemoved => 'removed the due date';
+
+  @override
+  String get tasksActivityStartDateSet => 'set a start date';
+
+  @override
+  String get tasksActivityStartDateRemoved => 'removed the start date';
+
+  @override
+  String get tasksActivityProjectChanged =>
+      'moved this task to another project';
+
+  @override
+  String get tasksActivityParentChanged => 'changed the parent task';
+
+  @override
+  String get tasksActivityParentRemoved => 'removed the parent task';
+
+  @override
+  String get tasksActivityReferenced => 'referenced this task';
+
+  @override
+  String get tasksActivityNone => 'none';
+
+  @override
+  String tasksActivityRun(int count) {
+    return 'made $count changes';
+  }
+
+  @override
+  String get tasksSessionRunning => 'running';
+
+  @override
+  String tasksSessionStatusChanges(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count status changes from this session',
+      one: '1 status change from this session',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get tasksSessionOpen => 'Open';
+
+  @override
+  String tasksVia(Object session) {
+    return 'via $session';
+  }
+
+  @override
+  String get tasksCreatedIn => 'Created in';
+
+  @override
+  String tasksSessionRefAgent(Object agent) {
+    return 'a $agent session';
+  }
+
+  @override
+  String get tasksSessionRefUnnamed => 'a session';
+
+  @override
+  String get tasksSessionRelationLinked => 'Linked';
+
+  @override
+  String get tasksSessionRelationCreated => 'Created';
+
+  @override
+  String get tasksSessionRelationUpdated => 'Updated';
+
+  @override
+  String get tasksSessionRelationCommented => 'Commented';
+
+  @override
+  String get tasksSessionRelationReferenced => 'Referenced';
+
+  @override
+  String tasksShowAll(int count) {
+    return 'Show all ($count)';
+  }
+
+  @override
+  String get tasksShowFewer => 'Show fewer';
+
+  @override
+  String get tasksCommentDeletedBody => 'This comment was deleted.';
+
+  @override
+  String get tasksCommentEdited => '(edited)';
+
+  @override
+  String get tasksAgentBadge => 'agent';
+
+  @override
+  String get tasksNoteBadge => 'Note';
+
+  @override
+  String get tasksCommentEditAction => 'Edit';
+
+  @override
+  String get tasksCommentDeleteAction => 'Delete';
+
+  @override
+  String get tasksDeleteCommentTitle => 'Delete comment';
+
+  @override
+  String get tasksDeleteCommentBody =>
+      'Are you sure you want to delete this comment? This action cannot be undone.';
+
+  @override
+  String get tasksReply => 'Reply';
+
+  @override
+  String get tasksCommentPlaceholder => 'Leave a comment…';
+
+  @override
+  String tasksReplyingTo(Object name) {
+    return 'Replying to $name';
+  }
+
+  @override
+  String tasksReplyToNames(Object names) {
+    return 'Reply to $names…';
+  }
+
+  @override
+  String tasksCommentForNames(Object names) {
+    return 'Comment for $names…';
+  }
+
+  @override
+  String tasksWakeHint(Object names) {
+    return '$names will work on this. Start with /note to just leave a note.';
+  }
+
+  @override
+  String get tasksNoteHint => 'Just a note. No agent will act on it.';
+
+  @override
+  String get tasksEditingComment => 'Editing your comment';
+
+  @override
+  String get tasksCommentPostFailed => 'Couldn\'t post the comment';
+
+  @override
+  String get tasksCommentSaveFailed => 'Couldn\'t save the comment';
+
+  @override
+  String get tasksCommentDeleteFailed => 'Couldn\'t delete the comment';
+
+  @override
+  String get tasksReactionFailed => 'Couldn\'t update the reaction';
+
+  @override
+  String get tasksCommentViewOnly =>
+      'You can view this task. Commenting needs commenter access to its project.';
+
+  @override
+  String tasksNamesAnd(Object first, Object last) {
+    return '$first and $last';
+  }
+
+  @override
+  String get tasksAddReaction => 'Add reaction';
+
+  @override
+  String tasksReactedWith(Object people, Object emoji) {
+    return '$people reacted with $emoji';
+  }
+
+  @override
+  String get tasksYou => 'You';
+
+  @override
+  String tasksReactorsOthers(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count others',
+      one: '1 other',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get tasksSomeone => 'Someone';
+
+  @override
+  String get tasksAnyEmoji => 'Any emoji';
+
+  @override
+  String get tasksAnyEmojiHint => 'Type an emoji';
+
+  @override
+  String get tasksPrincipalAgent => 'Agent';
+
+  @override
+  String get tasksPrincipalUser => 'Vicoa user';
+
+  @override
+  String get tasksPrincipalUnknown => 'Unknown';
+
+  @override
+  String tasksWaitingOn(Object names) {
+    return 'Waiting on $names';
+  }
+
+  @override
+  String tasksWaitingOnCount(int count) {
+    return 'Waiting on $count people';
+  }
+
+  @override
+  String get tasksWaitingOnYou => 'you';
+
+  @override
+  String get tasksWaitingOnSomeone => 'someone';
+
+  @override
+  String get tasksDispatchQueued => 'Queued';
+
+  @override
+  String get tasksDispatchStarting => 'Starting';
+
+  @override
+  String tasksDispatchWorking(Object agent) {
+    return '$agent working';
+  }
+
+  @override
+  String get tasksDispatchFailed => 'Failed';
+
+  @override
+  String tasksDispatchFailedReason(Object agent, Object reason) {
+    return '$agent couldn\'t start: $reason';
+  }
+
+  @override
+  String tasksDispatchFailedNoReason(Object agent) {
+    return '$agent couldn\'t start';
+  }
+
+  @override
+  String get tasksReplyPlaceholder => 'Leave a reply…';
+
+  @override
+  String get tasksTimelineLoadFailed => 'Couldn\'t load the activity';
 }

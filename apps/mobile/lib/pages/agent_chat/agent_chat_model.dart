@@ -1437,10 +1437,15 @@ String? latestWebPreviewUrl;
       clearPendingReferences();
       removeSentAnnotations(sentAnnotations);
     }
-    // Referencing a task files the session under it: the same late link the
-    // Tasks board draws. Never re-files a session that already has a task.
-    final linkTaskId = taskLinkForSend(refs, currentTaskId);
-    if (linkTaskId != null) unawaited(_linkReferencedTask(linkTaskId));
+    // The tasks the message `#`-referenced note this session in their
+    // activity, so it shows on each task's Sessions list. Fire-and-forget:
+    // the message is already on its way, and a lost note costs a line on the
+    // task, not the send. It never files this session under the task.
+    final referencedTasks = referencedTaskIds(refs);
+    final sessionId = instanceId;
+    if (referencedTasks.isNotEmpty && sessionId != null) {
+      unawaited(actions.apiRecordTaskReferences(sessionId, referencedTasks));
+    }
     // The composer is free from here. The POST runs in the background and
     // the bubble's own `_send_status` carries its state (spinner after 2s,
     // red ! on failure) — see message_queue_status.dart.
@@ -1513,28 +1518,6 @@ String? latestWebPreviewUrl;
     } finally {
       resumeInFlight = false;
     }
-  }
-
-  /// The task this session is filed under, if any (`task_id` on the details).
-  String? get currentTaskId {
-    final data = instanceData;
-    final id = data is Map ? data['task_id']?.toString() : null;
-    return id == null || id.isEmpty ? null : id;
-  }
-
-  /// PATCH the session's `task_id` for a `#`-referenced task. Best-effort: the
-  /// reference's context rides the message either way. Recorded up front so
-  /// a quick second send doesn't try again, and undone if the PATCH fails.
-  Future<void> _linkReferencedTask(String taskId) async {
-    final id = instanceId;
-    final data = instanceData;
-    if (id == null || data is! Map) return;
-    data['task_id'] = taskId;
-    final result = await actions.apiUpdateAgentInstance(id, {'task_id': taskId});
-    if (result == null && data['task_id'] == taskId) {
-      data['task_id'] = null;
-    }
-    onStateChanged?.call();
   }
 
   /// The UI side of a failed send, kept out of the background POST so it can
