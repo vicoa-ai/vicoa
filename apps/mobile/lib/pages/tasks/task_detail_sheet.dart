@@ -307,7 +307,9 @@ class _TaskDetailSheetState extends State<TaskDetailSheet> with WidgetsBindingOb
                         _SectionLabel(l10n.tasksSessionsSection),
                         TaskSessionList(sessions: _model.relatedSessions, onOpenSession: _openSession),
                       ],
-                      _SectionLabel(l10n.tasksTimelineActivity),
+                      // No heading over nothing: a task with no comments and
+                      // no history yet ends at its sessions.
+                      if (_model.timelineLoaded && !_model.timelineFailed && _model.entries.isNotEmpty) _SectionLabel(l10n.tasksTimelineActivity),
                       _timeline(theme, l10n, canComment),
                     ],
                   ),
@@ -514,10 +516,11 @@ class _TaskDetailSheetState extends State<TaskDetailSheet> with WidgetsBindingOb
     }
     if (_model.timelineFailed) {
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12.0),
+        padding: const EdgeInsets.only(top: 22.0, bottom: 12.0),
         child: Text(l10n.tasksTimelineLoadFailed, style: theme.labelMedium.override(font: GoogleFonts.sourceSans3(), color: theme.secondaryText, fontSize: 12.5, letterSpacing: 0.0)),
       );
     }
+    if (_model.entries.isEmpty) return const SizedBox.shrink();
     return TaskTimelineView(
       entries: _model.entries,
       viewer: _model.viewer,

@@ -3645,12 +3645,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get tasksSomeone => 'Someone';
 
   @override
-  String get tasksAnyEmoji => 'Any emoji';
-
-  @override
-  String get tasksAnyEmojiHint => 'Type an emoji';
-
-  @override
   String get tasksPrincipalAgent => 'Agent';
 
   @override

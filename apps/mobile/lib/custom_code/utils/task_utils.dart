@@ -209,27 +209,6 @@ bool reactionReacted(dynamic r) => r is Map && r['reacted'] == true;
 /// true total.
 List<dynamic> reactionReactors(dynamic r) => _list(r is Map ? r['reactors'] : null);
 
-final RegExp _space = RegExp(r'\s');
-
-/// Whether [value] is plausibly one emoji, by the server's rule
-/// (`shared/database/reactions.py` `is_emoji`): short, no ASCII letters,
-/// digits or whitespace, and at least one character past Latin-1. Joiners and
-/// variation selectors are allowed inside. Structural rather than a list, so
-/// any emoji the keyboard offers passes.
-bool isReactionEmoji(String value) {
-  final runes = value.runes.toList();
-  if (runes.isEmpty || runes.length > 16) return false;
-  var exotic = false;
-  for (final r in runes) {
-    if (r == 0x200D || r == 0xFE0F || r == 0xFE0E) continue;
-    final ch = String.fromCharCode(r);
-    if (r < 0x80 && RegExp(r'[A-Za-z0-9]').hasMatch(ch)) return false;
-    if (_space.hasMatch(ch)) return false;
-    if (r > 0xFF) exotic = true;
-  }
-  return exotic;
-}
-
 // --- Timeline payload (`TaskTimelineResponse`) -----------------------------
 
 List<dynamic> timelineComments(dynamic tl) => _list(tl is Map ? tl['comments'] : null);

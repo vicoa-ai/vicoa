@@ -107,7 +107,7 @@ TextStyle _text(FlutterFlowTheme theme, {Color? color, double size = 13.0, FontW
 BoxDecoration _card(FlutterFlowTheme theme, {bool highlight = false}) => BoxDecoration(
       color: theme.primaryBackground,
       borderRadius: BorderRadius.circular(12.0),
-      border: Border.all(color: highlight ? theme.primary.withValues(alpha: 0.5) : theme.alternate, width: 1.0),
+      border: Border.all(color: highlight ? theme.secondaryText.withValues(alpha: 0.5) : theme.alternate, width: 1.0),
     );
 
 /// Horizontal inset of every row, cards and bare lines alike (rule 1).
@@ -157,7 +157,7 @@ class _ThreadCard extends StatelessWidget {
                         replying ? l10n.tasksReplyingTo(principalDisplayName(l10n, tutils.commentAuthor(thread.root), viewer)) : l10n.tasksReplyPlaceholder,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: _text(theme, color: replying ? theme.primary : theme.secondaryText.withValues(alpha: 0.7), size: 13.5),
+                        style: _text(theme, color: replying ? theme.primaryText : theme.secondaryText.withValues(alpha: 0.7), size: 13.5),
                       ),
                     ),
                   ],
@@ -547,9 +547,9 @@ class _SessionCardState extends State<_SessionCard> {
                         Row(
                           children: [
                             if (live) ...[
-                              Container(width: 6.0, height: 6.0, decoration: const BoxDecoration(color: Color(0xFF10B981), shape: BoxShape.circle)),
+                              Container(width: 6.0, height: 6.0, decoration: BoxDecoration(color: theme.primaryText, shape: BoxShape.circle)),
                               const SizedBox(width: 4.0),
-                              Text(l10n.tasksSessionRunning, style: _text(theme, color: const Color(0xFF10B981), size: 12.0)),
+                              Text(l10n.tasksSessionRunning, style: _text(theme, color: theme.primaryText, size: 12.0, weight: FontWeight.w500)),
                             ] else
                               Text((s['status']?.toString() ?? '').toLowerCase(), style: _text(theme, color: theme.secondaryText, size: 12.0)),
                             Text('  ·  ${taskSessionTime(s)}', style: _text(theme, color: theme.secondaryText, size: 12.0)),

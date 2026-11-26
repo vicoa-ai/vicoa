@@ -6,6 +6,7 @@ import '/custom_code/utils/task_questions.dart';
 import '/custom_code/utils/task_utils.dart' as tutils;
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/l10n/app_localizations.dart';
+import 'task_surface.dart';
 import 'task_timeline_text.dart';
 
 /// Who a task involves, as chips: the assignee, whom an agent's question
@@ -13,9 +14,10 @@ import 'task_timeline_text.dart';
 /// task card and the detail sheet.
 
 /// "Waiting on Nick": an agent asked someone a question on the task and it is
-/// still open. For the viewer it reads "Waiting on you" in the primary tone,
-/// since it is their turn; for anyone else it is muted. The twin of the web's
-/// `WaitingOnPill`. Renders nothing when it waits on nobody.
+/// still open. Drawn on the chat page's neutral surface; for the viewer it
+/// reads "Waiting on you" in the body text colour, since it is their turn,
+/// and for anyone else it is muted. The twin of the web's `WaitingOnPill`.
+/// Renders nothing when it waits on nobody.
 class WaitingOnPill extends StatelessWidget {
   const WaitingOnPill({super.key, required this.people, required this.viewerId});
 
@@ -33,14 +35,11 @@ class WaitingOnPill extends StatelessWidget {
     if (label == null) return const SizedBox.shrink();
     final theme = FlutterFlowTheme.of(context);
     final mine = viewerId != null && people.any((p) => tutils.principalId(p) == viewerId);
-    final color = mine ? theme.primary : theme.secondaryText;
+    final color = mine ? theme.primaryText : theme.secondaryText;
     return Container(
       height: 20.0,
       padding: const EdgeInsets.symmetric(horizontal: 7.0),
-      decoration: BoxDecoration(
-        color: mine ? theme.primary.withValues(alpha: 0.12) : theme.alternate.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(10.0),
-      ),
+      decoration: taskChatSurface(theme),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -51,7 +50,7 @@ class WaitingOnPill extends StatelessWidget {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: theme.labelSmall.override(font: GoogleFonts.sourceSans3(), color: color, fontSize: 11.0, letterSpacing: 0.0, fontWeight: FontWeight.w500),
+              style: theme.labelSmall.override(font: GoogleFonts.sourceSans3(), color: color, fontSize: 11.0, letterSpacing: 0.0, fontWeight: mine ? FontWeight.w600 : FontWeight.w500),
             ),
           ),
         ],
@@ -119,10 +118,11 @@ DispatchTone? dispatchChipTone(Map<String, dynamic>? dispatch) {
 }
 
 /// What the agent asked to act on the task is doing right now, from its
-/// latest dispatch: "Queued", "Starting", "<agent> working", or a red
-/// "Failed". Nothing once its turn is over or the request was cancelled; the
-/// assignee and the timeline say the rest. The twin of the web's
-/// `TaskDispatchChip`, with the same states.
+/// latest dispatch: "Queued", "Starting", "<agent> working", or "Failed".
+/// Nothing once its turn is over or the request was cancelled; the assignee
+/// and the timeline say the rest. The twin of the web's `TaskDispatchChip`,
+/// with the same states, drawn on the chat page's neutral surface: the state
+/// is told by its glyph and the text's weight, not by a colour.
 class TaskDispatchChip extends StatelessWidget {
   const TaskDispatchChip({super.key, required this.dispatch, required this.agentName, this.onOpenSession, this.onShowReason});
 
@@ -148,10 +148,11 @@ class TaskDispatchChip extends StatelessWidget {
       DispatchTone.failed => l10n.tasksDispatchFailed,
       DispatchTone.waiting => dispatch?['state'] == 'queued' ? l10n.tasksDispatchQueued : l10n.tasksDispatchStarting,
     };
-    final color = switch (tone) {
-      DispatchTone.working => const Color(0xFF10B981), // emerald-500
-      DispatchTone.failed => const Color(0xFFEF4444), // red-500
-      DispatchTone.waiting => theme.secondaryText,
+    final color = tone == DispatchTone.waiting ? theme.secondaryText : theme.primaryText;
+    final Widget glyph = switch (tone) {
+      DispatchTone.working => Container(width: 6.0, height: 6.0, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+      DispatchTone.failed => Icon(Icons.error_outline_rounded, size: 12.0, color: color),
+      DispatchTone.waiting => Icon(Icons.schedule_rounded, size: 12.0, color: color),
     };
     final sessionId = dispatch?['agent_instance_id']?.toString();
     final detail = dispatch?['detail']?.toString();
@@ -164,11 +165,11 @@ class TaskDispatchChip extends StatelessWidget {
     final chip = Container(
       height: 20.0,
       padding: const EdgeInsets.symmetric(horizontal: 7.0),
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10.0)),
+      decoration: taskChatSurface(theme),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(width: 6.0, height: 6.0, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+          glyph,
           const SizedBox(width: 5.0),
           Flexible(
             child: Text(

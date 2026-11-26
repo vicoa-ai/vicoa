@@ -47,7 +47,8 @@ void main() {
     expect(find.text('VIC-42'), findsOneWidget);
     expect(find.text('Fix the flaky checkout test'), findsOneWidget);
     expect(find.text('haiku-bot'), findsOneWidget);
-    expect(find.text('Activity'), findsOneWidget);
+    // No heading over a timeline that isn't there.
+    expect(find.text('Activity'), findsNothing);
     expect(find.textContaining("Couldn't load the activity"), findsOneWidget);
     // An unfiled task is the viewer's own, so they may comment.
     expect(find.byType(TextField), findsOneWidget);

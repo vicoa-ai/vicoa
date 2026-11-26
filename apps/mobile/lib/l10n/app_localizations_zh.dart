@@ -3497,12 +3497,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get tasksSomeone => '有人';
 
   @override
-  String get tasksAnyEmoji => '任意表情';
-
-  @override
-  String get tasksAnyEmojiHint => '输入一个表情';
-
-  @override
   String get tasksPrincipalAgent => 'Agent';
 
   @override

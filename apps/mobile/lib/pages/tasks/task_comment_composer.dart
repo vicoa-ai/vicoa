@@ -8,7 +8,9 @@ import '/custom_code/utils/task_mentions.dart';
 import '/custom_code/utils/task_utils.dart' as tutils;
 import '/flutter_flow/flutter_flow_theme.dart';
 import '/l10n/app_localizations.dart';
+import '/pages/agent_chat/components/composer_primary_button.dart';
 import 'dashed_border.dart';
+import 'task_surface.dart';
 import 'task_timeline_text.dart';
 
 /// What the composer is aimed at.
@@ -220,9 +222,11 @@ class _TaskCommentComposerState extends State<TaskCommentComposer> {
     final style = theme.bodyMedium.override(font: GoogleFonts.sourceSans3(), color: theme.primaryText, fontSize: 15.0, letterSpacing: 0.0);
     final small = theme.labelSmall.override(font: GoogleFonts.sourceSans3(), color: theme.secondaryText, fontSize: 12.5, letterSpacing: 0.0);
 
+    // Laid out like the chat page's composer: no rule above it, the box
+    // inset from the sheet's edges, the same surface and the same button.
     return Container(
-      decoration: BoxDecoration(color: theme.secondaryBackground, border: Border(top: BorderSide(color: theme.alternate, width: 1.0))),
-      padding: const EdgeInsets.fromLTRB(12.0, 8.0, 12.0, 8.0),
+      color: theme.secondaryBackground,
+      padding: const EdgeInsets.fromLTRB(8.0, 6.0, 8.0, 8.0),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -232,14 +236,14 @@ class _TaskCommentComposerState extends State<TaskCommentComposer> {
               padding: const EdgeInsets.only(bottom: 6.0, left: 4.0),
               child: Row(
                 children: [
-                  Icon(editing ? Icons.edit_outlined : Icons.reply_rounded, size: 15.0, color: theme.primary),
+                  Icon(editing ? Icons.edit_outlined : Icons.reply_rounded, size: 15.0, color: theme.secondaryText),
                   const SizedBox(width: 6.0),
                   Expanded(
                     child: Text(
                       editing ? l10n.tasksEditingComment : l10n.tasksReplyingTo(widget.targetName ?? ''),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: small.copyWith(color: theme.primary),
+                      style: small.copyWith(color: theme.primaryText),
                     ),
                   ),
                   InkWell(
@@ -253,7 +257,7 @@ class _TaskCommentComposerState extends State<TaskCommentComposer> {
           if (matches.isNotEmpty)
             Container(
               margin: const EdgeInsets.only(bottom: 6.0),
-              decoration: BoxDecoration(color: theme.primaryBackground, borderRadius: BorderRadius.circular(12.0), border: Border.all(color: theme.alternate)),
+              decoration: taskChatSurface(theme, radius: 16.0),
               child: Column(
                 children: [
                   for (final c in matches)
@@ -286,15 +290,17 @@ class _TaskCommentComposerState extends State<TaskCommentComposer> {
                 // sinks into the sheet inside a dashed outline, as on the web.
                 // The CustomPaint is always there so the field is never rebuilt.
                 child: CustomPaint(
-                  foregroundPainter: note ? DashedBorderPainter(color: theme.secondaryText.withValues(alpha: 0.7), radius: 18.0) : null,
+                  foregroundPainter: note ? DashedBorderPainter(color: theme.secondaryText.withValues(alpha: 0.7), radius: 24.0) : null,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                    decoration: BoxDecoration(
-                      color: note ? theme.secondaryBackground : theme.primaryBackground,
-                      borderRadius: BorderRadius.circular(18.0),
-                      border: Border.all(color: note ? Colors.transparent : theme.alternate, width: 1.0),
-                    ),
-                    child: TextField(
+                    padding: const EdgeInsetsDirectional.fromSTEB(14.0, 4.0, 4.0, 4.0),
+                    decoration: note
+                        ? BoxDecoration(borderRadius: BorderRadius.circular(24.0), border: Border.all(color: Colors.transparent, width: 1.0))
+                        : taskChatSurface(theme, radius: 24.0),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: TextField(
                       controller: widget.controller,
                       focusNode: widget.focusNode,
                       minLines: 1,
@@ -305,32 +311,25 @@ class _TaskCommentComposerState extends State<TaskCommentComposer> {
                       decoration: InputDecoration(
                         isDense: true,
                         border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 9.0),
+                        contentPadding: const EdgeInsets.symmetric(vertical: 10.0),
                         hintText: placeholder,
                         hintStyle: style.copyWith(color: theme.secondaryText.withValues(alpha: 0.6)),
                       ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8.0),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 2.0),
-                child: Opacity(
-                  opacity: empty && !_sending ? 0.35 : 1.0,
-                  child: Material(
-                    color: theme.primary,
-                    shape: const CircleBorder(),
-                    child: InkWell(
-                      customBorder: const CircleBorder(),
-                      onTap: empty || _sending ? null : _send,
-                      child: SizedBox(
-                        width: 34.0,
-                        height: 34.0,
-                        child: _sending
-                            ? const Padding(padding: EdgeInsets.all(9.0), child: CircularProgressIndicator(strokeWidth: 2.0, color: Colors.white))
-                            : Icon(editing ? Icons.check_rounded : Icons.arrow_upward_rounded, color: Colors.white, size: 19.0),
-                      ),
+                          ),
+                        ),
+                        const SizedBox(width: 6.0),
+                        // The chat composer's own Send button.
+                        ComposerPrimaryButton(
+                          isSending: _sending,
+                          showStop: false,
+                          onStop: () {},
+                          onSend: () {
+                            if (empty) return;
+                            HapticFeedback.mediumImpact();
+                            _send();
+                          },
+                        ),
+                      ],
                     ),
                   ),
                 ),

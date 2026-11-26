@@ -6452,18 +6452,6 @@ abstract class AppLocalizations {
   /// **'Someone'**
   String get tasksSomeone;
 
-  /// No description provided for @tasksAnyEmoji.
-  ///
-  /// In en, this message translates to:
-  /// **'Any emoji'**
-  String get tasksAnyEmoji;
-
-  /// No description provided for @tasksAnyEmojiHint.
-  ///
-  /// In en, this message translates to:
-  /// **'Type an emoji'**
-  String get tasksAnyEmojiHint;
-
   /// No description provided for @tasksPrincipalAgent.
   ///
   /// In en, this message translates to:

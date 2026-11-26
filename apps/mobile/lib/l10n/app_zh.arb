@@ -1076,8 +1076,6 @@
   "tasksYou": "你",
   "tasksReactorsOthers": "其他 {count} 人",
   "tasksSomeone": "有人",
-  "tasksAnyEmoji": "任意表情",
-  "tasksAnyEmojiHint": "输入一个表情",
   "tasksPrincipalAgent": "Agent",
   "tasksPrincipalUser": "Vicoa 用户",
   "tasksPrincipalUnknown": "未知",
