@@ -26,7 +26,7 @@ from protocol.acp_catalog import ACP_CATALOG
 
 
 AGENT_CATALOG: dict[str, Any] = {
-    "version": "2026-11-26-1",
+    "version": "2026-11-26-2",
     "min_cli_version": "1.20.0",
     "min_client_version": "0.42.0",
     "agents": [
@@ -162,6 +162,10 @@ AGENT_CATALOG: dict[str, Any] = {
             # gpt-6.1-terra 0.153.0, gpt-6-luna 0.155.0. They offer `max` (and
             # `ultra` on the first three) beyond the four efforts below; only
             # the shared four are exposed here.
+            #
+            # gpt-5.4 and gpt-5.4-mini are gone: codex hid them in 0.153.0 and
+            # dropped them from its bundled models.json by 0.160.0. Sessions
+            # saved with either id keep it; the catalog only feeds the picker.
             "models": [
                 {"id": "gpt-5.5", "label": "GPT-5.5", "is_default": True},
                 {"id": "gpt-6.2-sol", "label": "GPT-6.2-Sol"},
@@ -171,8 +175,6 @@ AGENT_CATALOG: dict[str, Any] = {
                 {"id": "gpt-5.6-sol", "label": "GPT-5.6-Sol"},
                 {"id": "gpt-5.6-terra", "label": "GPT-5.6-Terra"},
                 {"id": "gpt-5.6-luna", "label": "GPT-5.6-Luna"},
-                {"id": "gpt-5.4", "label": "GPT-5.4"},
-                {"id": "gpt-5.4-mini", "label": "GPT-5.4-Mini"},
             ],
             # Subset of codex-rs ReasoningEffort (openai_models.rs:45) — full
             # enum is none/minimal/low/medium/high/xhigh. We expose the four

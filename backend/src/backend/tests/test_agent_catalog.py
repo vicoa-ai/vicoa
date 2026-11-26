@@ -164,6 +164,17 @@ class TestAgentCatalogShape:
                     f"{model_id} must NOT carry a default_thinking_effort override"
                 )
 
+    def test_codex_picker_drops_models_codex_retired(self):
+        """gpt-5.4 and gpt-5.4-mini are gone from codex's bundled models.json
+        (hidden in 0.153.0, absent from 0.160.0), so the picker no longer offers
+        them; gpt-5.5 stays the default."""
+        codex = next(a for a in AGENT_CATALOG["agents"] if a["id"] == "codex")
+        model_ids = [m["id"] for m in codex["models"]]
+        assert "gpt-5.4" not in model_ids
+        assert "gpt-5.4-mini" not in model_ids
+        defaults = [m["id"] for m in codex["models"] if m.get("is_default")]
+        assert defaults == ["gpt-5.5"]
+
 
 class TestDerivedConstants:
     """The daemon imports these for structural validation — keep them honest."""
