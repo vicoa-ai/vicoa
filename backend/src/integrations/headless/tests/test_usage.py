@@ -120,6 +120,7 @@ def test_claude_context_window_seed_matches_claude_code_defaults():
     assert claude_context_window_for_model("claude-opus-4-6") == 200_000
     # `native_1m` models run the bare id at 1M.
     for model in (
+        "claude-fable-5-2",
         "claude-fable-5",
         "claude-opus-5-5",
         "claude-opus-5",
@@ -127,8 +128,12 @@ def test_claude_context_window_seed_matches_claude_code_defaults():
         "claude-opus-4-7",
         "claude-sonnet-5-5",
         "claude-sonnet-5",
+        "claude-haiku-5-5",
     ):
         assert claude_context_window_for_model(model) == 1_000_000, model
+    # Haiku 5.5 is native 1M; Haiku 4.5 stays 200k, dated ids included.
+    assert claude_context_window_for_model("claude-haiku-5-5-20261120") == 1_000_000
+    assert claude_context_window_for_model("claude-haiku-4-5-20251001") == 200_000
     # Old sessions saved under a since-removed `[1m]` row keep the 1M seed.
     assert claude_context_window_for_model("claude-opus-4-8[1m]") == 1_000_000
     assert claude_context_window_for_model("claude-sonnet-5[1m]") == 1_000_000

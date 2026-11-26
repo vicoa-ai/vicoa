@@ -450,7 +450,7 @@ String sessionConfigSummary(AgentCatalog catalog, SessionConfig config) {
 /// the flag today; this comment is the rule.
 const String _agentCatalogFallbackJson = r'''
 {
-  "version": "2026-10-29-1",
+  "version": "2026-11-26-1",
   "min_cli_version": "1.20.0",
   "min_client_version": "0.42.0",
   "agents": [
@@ -459,9 +459,11 @@ const String _agentCatalogFallbackJson = r'''
       "label": "Claude Code",
       "supports_steer": true,
       "models": [
+        {"id": "claude-fable-5-2", "label": "Fable 5.2"},
         {"id": "claude-fable-5", "label": "Fable 5", "default_thinking_effort": "xhigh"},
         {"id": "claude-opus-5-5", "label": "Opus 5.5"},
         {"id": "claude-sonnet-5-5", "label": "Sonnet 5.5"},
+        {"id": "claude-haiku-5-5", "label": "Haiku 5.5"},
         {"id": "claude-opus-5", "label": "Opus 5", "default_thinking_effort": "xhigh"},
         {"id": "claude-opus-4-8", "label": "Opus 4.8", "default_thinking_effort": "xhigh"},
         {"id": "claude-opus-4-7", "label": "Opus 4.7", "default_thinking_effort": "xhigh"},
@@ -494,6 +496,13 @@ const String _agentCatalogFallbackJson = r'''
       "supports_steer": true,
       "models": [
         {"id": "gpt-5.5", "label": "GPT-5.5", "is_default": true},
+        {"id": "gpt-6.2-sol", "label": "GPT-6.2-Sol"},
+        {"id": "gpt-6.2-astra", "label": "GPT-6.2-Astra"},
+        {"id": "gpt-6.1-terra", "label": "GPT-6.1 Terra"},
+        {"id": "gpt-6-luna", "label": "GPT-6-Luna"},
+        {"id": "gpt-5.6-sol", "label": "GPT-5.6-Sol"},
+        {"id": "gpt-5.6-terra", "label": "GPT-5.6-Terra"},
+        {"id": "gpt-5.6-luna", "label": "GPT-5.6-Luna"},
         {"id": "gpt-5.4", "label": "GPT-5.4"},
         {"id": "gpt-5.4-mini", "label": "GPT-5.4-Mini"}
       ],

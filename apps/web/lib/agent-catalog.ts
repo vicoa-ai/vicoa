@@ -529,7 +529,7 @@ export function savePersistedSelection(payload: Partial<PersistedSelection>): vo
 // ---------------------------------------------------------------------------
 
 export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
-  version: "2026-10-29-1",
+  version: "2026-11-26-1",
   min_cli_version: "1.20.0",
   min_client_version: "0.42.0",
   agents: [
@@ -543,11 +543,14 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
         // Only Opus 4.6 and Sonnet 4.6 carry a `[1m]` variant (Claude Code runs their bare id at
         // 200k); every other model here except Haiku 4.5 is natively 1M-context in Claude Code.
         // Fable 5 is premium-priced and thinking-always-on — offered but not the picker default.
-        // Opus 5.5 and Sonnet 5.5 carry no `default_thinking_effort` on purpose: Claude Code's
-        // own default for them is `medium`, so they take the agent-level `high`, not `xhigh`.
+        // Fable 5.2, Opus 5.5, Sonnet 5.5 and Haiku 5.5 carry no `default_thinking_effort` on
+        // purpose: Claude Code's own default for them is `medium`, so they take the agent-level
+        // `high`, not `xhigh`.
+        { id: "claude-fable-5-2", label: "Fable 5.2" },
         { id: "claude-fable-5", label: "Fable 5", default_thinking_effort: "xhigh" },
         { id: "claude-opus-5-5", label: "Opus 5.5" },
         { id: "claude-sonnet-5-5", label: "Sonnet 5.5" },
+        { id: "claude-haiku-5-5", label: "Haiku 5.5" },
         { id: "claude-opus-5", label: "Opus 5", default_thinking_effort: "xhigh" },
         { id: "claude-opus-4-8", label: "Opus 4.8", default_thinking_effort: "xhigh" },
         { id: "claude-opus-4-7", label: "Opus 4.7", default_thinking_effort: "xhigh" },
@@ -584,8 +587,13 @@ export const AGENT_CATALOG_FALLBACK: AgentCatalog = {
       // Refresh per docs/agents/agent-catalog.md. Do NOT source from
       // ~/.codex/models_cache.json — that file is per-user / per-account
       // and reflects entitlements rather than the canonical slug list.
+      // gpt-6.x in codex's own list order; minimum codex CLI per model in the canonical catalog.
       models: [
         { id: "gpt-5.5", label: "GPT-5.5", is_default: true },
+        { id: "gpt-6.2-sol", label: "GPT-6.2-Sol" },
+        { id: "gpt-6.2-astra", label: "GPT-6.2-Astra" },
+        { id: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
+        { id: "gpt-6-luna", label: "GPT-6-Luna" },
         { id: "gpt-5.6-sol", label: "GPT-5.6-Sol" },
         { id: "gpt-5.6-terra", label: "GPT-5.6-Terra" },
         { id: "gpt-5.6-luna", label: "GPT-5.6-Luna" },
