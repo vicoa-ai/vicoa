@@ -4,6 +4,10 @@ A plain asyncio timer (Postgres has no wall-clock trigger and "run at 9am" is a
 future time, not a row change). Every SWEEP_INTERVAL it claims due rows, advances
 each row's `next_run_at` inside the claim transaction (v1's dedup guarantee), then
 dispatches outside the lock and records a history row.
+
+The claim has already moved `next_run_at` on by the time a run dispatches, so a
+run that raises must still leave a history row (``failed``, with a short reason)
+and a log line: otherwise the slot is gone with no trace of it.
 """
 
 import asyncio
@@ -30,6 +34,15 @@ CLAIM_LIMIT = 50
 # as the daemon Popen's the process, before the agent registers.
 INSTANCE_LINK_WAIT = 8.0
 INSTANCE_LINK_POLL = 0.5
+# The run history shows `detail` as a hint; the full traceback goes to the log.
+ERROR_DETAIL_MAX = 200
+
+
+def _error_detail(exc: BaseException) -> str:
+    """A one-line reason for a run that raised, short enough for the run history."""
+    lines = str(exc).strip().splitlines()
+    text = lines[0] if lines else type(exc).__name__
+    return f"error: {text}"[:ERROR_DETAIL_MAX]
 
 
 def _claim_due_blocking() -> list[dict]:
@@ -184,9 +197,30 @@ class AutomationScheduler:
                 raise
 
     async def _process_row(self, row: dict) -> None:
-        if row.get("agent_instance_id") is not None:
-            await self._process_session_row(row)
-            return
+        """Dispatch one claimed run and record it in the run history.
+
+        The sweep gathers these with ``return_exceptions=True``, so nothing may
+        escape unlogged: a dispatch that raises is recorded as ``failed``, and a
+        record that raises is at least logged."""
+        try:
+            if row.get("agent_instance_id") is not None:
+                result, linked = await self._dispatch_session_row(row)
+            else:
+                result, linked = await self._dispatch_row(row)
+        except Exception as exc:  # noqa: BLE001 — record it in the history, don't lose it
+            logger.exception("automation %s: run failed", row["id"])
+            result, linked = (
+                DispatchResult(status="failed", detail=_error_detail(exc)),
+                None,
+            )
+        try:
+            await asyncio.to_thread(_record_run_blocking, row, result, linked)
+        except Exception:  # noqa: BLE001 — the run is gone from history; keep it in the log
+            logger.exception(
+                "automation %s: could not record its %s run", row["id"], result.status
+            )
+
+    async def _dispatch_row(self, row: dict) -> tuple[DispatchResult, UUID | None]:
         result = await dispatch_automation(
             user_id=row["user_id"],
             machine_id=row["machine_id"],
@@ -209,9 +243,11 @@ class AutomationScheduler:
                     str(row["agent_profile_id"]),
                 )
             linked = await self._await_instance(result.agent_instance_id)
-        await asyncio.to_thread(_record_run_blocking, row, result, linked)
+        return result, linked
 
-    async def _process_session_row(self, row: dict) -> None:
+    async def _dispatch_session_row(
+        self, row: dict
+    ) -> tuple[DispatchResult, UUID | None]:
         """A run of an automation that continues one session. The session
         already exists, so the run links to it straight away."""
         result = await dispatch_to_session(
@@ -221,18 +257,26 @@ class AutomationScheduler:
             prompt=row["prompt"],
         )
         linked = row["agent_instance_id"] if result.agent_instance_id else None
-        await asyncio.to_thread(_record_run_blocking, row, result, linked)
+        return result, linked
 
     async def _await_instance(self, instance_id: str) -> UUID | None:
         """Wait (bounded) for the spawned agent to self-register so the run row
-        can link to it. Returns the id if the row appears, else None."""
+        can link to it. Returns the id if the row appears, else None.
+
+        The run has already fired by now, so a failed lookup only loses the
+        link: it must not turn the run into a failed one."""
         try:
             inst = UUID(instance_id)
         except (ValueError, TypeError):
             return None
         waited = 0.0
         while waited < INSTANCE_LINK_WAIT:
-            if await asyncio.to_thread(_instance_exists_blocking, inst):
+            try:
+                exists = await asyncio.to_thread(_instance_exists_blocking, inst)
+            except Exception:  # noqa: BLE001 — the run fired; only its link is lost
+                logger.exception("automation run: could not look up session %s", inst)
+                return None
+            if exists:
                 return inst
             await asyncio.sleep(INSTANCE_LINK_POLL)
             waited += INSTANCE_LINK_POLL
