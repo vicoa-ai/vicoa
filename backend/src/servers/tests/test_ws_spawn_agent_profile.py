@@ -13,10 +13,12 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 
 import servers.shared.db.queries as queries_module
 from servers import profile_provenance
 from servers.api import ws_handler
+from servers.scheduler import task_dispatcher
 from shared.database.agent_profile_models import AgentProfile
 from shared.database.enums import AgentStatus
 from shared.database.models import AgentInstance, AgentType, User
@@ -27,11 +29,30 @@ from shared.websocket.connection_manager import Connection
 pytestmark = pytest.mark.committed_db
 
 
-@pytest.fixture
-def bound_session(db_session_factory, monkeypatch):
-    """Point the query layer's own session factory at the test database."""
+@pytest_asyncio.fixture
+async def bound_session(test_db, db_session_factory, monkeypatch):
+    """Point the query layer's own session factory at the test database.
+
+    Teardown waits for the detached stamps a spawn leaves running. They write to
+    `agent_instances` from a worker thread, and the TRUNCATE that cleans up after
+    a `committed_db` test can deadlock against a write still in flight. Being a
+    dependent of `test_db` and `monkeypatch`, this runs before both are undone.
+    """
     monkeypatch.setattr(queries_module, "SessionLocal", db_session_factory)
-    return db_session_factory
+    yield db_session_factory
+    # A stamp blocked on a row the test wrote but never committed would never
+    # finish, so let go of the test's locks before waiting.
+    test_db.rollback()
+    # A stamp left by a test whose event loop is closed never finishes either.
+    loop = asyncio.get_running_loop()
+    stamps = {
+        task
+        for task in profile_provenance._tasks | task_dispatcher._brief_stamps
+        if task.get_loop() is loop
+    }
+    if stamps:
+        # Not `gather`: a test may have cancelled its stamp.
+        await asyncio.wait(stamps)
 
 
 @pytest.fixture
@@ -446,7 +467,6 @@ async def test_resuming_a_task_session_brings_the_task_brief_back(
     """A task session runs with its profile's instructions plus the task brief
     (servers/scheduler/task_dispatcher.py). A person's Resume relaunches the
     agent through this path, so both have to come back."""
-    from servers.scheduler import task_dispatcher
     from shared.task_dispatch_prompts import TASK_BRIEF
 
     monkeypatch.setattr(task_dispatcher, "SessionLocal", bound_session)
@@ -472,8 +492,6 @@ async def test_resuming_a_task_session_brings_the_task_brief_back(
 async def test_resuming_an_ordinary_session_adds_no_brief(
     test_db, bound_session, monkeypatch, user, profile
 ):
-    from servers.scheduler import task_dispatcher
-
     monkeypatch.setattr(task_dispatcher, "SessionLocal", bound_session)
     instance_id = uuid4()
     _instance(test_db, user, instance_id)
@@ -496,7 +514,6 @@ async def test_a_session_started_from_a_task_gets_the_task_brief(
     """The task page's Start session sends `task_id`: the session works on the
     task like an assigned agent, so the brief follows the profile's
     instructions, and once it registers it is flagged as carrying it."""
-    from servers.scheduler import task_dispatcher
     from shared.database.task_models import Task
     from shared.task_dispatch_prompts import TASK_BRIEF
 
@@ -537,8 +554,6 @@ async def test_a_session_started_from_a_task_gets_the_task_brief(
 async def test_someone_elses_task_adds_no_brief(
     test_db, bound_session, monkeypatch, user, profile
 ):
-    from servers.scheduler import task_dispatcher
-
     monkeypatch.setattr(task_dispatcher, "SessionLocal", bound_session)
     instance_id = uuid4()
     _instance(test_db, user, instance_id)
